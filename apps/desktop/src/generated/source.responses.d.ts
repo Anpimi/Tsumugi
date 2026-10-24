@@ -2,26 +2,340 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux" | "windows";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
+export type UnsignedDecimal = string;
 export type LineageDecision = "continue" | "reject";
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
+export type CommandErrorCode =
+  | "invalid-input"
+  | "destination-conflict"
+  | "missing-project"
+  | "permission-denied"
+  | "unsupported-schema"
+  | "corrupt-project"
+  | "stale-revision"
+  | "session-invalid"
+  | "project-in-use"
+  | "busy"
+  | "storage-failed"
+  | "outcome-unknown"
+  | "limit-exceeded"
+  | "result-mismatch"
+  | "output-invalid"
+  | "dependency-conflict"
+  | "cancelled";
+/**
+ * Values compared at the rejecting boundary, without user text or credentials.
+ */
+export type ConflictEvidence =
+  | {
+      current: ExecutionId;
+      expected: ExecutionId;
+      kind: "source-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "translation-selection";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "review-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-decision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-check";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-waiver";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-fallback";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "build-eligibility";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "comparison-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "term-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "context-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-snapshot";
+    }
+  | {
+      current: Revision;
+      expected: Revision;
+      kind: "content-revision";
+    };
+export type CommandOutcome = "rejected" | "unknown";
+export type RecoveryAction =
+  "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+/**
+ * A read or user decision to make before another mutation; never replay authority.
+ */
+export type RecoveryGuidance = "reconcile-original" | "review-current" | "choose-destination";
+export type CommandStage =
+  | "create"
+  | "open"
+  | "read"
+  | "rename"
+  | "add-target-locale"
+  | "set-target-locales"
+  | "close"
+  | "plugin-install"
+  | "plugin-settings"
+  | "model-connections"
+  | "execution-read"
+  | "execution-cancel"
+  | "execution-recover"
+  | "execution-adopt"
+  | "execution-quiesce";
+export type SourceMaintenanceHookReadState = "action-not-known" | "not-enabled" | "prepared" | "adopted";
+export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
+export type ErrorCode =
+  | "invalid-input"
+  | "limit-exceeded"
+  | "result-mismatch"
+  | "output-invalid"
+  | "dependency-conflict"
+  | "cancelled"
+  | "outcome-unknown"
+  | "unauthorized"
+  | "busy"
+  | "storage-failed"
+  | "corrupt-ledger";
+export type SourceMaintenanceHookPhase =
+  | "prepared"
+  | "pending"
+  | "running"
+  | "observed"
+  | "failed"
+  | "stopped"
+  | "expired"
+  | "superseded"
+  | "interrupted"
+  | "unknown";
+export type SourceMaintenanceHookStopResult =
+  | {
+      kind: "not-known";
+    }
+  | {
+      kind: "stopped";
+      receipt: SourceMaintenanceHookStopReceipt;
+    };
+export type SourceContextPageEntry =
+  | {
+      kind: "block";
+      value: SourceContextBlock;
+    }
+  | {
+      kind: "stored-block";
+      value: SourceContextBlockDescriptor;
+    }
+  | {
+      kind: "neighbor";
+      value: SourceContextNeighbor;
+    };
+/**
+ * Classification for presentation, without interpreting a format's syntax or
+ * normalizing its literal text. Other source-associated information uses Note.
+ */
+export type SourceContextFactKind = "speaker" | "role" | "scene" | "time" | "location" | "note";
+/**
+ * References are observations in captured source, not proof of an inference.
+ * Human project decisions remain in the project's independent revision owner.
+ */
+export type SourceContextFactOrigin =
+  | {
+      kind: "extracted";
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    }
+  | {
+      kind: "inferred";
+      rationale: string;
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    };
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
+export type SourceContextDirection = "before" | "after";
 
 export interface Responses {
   action: AdoptionAction;
   adoptionAction: AdoptionActionRead | null;
   attempt: ExecutionId;
   cancelled: null;
+  checkReview: SourceCheckReview;
   comparison: SourceChangePage;
   estimates: SourceImpactSummary[];
   history: SourceHistory;
   impact: SourceImpactPage;
   integration: IntegrationDescriptor;
   lineage: LineageEvidence[];
+  maintenanceHook: SourceMaintenanceHookObservation;
+  maintenanceHookSession: SourceMaintenanceHookSession;
+  maintenanceHookStopped: SourceMaintenanceHookStopped;
   page: ContentPage;
+  pluginPreflight: PluginSourcePreflight;
+  pluginSelection: PluginSourceSelection | null;
   preflight: Preflight;
   scope: ContentScope;
   selection: SourceSelection | null;
+  sourceContext: SourceContextPage;
+  sourceContextBlock: SourceContextBlockDetail;
   startAction: SourceImportStartRead | null;
 }
 export interface AdoptionAction {
@@ -51,6 +365,176 @@ export interface ChangeReference {
   kind: string;
   revision: Revision;
 }
+export interface SourceCheckReview {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  rules: ContractRef[];
+  source: PluginSourceView;
+  sourceAttemptId: ExecutionId;
+  sourceResultId: ExecutionId;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface PluginSourceView {
+  checker: CapabilityBinding;
+  declaration: SourceImportDeclaration;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  review: ReviewBinding;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * All listed materials are required, relative to one user-selected directory.
+ * This first contract supports fixed files, not globs or discovery programs.
+ */
+export interface SourceImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  materials: SourceMaterialDeclaration[];
+  profile: ContractRef;
+  /**
+   * Exact immutable Resource whose domain rules are adopted with this source.
+   */
+  reviewResource: string;
+  revisionPolicy: SourceRevisionPolicy;
+  semanticRules: ContractRef[];
+}
+export interface SourceMaterialDeclaration {
+  logicalPath: string;
+  maxBytes: number;
+  role: string;
+}
+/**
+ * Captured by the trusted policy owner before a proposal is received. Only
+ * these exact block schemas contribute opaque bytes to source revisions.
+ */
+export interface SourceRevisionPolicy {
+  profile: ContractRef;
+  revisionBasis: ContractRef[];
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
+}
+export interface ReviewBinding {
+  checker: CapabilityBinding;
+  declaration: ReviewDeclaration;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
 export interface SourceChangePage {
   added: number;
   ambiguous: number;
@@ -75,6 +559,7 @@ export interface SourceConfirmation {
   identityPolicy: string;
   lineage: LineageChoice[];
   lineageBaseSnapshot: ExecutionId | null;
+  maintenanceHook: SourceMaintenanceHookActivation | null;
   resultDigest: string;
   sourceLanguage: string;
 }
@@ -83,6 +568,14 @@ export interface LineageChoice {
   newOrdinal: number;
   oldOccurrenceId: ExecutionId;
   reason: string;
+}
+export interface SourceMaintenanceHookActivation {
+  after: number;
+  expiresAtMs: number;
+  limit: number;
+  locale: string;
+  policyVersion: string;
+  sessionEpoch: string;
 }
 export interface SourceChange {
   candidates: ContentRow[];
@@ -98,6 +591,10 @@ export interface ContentRow {
 }
 export interface SourceOccurrence {
   artifactId: ExecutionId;
+  /**
+   * Opaque digest of the exact captured revision policy, text, protected
+   * fragments and only the policy-selected domain blocks.
+   */
   identityBasis: string;
   key: string;
   /**
@@ -106,17 +603,53 @@ export interface SourceOccurrence {
    * @minItems 2
    * @maxItems 2
    */
-  keyByteRange: [number, number];
+  keyByteRange: [number, number] | null;
   namespace: string;
+  nativeIdentity: NativeIdentityEvidence | null;
+  operationOccurrenceId: string;
+  operationSourceRevisionId: string;
+  operationUnitId: string;
   ordinal: number;
+  source: SourceReference;
   text: string;
   /**
-   * Half-open UTF-8 byte offsets into the original artifact, not the decoded text.
+   * Derived UTF-8 coordinates for existing readers; original coordinates are
+   * retained in `source`, including their explicit encoding.
    *
    * @minItems 2
    * @maxItems 2
    */
   valueByteRange: [number, number];
+}
+export interface NativeIdentityEvidence {
+  display: NativeIdentityDisplay;
+  namespace: string;
+  policy: ContractRef;
+  /**
+   * The domain's canonical matching value, not necessarily its original
+   * literal spelling. Core does not normalize this value again.
+   */
+  value: string;
+}
+/**
+ * Domain-confirmed spelling for presentation, separate from canonical
+ * matching. A source reference is optional when the identity is derived.
+ */
+export interface NativeIdentityDisplay {
+  source: SourceReference | null;
+  value: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
 }
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;
@@ -206,6 +739,112 @@ export interface IntegrationDescriptor {
   requiredFiles: string[];
   version: string;
 }
+export interface SourceMaintenanceHookObservation {
+  callbacksDrained: boolean;
+  error: CommandError | null;
+  sourceActionId: ExecutionId;
+  state: SourceMaintenanceHookReadState;
+  view: SourceMaintenanceHookView | null;
+}
+export interface CommandError {
+  code: CommandErrorCode;
+  conflict?: ConflictEvidence | null;
+  currentRevision?: string;
+  diagnosticId?: ExecutionId | null;
+  field?: string;
+  itemIds?: ExecutionId[];
+  outcome: CommandOutcome;
+  reason?: string;
+  recoveryActions?: RecoveryAction[];
+  recoveryGuidance?: RecoveryGuidance | null;
+  recoveryRequired: boolean;
+  stage: CommandStage;
+}
+export interface SourceMaintenanceHookView {
+  activation: SourceMaintenanceHookActivation;
+  admissionClosed: boolean;
+  cause: SourceMaintenanceHookCause | null;
+  outcome: SourceMaintenanceHookOutcome | null;
+  phase: SourceMaintenanceHookPhase;
+  sourceActionId: ExecutionId;
+  stop: SourceMaintenanceHookStopReceipt | null;
+}
+export interface SourceMaintenanceHookCause {
+  attemptId: ExecutionId;
+  contentRevision: Revision;
+  projectId: ExecutionId;
+  resultDigest: string;
+  resultId: ExecutionId;
+  sourceActionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+}
+export interface SourceMaintenanceHookOutcome {
+  activation: SourceMaintenanceHookActivation;
+  assessment: MaintenanceAssessment | null;
+  cause: SourceMaintenanceHookCause;
+  error: ExecutionError | null;
+  phase: SourceMaintenanceHookPhase;
+  runId: ExecutionId;
+}
+export interface MaintenanceAssessment {
+  after: number;
+  coverage: string;
+  digest: string;
+  limit: number;
+  locale: string;
+  nextOrdinal: number | null;
+  projectId: ExecutionId;
+  rows: MaintenanceRow[];
+  sourceSnapshotId: ExecutionId;
+}
+export interface MaintenanceRow {
+  mappingUnresolved: boolean;
+  nativeKey: string;
+  protection: WorkProtection;
+  reasons: string[];
+  reviewBasis: string;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceText: string;
+  suggested: MaintenanceAction;
+  translationRevisionId: ExecutionId | null;
+  translationText: string | null;
+  unitId: ExecutionId;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
+}
+export interface ExecutionError {
+  code: ErrorCode;
+  conflict?: ConflictEvidence | null;
+  itemIds: ExecutionId[];
+  stage: string;
+}
+export interface SourceMaintenanceHookStopReceipt {
+  admissionClosed: boolean;
+  request: StopSourceMaintenanceHook;
+}
+export interface StopSourceMaintenanceHook {
+  actionId: ExecutionId;
+  activation: SourceMaintenanceHookActivation;
+  projectId: ExecutionId;
+  sourceActionId: ExecutionId;
+}
+export interface SourceMaintenanceHookSession {
+  defaultLifetimeMs: number;
+  maxLifetimeMs: number;
+  policyVersion: string;
+  sessionEpoch: string;
+  windowLimit: number;
+}
+export interface SourceMaintenanceHookStopped {
+  callbacksDrained: boolean;
+  request: StopSourceMaintenanceHook;
+  result: SourceMaintenanceHookStopResult;
+}
 export interface ContentPage {
   attemptId: ExecutionId;
   confirmation: SourceConfirmation;
@@ -219,6 +858,24 @@ export interface ContentPage {
   snapshotId: ExecutionId | null;
   total: number;
 }
+export interface PluginSourcePreflight {
+  attemptId: ExecutionId;
+  files: PluginSourceFile[];
+  inputDigest: string;
+  source: PluginSourceView;
+  sourceLanguage: string;
+}
+export interface PluginSourceFile {
+  byteLength: number;
+  logicalPath: string;
+  role: string;
+  sha256: string;
+}
+export interface PluginSourceSelection {
+  folderName: string;
+  selectionId: ExecutionId;
+  source: PluginSourceView;
+}
 export interface Preflight {
   count: number;
   diagnostics: string[];
@@ -229,6 +886,123 @@ export interface Preflight {
 export interface SourceSelection {
   folderName: string;
   selectionId: ExecutionId;
+}
+export interface SourceContextPage {
+  after: number;
+  contentRevision: Revision;
+  entries: SourceContextPageEntry[];
+  localUnitId: string;
+  nextAfter: number | null;
+  observations: SourceContextObservations;
+  occurrenceCount: number;
+  scope: SourceContextRequest;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+  totalEntries: number;
+}
+/**
+ * The block's index and local target retain its identity inside the exact
+ * result. `None` facts means an unsupported version; `Some` with an empty list
+ * is the domain's explicit empty observation. Missing blocks remain missing.
+ */
+export interface SourceContextBlock {
+  blockIndex: number;
+  facts: SourceContextFacts | null;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+/**
+ * The surrounding DomainBlock supplies Snapshot/Unit/Occurrence applicability.
+ * Empty facts report an explicit empty observation; absence is not that report.
+ */
+export interface SourceContextFacts {
+  /**
+   * @maxItems 32
+   */
+  facts: SourceContextFact[];
+}
+export interface SourceContextFact {
+  /**
+   * Unique only inside this block; it is not a project revision or entity ID.
+   */
+  id: string;
+  kind: SourceContextFactKind;
+  origin: SourceContextFactOrigin;
+  text: string;
+}
+export interface SourceContextBlockDescriptor {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  payloadBytes: number;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextNeighbor {
+  adjacentTo: SourceContextAdjacency[];
+  occurrence: SourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface SourceContextAdjacency {
+  /**
+   * The neighbor's position relative to this selected occurrence.
+   */
+  direction: SourceContextDirection;
+  occurrenceId: ExecutionId;
+}
+export interface SourceContextOccurrence {
+  localOccurrenceId: string;
+  occurrenceId: ExecutionId;
+  source: SourceReference;
+}
+/**
+ * Missing, explicitly empty and unknown schema observations are distinct.
+ */
+export interface SourceContextObservations {
+  emptyBlocks: number;
+  knownBlocks: number;
+  knownFacts: number;
+  missingBlocks: boolean;
+  neighborOccurrences: number;
+  unknownBlocks: number;
+  unknownRequiredBlocks: number;
+  unknownSamples: UnknownSourceBlockSample[];
+}
+export interface UnknownSourceBlockSample {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SourceContextBlockDetail {
+  basis: SourceContextBlockBasis;
+  descriptor: SourceContextBlockDescriptor;
+  /**
+   * Original UTF-8 text, without parsing, normalization or reserialization.
+   */
+  payloadUtf8: string;
+}
+export interface SourceContextBlockBasis {
+  contentRevision: Revision;
+  localUnitId: string;
+  scope: SourceContextRequest;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
 }
 export interface SourceImportStartRead {
   inputDigest: string;

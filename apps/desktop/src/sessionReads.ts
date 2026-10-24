@@ -134,7 +134,11 @@ export class SessionReads {
   invalidate(affected: readonly ChangeScope[], semanticChange = true) {
     if (this.closed) return;
     if (semanticChange) this.notifyChanges(affected);
-    const queries = this.client.getQueryCache().findAll({ predicate: query => depends(query, affected) });
+    // An unchanged focus check refreshes current reads, but a file selection
+    // remains explicit. Real changes still invalidate both kinds of Query.
+    const queries = this.client.getQueryCache().findAll({ predicate: query =>
+      depends(query, affected) && (semanticChange || query.meta?.refresh !== "explicit"),
+    });
     for (const query of queries) {
       if (query.state.fetchStatus === "fetching") this.pending.add(query.queryHash);
       query.invalidate();
@@ -163,6 +167,22 @@ export class SessionReads {
       this.invalidate([...this.affected]); this.affected.clear();
     }, 50);
     if (gap) void this.synchronize(true);
+  }
+  /** Confirm current change metadata before an explicit dependent read. */
+  async synchronizeFresh(): Promise<void> {
+    if (!this.running) return;
+    // A heartbeat already in flight may precede the caller's checked write.
+    // Its completion cannot stand in for a snapshot started afterwards.
+    if (this.syncFlight) await this.syncFlight;
+    if (!this.running) return;
+    await this.synchronize();
+    if (!this.running) return;
+    if (this.failed) throw new Error("Current project changes could not be confirmed");
+    // A hint may already have advanced sequence while its coalesced semantic
+    // invalidation is still queued. Deliver it before confirming fresh data.
+    clearTimeout(this.coalesce); this.coalesce = undefined;
+    const scopes = [...this.affected]; this.affected.clear();
+    if (scopes.length) this.invalidate(scopes);
   }
   private observeEpoch(value: string) {
     if (this.epoch && this.epoch !== value) this.retiredEpochs.add(this.epoch);

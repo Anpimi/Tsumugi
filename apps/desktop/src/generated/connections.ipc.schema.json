@@ -1,0 +1,1000 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AiConnection": {
+        "additionalProperties": false,
+        "description": "Non-secret saved connection defaults. Invocation scope, sharing and budgets\nremain in the separately captured AiConfig; this value grants no execution.",
+        "properties": {
+          "credentialEnv": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "tokenField": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "model",
+          "credentialEnv",
+          "tokenField"
+        ],
+        "type": "object"
+      },
+      "ConnectionActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ConnectionResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reference": {
+            "$ref": "#/definitions/ModelConnectionReference"
+          }
+        },
+        "required": [
+          "reference"
+        ],
+        "type": "object"
+      },
+      "ConnectionSnapshotRequest": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "ModelConnectionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionChange": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "edit": {
+            "$ref": "#/definitions/ModelConnectionEdit"
+          },
+          "expected": {
+            "$ref": "#/definitions/ModelConnectionBasis"
+          }
+        },
+        "required": [
+          "actionId",
+          "expected",
+          "edit"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionEdit": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "connection": {
+                "$ref": "#/definitions/AiConnection"
+              },
+              "kind": {
+                "const": "save",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "profileId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "profileId",
+              "name",
+              "connection"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "archive",
+                "type": "string"
+              },
+              "profileId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "profileId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "restore",
+                "type": "string"
+              },
+              "profileId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "profileId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ModelConnectionReference": {
+        "additionalProperties": false,
+        "description": "A persistent data identity, never a credential, execution grant or consent.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "storeId",
+          "profileId",
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "action": {
+        "$ref": "#/definitions/ConnectionActionRequest"
+      },
+      "change": {
+        "$ref": "#/definitions/ModelConnectionChange"
+      },
+      "resolve": {
+        "$ref": "#/definitions/ConnectionResolveRequest"
+      },
+      "snapshot": {
+        "$ref": "#/definitions/ConnectionSnapshotRequest"
+      }
+    },
+    "required": [
+      "snapshot",
+      "change",
+      "action",
+      "resolve"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:connections:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AiConnection": {
+        "additionalProperties": false,
+        "description": "Non-secret saved connection defaults. Invocation scope, sharing and budgets\nremain in the separately captured AiConfig; this value grants no execution.",
+        "properties": {
+          "credentialEnv": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "tokenField": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "endpoint",
+          "model",
+          "credentialEnv",
+          "tokenField"
+        ],
+        "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "diagnosticId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RecoveryGuidance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ConflictEvidence": {
+        "description": "Values compared at the rejecting boundary, without user text or credentials.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "expected": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "translation-selection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "review-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-waiver",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-fallback",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "build-eligibility",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "comparison-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "context-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expected": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "content-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConnectionReadView": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/ModelConnectionBasis"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/definitions/ModelConnectionReference"
+            },
+            "type": "array"
+          },
+          "snapshot": {
+            "$ref": "#/definitions/ModelConnectionSnapshot"
+          }
+        },
+        "required": [
+          "snapshot",
+          "basis",
+          "references"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "ModelConnectionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "storeId",
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionProfile": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "type": "boolean"
+          },
+          "connection": {
+            "$ref": "#/definitions/AiConnection"
+          },
+          "id": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "name",
+          "connection",
+          "archived"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/definitions/ModelConnectionSnapshot"
+          }
+        },
+        "required": [
+          "actionId",
+          "requestDigest",
+          "snapshot"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionReference": {
+        "additionalProperties": false,
+        "description": "A persistent data identity, never a credential, execution grant or consent.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "storeId",
+          "profileId",
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "lastActionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ModelConnectionProfile"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "storeId",
+          "revision",
+          "lastActionId",
+          "profiles"
+        ],
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "RecoveryGuidance": {
+        "description": "A read or user decision to make before another mutation; never replay authority.",
+        "enum": [
+          "reconcile-original",
+          "review-current",
+          "choose-destination"
+        ],
+        "type": "string"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "action": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ModelConnectionReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "connection": {
+        "$ref": "#/definitions/AiConnection"
+      },
+      "error": {
+        "$ref": "#/definitions/CommandError"
+      },
+      "receipt": {
+        "$ref": "#/definitions/ModelConnectionReceipt"
+      },
+      "snapshot": {
+        "$ref": "#/definitions/ConnectionReadView"
+      }
+    },
+    "required": [
+      "snapshot",
+      "receipt",
+      "action",
+      "connection",
+      "error"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:connections:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

@@ -1,0 +1,686 @@
+{
+  "toolView": {
+    "settingsRevision": "1",
+    "resourceId": "agent-query-tool",
+    "binding": {
+      "declaration": {
+        "name": "reference_query",
+        "title": "Reference lookup",
+        "description": "Query selected reference data. Guidance and results grant no permission.",
+        "capabilityId": "query",
+        "profile": {
+          "id": "example.reference",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "supportingResources": [
+          "terms"
+        ],
+        "skill": "guidance",
+        "query": {
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputTemplate": {
+            "basis": {
+              "revision": "é-👩🏽‍💻"
+            },
+            "target": "zh-CN",
+            "rows": [
+              {
+                "id": "original-query",
+                "text": "",
+                "selected": []
+              }
+            ]
+          },
+          "textPath": [
+            "rows",
+            0,
+            "text"
+          ],
+          "maxTextBytes": 256,
+          "target": {
+            "label": "Target language",
+            "description": "Choose the original target value.",
+            "path": [
+              "target"
+            ],
+            "options": [
+              {
+                "value": "zh-CN",
+                "label": "简体中文",
+                "description": "An explicit original value."
+              },
+              {
+                "value": "ja",
+                "label": "日本語",
+                "description": "An explicit original value."
+              }
+            ],
+            "minSelected": 1,
+            "maxSelected": 1
+          },
+          "selections": {
+            "label": "Reference senses",
+            "description": "Select the intended senses explicitly.",
+            "path": [
+              "rows",
+              0,
+              "selected"
+            ],
+            "options": [
+              {
+                "value": "term",
+                "label": "Term 👩🏽‍💻",
+                "description": "An explicit original value."
+              },
+              {
+                "value": "other",
+                "label": "Other",
+                "description": "An explicit original value."
+              }
+            ],
+            "minSelected": 1,
+            "maxSelected": 2
+          },
+          "output": {
+            "entriesPath": [
+              "results",
+              0,
+              "entries"
+            ],
+            "columns": [
+              {
+                "label": "Preference",
+                "path": [
+                  "value"
+                ]
+              },
+              {
+                "label": "Explanation",
+                "path": [
+                  "note"
+                ]
+              }
+            ],
+            "maxEntries": 2,
+            "emptyDescription": "No preference for this explicit selection."
+          }
+        }
+      },
+      "capability": {
+        "provider": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "declaration": {
+          "contract": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "org.tsumugi.examples.philosophy-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.reference",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 65536,
+            "maxOutputBytes": 65536,
+            "concurrency": 1,
+            "timeoutMs": 5000
+          }
+        }
+      },
+      "resources": [
+        {
+          "contributionId": "terms",
+          "schema": {
+            "id": "org.tsumugi.examples.terminology-resource",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        }
+      ]
+    },
+    "packageOrigin": {
+      "sourceId": "manual-local",
+      "publisherId": "user-approved"
+    },
+    "environment": {
+      "protocolVersion": 1,
+      "platform": {
+        "operatingSystem": "macos",
+        "architecture": "aarch64"
+      },
+      "sdkVersion": "0.1.0-alpha.1",
+      "processProtocol": 3,
+      "profile": "node-system-libraries-v1",
+      "toolVersion": "26.10.0",
+      "tool": {
+        "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+        "entrypoint": "bin/node"
+      },
+      "host": {
+        "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+        "entrypoint": "dist/main.js"
+      }
+    },
+    "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "runtimeOrigin": {
+      "sourceId": "captured-runtime",
+      "publisherId": "user-approved"
+    },
+    "componentScope": "project"
+  },
+  "spec": {
+    "handle": "60000000-0000-4000-8000-000000000019",
+    "binding": {
+      "declaration": {
+        "name": "reference_query",
+        "title": "Reference lookup",
+        "description": "Query selected reference data. Guidance and results grant no permission.",
+        "capabilityId": "query",
+        "profile": {
+          "id": "example.reference",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "supportingResources": [
+          "terms"
+        ],
+        "skill": "guidance",
+        "query": {
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputTemplate": {
+            "basis": {
+              "revision": "é-👩🏽‍💻"
+            },
+            "target": "zh-CN",
+            "rows": [
+              {
+                "id": "original-query",
+                "text": "",
+                "selected": []
+              }
+            ]
+          },
+          "textPath": [
+            "rows",
+            0,
+            "text"
+          ],
+          "maxTextBytes": 256,
+          "target": {
+            "label": "Target language",
+            "description": "Choose the original target value.",
+            "path": [
+              "target"
+            ],
+            "options": [
+              {
+                "value": "zh-CN",
+                "label": "简体中文",
+                "description": "An explicit original value."
+              },
+              {
+                "value": "ja",
+                "label": "日本語",
+                "description": "An explicit original value."
+              }
+            ],
+            "minSelected": 1,
+            "maxSelected": 1
+          },
+          "selections": {
+            "label": "Reference senses",
+            "description": "Select the intended senses explicitly.",
+            "path": [
+              "rows",
+              0,
+              "selected"
+            ],
+            "options": [
+              {
+                "value": "term",
+                "label": "Term 👩🏽‍💻",
+                "description": "An explicit original value."
+              },
+              {
+                "value": "other",
+                "label": "Other",
+                "description": "An explicit original value."
+              }
+            ],
+            "minSelected": 1,
+            "maxSelected": 2
+          },
+          "output": {
+            "entriesPath": [
+              "results",
+              0,
+              "entries"
+            ],
+            "columns": [
+              {
+                "label": "Preference",
+                "path": [
+                  "value"
+                ]
+              },
+              {
+                "label": "Explanation",
+                "path": [
+                  "note"
+                ]
+              }
+            ],
+            "maxEntries": 2,
+            "emptyDescription": "No preference for this explicit selection."
+          }
+        }
+      },
+      "capability": {
+        "provider": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "declaration": {
+          "contract": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "org.tsumugi.examples.philosophy-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.reference",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 65536,
+            "maxOutputBytes": 65536,
+            "concurrency": 1,
+            "timeoutMs": 5000
+          }
+        }
+      },
+      "resources": [
+        {
+          "contributionId": "terms",
+          "schema": {
+            "id": "org.tsumugi.examples.terminology-resource",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        }
+      ]
+    },
+    "resourceId": "agent-query-tool",
+    "settingsRevision": "1",
+    "packageOrigin": {
+      "sourceId": "manual-local",
+      "publisherId": "user-approved"
+    },
+    "runtimeOrigin": {
+      "sourceId": "captured-runtime",
+      "publisherId": "user-approved"
+    },
+    "target": "zh-CN",
+    "selections": [
+      "term"
+    ],
+    "execution": {
+      "capability": {
+        "provider": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "declaration": {
+          "contract": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "org.tsumugi.examples.philosophy-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.reference",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 65536,
+            "maxOutputBytes": 65536,
+            "concurrency": 1,
+            "timeoutMs": 5000
+          }
+        }
+      },
+      "componentScope": "project",
+      "profile": {
+        "id": "example.reference",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 3,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "applicationScope": null
+    },
+    "applicationCapabilities": []
+  },
+  "requests": {
+    "prepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "tool": {
+        "taskId": "60000000-0000-4000-8000-000000000018",
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "toolHandle": "60000000-0000-4000-8000-000000000019",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      }
+    },
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "tool": {
+        "taskId": "60000000-0000-4000-8000-000000000018",
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "toolHandle": "60000000-0000-4000-8000-000000000019",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "attempt": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "tool": {
+        "taskId": "60000000-0000-4000-8000-000000000018",
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "toolHandle": "60000000-0000-4000-8000-000000000019",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "offset": 0,
+      "limit": 100
+    },
+    "output": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "tool": {
+        "taskId": "60000000-0000-4000-8000-000000000018",
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "toolHandle": "60000000-0000-4000-8000-000000000019",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "itemId": "60000000-0000-4000-8000-000000000021",
+      "resultId": "60000000-0000-4000-8000-000000000022"
+    }
+  },
+  "responses": {
+    "prepared": {
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "parentTask": "60000000-0000-4000-8000-000000000012",
+      "taskId": "60000000-0000-4000-8000-000000000018",
+      "attemptId": "60000000-0000-4000-8000-000000000020",
+      "toolHandle": "60000000-0000-4000-8000-000000000019",
+      "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ]
+    },
+    "attempt": {
+      "taskId": "60000000-0000-4000-8000-000000000018",
+      "attemptId": "60000000-0000-4000-8000-000000000020",
+      "operation": "plugin-tool-query",
+      "progress": {
+        "total": 1,
+        "queued": 0,
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "unknown": 0,
+        "adopted": 0
+      },
+      "items": [
+        {
+          "status": {
+            "itemId": "60000000-0000-4000-8000-000000000021",
+            "execution": "succeeded",
+            "validation": "valid",
+            "adoption": "unapplied",
+            "cancellationRequested": false,
+            "retrySafe": false,
+            "diagnostic": null
+          },
+          "scope": {
+            "kind": "translation-unit",
+            "id": "60000000-0000-4000-8000-000000000003",
+            "locale": "zh-CN"
+          },
+          "resultId": "60000000-0000-4000-8000-000000000022"
+        }
+      ],
+      "recovery": {
+        "attemptId": "60000000-0000-4000-8000-000000000020",
+        "units": []
+      },
+      "nextOffset": null
+    },
+    "output": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000020",
+      "itemId": "60000000-0000-4000-8000-000000000021",
+      "resultId": "60000000-0000-4000-8000-000000000022",
+      "dispatchToken": "60000000-0000-4000-8000-000000000023",
+      "capabilityId": "org.tsumugi.examples.philosophy-query",
+      "capabilityVersion": "1:1",
+      "outcome": "succeeded",
+      "output": {},
+      "diagnostic": null,
+      "supersedes": null,
+      "plugin": {
+        "authorizationId": "60000000-0000-4000-8000-000000000025",
+        "channel": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "instanceId": "60000000-0000-4000-8000-000000000024",
+          "activationGeneration": 1
+        },
+        "result": {
+          "provider": {
+            "plugin": {
+              "publisher": "org.tsumugi.examples",
+              "id": "philosophy",
+              "version": "0.1.0-alpha.1"
+            },
+            "componentId": "knowledge",
+            "contributionId": "query",
+            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "instanceId": "60000000-0000-4000-8000-000000000024",
+            "activationGeneration": 1
+          },
+          "capability": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profile": {
+            "id": "example.reference",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "context": {
+            "projectId": "60000000-0000-4000-8000-000000000001",
+            "attemptId": "60000000-0000-4000-8000-000000000020",
+            "itemId": "60000000-0000-4000-8000-000000000021",
+            "dispatchId": "60000000-0000-4000-8000-000000000023",
+            "operationId": "plugin-tool-query",
+            "scopeId": "60000000-0000-4000-8000-000000000001",
+            "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "scopeDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "configurationDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          "resultId": "60000000-0000-4000-8000-000000000022",
+          "outcome": {
+            "kind": "succeeded",
+            "output": {
+              "schema": {
+                "id": "example.query-output",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "utf8": "{}",
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+            }
+          }
+        }
+      }
+    }
+  }
+}

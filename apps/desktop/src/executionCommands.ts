@@ -1,13 +1,17 @@
 import type { ContinuationAction, ContinuationReceipt, ContinuationPage, TaskView } from "./generated/execution.responses";
 import type { ProjectView } from "./projectCommands";
 import { checkedInvoke } from "./ipc";
-import type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest } from "./generated/execution.requests";
-import { validateResponseIdentity, validateResponseStatus, validateResponseTasks, validateResponseAttempts, validateResponseAttempt, validateResponseOutput, validateResponseCancellation, validateResponseRecovery, validateResponseContinuation, validateResponseContinuationReceipt, validateResponseContinuations, validateResponseTaskView, validateResponseAction, validateResponseAdoption, validateResponseReceipt } from "./generated/execution.validators";
-import { validateResponseAdoptionAction, validateResponseCancellationAction } from "./generated/execution.validators";
-import type { Responses, AdoptionAction, AdoptionReceipt } from "./generated/execution.responses";
+import type { SessionRequest, ListRequest, TaskActivityRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest, PluginToolPrepareRequest, PluginToolStartRequest, ApplicationInstanceRequest, StopApplicationInstanceRequest, ApplicationShutdownRequest, PluginToolDiscardRequest } from "./generated/execution.requests";
+import { validateResponseIdentity, validateResponseStatus, validateResponseTasks, validateResponseActivity, validateResponseAttempts, validateResponseAttempt, validateResponseOutput, validateResponseCancellation, validateResponseRecovery, validateResponseContinuation, validateResponseContinuationReceipt, validateResponseContinuations, validateResponseTaskView, validateResponseAction, validateResponseAdoption, validateResponseReceipt, validateResponseToolPreflight, validateResponseToolDiscarded, validateResponseApplicationInstance, validateResponseApplicationShutdown } from "./generated/execution.validators";
+import type { AdoptionAction, AdoptionReceipt, ApplicationInstanceView, ApplicationShutdownView, Responses } from "./generated/execution.responses";
+import { validateResponseAdoptionAction } from "./generated/execution.validators";
+import { validateResponsePluginStartAction } from "./generated/execution.validators";
+import type { PluginStartReadRequest } from "./generated/execution.requests";
+import { validateResponseCancellationAction } from "./generated/execution.validators";
 
-export type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest } from "./generated/execution.requests";
-export type { TaskView as Task, AdoptionReceipt as Receipt, AttemptSummary, ExecutionState, ItemStatus, Scope, ItemView, Progress, RecoveryUnit, AttemptDetail, RuntimeStatus, RecoveryView, AdoptionAction, ResultEnvelope, RecoveryAction, ContinuationAction, ContinuationReceipt, ContinuationPage } from "./generated/execution.responses";
+export type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest, PluginToolPrepareRequest, PluginToolStartRequest, ApplicationInstanceRequest, StopApplicationInstanceRequest, ApplicationShutdownRequest, PluginToolDiscardRequest } from "./generated/execution.requests";
+export type { TaskView as Task, AdoptionReceipt as Receipt, AttemptSummary, ExecutionState, ItemStatus, Scope, ItemView, Progress, RecoveryUnit, AttemptDetail, RuntimeStatus, RecoveryView, AdoptionAction, ExecutionOutputView, RecoveryAction, ContinuationAction, ContinuationReceipt, ContinuationPage, PluginToolPreflight, PluginToolItem, ApplicationScopeBasis, ApplicationInstanceView, ApplicationShutdownView } from "./generated/execution.responses";
+export type { TaskActivity, TaskActivityPhase, TaskActivityRow } from "./generated/execution.responses";
 
 export const executionContext = (project: ProjectView): SessionRequest => ({ sessionToken: project.sessionToken, projectId: project.metadata.projectId });
 
@@ -84,6 +88,13 @@ async function readTaskView(request: TaskViewRequest): Promise<TaskView> {
   if (task.taskId !== request.taskId || task.projectId !== request.projectId) throw new Error("Invalid task view scope");
   return task;
 }
+async function cancelExecution(request: CancelRequest) {
+  const revision = await checkedInvoke("cancel_execution_task", request, validateResponseCancellation);
+  // A committed cancellation advances the ledger; zero is only an uncancelled
+  // continuation basis, never acknowledgement of this cancellation request.
+  if (revision === "0") throw new Error("Invalid cancellation acknowledgement");
+  return revision;
+}
 
 export function confirmCancellationReceipt(request: CancelRequest, value: unknown) {
   if (!validateResponseCancellationAction(value) || value === null || value.projectId !== request.projectId
@@ -98,15 +109,20 @@ async function readCancellationAction(request: CancelRequest): Promise<Responses
 }
 
 export const executionCommands = {
+  pluginStartAction: async (request: PluginStartReadRequest): Promise<Responses["pluginStartAction"]> => {
+    const value = await checkedInvoke("read_plugin_execution_start", request, validateResponsePluginStartAction);
+    if (value !== null && (value.projectId !== request.projectId || value.attemptId !== request.attemptId
+      || value.operation !== request.operation || value.inputDigest !== request.inputDigest)) throw new Error("Invalid original plugin start proof");
+    return value;
+  },
   identity: (request: SessionRequest) => checkedInvoke("create_execution_identity", request, validateResponseIdentity),
   status: (request: SessionRequest) => checkedInvoke("execution_status", request, validateResponseStatus),
   list: (request: ListRequest) => checkedInvoke("list_execution_tasks", request, validateResponseTasks),
+  activity: (request: TaskActivityRequest) => checkedInvoke("read_execution_task_activity", request, validateResponseActivity),
   task: (request: TaskRequest) => checkedInvoke("read_execution_task", request, validateResponseAttempts),
   attempt: (request: AttemptRequest) => checkedInvoke("read_execution_attempt", request, validateResponseAttempt),
   output: (request: OutputRequest) => checkedInvoke("read_execution_output", request, validateResponseOutput),
-  // The scalar wire type allows zero, but a persisted cancellation increments it.
-  cancel: (request: CancelRequest) => checkedInvoke("cancel_execution_task", request,
-    (value): value is string => validateResponseCancellation(value) && value !== "0"),
+  cancel: cancelExecution,
   cancellationAction: readCancellationAction,
   continue: continueExecution,
   continuation: readContinuation,
@@ -118,4 +134,11 @@ export const executionCommands = {
   adopt: (request: AdoptRequest) => checkedInvoke("adopt_execution", request, validateResponseAdoption),
   receipt: (request: AdoptRequest) => checkedInvoke("read_execution_receipt", request, validateResponseReceipt),
   quiesce: (request: SessionRequest) => checkedInvoke("quiesce_execution", request, validateResponseStatus),
+  prepareTool: (request: PluginToolPrepareRequest) => checkedInvoke("prepare_plugin_tool", request, validateResponseToolPreflight),
+  startTool: (request: PluginToolStartRequest) => checkedInvoke("start_plugin_tool", request, validateResponseIdentity),
+  applicationInstance: (request: ApplicationInstanceRequest) => checkedInvoke("read_application_plugin_instance", request, (value): value is ApplicationInstanceView => validateResponseApplicationInstance(value) && value.basis.instanceId === request.basis.instanceId && value.basis.activationGeneration === request.basis.activationGeneration),
+  stopApplicationInstance: (request: StopApplicationInstanceRequest) => checkedInvoke("stop_application_plugin_instance", request, (value): value is ApplicationInstanceView => validateResponseApplicationInstance(value) && value.basis.instanceId === request.basis.instanceId && value.basis.activationGeneration === request.basis.activationGeneration && (value.state === "stopping" || value.state === "stopped")),
+  stopApplicationInstances: (request: ApplicationShutdownRequest) => checkedInvoke("stop_application_plugin_instances", request, (value): value is ApplicationShutdownView => validateResponseApplicationShutdown(value) && value.actionId === request.actionId),
+  resumeApplicationInstances: (request: ApplicationShutdownRequest) => checkedInvoke("resume_application_plugin_instances", request, (value): value is ApplicationShutdownView => validateResponseApplicationShutdown(value) && value.actionId === request.actionId && value.state === "resumed"),
+  discardTool: (request: PluginToolDiscardRequest) => checkedInvoke("discard_plugin_tool_preflight", request, validateResponseToolDiscarded),
 };

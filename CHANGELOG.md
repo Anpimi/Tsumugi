@@ -6,15 +6,18 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
-Development target: **0.2.0-alpha.1**.
+Source metadata: **0.2.0-alpha.1**. The published alpha.1 snapshot is frozen; the next application distribution must advance the prerelease.
 
-This initial backfill summarizes development commits `e76ef39` through `7febd7e` (2026-09-17 through 2026-10-02), which used `0.1.0` as their development version. No historical release tags exist, so these changes form one unreleased batch without invented release versions or dates.
+This initial backfill summarizes development commits `e76ef39` through `7febd7e` (2026-09-17 through 2026-10-02), which used `0.1.0` as their development version. The scaffold backfill is retained below alongside later source-only integrations; it does not replace the frozen release or create another distribution.
 
 ### Added
 
-- Core application execution, captured plugin grants, team coordination records, context strategies and detailed provider usage now share the project authority and its checked reopen path. This source integration provides their Core owners; desktop plugin loading and the Pi member runtime require their separate adapters.
+- Desktop plugin management, captured domain capabilities and independent runtime approvals for source/translation import, checking, builds and artifact verification. Saved results require explicit adoption and retain their original package and execution evidence.
+- Pi core and pi-ai 1.3.0 member execution, dynamic team requests and discussions, human guidance and takeover, original tool-result recovery, and project-local context-strategy experiments. Unknown usage remains unknown; preparing or reopening work grants no execution permission.
 
-- Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Its optional Core adapter preserves original dispatch grants and separately authorized application lifetimes, including readiness cancellation and confirmed process cleanup. Application members and desktop plugin loading remain separate; frozen runtime and plugin pins remain unchanged.
+- Core application execution, captured plugin grants, team coordination records, context strategies and detailed provider usage now share the project authority and its checked reopen path. Desktop plugin and Pi member adapters now use those same owners without adding another project Store or provider ledger.
+
+- Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Its optional Core adapter preserves original dispatch grants and separately authorized application lifetimes, including readiness cancellation and confirmed process cleanup. Its opt-in member adapter launches the captured Pi runtime and confirms original child cleanup; frozen runtime and plugin pins remain unchanged.
 
 - Experimental standalone plugin SDK source with Rust data contracts, a conformance CLI, synthetic examples, and self-contained JavaScript bindings and generation tooling. SDK integration does not add a plugin Host or desktop plugin loading; existing immutable SDK archives remain unchanged.
 

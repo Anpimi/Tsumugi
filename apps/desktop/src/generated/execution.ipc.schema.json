@@ -22,6 +22,50 @@
         ],
         "type": "object"
       },
+      "ApplicationInstanceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/ApplicationScopeBasis"
+          }
+        },
+        "required": [
+          "basis"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ApplicationShutdownRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId"
+        ],
+        "type": "object"
+      },
       "AttemptRequest": {
         "additionalProperties": false,
         "properties": {
@@ -252,6 +296,192 @@
         ],
         "type": "object"
       },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginStartOperation": {
+        "enum": [
+          "source-import",
+          "source-semantic-check",
+          "translation-extract",
+          "translation-semantic-check",
+          "locale-build",
+          "artifact-semantic-check",
+          "plugin-tool-query"
+        ],
+        "type": "string"
+      },
+      "PluginStartReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/definitions/PluginStartOperation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "operation"
+        ],
+        "type": "object"
+      },
+      "PluginToolDiscardRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "PluginToolPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "payloads": {
+            "items": true,
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/PluginToolRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "tool",
+          "attemptId",
+          "payloads"
+        ],
+        "type": "object"
+      },
+      "PluginToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginToolStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationExecution": {
+            "type": "boolean"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution",
+          "applicationExecution"
+        ],
+        "type": "object"
+      },
       "PrepareRequest": {
         "additionalProperties": false,
         "properties": {
@@ -353,6 +583,45 @@
         ],
         "type": "object"
       },
+      "StopApplicationInstanceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/ApplicationScopeBasis"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis"
+        ],
+        "type": "object"
+      },
+      "TaskActivityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "limit"
+        ],
+        "type": "object"
+      },
       "TaskRequest": {
         "additionalProperties": false,
         "properties": {
@@ -403,14 +672,30 @@
           "taskId"
         ],
         "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
       }
     },
     "properties": {
+      "activity": {
+        "$ref": "#/definitions/TaskActivityRequest"
+      },
       "adopt": {
         "$ref": "#/definitions/AdoptRequest"
       },
       "adoptionAction": {
         "$ref": "#/definitions/PrepareRequest"
+      },
+      "applicationInstance": {
+        "$ref": "#/definitions/ApplicationInstanceRequest"
+      },
+      "applicationInstanceStop": {
+        "$ref": "#/definitions/StopApplicationInstanceRequest"
+      },
+      "applicationShutdown": {
+        "$ref": "#/definitions/ApplicationShutdownRequest"
       },
       "attempt": {
         "$ref": "#/definitions/AttemptRequest"
@@ -436,6 +721,9 @@
       "output": {
         "$ref": "#/definitions/OutputRequest"
       },
+      "pluginStartAction": {
+        "$ref": "#/definitions/PluginStartReadRequest"
+      },
       "prepare": {
         "$ref": "#/definitions/PrepareRequest"
       },
@@ -450,11 +738,22 @@
       },
       "taskView": {
         "$ref": "#/definitions/TaskViewRequest"
+      },
+      "toolDiscard": {
+        "$ref": "#/definitions/PluginToolDiscardRequest"
+      },
+      "toolPrepare": {
+        "$ref": "#/definitions/PluginToolPrepareRequest"
+      },
+      "toolStart": {
+        "$ref": "#/definitions/PluginToolStartRequest"
       }
     },
     "required": [
       "session",
+      "pluginStartAction",
       "list",
+      "activity",
       "task",
       "attempt",
       "output",
@@ -467,7 +766,13 @@
       "taskView",
       "prepare",
       "adoptionAction",
-      "adopt"
+      "adopt",
+      "toolPrepare",
+      "toolStart",
+      "toolDiscard",
+      "applicationInstance",
+      "applicationInstanceStop",
+      "applicationShutdown"
     ],
     "title": "Requests",
     "type": "object",
@@ -585,6 +890,75 @@
         ],
         "type": "string"
       },
+      "ApplicationInstanceState": {
+        "enum": [
+          "reserved",
+          "active",
+          "stopping",
+          "stopped"
+        ],
+        "type": "string"
+      },
+      "ApplicationInstanceView": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/ApplicationScopeBasis"
+          },
+          "state": {
+            "$ref": "#/definitions/ApplicationInstanceState"
+          }
+        },
+        "required": [
+          "basis",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ApplicationShutdownState": {
+        "enum": [
+          "stopping",
+          "stopped",
+          "resumed"
+        ],
+        "type": "string"
+      },
+      "ApplicationShutdownView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/ApplicationShutdownState"
+          }
+        },
+        "required": [
+          "actionId",
+          "state"
+        ],
+        "type": "object"
+      },
       "AttemptDetail": {
         "additionalProperties": false,
         "properties": {
@@ -668,6 +1042,187 @@
           "taskId",
           "requestId",
           "revision"
+        ],
+        "type": "object"
+      },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolBinding": {
+        "additionalProperties": false,
+        "description": "A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/CapabilityToolDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/ToolResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "capability",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolDeclaration": {
+        "additionalProperties": false,
+        "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+        "properties": {
+          "capabilityId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ToolQueryDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."
+          },
+          "skill": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "description",
+          "capabilityId",
+          "profile",
+          "supportingResources",
+          "skill"
         ],
         "type": "object"
       },
@@ -804,11 +1359,22 @@
           "add-target-locale",
           "set-target-locales",
           "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
           "execution-read",
           "execution-cancel",
           "execution-recover",
           "execution-adopt",
           "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
         ],
         "type": "string"
       },
@@ -1357,6 +1923,15 @@
         ],
         "type": "object"
       },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
       "EncodedPayload": {
         "additionalProperties": false,
         "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
@@ -1378,9 +1953,105 @@
         ],
         "type": "object"
       },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExecutionOutputView": {
+        "additionalProperties": false,
+        "description": "Read-only display projection. The stored ResultEnvelope remains unchanged.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "capabilityId": {
+            "type": "string"
+          },
+          "capabilityVersion": {
+            "type": "string"
+          },
+          "diagnostic": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Diagnostic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dispatchToken": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "output": true,
+          "plugin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginResultEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceFailure": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceExtractionError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "itemId",
+          "resultId",
+          "supersedes",
+          "dispatchToken",
+          "capabilityId",
+          "capabilityVersion",
+          "outcome",
+          "output",
+          "diagnostic"
+        ],
+        "type": "object"
       },
       "ExecutionState": {
         "enum": [
@@ -1576,6 +2247,7 @@
       },
       "ItemView": {
         "additionalProperties": false,
+        "description": "Read-only execution projection shared by human and bounded consumers.",
         "properties": {
           "resultId": {
             "anyOf": [
@@ -1601,6 +2273,176 @@
         ],
         "type": "object"
       },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "PluginIdentity": {
         "additionalProperties": false,
         "description": "Claimed package identity; a host must authenticate the actual package source.",
@@ -1622,6 +2464,22 @@
         ],
         "type": "object"
       },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
       "PluginResultEvidence": {
         "additionalProperties": false,
         "description": "The complete received SDK result retains exact payload bytes and identity.\n`channel` is supplied independently by the trusted Host, not read from output.",
@@ -1640,6 +2498,151 @@
           "authorizationId",
           "channel",
           "result"
+        ],
+        "type": "object"
+      },
+      "PluginStartActionRead": {
+        "additionalProperties": false,
+        "description": "Evidence of one exact ordinary plugin input in the durable execution ledger.\nThis proves enqueueing, never current scope, worker completion or live consent.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "attemptId",
+          "operation",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "PluginToolItem": {
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "payload": true
+        },
+        "required": [
+          "itemId",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PluginToolPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationCapabilities": {
+            "items": {
+              "$ref": "#/definitions/ProcessCapability"
+            },
+            "type": "array"
+          },
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/definitions/PluginToolItem"
+            },
+            "type": "array"
+          },
+          "tool": {
+            "$ref": "#/definitions/PluginToolView"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "tool",
+          "items",
+          "applicationScope",
+          "applicationCapabilities"
+        ],
+        "type": "object"
+      },
+      "PluginToolView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "componentScope": {
+            "$ref": "#/definitions/ComponentScope"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "componentScope",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "ProcessCapability": {
+        "additionalProperties": false,
+        "description": "One callable declaration in the Host-captured component roster.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "contributionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "capability"
         ],
         "type": "object"
       },
@@ -1739,6 +2742,31 @@
           "packageDigest",
           "instanceId",
           "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
         ],
         "type": "object"
       },
@@ -1862,83 +2890,111 @@
         ],
         "type": "object"
       },
-      "ResultEnvelope": {
-        "additionalProperties": false,
-        "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "capabilityId": {
-            "type": "string"
-          },
-          "capabilityVersion": {
-            "type": "string"
-          },
-          "diagnostic": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/Diagnostic"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "dispatchToken": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "itemId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "outcome": {
-            "$ref": "#/definitions/ExecutionState"
-          },
-          "output": true,
-          "plugin": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/PluginResultEvidence"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "projectId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "resultId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "supersedes": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ExecutionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "projectId",
-          "attemptId",
-          "itemId",
-          "resultId",
-          "supersedes",
-          "dispatchToken",
-          "capabilityId",
-          "capabilityVersion",
-          "outcome",
-          "output",
-          "diagnostic"
-        ],
-        "type": "object"
-      },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
         "type": "string"
+      },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
       },
       "RuntimeStatus": {
         "additionalProperties": false,
@@ -1997,6 +3053,113 @@
         ],
         "type": "object"
       },
+      "SourceExtractionError": {
+        "additionalProperties": false,
+        "description": "A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.",
+        "properties": {
+          "artifactId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "$ref": "#/definitions/SourceExtractionErrorCode"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "artifactId",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "SourceExtractionErrorCode": {
+        "description": "Finite public failure classifications; details never determine permissions.",
+        "enum": [
+          "invalid-input",
+          "unsupported-profile",
+          "invalid-source",
+          "unsupported-structure",
+          "limit-exceeded",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "TaskActivity": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "$ref": "#/definitions/Revision"
+          },
+          "attention": {
+            "$ref": "#/definitions/Revision"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TaskActivityRow"
+            },
+            "type": "array"
+          },
+          "saved": {
+            "$ref": "#/definitions/Revision"
+          },
+          "total": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "total",
+          "active",
+          "attention",
+          "saved",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "TaskActivityPhase": {
+        "enum": [
+          "active",
+          "attention",
+          "saved"
+        ],
+        "type": "string"
+      },
+      "TaskActivityRow": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "phase": {
+            "$ref": "#/definitions/TaskActivityPhase"
+          },
+          "progress": {
+            "$ref": "#/definitions/Progress"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "operation",
+          "sequence",
+          "phase",
+          "progress"
+        ],
+        "type": "object"
+      },
       "TaskView": {
         "additionalProperties": false,
         "properties": {
@@ -2025,6 +3188,204 @@
         ],
         "type": "object"
       },
+      "ToolQueryColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "path"
+        ],
+        "type": "object"
+      },
+      "ToolQueryDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputTemplate": true,
+          "maxTextBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "output": {
+            "$ref": "#/definitions/ToolQueryOutput"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "selections": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "Explicit senses or categories. Matching text alone does not select them."
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "One explicit target option; no host-side locale or value normalization."
+          },
+          "textPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputSchema",
+          "outputSchema",
+          "inputTemplate",
+          "textPath",
+          "maxTextBytes",
+          "target",
+          "selections",
+          "output"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOption": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryColumn"
+            },
+            "type": "array"
+          },
+          "emptyDescription": {
+            "type": "string"
+          },
+          "entriesPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          },
+          "maxEntries": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entriesPath",
+          "columns",
+          "maxEntries",
+          "emptyDescription"
+        ],
+        "type": "object"
+      },
+      "ToolQueryPathPart": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "maximum": 1999,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ]
+      },
+      "ToolQuerySelection": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "maxSelected": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minSelected": {
+            "maximum": 64,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryOption"
+            },
+            "type": "array"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "description",
+          "path",
+          "options",
+          "minSelected",
+          "maxSelected"
+        ],
+        "type": "object"
+      },
+      "ToolResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
       "ValidationState": {
         "enum": [
           "absent",
@@ -2039,6 +3400,9 @@
       "action": {
         "$ref": "#/definitions/AdoptionAction"
       },
+      "activity": {
+        "$ref": "#/definitions/TaskActivity"
+      },
       "adoption": {
         "$ref": "#/definitions/AdoptionReceipt"
       },
@@ -2051,6 +3415,12 @@
             "type": "null"
           }
         ]
+      },
+      "applicationInstance": {
+        "$ref": "#/definitions/ApplicationInstanceView"
+      },
+      "applicationShutdown": {
+        "$ref": "#/definitions/ApplicationShutdownView"
       },
       "attempt": {
         "$ref": "#/definitions/AttemptDetail"
@@ -2094,7 +3464,17 @@
         "$ref": "#/definitions/ExecutionId"
       },
       "output": {
-        "$ref": "#/definitions/ResultEnvelope"
+        "$ref": "#/definitions/ExecutionOutputView"
+      },
+      "pluginStartAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginStartActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "receipt": {
         "anyOf": [
@@ -2120,12 +3500,20 @@
           "$ref": "#/definitions/TaskView"
         },
         "type": "array"
+      },
+      "toolDiscarded": {
+        "type": "boolean"
+      },
+      "toolPreflight": {
+        "$ref": "#/definitions/PluginToolPreflight"
       }
     },
     "required": [
       "identity",
+      "pluginStartAction",
       "status",
       "tasks",
+      "activity",
       "attempts",
       "attempt",
       "output",
@@ -2139,7 +3527,11 @@
       "action",
       "adoptionAction",
       "adoption",
-      "receipt"
+      "receipt",
+      "toolPreflight",
+      "toolDiscarded",
+      "applicationInstance",
+      "applicationShutdown"
     ],
     "title": "Responses",
     "type": "object",

@@ -106,41 +106,98 @@
       "locale": "zh-CN",
       "offset": 0,
       "limit": 100
+    },
+    "tmxPreview": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN"
+    },
+    "tbxPreview": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN"
+    },
+    "correctionBasis": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "afterSelectionId": "30000000-0000-4000-8000-000000000035"
+    },
+    "correctionCapture": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "capture": {
+        "actionId": "30000000-0000-4000-8000-000000000036",
+        "basis": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+          "before": {
+            "revisionId": "30000000-0000-4000-8000-000000000032",
+            "selectionId": "30000000-0000-4000-8000-000000000033"
+          },
+          "after": {
+            "revisionId": "30000000-0000-4000-8000-000000000034",
+            "selectionId": "30000000-0000-4000-8000-000000000035"
+          }
+        },
+        "source": "Barrel",
+        "target": "木桶",
+        "protected": false,
+        "reason": "Reviewed saved manual correction"
+      }
+    },
+    "resourceAction": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "actionId": "30000000-0000-4000-8000-000000000036"
     }
   },
   "responses": {
     "captures": [
       {
         "captureId": "30000000-0000-4000-8000-000000000006",
-        "resourceId": "contract-glossary",
-        "revision": "glossary-v1",
-        "license": "MIT",
         "sourceLocale": "en-US",
         "targetLocale": "zh-CN",
         "digest": "abcdef0123456789",
-        "count": 1
+        "count": 1,
+        "origin": {
+          "kind": "file",
+          "resourceId": "contract-glossary",
+          "revision": "glossary-v1",
+          "license": "MIT"
+        }
       }
     ],
     "capture": {
       "captureId": "30000000-0000-4000-8000-000000000006",
-      "resourceId": "contract-glossary",
-      "revision": "glossary-v1",
-      "license": "MIT",
       "sourceLocale": "en-US",
       "targetLocale": "zh-CN",
       "digest": "abcdef0123456789",
-      "count": 1
+      "count": 1,
+      "origin": {
+        "kind": "file",
+        "resourceId": "contract-glossary",
+        "revision": "glossary-v1",
+        "license": "MIT"
+      }
     },
     "preview": {
       "capture": {
         "captureId": "30000000-0000-4000-8000-000000000006",
-        "resourceId": "contract-glossary",
-        "revision": "glossary-v1",
-        "license": "MIT",
         "sourceLocale": "en-US",
         "targetLocale": "zh-CN",
         "digest": "abcdef0123456789",
-        "count": 1
+        "count": 1,
+        "origin": {
+          "kind": "file",
+          "resourceId": "contract-glossary",
+          "revision": "glossary-v1",
+          "license": "MIT"
+        }
       },
       "rows": [
         {
@@ -181,7 +238,9 @@
           "previousRevisionId": null,
           "removed": false
         }
-      ]
+      ],
+      "correction": null,
+      "mcp": null
     },
     "decision": {
       "actionId": "30000000-0000-4000-8000-000000000010",
@@ -204,6 +263,14 @@
         "externalEntryId": "barrel",
         "previousRevisionId": null,
         "removed": false
+      },
+      "request": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000010",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "entryId": "barrel",
+        "expectedRevisionId": null,
+        "decision": "adopt"
       }
     },
     "term": {
@@ -388,6 +455,402 @@
       "totalAffected": 1,
       "nextOffset": null,
       "coverage": "current-snapshot; explicit unit and literal possible matches"
+    },
+    "tmxPreview": {
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "fileName": "memory.tmx",
+      "preview": {
+        "profile": "tmx-1.4b-plain-text-preview",
+        "digest": "f23c0536f7b46a227d774093729d518062360a1278bd560eab3dae5ba60a34cb",
+        "byteLen": 379,
+        "sourceLocale": "en",
+        "targetLocale": "zh-CN",
+        "license": "unknown",
+        "header": {
+          "creationTool": "Synthetic export",
+          "creationToolVersion": "1",
+          "originalTmFormat": "synthetic",
+          "creationId": null,
+          "creationDate": null,
+          "changeId": null,
+          "changeDate": null
+        },
+        "rows": [
+          {
+            "ordinal": 1,
+            "tuid": "first",
+            "sourceText": "Hello 👩🏽‍💻 é",
+            "targetText": "你好 👩🏽‍💻 é",
+            "status": "eligible",
+            "reasons": [],
+            "effectiveSourceLocale": "en",
+            "tuProvenance": {
+              "creationTool": null,
+              "creationToolVersion": null,
+              "originalTmFormat": null,
+              "creationId": null,
+              "creationDate": null,
+              "changeId": null,
+              "changeDate": null
+            },
+            "sourceProvenance": {
+              "creationTool": null,
+              "creationToolVersion": null,
+              "originalTmFormat": null,
+              "creationId": null,
+              "creationDate": null,
+              "changeId": null,
+              "changeDate": null
+            },
+            "targetProvenance": {
+              "creationTool": null,
+              "creationToolVersion": null,
+              "originalTmFormat": null,
+              "creationId": null,
+              "creationDate": null,
+              "changeId": null,
+              "changeDate": null
+            }
+          }
+        ],
+        "losses": [
+          {
+            "kind": "unmapped-metadata",
+            "field": "adminlang",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 58,
+                "ordinal": null,
+                "path": "/tmx/header"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "datatype",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 58,
+                "ordinal": null,
+                "path": "/tmx/header"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "segtype",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 58,
+                "ordinal": null,
+                "path": "/tmx/header"
+              }
+            ],
+            "unlisted": 0
+          }
+        ]
+      }
+    },
+    "tbxPreview": {
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "fileName": "terms.tbx",
+      "preview": {
+        "profile": "tbx-basic-dca-subset-preview",
+        "digest": "a74cedb462fd5cd96734942c6df117d89da45437854b0d3b057d9e357e53cffc",
+        "byteLen": 1252,
+        "sourceLocale": "en",
+        "targetLocale": "zh-CN",
+        "documentLocale": "en",
+        "titles": [
+          "Synthetic terminology"
+        ],
+        "sourceDescriptions": [
+          "Synthetic exchange fixture"
+        ],
+        "license": "unknown",
+        "rows": [
+          {
+            "ordinal": 1,
+            "conceptId": "synthetic-1",
+            "sourceTerms": [
+              {
+                "languageOrdinal": 1,
+                "ordinal": 1,
+                "termSecId": "source-1",
+                "text": "Hello 👩🏽‍💻 é",
+                "usageStatuses": [
+                  "preferred"
+                ],
+                "sources": [
+                  "Synthetic term source"
+                ],
+                "reasons": []
+              }
+            ],
+            "targetTerms": [
+              {
+                "languageOrdinal": 2,
+                "ordinal": 2,
+                "termSecId": "target-1",
+                "text": "你好 👩🏽‍💻 é",
+                "usageStatuses": [
+                  "admitted"
+                ],
+                "sources": [
+                  "Synthetic target source"
+                ],
+                "reasons": []
+              }
+            ],
+            "status": "possible-mapping",
+            "reasons": []
+          }
+        ],
+        "losses": [
+          {
+            "kind": "unmapped-metadata",
+            "field": "context",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 822,
+                "ordinal": 1,
+                "path": "/tbx/text/body/conceptEntry/langSec/termSec/descripGrp/descrip"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "descripGrp",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 810,
+                "ordinal": 1,
+                "path": "/tbx/text/body/conceptEntry/langSec/termSec/descripGrp"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "partOfSpeech",
+            "count": 2,
+            "samples": [
+              {
+                "byteOffset": 666,
+                "ordinal": 1,
+                "path": "/tbx/text/body/conceptEntry/langSec/termSec/termNote"
+              },
+              {
+                "byteOffset": 1047,
+                "ordinal": 1,
+                "path": "/tbx/text/body/conceptEntry/langSec/termSec/termNote"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "unmapped-metadata",
+            "field": "source",
+            "count": 1,
+            "samples": [
+              {
+                "byteOffset": 873,
+                "ordinal": 1,
+                "path": "/tbx/text/body/conceptEntry/langSec/termSec/descripGrp/admin"
+              }
+            ],
+            "unlisted": 0
+          },
+          {
+            "kind": "schema-hint",
+            "field": "xml-model",
+            "count": 2,
+            "samples": [
+              {
+                "byteOffset": 39,
+                "ordinal": null,
+                "path": "/processing-instruction('xml-model')[1]"
+              },
+              {
+                "byteOffset": 159,
+                "ordinal": null,
+                "path": "/processing-instruction('xml-model')[2]"
+              }
+            ],
+            "unlisted": 0
+          }
+        ]
+      }
+    },
+    "correctionBasis": {
+      "basis": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "unitId": "30000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+        "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+        "before": {
+          "revisionId": "30000000-0000-4000-8000-000000000032",
+          "selectionId": "30000000-0000-4000-8000-000000000033"
+        },
+        "after": {
+          "revisionId": "30000000-0000-4000-8000-000000000034",
+          "selectionId": "30000000-0000-4000-8000-000000000035"
+        }
+      },
+      "sourceText": "Barrel near the door",
+      "beforeText": "桶在门旁",
+      "afterText": "木桶在门旁",
+      "beforeSourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+      "beforeSourceRevisionId": "30000000-0000-4000-8000-000000000031",
+      "current": true
+    },
+    "correctionCapture": {
+      "request": {
+        "actionId": "30000000-0000-4000-8000-000000000036",
+        "basis": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+          "before": {
+            "revisionId": "30000000-0000-4000-8000-000000000032",
+            "selectionId": "30000000-0000-4000-8000-000000000033"
+          },
+          "after": {
+            "revisionId": "30000000-0000-4000-8000-000000000034",
+            "selectionId": "30000000-0000-4000-8000-000000000035"
+          }
+        },
+        "source": "Barrel",
+        "target": "木桶",
+        "protected": false,
+        "reason": "Reviewed saved manual correction"
+      },
+      "capture": {
+        "captureId": "30000000-0000-4000-8000-000000000037",
+        "origin": {
+          "kind": "correction",
+          "basis": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "unitId": "30000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+            "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+            "before": {
+              "revisionId": "30000000-0000-4000-8000-000000000032",
+              "selectionId": "30000000-0000-4000-8000-000000000033"
+            },
+            "after": {
+              "revisionId": "30000000-0000-4000-8000-000000000034",
+              "selectionId": "30000000-0000-4000-8000-000000000035"
+            }
+          }
+        },
+        "sourceLocale": "en-US",
+        "targetLocale": "zh-CN",
+        "digest": "1234567890abcdef",
+        "count": 1
+      }
+    },
+    "correctionAction": {
+      "request": {
+        "actionId": "30000000-0000-4000-8000-000000000036",
+        "basis": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+          "before": {
+            "revisionId": "30000000-0000-4000-8000-000000000032",
+            "selectionId": "30000000-0000-4000-8000-000000000033"
+          },
+          "after": {
+            "revisionId": "30000000-0000-4000-8000-000000000034",
+            "selectionId": "30000000-0000-4000-8000-000000000035"
+          }
+        },
+        "source": "Barrel",
+        "target": "木桶",
+        "protected": false,
+        "reason": "Reviewed saved manual correction"
+      },
+      "capture": {
+        "captureId": "30000000-0000-4000-8000-000000000037",
+        "origin": {
+          "kind": "correction",
+          "basis": {
+            "projectId": "30000000-0000-4000-8000-000000000001",
+            "unitId": "30000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sourceSnapshotId": "30000000-0000-4000-8000-000000000030",
+            "sourceRevisionId": "30000000-0000-4000-8000-000000000031",
+            "before": {
+              "revisionId": "30000000-0000-4000-8000-000000000032",
+              "selectionId": "30000000-0000-4000-8000-000000000033"
+            },
+            "after": {
+              "revisionId": "30000000-0000-4000-8000-000000000034",
+              "selectionId": "30000000-0000-4000-8000-000000000035"
+            }
+          }
+        },
+        "sourceLocale": "en-US",
+        "targetLocale": "zh-CN",
+        "digest": "1234567890abcdef",
+        "count": 1
+      }
+    },
+    "decisionAction": {
+      "request": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000010",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "entryId": "barrel",
+        "expectedRevisionId": null,
+        "decision": "adopt"
+      },
+      "receipt": {
+        "actionId": "30000000-0000-4000-8000-000000000010",
+        "decision": "adopt",
+        "revision": {
+          "revisionId": "30000000-0000-4000-8000-000000000007",
+          "termId": "external:contract-glossary:barrel",
+          "locale": "zh-CN",
+          "source": "Barrel",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "木桶 👩🏽‍💻 é",
+          "protected": true,
+          "scopeUnitId": null,
+          "reason": "Fixed glossary entry",
+          "originKind": "external",
+          "captureId": "30000000-0000-4000-8000-000000000006",
+          "externalEntryId": "barrel",
+          "previousRevisionId": null,
+          "removed": false
+        },
+        "request": {
+          "projectId": "30000000-0000-4000-8000-000000000001",
+          "actionId": "30000000-0000-4000-8000-000000000010",
+          "captureId": "30000000-0000-4000-8000-000000000006",
+          "entryId": "barrel",
+          "expectedRevisionId": null,
+          "decision": "adopt"
+        }
+      }
     }
   }
 }

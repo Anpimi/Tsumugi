@@ -1,4 +1,4 @@
-import type { ReviewTarget, ReviewBasis, ReviewSummary, ReviewSummaryPage, ReviewDecision, CheckRun, ReviewCheckOutcome, ReviewWrite } from "../reviewCommands";
+import type { ReviewTarget, ReviewBasis, ReviewSummary, ReviewSummaryPage, ReviewDecision, CheckRun, ReviewCheckOutcome, ReviewWrite, ReviewFindingView } from "../reviewCommands";
 import { fixtureIdentity } from "./executionFixture";
 
 export function reviewBasisFor(target: Pick<ReviewTarget, "sourceSnapshotId" | "sourceRevisionId" | "selectionId" | "revisionId">): ReviewBasis {
@@ -16,7 +16,9 @@ export function reviewSummaryFor(target: ReviewTarget): ReviewSummary {
   return { unitId: target.unitId, locale: target.locale, nativeKey: target.nativeKey, sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId,
     sourcePreview: target.sourceText, translationPreview: target.translationText, selectionId: target.selectionId, revisionId: target.revisionId, basis: target.basis,
     currentDecision: target.currentDecision ? { decisionId: target.currentDecision.decisionId, basis: target.currentDecision.basis, kind: target.currentDecision.kind } : null,
-    currentCheck: target.currentCheck ? { runId: target.currentCheck.runId, basis: target.currentCheck.basis, outcome: target.currentCheck.outcome, hasFindings: target.currentCheck.rules.some(rule => rule.status === "findings") } : null };
+    currentCheck: target.currentCheck ? { runId: target.currentCheck.runId, basis: target.currentCheck.basis, outcome: target.currentCheck.outcome,
+      hasFindings: target.currentCheck.rules.some(rule => rule.status === "findings"),
+      hasIncomplete: target.currentCheck.rules.some(rule => !["passed", "findings", "not-applicable"].includes(rule.status)) } : null };
 }
 export function reviewSummaryPageFixture(rows: ReviewSummary[], overrides: Partial<ReviewSummaryPage> = {}): ReviewSummaryPage {
   return { rows, nextOrdinal: null, total: rows.length, scopeId: fixtureIdentity(609), sourceSnapshotId: rows[0]?.sourceSnapshotId ?? fixtureIdentity(600), readVersion: "view", ...overrides };
@@ -29,5 +31,11 @@ export function reviewDecisionFixture(request: ReviewWrite, target: ReviewTarget
 }
 export function reviewCheckFixture(target: ReviewTarget, actionId: string, outcome: ReviewCheckOutcome = "completed", overrides: Partial<CheckRun> = {}): CheckRun {
   return { runId: fixtureIdentity(620), actionId, unitId: target.unitId, locale: target.locale, basis: target.basis, basisEvidence: target.basisEvidence,
-    validatorVersion: "smapi-prebuild-2", outcome, rules: [], createdAt: "2026-10-03T00:00:00Z", ...overrides };
+    validatorVersion: "smapi-prebuild-2", outcome, rules: [], evidence: null, createdAt: "2026-10-03T00:00:00Z", ...overrides };
+}
+
+/** Empty advisory projection for this exact current Review target. */
+export function reviewFindingViewFixture(target: ReviewTarget): ReviewFindingView {
+  return { unitId: target.unitId, locale: target.locale, basis: target.basis, runId: target.currentCheck?.runId ?? null,
+    semanticRunId: null, findings: [], repairs: [], history: [], nextOffset: null };
 }

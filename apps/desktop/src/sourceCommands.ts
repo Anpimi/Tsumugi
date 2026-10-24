@@ -1,21 +1,65 @@
+import type { CaptureRequest, StartRequest as LegacyStartRequest } from "./generated/source.requests";
+import { validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseStartAction } from "./generated/source.validators";
 import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
-import type { CaptureRequest, StartRequest, SourceAdoptionActionRequest, SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest } from "./generated/source.requests";
-import type { Responses } from "./generated/source.responses";
-import { validateResponseAdoptionAction, validateResponseStartAction, validateRequestAdopt, validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction } from "./generated/source.validators";
+import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
+import type { SourceAdoptRequest, SourceAdoptionActionRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, SourceContextBlockReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+import type { Responses, SourceContextPage, SourceContextBlockBasis, SourceContextBlockDescriptor } from "./generated/source.responses";
+import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseSourceContextBlock, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
-export type { CaptureRequest, StartRequest, SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
-export type { SourceSelection, IntegrationDescriptor, FileCoverage as Coverage, Preflight, ContentScope, LineageChoice, SourceOccurrence, ContentRow, ContentPage, SourceChange, SourceChangeKind, SourceChangePage, SourceHistoryEntry, SourceHistory, LineageEvidence, SourceImpactBasis, SourceImpactSummary, SourceImpactRow, SourceImpactStatus, SourceImpactPage } from "./generated/source.responses";
+export type { SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
+export type { SourceContextReadRequest, SourceContextBlockReadRequest } from "./generated/source.requests";
+export type { SourceContextPage, SourceContextPageEntry, SourceContextBlock, SourceContextNeighbor, SourceContextBlockBasis, SourceContextBlockDescriptor, SourceContextBlockDetail } from "./generated/source.responses";
+export type { PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+export type { PluginSourceSelection, PluginSourcePreflight, SourceCheckReview, PluginSourceSelection as SourceSelection, PluginSourcePreflight as Preflight } from "./generated/source.responses";
+export type { CaptureRequest, StartRequest as LegacyStartRequest } from "./generated/source.requests";
+export type { PluginStartRequest as StartRequest } from "./generated/source.requests";
+export type SourceStartIntent = LegacyStartRequest | PluginStartRequest;
+export type { FileCoverage as Coverage, ContentScope, LineageChoice, SourceOccurrence, ContentRow, ContentPage, SourceChange, SourceChangeKind, SourceChangePage, SourceHistoryEntry, SourceHistory, LineageEvidence, SourceImpactBasis, SourceImpactSummary, SourceImpactRow, SourceImpactStatus, SourceImpactPage } from "./generated/source.responses";
+function readIntegration(request: SessionRequest, integrationId?: string): Promise<Responses["integration"]>;
+function readIntegration(request: SessionRequest, source: PluginSourceRequest): Promise<PluginSourceView>;
+function readIntegration(request: SessionRequest, source: string | PluginSourceRequest = "stardew-smapi") {
+  return typeof source === "string"
+    ? checkedInvoke(source === "webvtt" ? "read_webvtt_integration" : "read_source_integration", request, validateResponseIntegration)
+    : pluginCommands.source(source);
+}
+
 export const sourceCommands = {
-  integration: (request: SessionRequest, integrationId = "stardew-smapi") => checkedInvoke(integrationId === "webvtt" ? "read_webvtt_integration" : "read_source_integration", request, validateResponseIntegration),
+  integration: readIntegration,
   select: (request: SessionRequest, integrationId = "stardew-smapi") => checkedInvoke(integrationId === "webvtt" ? "select_webvtt_source" : "select_source", request, validateResponseSelection),
   preflight: (request: CaptureRequest) => checkedInvoke("preflight_source", request, validateResponsePreflight),
-  start: (request: StartRequest) => checkedInvoke("start_source_import", request, validateResponseAttempt),
-  startAction: async (request: StartRequest) => confirmSourceStart(request, await checkedInvoke("read_source_import_start", request, validateResponseStartAction)),
+  start: (request: LegacyStartRequest) => checkedInvoke("start_source_import", request, validateResponseAttempt),
+  startAction: async (request: LegacyStartRequest) => confirmSourceStart(request, await checkedInvoke("read_source_import_start", request, validateResponseStartAction)),
+  selectPlugin: (request: PluginSourceSelectRequest) => checkedInvoke("select_plugin_source", request, validateResponsePluginSelection),
+  capturePlugin: (request: PluginCaptureRequest) => checkedInvoke("preflight_plugin_source", request, validateResponsePluginPreflight),
+  startPlugin: (request: PluginStartRequest) => checkedInvoke("start_plugin_source", request, validateResponseAttempt),
+  prepareCheck: (request: SourceCheckPrepareRequest) => checkedInvoke("prepare_source_check", request, validateResponseCheckReview),
+  startCheck: (request: PluginStartRequest) => checkedInvoke("start_source_check", request, validateResponseAttempt),
+  finishCheck: (request: SourceCheckFinishRequest) => checkedInvoke("finish_source_check", request, validateResponseCancelled),
   cancelCapture: (request: SessionRequest) => checkedInvoke("cancel_source_capture", request, validateResponseCancelled),
   scope: (request: SessionRequest) => checkedInvoke("read_content_scope", request, validateResponseScope),
   preview: (request: PreviewRequest) => checkedInvoke("read_source_preview", request, validateResponsePage),
   content: (request: ContentRequest) => checkedInvoke("read_source_content", request, validateResponsePage),
+  sourceContext: async (request: SourceContextReadRequest) => {
+    const page = await checkedInvoke("read_source_context", request, validateResponseSourceContext);
+    const scope = page.scope, end = page.after + page.entries.length;
+    if (scope.projectId !== request.projectId || scope.sourceSnapshotId !== request.sourceSnapshotId
+      || scope.unitId !== request.unitId || scope.sourceRevisionId !== request.sourceRevisionId || scope.locale !== request.locale
+      || page.after !== request.after || page.entries.length > request.limit || end > page.totalEntries
+      || (page.nextAfter === null ? end !== page.totalEntries : page.entries.length === 0 || page.nextAfter !== end || page.nextAfter >= page.totalEntries)) {
+      throw new Error("Invalid source context page association");
+    }
+    return page;
+  },
+  sourceContextBlock: async (request: SourceContextBlockReadRequest) => {
+    const detail = await checkedInvoke("read_source_context_block", request, validateResponseSourceContextBlock);
+    if (request.projectId !== request.basis.scope.projectId || !sameSourceContextBlockBasis(detail.basis, request.basis)
+      || !sameSourceContextBlockDescriptor(detail.descriptor, request.descriptor)
+      || new TextEncoder().encode(detail.payloadUtf8).byteLength !== detail.descriptor.payloadBytes) {
+      throw new Error("Invalid source context block association");
+    }
+    return detail;
+  },
   compare: (request: Omit<ComparisonRequest, "filter"> & { filter?: string }) => checkedInvoke("read_source_comparison", { base: null, filter: "", ...request }, validateResponseComparison),
   history: (request: HistoryRequest) => checkedInvoke("read_source_history", request, validateResponseHistory),
   historyContent: (request: HistoryContentRequest) => checkedInvoke("read_source_history_content", request, validateResponsePage),
@@ -26,14 +70,50 @@ export const sourceCommands = {
   adoptionAction: (request: SourceAdoptionActionRequest): Promise<Responses["adoptionAction"]> => checkedInvoke("read_source_adoption_action", request, validateResponseAdoptionAction),
 };
 
+/** Metadata pages and explicit record reads use the same captured source identity. */
+export function sourceContextBlockBasis(page: SourceContextPage): SourceContextBlockBasis {
+  return { scope: page.scope, contentRevision: page.contentRevision, sourceAttemptId: page.sourceAttemptId,
+    sourceResultId: page.sourceResultId, sourceResultDigest: page.sourceResultDigest,
+    sourceLocale: page.sourceLocale, localUnitId: page.localUnitId };
+}
+function sameSourceContextBlockBasis(left: SourceContextBlockBasis, right: SourceContextBlockBasis) {
+  return left.scope.projectId === right.scope.projectId && left.scope.sourceSnapshotId === right.scope.sourceSnapshotId
+    && left.scope.unitId === right.scope.unitId && left.scope.sourceRevisionId === right.scope.sourceRevisionId && left.scope.locale === right.scope.locale
+    && left.contentRevision === right.contentRevision && left.sourceAttemptId === right.sourceAttemptId && left.sourceResultId === right.sourceResultId
+    && left.sourceResultDigest === right.sourceResultDigest && left.sourceLocale === right.sourceLocale && left.localUnitId === right.localUnitId;
+}
+function sameSourceContextBlockDescriptor(left: SourceContextBlockDescriptor, right: SourceContextBlockDescriptor) {
+  return left.blockIndex === right.blockIndex && left.target.kind === right.target.kind
+    && (left.target.kind === "snapshot" ? right.target.kind === "snapshot" : right.target.kind !== "snapshot" && left.target.id === right.target.id)
+    && left.schema.id === right.schema.id && left.schema.schemaVersion === right.schema.schemaVersion && left.schema.behaviorVersion === right.schema.behaviorVersion
+    && left.handling === right.handling && left.inRevisionBasis === right.inRevisionBasis && left.payloadBytes === right.payloadBytes;
+}
+
+export function sameSourceEnvironment(view: PluginSourceView, request: PluginSourceRequest) {
+  return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest
+    && [view.extractor.provider, view.checker.provider].every(provider => provider.packageDigest === request.package.packageDigest
+      && provider.plugin.id === request.package.plugin.id && provider.plugin.publisher === request.package.plugin.publisher
+      && provider.plugin.version === request.package.plugin.version);
+}
+export function sourceRequest(view: PluginSourceView): PluginSourceRequest {
+  return { package: { plugin: view.extractor.provider.plugin, packageDigest: view.extractor.provider.packageDigest },
+    resourceId: view.resourceId, environmentDigest: view.environmentDigest };
+}
+
 function normalizedConfirmation(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const fields = value as Record<string, unknown>;
+  if (!("maintenanceHook" in fields)) return null;
+  const activation = fields.maintenanceHook;
+  if (activation !== null && (!activation || typeof activation !== "object" || Array.isArray(activation))) return null;
+  const hook = activation as Record<string, unknown> | null;
   const lineage = fields.lineage === undefined ? [] : fields.lineage;
   if (!Array.isArray(lineage)) return null;
   return { resultDigest: fields.resultDigest, identityPolicy: fields.identityPolicy, expectedContentRevision: fields.expectedContentRevision,
     sourceLanguage: fields.sourceLanguage, expectedCurrentSnapshot: fields.expectedCurrentSnapshot ?? null,
     lineageBaseSnapshot: fields.lineageBaseSnapshot ?? null, actor: fields.actor ?? null,
+    maintenanceHook: hook === null ? null : { policyVersion: hook.policyVersion, sessionEpoch: hook.sessionEpoch, locale: hook.locale,
+      after: hook.after, limit: hook.limit, expiresAtMs: hook.expiresAtMs },
     lineage: lineage.map(choice => {
       if (!choice || typeof choice !== "object" || Array.isArray(choice)) return null;
       const row = choice as Record<string, unknown>;
@@ -63,7 +143,7 @@ export function confirmSourceReceipt(request: SourceAdoptRequest, unitId: string
   return change.id;
 }
 
-export function confirmSourceStart(request: StartRequest, value: unknown): Responses["startAction"] {
+export function confirmSourceStart(request: LegacyStartRequest, value: unknown): Responses["startAction"] {
   if (!validateResponseStartAction(value) || value !== null && (value.request.projectId !== request.projectId
     || value.request.attemptId !== request.attemptId || value.request.selectionId !== request.selectionId
     || value.request.sourceLanguage !== request.sourceLanguage || !/^[a-f0-9]{64}$/.test(value.inputDigest))) {

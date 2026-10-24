@@ -61,7 +61,15 @@
             "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
             "maxOutputTokens": 2000,
             "credentialEnv": "",
-            "maxRetries": 0
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            },
+            "contextStrategy": null
           },
           {
             "maxItems": 20,
@@ -75,7 +83,15 @@
             "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
             "maxOutputTokens": 2000,
             "credentialEnv": "",
-            "maxRetries": 0
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            },
+            "contextStrategy": null
           }
         ],
         "maxRequests": 40,
@@ -135,7 +151,13 @@
                 }
               ],
               "sourceText": "Barrel {name}",
-              "sourceLocale": "en"
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              },
+              "projectContext": {
+                "kind": "not-selected"
+              }
             },
             "slot": 0
           },
@@ -166,7 +188,13 @@
                 }
               ],
               "sourceText": "Barrel {name}",
-              "sourceLocale": "en"
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              },
+              "projectContext": {
+                "kind": "not-selected"
+              }
             },
             "slot": 1
           }
@@ -186,7 +214,15 @@
               "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
               "maxOutputTokens": 2000,
               "credentialEnv": "",
-              "maxRetries": 0
+              "maxRetries": 0,
+              "sourceContext": {
+                "extracted": false,
+                "inferred": false,
+                "neighbors": false,
+                "maxBytes": 16384,
+                "maxItems": 128
+              },
+              "contextStrategy": null
             },
             {
               "maxItems": 20,
@@ -200,7 +236,15 @@
               "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
               "maxOutputTokens": 2000,
               "credentialEnv": "",
-              "maxRetries": 0
+              "maxRetries": 0,
+              "sourceContext": {
+                "extracted": false,
+                "inferred": false,
+                "neighbors": false,
+                "maxBytes": 16384,
+                "maxItems": 128
+              },
+              "contextStrategy": null
             }
           ],
           "maxRequests": 40,
@@ -331,7 +375,10 @@
             "targetLocale": "zh-CN",
             "usage": {
               "promptTokens": "9007199254740993",
-              "completionTokens": "18446744073709551615"
+              "completionTokens": "18446744073709551615",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             }
           },
           "label": 0,
@@ -363,7 +410,13 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "not-selected"
+            }
           }
         },
         {
@@ -375,7 +428,10 @@
             "targetLocale": "zh-CN",
             "usage": {
               "promptTokens": "9007199254740993",
-              "completionTokens": "18446744073709551615"
+              "completionTokens": "18446744073709551615",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             }
           },
           "label": 1,
@@ -407,7 +463,13 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "not-selected"
+            }
           }
         }
       ],
@@ -445,6 +507,7 @@
           "revisionId": "60000000-0000-4000-8000-000000000013",
           "contributors": [],
           "basisCurrent": true,
+          "candidateDisposition": null,
           "text": "木桶 👩🏽‍💻 é {name}",
           "recipe": null,
           "originKind": "ai",
@@ -455,6 +518,7 @@
           "revisionId": "60000000-0000-4000-8000-000000000014",
           "contributors": [],
           "basisCurrent": true,
+          "candidateDisposition": null,
           "text": "Manual {name}",
           "recipe": null,
           "originKind": "manual",

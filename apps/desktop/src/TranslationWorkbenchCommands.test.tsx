@@ -15,10 +15,11 @@ import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView 
 import type { TranslationAdoptRequest, TranslationHistory, TranslationRevision, TranslationSelectRequest, TranslationSelection, TranslationPreview, TranslationPreviewRow } from "./translationCommands";
 import { validateRequestAdopt, validateRequestSave, validateRequestSelect } from "./generated/translation.validators";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { translationActionFixture, translationAttemptFixture, translationPreviewFixture, translationReceiptFixture, translationRecoveryUnit, translationRowFixture } from "./testSupport/translationFixture";
+import { translationActionFixture, translationAttemptFixture, translationPreviewFixture, translationReceiptFixture, translationRecoveryUnit, translationRowFixture, translationImportChoice, translationSelectionFixture, translationCaptureFixture, translationCheckerFixture, translationProjectionFixture, translationStageAttempt } from "./testSupport/translationFixture";
 import { reviewSummaryFor, reviewSummaryPageFixture, reviewTargetFixture } from "./testSupport/reviewFixture";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { translationInventory, translationPackage, translationView } from "./testSupport/pluginTranslationFixture";
 import { i18n } from "./i18n";
 
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
@@ -26,6 +27,7 @@ const project:ProjectView={sessionToken:fixture.start.sessionToken,locator:"isol
   metadata:{projectId:fixture.start.projectId,displayName:"Translation commands",sourceLocale:"en",targetLocales:["zh-CN"],metadataRevision:"1"}};
 const scope={projectId:project.metadata.projectId,sessionToken:project.sessionToken,area:"translation" as const};
 let imports:ReturnType<typeof useTranslationImportSession>,drafts:ReturnType<typeof useTranslationDraftSession>,reads:ReturnType<typeof useSessionReads>,registry:ReturnType<typeof useWorkbenchCommands>;
+let qualified:boolean;
 let preview:TranslationPreview,history:TranslationHistory,candidate:TranslationRevision,identities:number,importRequests:Map<string,TranslationAdoptRequest>;
 function Probe(){
   const imported=useTranslationImportSession(),draft=useTranslationDraftSession(),reader=useSessionReads(),commands=useWorkbenchCommands();
@@ -48,7 +50,7 @@ function editorResponse(){return{target:target(),translations:history,terms:{uni
 function selection(request:TranslationSelectRequest):TranslationSelection{return{actionId:request.actionId,unitId:request.unitId,locale:request.locale,
   eventId:fixtureIdentity(970),revisionId:request.revisionId,sequence:"1",previousEventId:request.expectedSelectionId??null};}
 beforeEach(async()=>{
-  await i18n.changeLanguage("en-US");invoke.mockReset();identities=700;importRequests=new Map();
+  await i18n.changeLanguage("en-US");invoke.mockReset();qualified=false;identities=700;importRequests=new Map();
   preview=translationPreviewFixture();const row=preview.rows[0];if(!row.unitId||!row.sourceRevisionId)throw new Error("Expected complete target fixture");
   candidate={...fixture.receipt.revision,unitId:row.unitId,locale:"zh-CN",ordinal:"1",sourceRevisionId:row.sourceRevisionId,
     sourceSnapshotId:preview.fixedSourceSnapshotId,originKind:"manual",text:"Historical candidate",contributors:[],attemptId:null,resultId:null,itemId:null,
@@ -60,17 +62,28 @@ beforeEach(async()=>{
     if(command==="read_review_summary_page")return reviewSummaryPageFixture([reviewSummaryFor(target())]);
     if(command==="read_review_editor_snapshot")return editorResponse();
     if(command==="read_translation_history")return history;
-    if(command==="select_source")return{selectionId:fixture.start.selectionId,folderName:"Synthetic folder"};
-    if(command==="list_translation_files")return["zh.json"];
-    if(command==="preflight_translation")return{fileName:request.fileName,fileDigest:preview.fileDigest,sourceSnapshotId:preview.fixedSourceSnapshotId,
-      targetLocale:request.targetLocale,declaredLocale:preview.declaredLocale,count:preview.total};
+    if(command==="read_plugin_inventory")return translationInventory;
+    if(command==="read_plugin_package")return translationPackage;
+    if(command==="read_plugin_translation")return translationView;
+    if(command==="read_plugin_translation_source")return translationImportChoice(preview.fixedSourceSnapshotId).source;
+    if(command==="select_plugin_translation")return translationSelectionFixture(preview.fixedSourceSnapshotId);
+    if(command==="list_plugin_translation_files")return["zh.json"];
+    if(command==="preflight_plugin_translation")return translationCaptureFixture(String(request.attemptId),preview.fixedSourceSnapshotId);
+    if(command==="prepare_translation_check")return translationCheckerFixture(String(request.attemptId),String(request.translationAttemptId),String(request.translationResultId),preview.fixedSourceSnapshotId);
+    if(command==="start_translation_check")return request.attemptId;
+    if(command==="finish_translation_check"){qualified=true;return null;}
+    if(command==="prepare_translation_projection")return translationProjectionFixture(String(request.attemptId),String(request.translationAttemptId),String(request.translationResultId),preview.fixedSourceSnapshotId);
+    if(command==="start_translation_projection")return request.attemptId;
+    if(command==="read_work_protection")return {unitId:request.unitId,locale:request.locale,revision:"1",protected:true};
     if(command==="create_execution_identity")return fixtureIdentity(identities++);
-    if(command==="start_translation_import")return request.attemptId;
+    if(command==="start_plugin_translation")return request.attemptId;
     if(command==="read_translation_preview"){
       const rows=preview.rows.filter(row=>row.entry.ordinal>=Number(request.after)).slice(0,Math.min(1,Number(request.limit))),last=rows.at(-1)?.entry.ordinal;
       return{...preview,attemptId:request.attemptId,rows,nextOrdinal:last!==undefined&&last+1<preview.total?last+1:null};
     }
     if(command==="read_execution_attempt"){
+      if(request.attemptId===imports.current().extractionAttempt)return translationStageAttempt(String(request.attemptId),"translation-extract",qualified?"valid":"pending");
+      if(request.attemptId===imports.current().checkAttempt)return translationStageAttempt(String(request.attemptId),"translation-semantic-check","valid");
       const offset=Number(request.offset),rows=preview.rows.slice(offset,offset+1);
       return translationAttemptFixture({...preview,attemptId:String(request.attemptId)},rows,offset+rows.length<preview.total?offset+rows.length:null);
     }
@@ -102,7 +115,7 @@ function setup():TranslationImportSetupCommandPayload{const value=imports.curren
   locale:value.targetLocale,selectionId:value.folder?.selectionId??null,fileName:value.fileName};}
 function consent(confirmed=imports.current().confirmed):TranslationImportConsentCommandPayload{
   const checked=imports.current().preflight;if(!checked)throw new Error("Expected preflight");return{...setup(),kind:"translation-import-consent",
-    sourceSnapshotId:checked.sourceSnapshotId,fileDigest:checked.fileDigest,declaredLocale:checked.declaredLocale,confirmed};
+    sourceSnapshotId:checked.source.sourceSnapshotId,fileDigest:checked.file.sha256,inputDigest:checked.inputDigest,producerConsent:imports.current().producerConsent===checked.inputDigest,confirmed};
 }
 function previewTarget(value=imports.current().preview,editSeq=imports.current().editSeq){if(!value)throw new Error("Expected fixed preview");return{editSeq,
   attemptId:value.attemptId,bundleId:value.bundleId,basis:value.basis,locale:value.targetLocale,fixedSourceSnapshotId:value.fixedSourceSnapshotId,
@@ -122,12 +135,24 @@ function revisionPayload():TranslationRevisionCommandPayload{const value=drafts.
 function selectionPending():TranslationSelectionPendingCommandPayload{const value=drafts.current()?.pendingSelection;if(!value)throw new Error("Expected original selection");
   return{kind:"translation-selection-pending",request:structuredClone(value.request),submittedSeq:value.submittedSeq};}
 async function openImport(){const user=userEvent.setup(),view=render(<Harness/>,project);await user.click(screen.getByRole("button",{name:i18n.t("translation.title")}));
-  await user.click(screen.getByRole("button",{name:i18n.t("translation.importTab")}));await user.click(screen.getByRole("button",{name:i18n.t("translation.chooseFolder")}));
-  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("translation.inspect")})).toBeEnabled());await user.click(screen.getByRole("button",{name:i18n.t("translation.inspect")}));
-  await screen.findByRole("checkbox",{name:/I confirm that|我确认/});return{user,view};}
-async function readyImport(){const result=await openImport();await result.user.click(screen.getByRole("checkbox",{name:/I confirm that/}));
-  await result.user.click(screen.getByRole("button",{name:i18n.t("translation.start")}));await screen.findByRole("heading",{name:i18n.t("translation.preview")});
-  await waitFor(()=>expect(imports.current().preview).not.toBeNull());return result;}
+  await user.click(screen.getByRole("button",{name:i18n.t("translation.importTab")}));
+  await user.selectOptions(await screen.findByRole("combobox",{name:i18n.t("translationPlugin.package")}),`${translationPackage.packageDigest}:${translationView.resourceId}`);
+  await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("sourcePlugin.runtime")}),translationView.environmentDigest);
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("translation.chooseFolder")})).toBeEnabled());
+  await user.click(screen.getByRole("button",{name:i18n.t("translation.chooseFolder")}));
+  await user.selectOptions(await screen.findByRole("combobox",{name:i18n.t("translation.file")}),"zh.json");
+  await user.click(screen.getByRole("checkbox",{name:/I confirm that/}));
+  await user.click(screen.getByRole("button",{name:i18n.t("translationPlugin.capture")}));
+  await screen.findByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")});return{user,view};}
+async function readyImport(){const result=await openImport();await result.user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));
+  await result.user.click(screen.getByRole("button",{name:i18n.t("translation.start")}));
+  await result.user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.prepareCheck")}));
+  await result.user.click(await screen.findByRole("checkbox",{name:i18n.t("translationPlugin.checkerConsent")}));
+  await result.user.click(screen.getByRole("button",{name:i18n.t("translationPlugin.startCheck")}));
+  await result.user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.recordCheck")}));
+  await result.user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.preparePreview")}));
+  await result.user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.openPreview")}));
+  await screen.findByRole("heading",{name:i18n.t("translation.preview")});await waitFor(()=>expect(imports.current().preview).not.toBeNull());return result;}
 async function readyRow(){const result=await readyImport();await result.user.click(screen.getByRole("button",{name:i18n.t("translation.addCandidate")}));
   await screen.findByRole("dialog",{name:i18n.t("translation.addCandidate")});return result;}
 async function readyEditor(){const user=userEvent.setup(),view=render(<Harness/>,project);await user.click(screen.getByRole("button",{name:i18n.t("translation.title")}));
@@ -162,13 +187,14 @@ it.each(["en-US", "zh-CN"])("shows only the real selection read phase and preser
   expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("read_translation_action")).toHaveLength(0);
 });
 
-it("registers fifteen scoped business entries and confirms an ordered complete multi-page batch through the UI",async()=>{
+it("registers import and content row commands and confirms an ordered complete multi-page import batch through the UI",async()=>{
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(value=>value.payloadKind?.startsWith("translation-")).map(value=>value.id).sort()).toEqual([
-    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-import-receipt","translation.check-import-start","translation.check-selection",
-    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.inspect-import","translation.retry-import-action",
-    "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import",
-  ]);
+    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-candidate-decision","translation.check-import-start","translation.check-import-plugin-start","translation.check-import-projection-start","translation.check-import-receipt","translation.check-selection",
+    "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.decide-candidate","translation.edit-context","translation.inspect-import","translation.open-comparison","translation.retry-candidate-decision","translation.retry-import-action",
+    "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import","translation.toggle-content-selection",
+    "translation.prepare-import-check","translation.start-import-check","translation.finish-import-check","translation.prepare-import-projection","translation.start-import-projection","translation.retry-import-plugin","translation.propose-term",
+  ].sort());
   const previewPayload:TranslationImportPreviewCommandPayload={kind:"translation-import-preview",...previewTarget(),selectIfEmpty:false};
   expect(registry.dispatch("translation.capture-import-batch",{...scope,sessionToken:"wrong"},previewPayload)).toBe(false);
   await user.click(screen.getByRole("button",{name:i18n.t("translation.apply",{count:3})}));const dialog=await screen.findByRole("dialog",{name:i18n.t("translation.batchConfirm")});
@@ -181,49 +207,49 @@ it("registers fifteen scoped business entries and confirms an ordered complete m
 });
 
 it("denies wrong file consent and a current Query error before allocating a new import identity",async()=>{
-  const {user}=await openImport();await user.click(screen.getByRole("checkbox",{name:/I confirm that/}));const payload=consent();
+  const {user}=await openImport();await user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));const payload=consent();
   expect(registry.dispatch("translation.start-import",scope,{...payload,fileDigest:"different"})).toBe(false);
-  const query=reads.client.getQueryCache().find({queryKey:reads.key(["translation-source-scope"]),exact:true})!;
+  const query=reads.client.getQueryCache().find({queryKey:reads.key(["translation-plugin-source", "zh-CN"]),exact:true})!;
   act(()=>query.setState({fetchStatus:"fetching"}));expect(registry.describe("translation.start-import",scope,payload)?.availability.enabled).toBe(false);
   act(()=>query.setState({status:"error",fetchStatus:"idle",error:new Error("Current source unavailable")}));
   expect(registry.describe("translation.start-import",scope,payload)?.availability.enabled).toBe(false);
-  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("translation.start")})).toBeDisabled());expect(calls("create_execution_identity")).toHaveLength(0);
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("translation.start")})).toBeDisabled());expect(calls("create_execution_identity")).toHaveLength(1);
 });
 
 it.each(["error","contradiction"] as const)("retains removed replacement source Query %s during start identity and releases the witness",async change=>{
-  const {user,view}=await openImport();await user.click(screen.getByRole("checkbox",{name:/I confirm that/}));const identity=deferred<string>(),original=invoke.getMockImplementation()!,dispose=vi.fn(),watch=reads.watchExactQuery.bind(reads);
+  const {user,view}=await openImport();await user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));const identity=deferred<string>(),original=invoke.getMockImplementation()!,dispose=vi.fn(),watch=reads.watchExactQuery.bind(reads);
   vi.spyOn(reads,"watchExactQuery").mockImplementation(key=>{const proof=watch(key);return{current:proof.current,dispose:()=>{dispose();proof.dispose();}};});
   invoke.mockImplementation((command:string,args)=>command==="create_execution_identity"?identity.promise:original(command,args));
   act(()=>{expect(registry.dispatch("translation.start-import",scope,consent())).toBe(true);expect(registry.dispatch("translation.start-import",scope,consent())).toBe(false);});
-  await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(1));view.rerender(<Harness consumer={false}/>,project);const key=reads.key(["translation-source-scope"]);
-  act(()=>{reads.client.removeQueries({queryKey:key,exact:true});reads.client.setQueryData(key,{revision:"1",currentSnapshot:change==="contradiction"?fixtureIdentity(999):preview.currentSourceSnapshotId});
+  await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(2));view.rerender(<Harness consumer={false}/>,project);const key=reads.key(["translation-plugin-source", "zh-CN"]);
+  act(()=>{reads.client.removeQueries({queryKey:key,exact:true});reads.client.setQueryData(key,{...translationImportChoice(preview.fixedSourceSnapshotId).source,sourceSnapshotId:change==="contradiction"?fixtureIdentity(999):preview.currentSourceSnapshotId});
     if(change==="error")reads.client.getQueryCache().find({queryKey:key,exact:true})!.setState({status:"error",error:new Error("Replacement failed")});reads.client.removeQueries({queryKey:key,exact:true});});
-  await act(async()=>identity.resolve(fixtureIdentity(900)));await waitFor(()=>expect(imports.current().busy).toBe(false));expect(calls("start_translation_import")).toHaveLength(0);expect(dispose).toHaveBeenCalledTimes(1);
+  await act(async()=>identity.resolve(fixtureIdentity(900)));await waitFor(()=>expect(imports.current().busy).toBe(false));expect(calls("start_plugin_translation")).toHaveLength(0);expect(dispose).toHaveBeenCalledTimes(2);
 });
 
 it.each(["gc","retire","destroy"] as const)("distinguishes pure view eviction from a real session boundary while start waits (%s)",async boundary=>{
-  const {user,view}=await openImport();await user.click(screen.getByRole("checkbox",{name:/I confirm that/}));
+  const {user,view}=await openImport();await user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));
   const identity=deferred<string>(),original=invoke.getMockImplementation()!,dispose=vi.fn(),watch=reads.watchExactQuery.bind(reads);
   vi.spyOn(reads,"watchExactQuery").mockImplementation(key=>{const proof=watch(key);return{current:proof.current,dispose:()=>{dispose();proof.dispose();}};});
   invoke.mockImplementation((command:string,args)=>command==="create_execution_identity"?identity.promise:original(command,args));
-  act(()=>{expect(registry.dispatch("translation.start-import",scope,consent())).toBe(true);});await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(1));
-  if(boundary==="destroy"){view.unmount();expect(dispose).toHaveBeenCalledTimes(1);}
+  act(()=>{expect(registry.dispatch("translation.start-import",scope,consent())).toBe(true);});await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(2));
+  if(boundary==="destroy"){view.unmount();expect(dispose).toHaveBeenCalledTimes(2);}
   else{view.rerender(<Harness consumer={false}/>,project);act(()=>{if(boundary==="retire")reads.retire();else reads.client.clear();});}
   await act(async()=>identity.resolve(fixtureIdentity(999)));
-  if(boundary==="gc"){await waitFor(()=>expect(imports.current().attempt).toBe(fixtureIdentity(999)));expect(calls("start_translation_import")).toHaveLength(1);}
-  else expect(calls("start_translation_import")).toHaveLength(0);
-  expect(dispose).toHaveBeenCalledTimes(1);
+  if(boundary==="gc"){await waitFor(()=>expect(imports.current().extractionAttempt).toBe(imports.current().preflight?.attemptId));expect(calls("start_plugin_translation")).toHaveLength(1);}
+  else expect(calls("start_plugin_translation")).toHaveLength(0);
+  expect(dispose).toHaveBeenCalledTimes(2);
 });
 
 it("keeps a checked row confirmation actionable under pure source read failure and continues it through consumer removal without changing B",async()=>{
   const {view}=await readyRow();act(()=>drafts.begin({unitId:candidate.unitId,locale:"zh-CN",sourceRevisionId:candidate.sourceRevisionId,key:"entry",sourceText:"Original"},null,null));
-  const sourceQuery=reads.client.getQueryCache().find({queryKey:reads.key(["translation-source-scope"]),exact:true})!;
+  const sourceQuery=reads.client.getQueryCache().find({queryKey:reads.key(["translation-plugin-source", "zh-CN"]),exact:true})!;
   act(()=>sourceQuery.setState({status:"error",error:new Error("Pure view read failed")}));const payload=rowPayload();
   expect(registry.describe("translation.apply-import-row",scope,payload)?.availability.enabled).toBe(true);
   await waitFor(()=>expect(within(screen.getByRole("dialog",{name:i18n.t("translation.addCandidate")})).getByRole("button",{name:i18n.t("translation.addCandidate")})).toBeEnabled());
   const identity=deferred<string>(),original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args)=>command==="create_execution_identity"?identity.promise:original(command,args));
   act(()=>{expect(registry.dispatch("translation.apply-import-row",scope,payload)).toBe(true);expect(registry.dispatch("translation.apply-import-row",scope,payload)).toBe(false);});
-  await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(2));view.rerender(<Harness consumer={false}/>,project);act(()=>{reads.client.clear();drafts.edit("Newer B");});
+  await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(6));view.rerender(<Harness consumer={false}/>,project);act(()=>{reads.client.clear();drafts.edit("Newer B");});
   await act(async()=>identity.resolve(fixtureIdentity(999)));await waitFor(()=>expect(imports.current().completionVersion).toBe(1));
   expect(drafts.current()?.text).toBe("Newer B");expect(originalRequests("prepare_translation_adoption")[0].confirmation).toMatchObject({targetUnitId:payload.unitId,decision:payload.decision,resultDigest:payload.resultDigest});
   expect(registry.describe("translation.apply-import-row",scope,payload)).toBeUndefined();
@@ -242,7 +268,8 @@ it("keeps an original import retry behind actual missing-receipt permission desp
   await waitFor(()=>expect(registry.describe("translation.retry-import-action",scope,payload)?.availability.enabled).toBe(true));
   await act(async()=>{expect(registry.dispatch("translation.retry-import-action",scope,payload)).toBe(true);});
   expect(imports.current().uncertain[0]).toMatchObject({request:payload.request,receiptChecked:false});expect(originalRequests("prepare_translation_adoption")).toEqual([payload.request,payload.request]);
-  expect(calls("create_execution_identity")).toHaveLength(2);
+  // Capture, producer grant, checker attempt/grant, projection and original adoption.
+  expect(calls("create_execution_identity")).toHaveLength(6);
 });
 
 it.each(["error","contradiction"] as const)("rejects a removed replacement editor Query %s while the exact historical selection identity is pending",async change=>{
@@ -302,21 +329,128 @@ it("refuses an original captured row dispatch after the real session is retired"
   expect(registry.dispatch("translation.apply-import-row",scope,payload)).toBe(false);expect(calls("prepare_translation_adoption")).toHaveLength(0);
 });
 
-it.each(["en-US","zh-CN"])("exposes pure import start recovery and exact retry through the real registry (%s)", async language => {
-  await i18n.changeLanguage(language); const original = invoke.getMockImplementation()!; let writes = 0, checks = 0;
-  invoke.mockImplementation((command: string,payload) => command === "start_translation_import"
-    ? ++writes === 1 ? Promise.reject(new Error("Lost ACK")) : Promise.resolve(payload.request.attemptId)
-    : command === "read_translation_import_start" ? ++checks === 1 ? Promise.reject(new Error("Read unavailable")) : Promise.resolve(null) : original(command,payload));
-  const {user} = await openImport(); await user.click(screen.getByRole("checkbox", {name:language === "en-US" ? /I confirm that/ : /我确认/}));
-  await user.click(screen.getByRole("button", { name: i18n.t("translation.start") }));
-  const check = await screen.findByRole("button", { name: i18n.t("translation.checkStart") });
-  await waitFor(() => expect(check).toBeEnabled()); expect(screen.queryByRole("button", {name:i18n.t("translation.retryStart")})).not.toBeInTheDocument();
-  const request = imports.current().pendingStart!, payload = {kind:"translation-import-start-pending" as const,request};
-  expect(registry.describe("translation.check-import-start",scope,payload)?.risk).toBe("reads-execution");
-  expect(registry.dispatch("translation.check-import-start",scope,{...payload,request:{...request,selectionId:fixtureIdentity(777)}})).toBe(false);
-  await user.click(check); const retry = await screen.findByRole("button",{name:i18n.t("translation.retryStart")});
-  await waitFor(() => expect(retry).toBeEnabled()); await user.click(retry);
-  await waitFor(() => expect(imports.current().pendingStart).toBeNull());
-  expect(originalRequests("start_translation_import")).toEqual([request,request]);
-  expect(originalRequests("read_translation_import_start")).toEqual([request,request]);
+it("records and restores an AI candidate while preserving manual text and the immutable original result", async()=>{
+  candidate.originKind="ai";candidate.attemptId=fixture.start.attemptId;candidate.resultId=preview.rows[0].resultId;candidate.itemId=preview.rows[0].itemId;
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args)=>{
+    if(command==="decide_translation_candidate"){
+      const value={request:args.request.decision,sourceSnapshotId:preview.currentSourceSnapshotId};
+      candidate={...candidate,candidateDecision:value};history={...history,rows:[candidate]};return Promise.resolve(value);
+    }
+    return original(command,args);
+  });
+  const {user}=await readyEditor();
+  act(()=>drafts.edit("Manual B 👩🏽‍💻"));
+  expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeDisabled();
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.actor")}),"Synthetic reviewer");
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.reason")}),"Wrong meaning");
+  expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeEnabled();
+  await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")}));
+  await waitFor(()=>expect(calls("decide_translation_candidate")).toHaveLength(1));
+  await screen.findByText(i18n.t("candidateDecisions.rejectedRecorded"));
+  expect(drafts.candidates.hasDraft()).toBe(false);
+  expect(drafts.current()?.text).toBe("Manual B 👩🏽‍💻");
+  expect(originalRequests("decide_translation_candidate")[0].decision).toMatchObject({revisionId:candidate.revisionId,actor:"Synthetic reviewer",reason:"Wrong meaning",disposition:"rejected",expectedDecisionId:null});
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.restore")})).toBeEnabled());
+  expect(screen.getByRole("button",{name:i18n.t("translation.selectRevision")})).toBeDisabled();
+  expect(calls("select_translation_revision")).toHaveLength(0);expect(calls("save_translation_revision")).toHaveLength(0);
+  await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.restore")}));
+  await screen.findByText(i18n.t("candidateDecisions.restoredRecorded"));
+  const requests=originalRequests("decide_translation_candidate");expect(requests).toHaveLength(2);
+  expect(requests[1].decision.expectedDecisionId).toBe(requests[0].decision.actionId);expect(requests[1].decision.disposition).toBe("restored");
+  expect(candidate.text).toBe("Historical candidate");expect(drafts.current()?.text).toBe("Manual B 👩🏽‍💻");
+});
+
+it("checks the original lost candidate-decision receipt after consumer removal without losing newer inputs",async()=>{
+  candidate.originKind="ai";candidate.attemptId=fixture.start.attemptId;candidate.resultId=preview.rows[0].resultId;candidate.itemId=preview.rows[0].itemId;
+  const original=invoke.getMockImplementation()!;let recorded:unknown,lookups=0;
+  invoke.mockImplementation((command:string,args)=>{
+    if(command==="decide_translation_candidate"){recorded={request:args.request.decision,sourceSnapshotId:preview.currentSourceSnapshotId};return Promise.reject(new Error("Reply lost"));}
+    if(command==="read_translation_candidate_action")return lookups++===0?Promise.reject(new Error("Saved decision temporarily unavailable")):Promise.resolve(recorded);
+    return original(command,args);
+  });
+  const {user,view}=await readyEditor();
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.actor")}),"Reviewer A");
+  await user.type(screen.getByRole("textbox",{name:i18n.t("candidateDecisions.reason")}),"Reason A");
+  expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")})).toBeEnabled();
+  await user.click(screen.getByRole("button",{name:i18n.t("candidateDecisions.reject")}));
+  await waitFor(()=>expect(calls("decide_translation_candidate")).toHaveLength(1));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("candidateDecisions.check")})).toBeEnabled());
+  expect(drafts.candidates.current().pending?.decision.reason).toBe("Reason A");
+  act(()=>{drafts.edit("Text B");drafts.candidates.edit("reason","Reason B");});
+  expect(drafts.mutationReserved).toBe(true);
+  view.rerender(<Harness consumer={false}/>,project);expect(registry.list(scope).find(command=>command.id === "translation.decide-candidate")).toBeUndefined();
+  await act(async()=>{await drafts.candidates.check();});
+  expect(drafts.candidates.current().pending).toBeNull();expect(drafts.candidates.current().reason).toBe("Reason B");
+  expect(drafts.candidates.hasDraft()).toBe(true);
+  expect(drafts.current()?.text).toBe("Text B");expect(drafts.mutationReserved).toBe(false);
+  expect(calls("decide_translation_candidate")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_translation_candidate_action")).toHaveLength(2);
+  expect(originalRequests("read_translation_candidate_action")[0]).toMatchObject({actionId:originalRequests("decide_translation_candidate")[0].decision.actionId,unitId:candidate.unitId,locale:"zh-CN"});
+});
+
+it("opens an exact saved revision for offline comparison without saving the newer manual draft", async()=>{
+  const {user,view}=await readyEditor(),compare=vi.fn(async()=>true);
+  view.rerender(<><Probe/><TranslationWorkbench project={project} disabled={false} onOpenComparison={compare}/></>,project);
+  act(()=>drafts.edit("Newer manual B"));
+  const button=await screen.findByRole("button",{name:i18n.t("arena.openFromEntry")});
+  await waitFor(()=>expect(button).toBeEnabled());await user.click(button);
+  expect(compare).toHaveBeenCalledWith(expect.objectContaining({unitId:candidate.unitId,sourceRevisionId:candidate.sourceRevisionId}),"zh-CN",expect.objectContaining({revisionId:candidate.revisionId,ordinal:candidate.ordinal}));
+  expect(drafts.current()?.text).toBe("Newer manual B");expect(calls("save_translation_revision")).toHaveLength(0);expect(calls("select_translation_revision")).toHaveLength(0);
+});
+
+it("separates the typed translation start read from explicit retry and rejects stale, hidden and busy recovery commands", async () => {
+  const {user,view} = await openImport();
+  await user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));
+  const original=invoke.getMockImplementation()!;let reads=0,resolve!:(value:unknown)=>void;
+  invoke.mockImplementation((name,args)=>name==="start_plugin_translation"?Promise.reject(new Error("Lost ACK"))
+    :name==="read_plugin_execution_start"?++reads===1?Promise.reject(new Error("Read unavailable")):new Promise(done=>{resolve=done;}):original(name,args));
+  await act(async()=>{await imports.start();});
+  const request=imports.current().pendingStart!;expect(request).not.toBeNull();
+  const payload={kind:"translation-import-start-pending" as const,request};
+  expect(registry.describe("translation.retry-import-start",scope,payload)?.availability.enabled).toBe(false);
+  expect(registry.dispatch("translation.check-import-start",scope,{...payload,request:{...request,inputDigest:"b".repeat(64)}})).toBe(false);
+  expect(registry.dispatch("translation.check-import-start",{...scope,projectId:fixtureIdentity(999)},payload)).toBe(false);
+  act(()=>{expect(registry.dispatch("translation.check-import-start",scope,payload)).toBe(true);expect(registry.dispatch("translation.check-import-start",scope,payload)).toBe(false);});
+  await waitFor(()=>expect(imports.current().checkingStart).toBe(true));
+  await act(async()=>{resolve(null);});
+  await screen.findByRole("button",{name:i18n.t("execution.retryPluginStart")});
+  expect(invoke.mock.calls.filter(([name])=>name==="start_plugin_translation")).toHaveLength(1);
+  expect(registry.describe("translation.retry-import-start",scope,payload)?.availability.enabled).toBe(true);
+  view.rerender(<Probe/>);
+  expect(registry.dispatch("translation.retry-import-start",scope,payload)).toBe(false);
+  expect(imports.current().pendingStart).toBe(request);
+});
+
+it("checks the original built-in preview through its typed command without replay and only exposes an explicit retry after absence",async()=>{
+  const {user,view}=await openImport();
+  await user.click(screen.getByRole("checkbox",{name:i18n.t("translationPlugin.producerConsent")}));
+  await user.click(screen.getByRole("button",{name:i18n.t("translation.start")}));
+  await user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.prepareCheck")}));
+  await user.click(await screen.findByRole("checkbox",{name:i18n.t("translationPlugin.checkerConsent")}));
+  await user.click(screen.getByRole("button",{name:i18n.t("translationPlugin.startCheck")}));
+  await user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.recordCheck")}));
+  await user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.preparePreview")}));
+  const original=invoke.getMockImplementation()!;let count=0,resolve!:(value:unknown)=>void;
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.reject(new Error("Lost preview ACK"))
+    :name==="read_translation_projection_start"?++count===1?Promise.reject(new Error("Read unavailable")):new Promise(done=>{resolve=done;}):original(name,args));
+  await user.click(await screen.findByRole("button",{name:i18n.t("translationPlugin.openPreview")}));
+  await screen.findByRole("button",{name:i18n.t("execution.checkPluginStart")});
+  const pending=imports.current().pendingPlugin;
+  if(pending?.pendingKind!=="start-projection")throw new Error("Expected original built-in preview start");
+  const payload={kind:"translation-plugin-pending" as const,...pending};
+  expect(registry.describe("translation.check-import-projection-start",scope,payload)?.availability.enabled).toBe(true);
+  expect(registry.describe("translation.retry-import-plugin",scope,payload)?.availability.enabled).toBe(false);
+  expect(registry.dispatch("translation.check-import-plugin-start",scope,payload)).toBe(false);
+  expect(registry.dispatch("translation.check-import-projection-start",scope,{...payload,request:{...pending.request,inputDigest:"b".repeat(64)}})).toBe(false);
+  act(()=>{expect(registry.dispatch("translation.check-import-projection-start",scope,payload)).toBe(true);expect(registry.dispatch("translation.check-import-projection-start",scope,payload)).toBe(false);});
+  await waitFor(()=>expect(imports.current().checkingStart).toBe(true));
+  await act(async()=>{resolve(null);});
+  await screen.findByText(i18n.t("translationPlugin.projectionStartMissing"));
+  expect(registry.describe("translation.retry-import-plugin",scope,payload)?.availability.enabled).toBe(true);
+  expect(invoke.mock.calls.filter(([name])=>name==="start_translation_projection")).toHaveLength(1);
+  view.rerender(<Probe/>);
+  expect(registry.dispatch("translation.check-import-projection-start",scope,payload)).toBe(false);
+  expect(registry.dispatch("translation.retry-import-plugin",scope,payload)).toBe(false);
+  expect(imports.current().pendingPlugin).toBe(pending);
 });

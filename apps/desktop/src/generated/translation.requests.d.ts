@@ -2,20 +2,32 @@
 
 export type ExecutionId = string;
 export type TranslationSelectionDecision = "candidate-only" | "select-if-empty" | "replace";
+export type CandidateDisposition = "rejected" | "restored";
 export type Revision = string;
+export type UnsignedDecimal = string;
 
 export interface Requests {
   action: TranslationActionRequest;
   adopt: TranslationAdoptRequest;
   adoptionAction: TranslationAdoptionActionRequest;
+  candidateDecision: CandidateDecisionRequest;
   capture: TranslationCaptureRequest;
+  checkFinish: TranslationCheckFinishRequest;
+  checkPrepare: TranslationCheckPrepareRequest;
   files: TranslationFilesRequest;
   history: TranslationHistoryRequest;
+  pluginCapture: PluginTranslationCaptureRequest;
+  pluginSelect: PluginTranslationSelectRequest;
+  pluginStart: PluginStartRequest;
   preview: TranslationPreviewRequest;
+  projectionPrepare: TranslationProjectionPrepareRequest;
+  projectionStart: TranslationProjectionStartRequest;
+  projectionStartAction: TranslationProjectionStartRequest;
   save: TranslationSaveRequest;
   saveAction: TranslationSaveRequest;
   select: TranslationSelectRequest;
   selectionAction: TranslationSelectRequest;
+  source: TranslationSourceRequest;
   start: TranslationStartRequest;
   startAction: TranslationStartRequest;
 }
@@ -48,12 +60,63 @@ export interface TranslationAdoptionActionRequest {
   adoption: TranslationAdoptRequest;
   unitId: ExecutionId;
 }
+export interface CandidateDecisionRequest {
+  decision: CandidateDecisionWrite;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface CandidateDecisionWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: CandidateDisposition;
+  expectedDecisionId?: ExecutionId | null;
+  expectedSelectionId?: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
 export interface TranslationCaptureRequest {
   fileName: string;
   projectId: ExecutionId;
   selectionId: ExecutionId;
   sessionToken: string;
   targetLocale: string;
+}
+export interface TranslationCheckFinishRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  sessionToken: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+export interface TranslationCheckPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  translation: PluginTranslationRequest;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+export interface PluginTranslationRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
 }
 export interface TranslationFilesRequest {
   projectId: ExecutionId;
@@ -68,11 +131,66 @@ export interface TranslationHistoryRequest {
   sessionToken: string;
   unitId: ExecutionId;
 }
+export interface PluginTranslationCaptureRequest {
+  attemptId: ExecutionId;
+  fileName: string;
+  languageConfirmed: boolean;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sessionToken: string;
+}
+export interface PluginTranslationSelectRequest {
+  expectedSourceSnapshotId: ExecutionId;
+  nativeScope: TranslationNativeScope;
+  projectId: ExecutionId;
+  sessionToken: string;
+  targetLocale: string;
+  translation: PluginTranslationRequest;
+}
+/**
+ * Captured from the current adopted source. The plugin supplies canonical
+ * native values under this exact policy; Core must never normalize them again.
+ */
+export interface TranslationNativeScope {
+  namespace: string;
+  policy: ContractRef;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface PluginStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
+}
 export interface TranslationPreviewRequest {
   after: number;
   attemptId: ExecutionId;
   basis?: string | null;
   limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface TranslationProjectionPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+export interface TranslationProjectionStartRequest {
+  attemptId: ExecutionId;
+  inputDigest: string;
   projectId: ExecutionId;
   sessionToken: string;
 }
@@ -95,6 +213,11 @@ export interface TranslationSelectRequest {
   sessionToken: string;
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface TranslationSourceRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  targetLocale: string;
 }
 export interface TranslationStartRequest {
   attemptId: ExecutionId;

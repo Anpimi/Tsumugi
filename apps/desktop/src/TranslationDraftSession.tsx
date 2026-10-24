@@ -1,3 +1,5 @@
+import { useWorkProtectionSession, type WorkProtectionSession } from "./WorkProtectionSession";
+import { useCandidateDecisionSession } from "./CandidateDecisionSession";
 import { useSessionAlive } from "./SessionReadProvider";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
@@ -29,6 +31,8 @@ export interface TranslationDraft extends DraftIdentity {
 
 interface SaveResult { saved: boolean; savedCurrent: boolean; submittedSeq: number; submittedText: string }
 interface DraftSession {
+  candidates: ReturnType<typeof useCandidateDecisionSession>;
+  protection: WorkProtectionSession;
   draft: TranslationDraft | null;
   current: () => TranslationDraft | null;
   begin: (identity: DraftIdentity, selection: TranslationSelection | null, baseText: string | null, suggestedText?: string) => boolean;
@@ -41,6 +45,8 @@ interface DraftSession {
   unchanged: (seq: number, text: string) => boolean;
   mutationReserved: boolean;
   reserveMutation: () => symbol | null;
+  reserveInputMutation: () => symbol | null;
+  ownsMutation: (token: symbol) => boolean;
   releaseMutation: (token: symbol) => void;
   selectRevision: (revision: TranslationRevision, proof?: () => boolean, dispose?: () => void) => Promise<boolean>;
   checkSelection: () => Promise<boolean>;
@@ -64,7 +70,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   const selectionReservation = useRef<symbol | null>(null);
   const selectionVersion = useRef(0);
   const selectionReadCleanup = useRef<(() => void) | null>(null);
-  const [mutationReserved, setMutationReserved] = useState(false);
+  const [, setMutationReserved] = useState(false);
   useLayoutEffect(() => {
     const previous = projectRef.current, locale = currentDraft.current?.locale;
     if (selectionReservation.current && (previous.metadata.sourceLocale !== project.metadata.sourceLocale
@@ -74,9 +80,20 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; mutation.current = null; selectionReservation.current = null; }; }, []);
   useLayoutEffect(() => () => { selectionReadCleanup.current?.(); selectionReadCleanup.current = null; }, []);
 
+  const protection = useWorkProtectionSession(project, { reserve: reserveMutation, release: releaseMutation });
+  const candidates = useCandidateDecisionSession(project, { current, reserve: reserveMutation, release: releaseMutation });
+
   function reserveMutation() {
-    if (!mounted.current || mutation.current || inFlight.current || currentDraft.current?.pending || currentDraft.current?.pendingSelection || currentDraft.current?.saving) return null;
+    if (!mounted.current || protection.blocked() || mutation.current || inFlight.current || currentDraft.current?.pending || currentDraft.current?.pendingSelection || currentDraft.current?.saving) return null;
     const token = Symbol("translation mutation"); mutation.current = token; setMutationReserved(true); return token;
+  }
+  function reserveInputMutation() {
+    const current = currentDraft.current;
+    // New editor input may follow an accepted save, including an unknown save.
+    // It shares the original exclusive slot without permitting another write.
+    if (!mounted.current || !current || protection.blocked() || mutation.current || current.selecting || current.pendingSelection
+      || !projectRef.current.metadata.targetLocales.includes(current.locale)) return null;
+    const token = Symbol("translation input"); mutation.current = token; setMutationReserved(true); return token;
   }
   function releaseMutation(token: symbol) {
     if (mutation.current !== token) return;
@@ -94,7 +111,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   function current() { return currentDraft.current; }
   function begin(identity: DraftIdentity, selection: TranslationSelection | null, baseText: string | null, suggestedText?: string) {
     const existing = currentDraft.current;
-    if (!mounted.current || inFlight.current || existing?.selecting || existing?.pending || existing?.pendingSelection || (existing && (existing.text !== (existing.baseText ?? "") || existing.newerDraftSaved))) return false;
+    if (!mounted.current || protection.blocked() || mutation.current || inFlight.current || existing?.selecting || existing?.pending || existing?.pendingSelection || (existing && (existing.text !== (existing.baseText ?? "") || existing.newerDraftSaved))) return false;
     update(() => ({ ...identity, baseSelectionId: selection?.eventId ?? null, baseRevisionId: selection?.revisionId ?? null,
       baseText, text: suggestedText ?? baseText ?? "", editSeq: 0, pending: null, pendingSelection: null, selecting: false, saving: false, checkingAction: null,
       outcomeUnknown: false, receiptCheck: null, receiptKind: null, newerDraftSaved: false, failure: null }));
@@ -106,7 +123,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   function revert() {
     update(value => value ? { ...value, text: value.baseText ?? "", editSeq: value.editSeq + 1, newerDraftSaved: false } : value);
   }
-  function clear() { if (!inFlight.current && !currentDraft.current?.selecting && !currentDraft.current?.pending && !currentDraft.current?.pendingSelection) update(() => null); }
+  function clear() { if (!protection.blocked() && !mutation.current && !inFlight.current && !currentDraft.current?.selecting && !currentDraft.current?.pending && !currentDraft.current?.pendingSelection) update(() => null); }
   function selected(selection: TranslationSelection | null, text: string | null, expectedSeq: number) {
     update(value => value && !value.pending && !value.pendingSelection && !value.saving ? { ...value,
       baseSelectionId: selection?.eventId ?? null, baseRevisionId: selection?.revisionId ?? null,
@@ -175,7 +192,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   async function save(): Promise<SaveResult> {
     const start = currentDraft.current;
     const empty = { saved: false, savedCurrent: false, submittedSeq: start?.editSeq ?? 0, submittedText: start?.text ?? "" };
-    if (!mounted.current || !start || inFlight.current || mutation.current || start.pendingSelection
+    if (!mounted.current || protection.blocked() || !start || inFlight.current || mutation.current || start.pendingSelection
       || start.pending && start.receiptCheck !== "missing" || !projectRef.current.metadata.targetLocales.includes(start.locale)) return empty;
     inFlight.current = true;
     const submittedSeq = start.pending?.submittedSeq ?? start.editSeq;
@@ -280,7 +297,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   }
   async function selectRevision(revision: TranslationRevision, proof: () => boolean = () => true, dispose?: () => void) {
     const before = currentDraft.current;
-    if (!before || !proof() || before.text !== (before.baseText ?? "") || before.newerDraftSaved
+    if (!before || !proof() || revision.candidateDecision?.request.disposition === "rejected" || before.text !== (before.baseText ?? "") || before.newerDraftSaved
       || !projectRef.current.metadata.targetLocales.includes(before.locale) || revision.unitId !== before.unitId || revision.locale !== before.locale) { dispose?.(); return false; }
     const token = reserveMutation(); if (!token) { dispose?.(); return false; }
     let disposed = false;
@@ -334,8 +351,9 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     return dispatchSelection(pending, true);
   }
 
-  return <DraftContext.Provider value={{ draft, current, begin, edit, revert, clear, save, checkSavedAction, selected, unchanged,
-    mutationReserved, reserveMutation, releaseMutation, selectRevision, checkSelection, retrySelection }}>
+  return <DraftContext.Provider value={{ candidates, protection, draft, current, begin, edit, revert, clear, save, checkSavedAction, selected, unchanged,
+    get mutationReserved() { return mutation.current !== null; }, reserveMutation, reserveInputMutation,
+    ownsMutation: token => mutation.current === token, releaseMutation, selectRevision, checkSelection, retrySelection }}>
     {children}
   </DraftContext.Provider>;
 }

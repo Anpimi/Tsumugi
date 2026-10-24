@@ -1,4 +1,4 @@
-import { reviewReasonKey } from "./reviewLabels";
+import "./ReleaseWorkbench.css";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
@@ -7,11 +7,11 @@ import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
 import { executionContext } from "./executionCommands";
 import { reviewCommands } from "./reviewCommands";
-import { sourceReads } from "./sourceQueries";
 import { confirmReleaseDelivery, releaseCommands, type ReleaseView, type DeliveryView } from "./releaseCommands";
 import { useReleaseDraftSession } from "./ReleaseDraftSession";
+import { PluginBuildControls } from "./PluginBuildControls";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
-import { useWorkbenchCommands, type CommandAvailability, type ReleasePreparationCommandPayload, type ReleaseBuildPendingCommandPayload,
+import { useWorkbenchCommands, type CommandAvailability,
   type ReleaseRecordCommandPayload, type ReleaseDestinationCommandPayload, type ReleasePreviewCommandPayload,
   type ReleaseDeliveryPendingCommandPayload, type ReleaseDeliveryCommandPayload, type ReleaseBlockerCommandPayload } from "./workbenchCommands";
 
@@ -20,17 +20,15 @@ const errorReasons = {
   "invalid-input": "release.errorInput", "permission-denied": "release.errorPermission",
   "session-invalid": "release.errorSession", "limit-exceeded": "release.errorLimit", "outcome-unknown": "release.errorOutcomeUnknown",
 } as const;
-export interface ReleaseHandle { allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean> }
-export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: { project: ProjectView; disabled: boolean; ref?: Ref<ReleaseHandle>; onOpenTranslation?: (target: import("./TranslationWorkbench").EditorTarget, locale: string) => boolean | Promise<boolean> }) {
+export interface ReleaseHandle { allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean>; showSavedBuild: (attemptId: string) => boolean }
+export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation, onOpenExtensions }: { project: ProjectView; disabled: boolean; ref?: Ref<ReleaseHandle>; onOpenTranslation?: (target: import("./TranslationWorkbench").EditorTarget, locale: string) => Promise<boolean>; onOpenExtensions?: () => void }) {
   const { t } = useTranslation(), session = executionContext(project), owner = useReleaseDraftSession(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const [open, setOpen] = useWorkbenchView("release"), [leaving, setLeaving] = useState(false);
-  const { languages, names, integration, eligibility, chosen, selection, preview, overwrite, attempt, result, pending, busy, exportMissing } = owner;
-  const leaveProof = useRef<(() => boolean) | null>(null);
+  const { chosen, selection, preview, overwrite, result, pending, busy, checkingDelivery, exportMissing } = owner;
+  const leaveProof = useRef<(() => boolean) | null>(null), leaveTrigger = useRef<HTMLElement | null>(null);
   const leaveResolve = useRef<((value: boolean) => void) | null>(null), errorRegion = useRef<HTMLDivElement>(null), mounted = useRef(false), viewVersion = useRef(0);
   const releasesRead = useSessionQuery({ key: ["release-list"], scopes: ["release", "execution"], enabled: open,
     read: () => releaseCommands.releases(session) });
-  const integrationOptions = sourceReads.integration(session, "stardew-smapi");
-  const integrationRead = useSessionQuery({ ...integrationOptions, enabled: open });
   const deliveriesRead = useSessionQuery({ key: ["release-deliveries", chosen?.releaseId], scopes: ["release"], enabled: open && !!chosen,
     read: async () => {
       const rows = await releaseCommands.deliveries({ ...session, releaseId: chosen!.releaseId });
@@ -38,29 +36,43 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
       return rows;
     } });
   const releases = releasesRead.data ?? [], deliveries = deliveriesRead.data ?? [], historyError = !!deliveriesRead.error;
-  const errorValue = owner.failure ?? (integrationRead.error || releasesRead.error ? commandFailure(integrationRead.error ?? releasesRead.error, "storage-failed") : null);
+  const errorValue = (owner.failureArea === "delivery" ? owner.failure : null) ?? (releasesRead.error ? commandFailure(releasesRead.error, "storage-failed") : null);
   const error = typeof errorValue === "string" ? errorValue : errorValue?.code ?? null;
-  const vtt = integration?.id === "webvtt";
+  const failureTone = error === "outcome-unknown" || (pending && pending.kind !== "build")
+    || (errorValue !== null && typeof errorValue !== "string" && errorValue.outcome !== "rejected")
+    || (historyError && deliveriesRead.data !== undefined) || (releasesRead.isError && releasesRead.data !== undefined) ? "warning" : "error";
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; leaveResolve.current?.(false); }; }, []);
   useLayoutEffect(() => { viewVersion.current++; }, [open, project.sessionToken]);
-  useEffect(() => { if (integrationRead.data) owner.observeIntegration(integrationRead.data); }, [integrationRead.data]);
   useEffect(() => { if (error || historyError) { errorRegion.current?.focus(); errorRegion.current?.scrollIntoView({ block: "nearest" }); } }, [error, historyError]);
   function allowLeave(current: () => boolean = () => true): Promise<boolean> {
     leaveProof.current = current;
     viewVersion.current++;
-    if (owner.reserved()) { setOpen(true); owner.reportFailure("outcome-unknown"); return Promise.resolve(false); }
-    if (!owner.current().buildDirty && !owner.current().deliveryDirty) return Promise.resolve(true);
+    if (owner.reserved()) { setOpen(true); owner.reportFailure("outcome-unknown",owner.current().workflow || owner.current().pending?.kind === "build" ? "build" : "delivery"); return Promise.resolve(false); }
+    const workflow = owner.current().workflow;
+    if (workflow && !(workflow.safety?.admissionClosed && workflow.safety.callbacksDrained)) {
+      setOpen(true); owner.reportFailure("outcome-unknown", "build"); return Promise.resolve(false);
+    }
+    if (!owner.current().buildDirty && !owner.current().deliveryDirty && !workflow && !(owner.current().prepared && !owner.current().attempt) && !(owner.current().checkReview && !owner.current().checkAttempt)) return Promise.resolve(true);
+    leaveTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setOpen(true); setLeaving(true);
     return new Promise(resolve => { leaveResolve.current?.(false); leaveResolve.current = resolve; });
   }
-  function settleLeave(value: boolean) {
+  async function settleLeave(value: boolean) {
     if (value && leaveProof.current && !leaveProof.current()) value = false;
+    const originalEditSeq = owner.current().editSeq;
+    if (value && (owner.current().buildDirty || owner.current().prepared || owner.current().checkReview || owner.current().attempt || owner.current().checkAttempt || owner.current().workflow)) {
+      // The checked discard changes its own dirty revision. The owner guards its
+      // original input; navigation separately inspects the settled result.
+      if (!await owner.discardBuild(true) || owner.current().editSeq !== originalEditSeq) value = false;
+    }
     setLeaving(false);
     if (value && !owner.reset()) value = false;
     leaveResolve.current?.(value); leaveResolve.current = null; leaveProof.current = null;
   }
   // Ordinary workspace navigation keeps the project session owner alive.
-  useImperativeHandle(ref, () => ({ allowLeave, allowNavigate: () => Promise.resolve(true) }));
+  useImperativeHandle(ref, () => ({ allowLeave, allowNavigate: () => Promise.resolve(true), showSavedBuild: attemptId => {
+    if (disabled || leaving || !mounted.current || !owner.showSavedBuild(attemptId)) return false; setOpen(true); return true;
+  } }));
   async function openBlocker(payload: ReleaseBlockerCommandPayload) {
     const ticket = ++viewVersion.current;
     try {
@@ -86,35 +98,6 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
     if (disabled) return unavailable;
     if (!recovery && owner.reserved()) return {enabled:false,reason:"pending-action"};
     return {enabled:true};
-  }
-  function preparationPayload(): ReleasePreparationCommandPayload | undefined {
-    const value = owner.current(); if (!value.integration) return undefined;
-    return {kind:"release-preparation",editSeq:value.editSeq,locales:[...value.languages],fileNames:value.languages.map(locale=>value.names[locale] ?? ""),
-      sourceLocale:project.metadata.sourceLocale,targetLocales:[...project.metadata.targetLocales],integrationId:value.integration.id,
-      integrationVersion:value.integration.version,eligibilityBasis:value.eligibility?.basis ?? null};
-  }
-  function preparationAvailability(payload?: ReleasePreparationCommandPayload, build = false): CommandAvailability {
-    const allowed = gate(); if (!allowed.enabled) return allowed;
-    const value = owner.current(), actual = preparationPayload(), query = reads.client.getQueryState(reads.key(integrationOptions.key));
-    return payload && actual && payload.editSeq === actual.editSeq && same(payload.locales,actual.locales) && same(payload.fileNames,actual.fileNames)
-      && payload.sourceLocale === actual.sourceLocale && same(payload.targetLocales,actual.targetLocales) && payload.integrationId === actual.integrationId
-      && payload.integrationVersion === actual.integrationVersion && payload.eligibilityBasis === actual.eligibilityBasis && owner.available()
-      && value.languages.every(locale=>value.names[locale]?.trim()) && value.integration?.available && query?.status === "success" && query.error === null
-      && query.fetchStatus === "idle" && !query.isInvalidated && same(query.data,value.integration)
-      && (!build || !!value.eligibility?.ready && !!value.assessment && !value.stale) ? {enabled:true} : unavailable;
-  }
-  function readProof() {
-    const captured = structuredClone(owner.current().integration), witness = reads.watchExactQuery(integrationOptions.key);
-    return {current:()=>{const query=witness.current();return !reads.retired && (!query || query.state.status === "success" && query.state.error === null && same(query.state.data,captured));},dispose:witness.dispose};
-  }
-  function buildPendingPayload(): ReleaseBuildPendingCommandPayload | undefined {
-    const value = owner.current().pending; if (value?.kind !== "build") return undefined;
-    return {kind:"release-build-pending",attemptId:value.request.attemptId,choices:structuredClone(value.request.choices),expectedEligibilityBasis:value.request.expectedEligibilityBasis};
-  }
-  function buildPendingAvailability(payload?: ReleaseBuildPendingCommandPayload, retry = false): CommandAvailability {
-    const allowed = gate(true); if (!allowed.enabled) return allowed; const actual = buildPendingPayload(), value = owner.current().pending;
-    return payload && actual && payload.attemptId === actual.attemptId && payload.expectedEligibilityBasis === actual.expectedEligibilityBasis
-      && same(payload.choices,actual.choices) && (!retry || value?.kind === "build" && value.retryAllowed) ? {enabled:true} : unavailable;
   }
   function recordPayload(record: ReleaseView): ReleaseRecordCommandPayload {
     return {kind:"release-record",releaseId:record.releaseId,releaseActionId:record.actionId,attemptId:record.attemptId,manifestSha256:record.manifestSha256};
@@ -186,10 +169,6 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
   useLayoutEffect(()=>{
     const metadata={category:"release" as const,scope:commandScope,binding:null,confirmation:"none" as const};
     const remove=[
-      registry.register({...metadata,id:"release.assess-build",nameKey:"release.check",risk:"captures-release",payloadKind:"release-preparation",availability:payload=>preparationAvailability(payload),handler:()=>{void owner.assess(readProof());}}),
-      registry.register({...metadata,id:"release.start-build",nameKey:"release.build",risk:"runs-release-build",payloadKind:"release-preparation",availability:payload=>preparationAvailability(payload,true),handler:()=>{void owner.build(readProof());}}),
-      registry.register({...metadata,id:"release.check-build",nameKey:"release.checkBuild",risk:"reconciles-release",payloadKind:"release-build-pending",availability:payload=>buildPendingAvailability(payload),handler:()=>{void owner.checkBuild();}}),
-      registry.register({...metadata,id:"release.retry-build",nameKey:"release.retryBuild",risk:"retries-execution-action",payloadKind:"release-build-pending",availability:payload=>buildPendingAvailability(payload,true),handler:()=>{void owner.retryBuild();}}),
       registry.register({...metadata,id:"release.choose-release",nameKey:"release.selected",risk:"opens-release",payloadKind:"release-record",availability:recordAvailability,handler:payload=>{const record=releaseRecord(payload);if(record)owner.chooseRelease(record);}}),
       registry.register({...metadata,id:"release.choose-destination",nameKey:"release.chooseFolder",risk:"captures-release",payloadKind:"release-destination",availability:payload=>destinationAvailability(payload),handler:()=>{void owner.chooseFolder();}}),
       registry.register({...metadata,id:"release.preview-destination",nameKey:"release.preview",risk:"captures-release",payloadKind:"release-destination",availability:payload=>destinationAvailability(payload,true),handler:()=>{void owner.previewFolder();}}),
@@ -201,36 +180,29 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
       registry.register({...metadata,id:"release.open-blocker",nameKey:"translation.openEditor",risk:"opens-translation",payloadKind:"release-blocker",availability:blockerAvailability,handler:payload=>{void openBlocker(payload);}}),
     ];return()=>remove.forEach(dispose=>dispose());
   });
-  return <><WorkbenchPanel open={open} title={t("release.title")} description={t(vtt ? "release.webvttDescription" : "release.description")} className="source-dialog release-dialog" onBack={() => setOpen(false)} backDisabled={disabled}>
+  return <><WorkbenchPanel open={open} title={t("release.title")} description={t("release.description")} className="source-dialog release-dialog" descriptionDisclosure onBack={() => setOpen(false)} backDisabled={disabled}>
       <div className="execution-content" aria-busy={busy}>
-        {error || historyError ? <div className="release-alert" role="alert" ref={errorRegion} tabIndex={-1}>
+        <ol className="delivery-stages" aria-label={t("release.workflow")}>
+          {(["readiness", "build", "check", "record", "export"] as const).map((step, index) => <li key={step}><span aria-hidden="true">{index + 1}</span>{t(`release.stages.${step}`)}</li>)}
+        </ol>
+        {error || historyError ? <div className="release-alert" data-tone={failureTone} role="alert" ref={errorRegion} tabIndex={-1}>
           {error ? <p>{t("release.error", { reason: t(errorReasons[error as keyof typeof errorReasons] ?? "release.errorUnknown") })}</p> : null}
           <CommandFailureDetails failure={errorValue} />
-          {integrationRead.isError || releasesRead.isError ? <button disabled={disabled || integrationRead.isFetching || releasesRead.isFetching} onClick={() => void Promise.all([integrationRead.refetch(), releasesRead.refetch()])}>{t("release.retryReads")}</button> : null}
+          {releasesRead.isError ? <button disabled={disabled || releasesRead.isFetching} onClick={() => void releasesRead.refetch()}>{t("release.retryReads")}</button> : null}
           {historyError ? <><p>{t("release.historyFailed")}</p>{chosen ? <button disabled={disabled || deliveriesRead.isFetching} onClick={() => void deliveriesRead.refetch()}>{t("release.refreshDeliveries")}</button> : null}</> : null}
         </div> : null}
-        {pending?.kind === "build" ? <section role="status"><p>{t(owner.checkingBuild ? "release.checkingBuild" : pending.retryAllowed ? "release.buildMissing" : "release.buildUnknown")}</p>
-          <button disabled={!buildPendingAvailability(buildPendingPayload()).enabled} onClick={() => {const payload=buildPendingPayload();if(payload)registry.dispatch("release.check-build",commandScope,payload);}}>{t("release.checkBuild")}</button>
-          {pending.retryAllowed ? <button disabled={!buildPendingAvailability(buildPendingPayload(),true).enabled} onClick={() => {const payload=buildPendingPayload();if(payload)registry.dispatch("release.retry-build",commandScope,payload);}}>{t("release.retryBuild")}</button> : null}
-        </section> : null}
-        {pending && pending.kind !== "build" ? <section role="status"><p>{t(owner.checkingDelivery ? "release.checkingDelivery" : "release.exportUnknown")}</p><button disabled={!deliveryPendingAvailability(deliveryPendingPayload()).enabled} onClick={() => {const payload=deliveryPendingPayload();if(payload)registry.dispatch("release.check-export",commandScope,payload);}}>{t("release.checkExport")}</button><button disabled={!deliveryPendingAvailability(deliveryPendingPayload()).enabled} onClick={() => {const payload=deliveryPendingPayload();if(payload)registry.dispatch("release.reauthorize-destination",commandScope,payload);}}>{t("release.reauthorizeFolder")}</button>{pending.recoverySelection ? <p>{t("release.reauthorizationLimit")}</p> : null}</section> : null}
-        {exportMissing ? <p role="status">{t("release.exportMissing")}</p> : null}
-        <section><h3>{t("release.prepare")}</h3><p>{t(vtt ? "release.webvttScope" : "release.scope")}</p>
-          <fieldset><legend>{t("release.languages")}</legend>{project.metadata.targetLocales.map(locale => <label key={locale} className="release-locale"><input type="checkbox" checked={languages.includes(locale)} disabled={disabled} onChange={event => owner.setLanguage(locale, event.target.checked)} />{locale}</label>)}</fieldset>
-          {languages.map(locale => <label className="release-mapping" key={locale}>{t(vtt ? "release.webvttFileName" : "release.fileName", { locale })}<span>{vtt ? "" : "i18n/"}</span><input aria-label={t(vtt ? "release.webvttFileName" : "release.fileName", { locale })} value={names[locale] ?? ""} disabled={disabled || !integration} onChange={event => owner.setName(locale, event.target.value)} placeholder={vtt ? "zh-CN.vtt" : "zh.json"} /></label>)}
-          {languages.filter(locale => !project.metadata.targetLocales.includes(locale)).map(locale => <p role="status" key={locale}>{t("release.removedLocale", { locale })} <button disabled={disabled} onClick={() => owner.setLanguage(locale, false)}>{t("release.removeLocale", { locale })}</button></p>)}
-          {owner.stale ? <p role="status">{t("release.readinessStale")}</p> : null}
-          {integrationRead.isPending ? <p role="status">{t("release.loading")}</p> : integration && !integration.available ? <p role="status">{t("release.integrationUnavailable")}</p> : null}
-          <p>{t("release.policy")}</p>
-          <div className="form-actions"><button className="secondary-button" disabled={!preparationAvailability(preparationPayload()).enabled} onClick={() => {const payload=preparationPayload();if(payload)registry.dispatch("release.assess-build",commandScope,payload);}}>{t("release.check")}</button><button className="primary-button" disabled={!preparationAvailability(preparationPayload(),true).enabled} onClick={() => {const payload=preparationPayload();if(payload)registry.dispatch("release.start-build",commandScope,payload);}}>{t("release.build")}</button></div>
-          {eligibility ? <div role="status"><p>{t(eligibility.ready ? "release.ready" : "release.blocked", { count: eligibility.locales.reduce((sum, item) => sum + item.blockerCount, 0) })}</p><p>{t("release.source", { id: eligibility.sourceSnapshotId })} · {eligibility.policyVersion}</p>
-            {eligibility.locales.map(item => <div key={item.locale}><strong>{item.locale}</strong>: {t("release.coverage", { count: item.checkedUnits })}{item.blockers.map((reason, index) => <div className="release-blocker" key={`${reason.unitId}:${index}`}>{reason.nativeKey}: {t(reviewReasonKey(reason.code))} {onOpenTranslation ? <button type="button" className="text-button" disabled={!blockerAvailability(blockerPayload(reason.unitId,item.locale)).enabled} onClick={() => {const payload=blockerPayload(reason.unitId,item.locale);if(payload)registry.dispatch("release.open-blocker",commandScope,payload);}}>{t("translation.openEditor")}</button> : null}<details><summary>{t("execution.diagnostic")}</summary>{reason.code}</details></div>)}{item.exceptions.map((reason, index) => <p key={`exception:${reason.unitId}:${index}`}>{t("release.exception", { key: reason.nativeKey, reason: reason.code })}</p>)}</div>)}
-          </div> : null}
-          {attempt ? <p role="status">{t("release.started", { id: attempt })}</p> : null}{owner.earlierBuild ? <p role="status">{t("release.earlierBuild")}</p> : null}
-        </section>
-        <section><div className="execution-actions"><h3>{t("release.history")}</h3><button className="secondary-button" disabled={disabled || releasesRead.isFetching} onClick={() => void releasesRead.refetch()}>{t("release.refresh")}</button></div>
-          {releasesRead.isPending ? <p>{t("release.loading")}</p> : releases.length === 0 ? releasesRead.isError ? null : <p>{t("release.empty")}</p> : <ul>{releases.map(item => <li key={item.releaseId}><button className="text-button" disabled={!recordAvailability(recordPayload(item)).enabled} onClick={() => registry.dispatch("release.choose-release",commandScope,recordPayload(item))}>{item.createdAt} · {item.artifacts.map(file => file.locale).join(", ")}</button></li>)}</ul>}
-          {chosen ? <div><h4>{t("release.selected")}</h4><p>{t("release.source", { id: chosen.sourceSnapshotId })} · {chosen.policyVersion}</p><ul>{chosen.artifacts.map(file => <li key={`${file.locale}:${file.fileName}`}>{file.locale} → {file.fileName} · {file.entryCount} · <code>{file.sha256}</code></li>)}</ul>
+        {pending && pending.kind !== "build" ? <section className="release-delivery-recovery" role="status"><p>{t(checkingDelivery ? "release.checkingDelivery" : "release.exportUnknown")}</p><button disabled={!deliveryPendingAvailability(deliveryPendingPayload()).enabled} onClick={() => {const payload=deliveryPendingPayload();if(payload)registry.dispatch("release.check-export",commandScope,payload);}}>{t("release.checkExport")}</button><button disabled={!deliveryPendingAvailability(deliveryPendingPayload()).enabled} onClick={() => {const payload=deliveryPendingPayload();if(payload)registry.dispatch("release.reauthorize-destination",commandScope,payload);}}>{t("release.reauthorizeFolder")}</button>{pending.recoverySelection ? <p>{t("release.reauthorizationLimit")}</p> : null}</section> : null}
+        {exportMissing ? <p className="release-feedback" data-tone="warning" role="status">{t("release.exportMissing")}</p> : null}
+        <div className="release-workflow"><div className="release-current-build"><PluginBuildControls project={project} open={open} disabled={disabled} leaving={leaving} onOpenExtensions={onOpenExtensions} onRecorded={async actionId => {
+          const response = await releasesRead.refetch();
+          if (!mounted.current || reads.retired || response.error || owner.current().buildReceipt?.actionId !== actionId) return;
+          const record = response.data?.find(item => item.actionId === actionId && item.attemptId === owner.current().buildReceipt?.attemptId);
+          const current = owner.current();
+          if (record && !current.chosen && !current.selection && !current.preview && !current.result && !current.deliveryDirty) owner.chooseRelease(record);
+        }} openBlocker={onOpenTranslation ? (unitId, locale) => { const payload = blockerPayload(unitId,locale); if (payload) registry.dispatch("release.open-blocker",commandScope,payload); } : undefined}/>
+        </div><section className="release-history"><div className="execution-actions"><h3>{t("release.history")}</h3><button className="secondary-button" disabled={disabled || releasesRead.isFetching} onClick={() => void releasesRead.refetch()}>{t("release.refresh")}</button></div><p className="release-history-help">{t("release.savedReleaseHelp")}</p>
+          {releasesRead.isPending ? <p>{t("release.loading")}</p> : releases.length === 0 ? releasesRead.isError ? null : <p>{t("release.empty")}</p> : <ul className="release-records">{releases.map(item => <li key={item.releaseId}><button className="text-button" aria-pressed={chosen?.releaseId === item.releaseId} disabled={!recordAvailability(recordPayload(item)).enabled} onClick={() => registry.dispatch("release.choose-release",commandScope,recordPayload(item))}>{item.createdAt} · {item.artifacts.map(file => file.locale).join(", ")}</button></li>)}</ul>}
+          {chosen ? <div className="release-selected"><h4>{t("release.selected")}</h4><p>{t("release.source", { id: chosen.sourceSnapshotId })} · {chosen.policyVersion}</p><ul className="release-files">{chosen.artifacts.map(file => <li key={`${file.locale}:${file.fileName}`}>{file.locale} → {file.fileName} · {file.entryCount} · <code>{file.sha256}</code></li>)}</ul>
             <details><summary>{t("release.evidence")}</summary>
               <p>{t("release.manifestDigest", { digest: chosen.manifestSha256 })}</p>
               <p>{t("release.toolVersions", { builder: chosen.builderVersion, validator: chosen.validatorVersion })}</p>
@@ -240,14 +212,14 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
             </details>
             <div className="form-actions"><button className="secondary-button" disabled={!destinationAvailability(destinationPayload()).enabled} onClick={() => {const payload=destinationPayload();if(payload)registry.dispatch("release.choose-destination",commandScope,payload);}}>{t("release.chooseFolder")}</button>{selection ? <button className="secondary-button" disabled={!destinationAvailability(destinationPayload(),true).enabled} onClick={() => {const payload=destinationPayload();if(payload)registry.dispatch("release.preview-destination",commandScope,payload);}}>{t("release.preview")}</button> : null}</div>
             {selection ? <p>{t("release.savedDestination", { name: selection.folderName })}</p> : null}
-            {preview ? <div><h4>{t("release.previewTitle")}</h4><p>{t("release.savedDestination", { name: preview.folderName })}</p><ul>{preview.files.map(file => <li key={`${file.locale}:${file.fileName}`}>{file.fileName} · {t(`release.fileState.${file.state}`)} · <code>{file.expectedSha256}</code></li>)}</ul>
+            {preview ? <div className="release-destination-preview"><h4>{t("release.previewTitle")}</h4><p>{t("release.savedDestination", { name: preview.folderName })}</p><ul className="release-files">{preview.files.map(file => <li key={`${file.locale}:${file.fileName}`}>{file.fileName} · {t(`release.fileState.${file.state}`)} · <code>{file.expectedSha256}</code></li>)}</ul>
               {hasConflict ? <label><input type="checkbox" checked={overwrite} disabled={!previewAvailability(previewPayload()).enabled} onChange={event => {const payload=previewPayload(event.target.checked);if(payload)registry.dispatch("release.confirm-overwrite",commandScope,payload);}} />{t("release.overwrite")}</label> : null}
               <div className="form-actions"><button className="primary-button" disabled={!previewAvailability(previewPayload(),true).enabled} onClick={() => {const payload=previewPayload();if(payload)registry.dispatch("release.export",commandScope,payload);}}>{t("release.export")}</button></div></div> : null}
-            {result ? <div role="status"><p>{t(`release.deliveryState.${result.state}`)}</p>{(result.state === "pending" || result.state === "unknown") && selection ? <button disabled={!deliveryAvailability(deliveryPayload(result)).enabled} onClick={() => {const payload=deliveryPayload(result);if(payload)registry.dispatch("release.reconcile-delivery",commandScope,payload);}}>{t("release.checkPending")}</button> : null}</div> : null}
-            <h4>{t("release.deliveries")}</h4>{deliveriesRead.isPending ? <p>{t("release.loading")}</p> : deliveries.length === 0 ? historyError ? null : <p>{t("release.noDeliveries")}</p> : <ul>{deliveries.map(delivery => <li key={delivery.deliveryId}>{delivery.createdAt} · {t(`release.deliveryState.${delivery.state}`)} · {delivery.directory} · {t(delivery.overwriteConflicts ? "release.overwriteAllowed" : "release.overwriteNotAllowed")}{(delivery.state === "pending" || delivery.state === "unknown") && selection && delivery.actionId !== result?.actionId ? <button className="secondary-button" disabled={!deliveryAvailability(deliveryPayload(delivery)).enabled} onClick={() => {const payload=deliveryPayload(delivery);if(payload)registry.dispatch("release.reconcile-delivery",commandScope,payload);}}>{t("release.checkPending")}</button> : null}<ul>{delivery.files.map(file => <li key={`${file.locale}:${file.fileName}`}>{file.fileName}: {t(`release.deliveryState.${file.state}`)}{file.actualSha256 ? <> · <code>{file.actualSha256}</code></> : null}</li>)}</ul></li>)}</ul>}
+            {result ? <div className="release-feedback" data-tone={result.state === "succeeded" ? "success" : result.state === "failed" ? "error" : "warning"} role="status"><p>{t(`release.deliveryState.${result.state}`)}</p>{(result.state === "pending" || result.state === "unknown") && selection ? <button disabled={!deliveryAvailability(deliveryPayload(result)).enabled} onClick={() => {const payload=deliveryPayload(result);if(payload)registry.dispatch("release.reconcile-delivery",commandScope,payload);}}>{t("release.checkPending")}</button> : null}</div> : null}
+            <h4>{t("release.deliveries")}</h4>{deliveriesRead.isPending ? <p>{t("release.loading")}</p> : deliveries.length === 0 ? historyError ? null : <p>{t("release.noDeliveries")}</p> : <ul className="release-deliveries">{deliveries.map(delivery => <li key={delivery.deliveryId}>{delivery.createdAt} · {t(`release.deliveryState.${delivery.state}`)} · {delivery.directory} · {t(delivery.overwriteConflicts ? "release.overwriteAllowed" : "release.overwriteNotAllowed")}{(delivery.state === "pending" || delivery.state === "unknown") && selection && delivery.actionId !== result?.actionId ? <button className="secondary-button" disabled={!deliveryAvailability(deliveryPayload(delivery)).enabled} onClick={() => {const payload=deliveryPayload(delivery);if(payload)registry.dispatch("release.reconcile-delivery",commandScope,payload);}}>{t("release.checkPending")}</button> : null}<ul>{delivery.files.map(file => <li key={`${file.locale}:${file.fileName}`}>{file.fileName}: {t(`release.deliveryState.${file.state}`)}{file.actualSha256 ? <> · <code>{file.actualSha256}</code></> : null}</li>)}</ul></li>)}</ul>}
           </div> : null}
-        </section>
+        </section></div>
       </div>
     </WorkbenchPanel>
-    <Dialog.Root open={leaving} onOpenChange={next => { if (!next) settleLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop"/><Dialog.Content className="confirm-dialog execution-confirm-dialog"><Dialog.Title>{t("release.unsaved")}</Dialog.Title><Dialog.Description>{t("release.unsavedHelp")}</Dialog.Description><button onClick={() => settleLeave(false)}>{t("release.stay")}</button><button onClick={() => settleLeave(true)}>{t("release.discard")}</button></Dialog.Content></Dialog.Portal></Dialog.Root></>;
+    <Dialog.Root open={leaving} onOpenChange={next => { if (!next && !busy) void settleLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop"/><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event=>event.preventDefault()} onEscapeKeyDown={event=>{if(busy)event.preventDefault();}} onCloseAutoFocus={event=>{if(leaveTrigger.current?.isConnected){event.preventDefault();leaveTrigger.current.focus();}}}><Dialog.Title>{t("release.unsaved")}</Dialog.Title><Dialog.Description>{t("release.unsavedHelp")}</Dialog.Description><button disabled={busy} onClick={() => void settleLeave(false)}>{t(owner.buildDirty || owner.prepared ? "source.keep" : "release.stay")}</button><button disabled={busy} onClick={() => void settleLeave(true)}>{t(owner.buildDirty || owner.prepared ? "source.leave" : "release.discard")}</button></Dialog.Content></Dialog.Portal></Dialog.Root></>;
 }

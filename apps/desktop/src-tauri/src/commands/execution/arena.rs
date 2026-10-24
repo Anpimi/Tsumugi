@@ -1,5 +1,6 @@
 use super::ai_wire::{AiItemView, AiOutputView, AiConfig, ArenaConfig, ArenaPreviewView, ComparisonView, ProviderBudget, index};
 use super::*;
+use crate::commands::connections;
 use tsumugi_core::{
     ComparisonRequest, ComparisonSummary, MergeBasis, SaveTranslationRevision,
     TranslationSelection, ai::arena::*,
@@ -131,6 +132,7 @@ pub async fn preview_arena_translation(
     state: State<'_, AppState>,
     request: PreviewRequest,
 ) -> Result<Prepared, CommandError> {
+    let connections = connections::captured_store(&state);
     state
         .sessions
         .run(
@@ -145,6 +147,8 @@ pub async fn preview_arena_translation(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
+                request.config.validate(request.unit_ids.len()).map_err(mapped)?;
+                connections::verify_configs(connections.as_ref(), &request.config.variants)?;
                 let preview = store
                     .preview_arena(request.config.into(), &request.locale, &request.unit_ids)
                     .map_err(mapped)?;
@@ -181,6 +185,7 @@ pub async fn start_arena_translation(
     state: State<'_, AppState>,
     request: StartRequest,
 ) -> Result<ExecutionId, CommandError> {
+    let connections = connections::captured_store(&state);
     state
         .sessions
         .run(
@@ -248,6 +253,7 @@ pub async fn start_arena_translation(
                         "arena-preview",
                     )));
                 }
+                connections::verify_configs(connections.as_ref(), &preview.config.variants)?;
                 host.runtime.submit(store, &input).map_err(mapped)?;
                 Ok(request.attempt_id)
             },

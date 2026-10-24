@@ -124,7 +124,30 @@ Cancellation, settings withdrawal and failed readiness retire that activation.
 `stop()` requests shutdown; `drained()` confirms actual owned-thread and child
 cleanup. A cancelled handshake does not itself prove that cleanup completed.
 The supported application roster excludes required dependencies and project
-services. This adapter adds neither a Pi member runner nor a desktop registry.
+services. This application lifecycle is separate from the member channel below; desktop registry and team policy remain application consumers.
+
+## Optional member channel
+
+With `core-adapter`, `member::run_member` launches one captured application member
+artifact with the independently approved Node tool. The member artifact uses the
+Core-generated member profile, separately from the SDK Process protocol. Core
+and application handlers retain original model requests, budgets, tool admission,
+sharing and durable results. Node receives controlled transport replies instead
+of ambient credentials. Cancellation closes admission and waits for the original
+handler and owned child to drain before releasing staging.
+
+Build the [internal Pi runtime](../../runtimes/agent-service/README.md) from its
+pinned source and provide its fresh absolute artifact path alongside the runtime
+inputs below. The opt-in fixtures are synthetic, with no real provider call:
+
+```sh
+TSUMUGI_TEST_MEMBER_ARTIFACT=/absolute/new/member-runtime \
+  cargo test -p tsumugi-plugin-host --features member-conformance --test member --test member_artifact_build --locked -- --test-threads=1
+```
+
+A missing artifact, mismatched profile or unapproved runtime fails explicitly;
+there is no PATH lookup or alternative member engine. This feature and its
+headless tests do not establish native desktop or real-provider acceptance.
 
 ## Focused conformance
 

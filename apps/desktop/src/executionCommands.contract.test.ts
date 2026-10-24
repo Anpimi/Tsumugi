@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
+import sdkResult from "../../../crates/plugin-sdk/tests/fixtures/invocation.result.json";
 import { executionCommands, confirmCancellationReceipt, confirmExecutionAction, confirmExecutionReceipt, type ContinuationRequest, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
 import * as validators from "./generated/execution.validators";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -38,7 +39,27 @@ it("reads complete original adoption records with required nullable receipts wit
   }
   expect(invoke.mock.calls.every(([name])=>name==="read_execution_adoption_action")).toBe(true);
 });
-
+it("accepts bounded source-failure shape without opening the execution output contract", () => {
+  const output = { ...fixture.output, sourceFailure: {
+    code: "invalid-source", artifactId: "captured-1", detail: "Expected exactly one entry declaration.",
+  } };
+  expect(validators.validateResponseOutput(output)).toBe(true);
+  expect(validators.validateResponseOutput({ ...output, retryAuthority: true })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, sourceFailure: { ...output.sourceFailure, code: "future" } })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, sourceFailure: { ...output.sourceFailure, allowRetry: true } })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, sourceFailure: { ...output.sourceFailure, artifactId: 2 } })).toBe(false);
+});
+it("retains SDK channel and raw result evidence through the generated output contract", async () => {
+  const result = sdkResult.body.data;
+  const output = { ...fixture.output, outcome: "succeeded", output: JSON.parse(result.outcome.output.utf8), diagnostic: null,
+    plugin: { authorizationId: fixture.prepare.actionId, channel: result.provider, result } };
+  expect(validators.validateResponseOutput(output)).toBe(true);
+  invoke.mockResolvedValueOnce(output);
+  expect(await executionCommands.output(fixture.outputRequest)).toEqual(output);
+  expect(output.plugin.result.outcome.output.utf8).toBe('{"text":"世界 😀"}');
+  expect(validators.validateResponseOutput({ ...output, plugin: { ...output.plugin, authority: true } })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, plugin: { ...output.plugin, authorizationId: "not-a-core-id" } })).toBe(false);
+});
 it("preserves Rust field names, exact revisions and explicit command scopes", async () => {
   invoke.mockResolvedValueOnce(fixture.status);
   expect(await executionCommands.status(session)).toEqual(fixture.status);
@@ -200,6 +221,59 @@ it("rejects incomplete or mis-scoped continuation history without a false absenc
   expect(await executionCommands.continuations({ ...request, after: fixture.continuationReceipt.sequence })).toEqual({ receipts: [], next: null });
 });
 
+it("requires actual null for continuation absence and accepts the original revision-zero request", async () => {
+  const request: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } };
+  const recorded = { ...fixture.continuationReceipt, action: request.action };
+  invoke.mockResolvedValueOnce(recorded);
+  expect(await executionCommands.continue(request)).toEqual(recorded);
+  expect(invoke).toHaveBeenLastCalledWith("continue_execution", { request });
+  for (const value of [undefined, {}, false]) {
+    invoke.mockResolvedValueOnce(value);
+    await expect(executionCommands.continuation(fixture.continuationRead)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce(null);
+  expect(await executionCommands.continuation(fixture.continuationRead)).toBeNull();
+  invoke.mockResolvedValueOnce({ ...fixture.task, taskId: fixture.output.dispatchToken });
+  await expect(executionCommands.taskView(fixture.taskViewRequest)).rejects.toThrow("Invalid task view scope");
+});
+
+it("reads a reused raw Plugin result under its logical continuation without rewriting the producer frame", async () => {
+  const result = sdkResult.body.data;
+  const output = { ...fixture.output, outcome: "succeeded", output: JSON.parse(result.outcome.output.utf8), diagnostic: null,
+    plugin: { authorizationId: fixture.prepare.actionId, channel: result.provider, result } };
+  const request = { ...fixture.outputRequest, attemptId: fixture.continuationReceipt.attemptId };
+  invoke.mockResolvedValueOnce(output);
+  expect(await executionCommands.output(request)).toEqual(output);
+  expect(invoke).toHaveBeenLastCalledWith("read_execution_output", { request });
+  expect(output.attemptId).toBe(fixture.continuation.action.sourceAttemptId);
+  expect(output.attemptId).not.toBe(request.attemptId);
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "start_plugin_tool")).toBe(false);
+});
+
+it("preserves revision zero and rejects wrong Task-view authority before constructing a continuation", async () => {
+  const request:ContinuationRequest={...fixture.continuation,action:{...fixture.continuation.action,kind:"resume-undispatched",expectedCancellationRevision:"0"}};
+  const saved={...fixture.continuationReceipt,action:structuredClone(request.action)};
+  expect(validators.validateRequestContinuation(request)).toBe(true);
+  invoke.mockResolvedValueOnce(saved);expect(await executionCommands.continue(request)).toEqual(saved);
+  expect(invoke).toHaveBeenLastCalledWith("continue_execution",{request});
+  invoke.mockResolvedValueOnce(null);expect(await executionCommands.continuation(fixture.continuationRead)).toBeNull();
+  for(const value of [{...fixture.task,taskId:fixture.prepare.actionId},{...fixture.task,projectId:fixture.prepare.actionId}]){
+    invoke.mockResolvedValueOnce(value);await expect(executionCommands.taskView(fixture.taskViewRequest)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce({...fixture.task,cancellationRevision:"0"});
+  expect((await executionCommands.taskView(fixture.taskViewRequest)).cancellationRevision).toBe("0");
+  expect(invoke.mock.calls.filter(([name])=>name==="continue_execution")).toHaveLength(1);
+});
+
+it("requires a positive generated cancellation revision without confusing it with a zero continuation basis", async () => {
+  for(const reply of ["0",0,"01","9223372036854775808",{taskId:fixture.cancel.taskId,revision:"1",count:1}]){
+    invoke.mockResolvedValueOnce(reply);const error=await executionCommands.cancel(fixture.cancel).catch(value=>value);
+    expect(error).toBeInstanceOf(Error);expect(hasUnknownOutcome(error)).toBe(true);
+  }
+  invoke.mockResolvedValueOnce("1");expect(await executionCommands.cancel(fixture.cancel)).toBe("1");
+  expect(invoke).toHaveBeenLastCalledWith("cancel_execution_task",{request:fixture.cancel});
+});
+
 it("accepts a zero continuation basis while checking the original TaskView scope and exact revision", async () => {
   const request: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } };
   expect(validators.validateRequestContinuation(request)).toBe(true);
@@ -215,4 +289,18 @@ it("accepts a zero continuation basis while checking the original TaskView scope
   invoke.mockResolvedValueOnce(task);
   expect(await executionCommands.taskView(fixture.taskViewRequest)).toEqual(task);
   expect(invoke).toHaveBeenLastCalledWith("read_execution_task_view", { request: fixture.taskViewRequest });
+});
+
+it.each(["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check", "plugin-tool-query"] as const)("strictly reads the original %s input without adding execution authority", async operation => {
+  const request = { ...session, attemptId: fixture.detail.attemptId, inputDigest: "a".repeat(64), operation };
+  const proof = { projectId: request.projectId, attemptId: request.attemptId, inputDigest: request.inputDigest, operation, taskId: fixture.detail.taskId };
+  expect(validators.validateRequestPluginStartAction(request)).toBe(true);
+  for (const value of [null, proof]) { invoke.mockResolvedValueOnce(value); expect(await executionCommands.pluginStartAction(request)).toEqual(value); }
+  for (const value of [undefined, { ...proof, inputDigest: "b".repeat(64) }, { ...proof, attemptId: fixture.prepare.unitId },
+    { ...proof, operation: "unrelated" }, { ...proof, projectId: fixture.prepare.unitId }, { ...proof, taskId: "invalid" },
+    { ...proof, grantId: fixture.prepare.actionId }, { ...proof, inputDigest: undefined }]) {
+    invoke.mockResolvedValueOnce(value);
+    expect(hasUnknownOutcome(await executionCommands.pluginStartAction(request).catch(error => error))).toBe(true);
+  }
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_execution_start")).toBe(true);
 });

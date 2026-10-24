@@ -1,8 +1,41 @@
 import { describe, expect, it, vi } from "vitest";
 import { SessionNavigation, type ExitDisposition, type SessionNavigationPorts, type WorkspaceDestination } from "./sessionNavigation";
 import type { WorkspaceArea } from "./WorkbenchFrame";
+import { reviewDiagnosticFixture } from "./testSupport/reviewDiagnosticFixture";
+import { semanticDiagnosticFixture } from "./testSupport/semanticDiagnosticFixture";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
+
+it("freezes a diagnostic and its queue return inputs through both navigation guards", async () => {
+  const test = setup(), answer = deferred<boolean>(), { target, run, diagnostic } = reviewDiagnosticFixture();
+  test.setArea("review"); test.presentation.allowNavigate.mockImplementationOnce(() => answer.promise);
+  const destination: Extract<WorkspaceDestination, { kind: "review-edit" }> = { kind: "review-edit", locale: target.locale,
+    target: { unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, handoff: {
+      returnTo: { projectId: "project", sessionToken: "session", locale: target.locale, unitId: target.unitId, tab: "work", summaryScope: null, pageAfter: 0, workOffset: 50 },
+      diagnostic: { runId: run.runId, source: { purpose: "qa" }, diagnostic, basis: target.basis, basisEvidence: target.basisEvidence, translationText: target.translationText },
+    } };
+  const moving = test.navigation.navigate(destination);
+  destination.handoff.returnTo.workOffset = 100; destination.handoff.diagnostic!.diagnostic.location!.range.end = 9;
+  answer.resolve(true); expect(await moving).toBe(true); expect(test.area()).toBe("translation");
+  expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({ handoff: expect.objectContaining({
+    returnTo: expect.objectContaining({ tab: "work", workOffset: 50 }), diagnostic: expect.objectContaining({ diagnostic: expect.objectContaining({ location: expect.objectContaining({ range: expect.objectContaining({ end: 8 }) }) }) }),
+  }) }), expect.any(Function));
+});
+it("freezes the separate model origin and diagnostic without restoring model authority", async () => {
+  const test = setup(), answer = deferred<boolean>(), value = semanticDiagnosticFixture();
+  test.setArea("review"); test.presentation.allowNavigate.mockImplementationOnce(() => answer.promise);
+  const destination: Extract<WorkspaceDestination, { kind: "review-edit" }> = { kind: "review-edit", locale: value.target.locale,
+    target: { unitId: value.target.unitId, sourceRevisionId: value.target.sourceRevisionId, key: value.target.nativeKey, sourceText: value.target.sourceText }, handoff: {
+      returnTo: { projectId: "project", sessionToken: "session", locale: value.target.locale, unitId: value.target.unitId, tab: "work", summaryScope: null, pageAfter: 0, workOffset: 50 },
+      diagnostic: { runId: value.run.runId, source: structuredClone(value.source), diagnostic: structuredClone(value.diagnostic), basis: value.target.basis, basisEvidence: value.target.basisEvidence, translationText: value.target.translationText },
+    } };
+  const moving = test.navigation.navigate(destination), source = destination.handoff.diagnostic!.source;
+  if (source.purpose !== "ai-semantic") throw new Error("Model origin required"); source.origin.model = "Changed after click"; source.origin.resultDigest = "9".repeat(64);
+  answer.resolve(true); expect(await moving).toBe(true);
+  expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({ handoff: expect.objectContaining({ diagnostic: expect.objectContaining({
+    source: { purpose: "ai-semantic", origin: value.run.evidence },
+  }) }) }), expect.any(Function));
+});
 function setup() {
   let live = true, area: WorkspaceArea = "overview";
   let states: ExitDisposition[] = [{ area: "translation", status: "ready", revision: "0" }];
@@ -20,6 +53,109 @@ function setup() {
 }
 
 describe("project session navigation", () => {
+  it("commits the content-find view only after both original navigation guards accept", async () => {
+    const test = setup(); test.setArea("translation");
+    const commit = vi.fn(() => true);
+    test.ports.accept = vi.fn(async () => commit);
+    test.presentation.allowNavigate.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await test.navigation.navigate({ kind: "translation-find" })).toBe(false);
+    expect(commit).not.toHaveBeenCalled();
+    expect(test.ports.show).not.toHaveBeenCalled();
+    expect(await test.navigation.navigate({ kind: "translation-find" })).toBe(true);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(test.ports.show).toHaveBeenCalledWith("translation");
+    expect(test.ports.accept).toHaveBeenLastCalledWith({ kind: "translation-find" }, expect.any(Function));
+    expect(test.presentation.allowNavigate).toHaveBeenCalledTimes(4);
+  });
+  it("abandons content-find before acceptance when its source guard outlives the session", async () => {
+    const test = setup(), guard = deferred<boolean>(); test.setArea("review");
+    test.presentation.allowNavigate.mockImplementationOnce(() => guard.promise);
+    const moving = test.navigation.navigate({ kind: "translation-find" });
+    await Promise.resolve();
+    test.replace(); test.navigation.dispose(); guard.resolve(true);
+    expect(await moving).toBe(false);
+    expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(test.ports.show).not.toHaveBeenCalled();
+    expect(test.area()).toBe("review");
+  });
+  it("routes a readonly source notice to AI through both source guards and preserves its original owner sequences", async () => {
+    const test = setup(); test.setArea("source"); const wait = deferred<boolean>();
+    test.presentation.allowNavigate.mockImplementationOnce(() => wait.promise);
+    const destination: Extract<WorkspaceDestination, { kind: "maintenance-notice" }> = { kind: "maintenance-notice", sourceActionId: "original-source-action", sourceEditSeq: 3, aiEditSeq: 7 };
+    const moving = test.navigation.navigate(destination); destination.sourceActionId = "newer-action"; destination.aiEditSeq = 8;
+    wait.resolve(true); expect(await moving).toBe(true); expect(test.area()).toBe("ai");
+    expect(test.ports.accept).toHaveBeenCalledWith({ kind: "maintenance-notice", sourceActionId: "original-source-action", sourceEditSeq: 3, aiEditSeq: 7 }, expect.any(Function));
+    expect(test.presentation.allowNavigate).toHaveBeenCalledTimes(2);
+  });
+  it("checks the same captured destination in both source guards without lending a recovery intent to another task", async () => {
+    const test = setup(); test.setArea("ai");
+    const exact: WorkspaceDestination = { kind: "task", taskId: "child-task", attemptId: "child-attempt" };
+    let recovery: WorkspaceDestination | null = exact;
+    test.presentation.allowNavigate.mockImplementation(async (destination?: WorkspaceDestination) =>
+      destination?.kind === "task" && recovery?.kind === "task" && destination.taskId === recovery.taskId && destination.attemptId === recovery.attemptId);
+    expect(await test.navigation.navigate({ kind: "task", taskId: "another-task", attemptId: "child-attempt" })).toBe(false);
+    expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(await test.navigation.navigate(exact)).toBe(true);
+    expect(test.presentation.allowNavigate).toHaveBeenLastCalledWith(exact);
+    test.setArea("ai"); recovery = null;
+    expect(await test.navigation.navigate(exact)).toBe(false);
+    expect(test.area()).toBe("ai");
+  });
+  it.each(["source-guard", "newer-draft"] as const)("does not commit a prepared Review handoff after %s or revive its old closure", async reason => {
+    const test = setup(); test.setArea("ai");
+    let editSeq = 0, commit!: () => boolean;
+    const receive = vi.fn();
+    vi.mocked(test.ports.accept).mockImplementationOnce(async (_destination, current) => {
+      const captured = editSeq;
+      commit = () => { if (!current() || editSeq !== captured) return false; receive(); return true; };
+      return commit;
+    });
+    test.presentation.allowNavigate.mockResolvedValueOnce(true).mockImplementationOnce(async () => {
+      if (reason === "newer-draft") editSeq++;
+      return reason !== "source-guard";
+    });
+    const destination: WorkspaceDestination = { kind: "review-target", target: { unitId: "unit", sourceRevisionId: "source", key: "Entry", sourceText: "Source" },
+      locale: "zh-CN", origin: { attemptId: "attempt", taskId: "task", itemId: "item", editSeq: 0 } };
+    expect(await test.navigation.navigate(destination)).toBe(false);
+    expect(receive).not.toHaveBeenCalled(); expect(test.area()).toBe("ai");
+    editSeq = 0;
+    expect(commit()).toBe(false); expect(receive).not.toHaveBeenCalled();
+  });
+  it("freezes the original Review target and AI identity until its synchronous commit", async () => {
+    const test = setup(); test.setArea("ai"); const guard = deferred<boolean>();
+    test.presentation.allowNavigate.mockImplementationOnce(() => guard.promise);
+    const destination: Extract<WorkspaceDestination, { kind: "review-target" }> = { kind: "review-target",
+      target: { unitId: "unit", sourceRevisionId: "source", key: "Original", sourceText: "Source" }, locale: "zh-CN",
+      origin: { attemptId: "attempt", taskId: "task", itemId: "item", editSeq: 1 } };
+    const committing = vi.fn(() => { expect(test.area()).toBe("ai"); return true; });
+    vi.mocked(test.ports.accept).mockResolvedValueOnce(committing);
+    const moving = test.navigation.navigate(destination);
+    destination.target.key = "Later"; destination.origin.editSeq = 2; guard.resolve(true);
+    expect(await moving).toBe(true); expect(committing).toHaveBeenCalledOnce(); expect(test.area()).toBe("review");
+    expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ key: "Original" }),
+      origin: expect.objectContaining({ editSeq: 1 }) }), expect.any(Function));
+  });
+  it("freezes the original editor context capture and returns through the same navigation guard",async()=>{
+    const test=setup();test.setArea("translation");const answer=deferred<boolean>();
+    test.presentation.allowNavigate.mockImplementationOnce(()=>answer.promise);
+    const capture={target:{unitId:"unit",sourceRevisionId:"source",key:"Original key",sourceText:"Original"},locale:"zh-CN",sourceSnapshotId:"snapshot",contextRevisionId:null,readVersion:"view",editSeq:4};
+    const moving=test.navigation.navigate({kind:"resource-context",capture});capture.target.key="Later key";capture.editSeq=5;answer.resolve(true);
+    expect(await moving).toBe(true);expect(test.area()).toBe("resources");
+    const accepted=test.ports.accept as ReturnType<typeof vi.fn>,original=accepted.mock.calls[0][0];
+    expect(original.capture.target.key).toBe("Original key");expect(original.capture.editSeq).toBe(4);
+    test.presentation.allowNavigate.mockResolvedValueOnce(false);
+    expect(await test.navigation.navigate({kind:"resource-context-return",capture:original.capture})).toBe(false);expect(test.area()).toBe("resources");
+    expect(await test.navigation.navigate({kind:"resource-context-return",capture:original.capture})).toBe(true);expect(test.area()).toBe("translation");
+  });
+  it("routes a task dock entry through the same current-work guard", async () => {
+    const test = setup(); test.setArea("translation");
+    test.presentation.allowNavigate.mockResolvedValueOnce(false);
+    const destination = { kind: "task" as const, taskId: "task", attemptId: "attempt" };
+    expect(await test.navigation.navigate(destination)).toBe(false);
+    expect(test.area()).toBe("translation"); expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(await test.navigation.navigate(destination)).toBe(true);
+    expect(test.area()).toBe("tasks"); expect(test.ports.accept).toHaveBeenCalledWith(destination, expect.any(Function));
+  });
   it("finds a hidden dirty owner and rechecks business state after its dialog", async () => {
     const test = setup();
     test.setStates([{ area: "resources", status: "dirty", revision: "input-A" }]);
@@ -44,7 +180,28 @@ describe("project session navigation", () => {
     expect(test.area()).toBe("tasks");
     expect(test.presentation.allowLeave).not.toHaveBeenCalled();
     expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(test.ports.failure).toHaveBeenCalledWith({ reason: "session-exit-blocked" });
     expect(test.ports.busy).toHaveBeenLastCalledWith(false);
+  });
+  it("explains an unconfirmed execution read and requires a fresh exit intent after recovery", async () => {
+    const test = setup(); test.setStates([{ area: "translation", status: "blocked", revision: "saved-attempt" }]);
+    expect(await test.navigation.prepareExit()).toBeNull();
+    expect(test.area()).toBe("translation");
+    expect(test.ports.failure).toHaveBeenCalledWith({ reason: "session-exit-blocked" });
+    expect(test.presentation.allowLeave).not.toHaveBeenCalled();
+    test.setStates([{ area: "translation", status: "ready", revision: "saved-attempt" }]);
+    expect(test.ports.accept).not.toHaveBeenCalled();
+    const permit = await test.navigation.prepareExit();
+    expect(permit?.current()).toBe(true);
+    permit?.release();
+    expect(test.ports.busy).toHaveBeenLastCalledWith(false);
+  });
+  it("does not report an old blocked exit after its project session ends", async () => {
+    const test = setup(); test.setStates([{ area: "translation", status: "blocked", revision: "saved-attempt" }]);
+    test.ports.show = vi.fn(() => test.replace());
+    expect(await test.navigation.prepareExit()).toBeNull();
+    expect(test.ports.failure).not.toHaveBeenCalled();
+    expect(test.presentation.allowLeave).not.toHaveBeenCalled();
   });
   it("does not exit after saving A when a newer B invalidated the dialog capture", async () => {
     const test = setup(); test.setStates([{ area: "translation", status: "dirty", revision: "A" }]);
@@ -118,4 +275,45 @@ describe("project session navigation", () => {
     expect(await test.navigation.navigate({ kind: "area", area: "review" })).toBe(false);
     expect(test.area()).toBe("source"); expect(test.ports.accept).not.toHaveBeenCalled();
   });
+  it("freezes the exact saved build before waiting for the current consumer", async () => {
+    const test = setup(), wait = deferred<null>(); test.setArea("tasks");
+    vi.mocked(test.ports.consumer).mockImplementationOnce(() => wait.promise);
+    const destination: Extract<WorkspaceDestination, { kind: "saved-build" }> = { kind: "saved-build", attemptId: "original-build" };
+    const opened = test.navigation.navigate(destination); destination.attemptId = "later-build"; wait.resolve(null);
+    expect(await opened).toBe(true);
+    expect(test.ports.accept).toHaveBeenCalledWith({ kind: "saved-build", attemptId: "original-build" }, expect.any(Function));
+    expect(test.area()).toBe("release");
+    expect(test.ports.busy).toHaveBeenLastCalledWith(false);
+  });
+  it("keeps the copied tool text fixed while navigation waits", async () => {
+    const test = setup(), wait = deferred<null>(); test.setArea("translation");
+    vi.mocked(test.ports.consumer).mockImplementationOnce(() => wait.promise);
+    const destination: Extract<WorkspaceDestination, { kind: "tool-query" }> = { kind: "tool-query", text: "Original source text" };
+    const opened = test.navigation.navigate(destination); destination.text = "Later edited text"; wait.resolve(null);
+    expect(await opened).toBe(true);
+    expect(test.ports.accept).toHaveBeenCalledWith({ kind: "tool-query", text: "Original source text" }, expect.any(Function));
+    expect(test.area()).toBe("resources");
+  });
+  it.each([
+    { kind: "saved-build", attemptId: "original-build" },
+    { kind: "tool-query", text: "Original source text" },
+  ] satisfies WorkspaceDestination[])("keeps the current view when the destination owner rejects $kind", async destination => {
+    const test = setup(); test.setArea("translation"); vi.mocked(test.ports.accept).mockResolvedValueOnce(false);
+    expect(await test.navigation.navigate(destination)).toBe(false);
+    expect(test.area()).toBe("translation"); expect(test.ports.show).not.toHaveBeenCalled();
+    expect(test.ports.busy).toHaveBeenLastCalledWith(false);
+  });
+
+});
+
+it("captures an immutable offline comparison destination and keeps the original work guard",async()=>{
+  const test=setup();test.setArea("translation");
+  const waiting=deferred<boolean>();test.presentation.allowNavigate.mockReturnValueOnce(waiting.promise);
+  const target={unitId:"original-unit",sourceRevisionId:"original-source",key:"Original",sourceText:"Original text"};
+  const destination:WorkspaceDestination={kind:"arena-comparison",target,locale:"zh-CN",revisionId:"saved-revision",revisionOrdinal:"101",returnTo:"translation"};
+  const navigating=test.navigation.navigate(destination);target.unitId="changed-unit";waiting.resolve(true);
+  expect(await navigating).toBe(true);expect(test.area()).toBe("arena");
+  expect(test.ports.accept).toHaveBeenCalledWith(expect.objectContaining({target:expect.objectContaining({unitId:"original-unit"}),revisionId:"saved-revision",revisionOrdinal:"101"}),expect.any(Function));
+  const captured=vi.mocked(test.ports.accept).mock.calls[0][0];expect(Object.isFrozen(captured)).toBe(true);
+  if(captured.kind!=="arena-comparison")throw new Error("Expected comparison target");expect(Object.isFrozen(captured.target)).toBe(true);
 });

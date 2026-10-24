@@ -2,13 +2,14 @@ import { createContext, useContext, useLayoutEffect, useRef, useState, type Reac
 import { useTranslation } from "react-i18next";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, confirmCancellationReceipt, confirmExecutionAction, confirmExecutionReceipt, matchesContinuation, sameExecutionIds, type CancelRequest, type AttemptDetail, type RecoveryAction, type RecoveryUnit, type ItemView, type PrepareRequest, type AdoptionAction, type Receipt, type RecoveryRequest, type RecoveryView, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
-import { validateResponseAdoptionAction, validateRequestCancel, validateRequestPrepare, validateRequestRecovery, validateRequestContinuation, validateResponseIdentity, validateResponseAttempt } from "./generated/execution.validators";
+import { validateRequestCancel, validateRequestPrepare, validateRequestRecovery, validateRequestContinuation, validateResponseIdentity, validateResponseAttempt } from "./generated/execution.validators";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import type { QueryKey } from "@tanstack/react-query";
+import { validateResponseAdoptionAction } from "./generated/execution.validators";
 
-type Origin = "tasks" | "source" | "ai" | "arena";
+type Origin = "tasks" | "source" | "ai" | "arena" | "release" | "resources";
 export interface CancellationTarget { readonly taskId: string; readonly attemptId: string; readonly origin: Origin }
 export interface CancellationRetryIntent extends CancellationTarget { readonly requestId: string }
 type Cancellation = { target: CancellationTarget } & (
@@ -74,7 +75,7 @@ interface TaskSession {
   beginFromQuery: (key: QueryKey, detail: AttemptDetail, unit: RecoveryUnit, action: TaskAction, offset: number, itemId?: string) => Promise<void>;
   canBegin: (taskId: string) => boolean;
   canSubmit: () => boolean;
-  submit: () => Promise<void>;
+  submit: (continueCaptured?: () => boolean) => Promise<void>;
   checkAdoption: () => Promise<void>;
   retryAdoption: () => Promise<void>;
   checkContinuation: () => Promise<void>;
@@ -411,11 +412,11 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       else fail(value,error,true);
     }
   }
-  async function submit() {
+  async function submit(continueCaptured: () => boolean = () => true) {
     const start = activityRef.current;
-    if (!canSubmit() || !start) return;
+    if (!canSubmit() || !start || !continueCaptured()) return;
     const readProof = capturedReadProof(start);
-    try { await submitCaptured(start, readProof.current); }
+    try { await submitCaptured(start, () => continueCaptured() && readProof.current()); }
     finally { readProof.dispose(); }
   }
   async function submitCaptured(start: TaskActivity, currentRead: () => boolean) {

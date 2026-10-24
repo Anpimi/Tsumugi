@@ -1,13 +1,28 @@
-import { validateResponseAdoptionAction } from "./generated/translation.validators";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type AdoptionAction, type AttemptDetail, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
-import { sourceCommands, type SourceSelection } from "./sourceCommands";
+import { sourceCommands } from "./sourceCommands";
+import { useExecutionTaskSession } from "./ExecutionTaskSession";
+import type { PluginTranslationRequest } from "./pluginCommands";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
-import { translationCommands, confirmTranslationStart, confirmTranslationAction, confirmTranslationReceipt, type TranslationAdoptRequest, type TranslationDecision,
-  type TranslationPreflight, type TranslationPreview, type TranslationPreviewRow, type TranslationStartRequest } from "./translationCommands";
+import { translationCommands, matchesTranslationEnvironment, translationRequest, confirmTranslationAction, confirmTranslationReceipt, type TranslationAdoptRequest, type TranslationDecision,
+  type PluginTranslationSelection, type PluginTranslationPreflight, type PluginStartRequest, type PluginTranslationCaptureRequest,
+  type TranslationCheckPrepareRequest, type TranslationCheckFinishRequest, type TranslationCheckReview,
+  type TranslationProjectionPrepareRequest, type TranslationProjectionStartRequest, type TranslationProjectionReview,
+  type TranslationSourceContext, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
+import type { TranslationNativeScope } from "./generated/translation.requests";
+import { validateResponseAdoptionAction } from "./generated/translation.validators";
+
+export type TranslationPluginPending =
+  | { pendingKind: "capture"; request: PluginTranslationCaptureRequest }
+  | { pendingKind: "prepare-check"; request: TranslationCheckPrepareRequest }
+  | { pendingKind: "start-check"; request: PluginStartRequest }
+  | { pendingKind: "finish-check"; request: TranslationCheckFinishRequest }
+  | { pendingKind: "prepare-projection"; request: TranslationProjectionPrepareRequest }
+  | { pendingKind: "start-projection"; request: TranslationProjectionStartRequest };
+export interface TranslationImportChoice { translation: PluginTranslationRequest; source: TranslationSourceContext; nativeScope: TranslationNativeScope }
 
 export interface TranslationImportPending {
   request: TranslationAdoptRequest;
@@ -24,12 +39,20 @@ export interface TranslationBatchDetail { key: string; actionId: string; status:
 interface BatchCapture { preview: TranslationPreview; rows: TranslationPreviewRow[]; eligible: TranslationPreviewRow[]; excluded: number; decision: TranslationDecision; editSeq: number }
 interface RowCapture { preview: TranslationPreview; row: TranslationPreviewRow; decision: TranslationDecision; editSeq: number }
 export interface TranslationImportState {
-  folder: SourceSelection | null;
+  folder: PluginTranslationSelection | null;
+  translation: PluginTranslationRequest | null;
   fileName: string;
   targetLocale: string;
-  preflight: TranslationPreflight | null;
+  preflight: PluginTranslationPreflight | null;
+  producerConsent: string | null;
+  extractionAttempt: string | null;
+  checkReview: TranslationCheckReview | null;
+  checkerConsent: string | null;
+  checkAttempt: string | null;
+  projection: TranslationProjectionReview | null;
+  pendingPlugin: TranslationPluginPending | null;
   confirmed: boolean;
-  pendingStart: TranslationStartRequest | null;
+  pendingStart: PluginStartRequest | null;
   checkingStart: boolean;
   startRetryAllowed: boolean;
   attempt: string | null;
@@ -52,15 +75,30 @@ export interface TranslationImportState {
 interface ImportSession {
   state: TranslationImportState;
   current: () => TranslationImportState;
+  hasPending: () => boolean;
+  hasActive: () => boolean;
+  setTranslation: (request: PluginTranslationRequest | null) => void;
+  consentProducer: (value: boolean) => void;
+  consentChecker: (value: boolean) => void;
+  resetPlugin: () => boolean;
   setTarget: (locale: string) => boolean;
   setFile: (file: string) => void;
   confirmLanguage: (value: boolean) => void;
   setStrategy: (value: boolean) => void;
-  chooseFolder: () => Promise<void>;
+  chooseFolder: (choice?: TranslationImportChoice, proof?: () => boolean) => Promise<void>;
   preflight: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   start: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
-  checkStart: () => Promise<void>;
   retryStart: () => Promise<void>;
+  checkStart: () => Promise<void>;
+  checkPluginStart: () => Promise<void>;
+  checkProjectionStart: () => Promise<void>;
+  prepareCheck: (resultId: string, proof?: () => boolean) => Promise<void>;
+  startCheck: (proof?: () => boolean) => Promise<void>;
+  finishCheck: (resultId: string) => Promise<void>;
+  prepareProjection: (resultId: string, proof?: () => boolean) => Promise<void>;
+  startProjection: () => Promise<void>;
+  retryPlugin: () => Promise<void>;
+  cancelTask: (detail: AttemptDetail) => Promise<void>;
   showAttempt: (id: string) => boolean;
   ready: (page: TranslationPreview) => void;
   page: (after: number, refresh?: boolean) => Promise<void>;
@@ -95,25 +133,26 @@ function eligible(row: TranslationPreviewRow) { return row.status === "unique" &
 
 /** Fixed user decisions and original mutation continuations outlive their view. */
 export function TranslationImportSession({ project, children }: { project: ProjectView; children: ReactNode }) {
-  const drafts = useTranslationDraftSession(), reads = useSessionReads();
+  const drafts = useTranslationDraftSession(), reads = useSessionReads(), tasks = useExecutionTaskSession();
   const draftsRef = useRef(drafts); draftsRef.current = drafts;
   const [session] = useState(() => executionContext(project));
-  const [state, setState] = useState<TranslationImportState>(() => ({ folder: null, fileName: "",
+  const [state, setState] = useState<TranslationImportState>(() => ({ folder: null, translation: null, fileName: "",
     targetLocale: project.metadata.targetLocales[0] ?? "", preflight: null, confirmed: false, pendingStart: null, checkingStart: false, startRetryAllowed: false,
     attempt: null, preview: null, selectIfEmpty: false, rowAction: null, batchCapture: null, batchProgress: null,
+    producerConsent: null, extractionAttempt: null, checkReview: null, checkerConsent: null, checkAttempt: null, projection: null, pendingPlugin: null,
     batchOutcome: null, batchDetails: [], uncertain: [], receiptMessage: null, checkingAction: null, busy: false, stale: false,
     editSeq: 0, completionVersion: 0, failure: null }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(false);
-  const submittedStartSeq = useRef(0);
+  const submittedStartSeq = useRef(0), submittedVersion = useRef(0), submittedProjectionVersion = useRef(0);
   const version = useRef(0), mutation = useRef<symbol | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
   const readCleanup = useRef<(() => void) | null>(null);
   function current() { return stateRef.current; }
-  function live() { return mounted.current && projectRef.current.sessionToken === session.sessionToken && projectRef.current.metadata.projectId === session.projectId; }
+  function live() { return mounted.current && !reads.retired && projectRef.current.sessionToken === session.sessionToken && projectRef.current.metadata.projectId === session.projectId; }
   function update(change: (before: TranslationImportState) => TranslationImportState) {
     if (!live()) return;
     const next = change(current()); stateRef.current = next; setState(next);
   }
-  function revoke() { version.current++; update(before => ({ ...before, stale: !!before.preview, confirmed: false })); }
+  function revoke() { version.current++; update(before => ({ ...before, stale: !!before.preview, confirmed: false, producerConsent: null, checkerConsent: null })); }
   useLayoutEffect(() => { mounted.current = true; return () => {
     mounted.current = false; version.current++;
     readCleanup.current?.(); readCleanup.current = null;
@@ -123,7 +162,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
   useLayoutEffect(() => {
     projectRef.current = project;
     const next = metadata(project, current().targetLocale);
-    if (next !== currentMeta.current) { currentMeta.current = next; revoke(); update(before => ({ ...before, preflight: null })); }
+    if (next !== currentMeta.current) { currentMeta.current = next; revoke(); }
   }, [project]);
   useEffect(() => reads.subscribeChanges(scopes => {
     if (scopes.includes("source")) revoke();
@@ -134,7 +173,15 @@ export function TranslationImportSession({ project, children }: { project: Proje
       }).catch(() => { /* Pure read failure cannot change the original action. */ });
     }
   }), [reads]);
-  function pending() { return !!current().pendingStart || current().uncertain.length > 0; }
+  function pending() { return !!current().pendingStart || !!current().pendingPlugin || current().uncertain.length > 0; }
+  function hasActive() {
+    const before = current();
+    return [["translation-plugin-producer", before.extractionAttempt], ["translation-plugin-checker", before.checkAttempt], ["translation-plugin-projection", before.preview ? null : before.attempt]].some(([key, attemptId]) => {
+      if (!attemptId) return false;
+      const detail = reads.client.getQueryData<AttemptDetail | null>(reads.key([key, attemptId]));
+      return !detail || detail.attemptId !== attemptId || detail.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched");
+    });
+  }
   function editable() { return live() && !flight.current && !pending(); }
   async function run(work: () => Promise<void>, recovery = false) {
     if (!live() || flight.current || (!recovery && pending())) return;
@@ -142,7 +189,16 @@ export function TranslationImportSession({ project, children }: { project: Proje
     try { await work(); } catch (error) { if (live()) update(before => ({ ...before, failure: commandFailure(error) })); }
     finally { flight.current = false; update(before => ({ ...before, busy: false })); }
   }
+  async function runPlugin(work: () => Promise<void>, recovery = false) {
+    await run(async () => {
+      // An uncertain original request still owns this reservation. Its explicit
+      // retry must reuse that token rather than competing with itself.
+      if (mutation.current ? !recovery : !reserveMutation()) return;
+      try { await work(); } finally { releaseMutation(); }
+    }, recovery);
+  }
   async function withReadCleanup(dispose: (() => void) | undefined, work: () => Promise<void>) {
+    if (!live() || flight.current) { dispose?.(); return; }
     let disposed = false;
     const cleanup = () => { if (!disposed) { disposed = true; dispose?.(); } };
     readCleanup.current = cleanup;
@@ -156,98 +212,264 @@ export function TranslationImportSession({ project, children }: { project: Proje
       && available(before.targetLocale) && !current().stale;
   }
   function resetPreparation(before: TranslationImportState) {
-    return { ...before, preflight: null, confirmed: false, attempt: null, preview: null, rowAction: null,
+    return { ...before, preflight: null, producerConsent: null, extractionAttempt: null, checkReview: null, checkerConsent: null,
+      checkAttempt: null, projection: null, confirmed: false, attempt: null, preview: null, rowAction: null,
       batchCapture: null, batchOutcome: null, batchDetails: [], receiptMessage: null, stale: false, editSeq: before.editSeq + 1 };
   }
+  function setTranslation(translation: PluginTranslationRequest | null) {
+    if (!editable() || hasActive() || current().preflight || current().extractionAttempt) return;
+    version.current++;
+    update(before => ({ ...resetPreparation(before), translation, folder: null, fileName: "" }));
+  }
+  function consentProducer(value: boolean) {
+    const before = current();
+    if (editable() && before.preflight) update(state => ({ ...state, producerConsent: value ? before.preflight!.inputDigest : null }));
+  }
+  function consentChecker(value: boolean) {
+    const before = current();
+    if (editable() && before.checkReview) update(state => ({ ...state, checkerConsent: value ? before.checkReview!.inputDigest : null }));
+  }
+  function resetPlugin() {
+    if (!editable() || hasActive()) return false;
+    version.current++;
+    update(before => ({ ...resetPreparation(before), folder: null, fileName: "", failure: null }));
+    return true;
+  }
   function setTarget(locale: string) {
-    if (!editable() || (locale && !available(locale))) return false;
+    if (!editable() || hasActive() || (locale && !available(locale))) return false;
     if (locale === current().targetLocale) return true;
     version.current++; currentMeta.current = metadata(projectRef.current, locale);
-    update(before => ({ ...resetPreparation(before), targetLocale: locale })); return true;
+    update(before => ({ ...resetPreparation(before), folder: null, fileName: "", targetLocale: locale })); return true;
   }
-  function setFile(fileName: string) { if (editable() && fileName !== "") { version.current++; update(before => ({ ...resetPreparation(before), fileName })); } }
+  function setFile(fileName: string) { if (editable() && !hasActive() && fileName !== "") { version.current++; update(before => ({ ...resetPreparation(before), fileName })); } }
   function confirmLanguage(confirmed: boolean) {
-    if (editable() && current().preflight && available()) update(before => ({ ...before, confirmed, editSeq: before.editSeq + 1 }));
+    if (editable() && current().folder && !current().preflight && !current().extractionAttempt && available()) update(before => ({ ...before, confirmed, preflight: null, producerConsent: null, editSeq: before.editSeq + 1 }));
   }
   function setStrategy(selectIfEmpty: boolean) {
     if (editable()) update(before => ({ ...before, selectIfEmpty, batchCapture: null, editSeq: before.editSeq + 1 }));
   }
-  async function chooseFolder() {
-    if (!available()) return;
-    await run(async () => {
-      const folder = await translationCommands.selectFolder(session);
-      if (!live()) return;
+  async function chooseFolder(choice?: TranslationImportChoice, proof: () => boolean = live) {
+    if (!available() || !choice || !proof()) return;
+    const targetLocale = current().targetLocale, ticket = version.current;
+    await runPlugin(async () => {
+      const folder = await translationCommands.selectPlugin({ ...session, translation: choice.translation, targetLocale,
+        expectedSourceSnapshotId: choice.source.sourceSnapshotId, nativeScope: choice.nativeScope });
+      if (!live() || !proof() || ticket !== version.current || current().targetLocale !== targetLocale) return;
+      if (folder && (folder.targetLocale !== targetLocale || JSON.stringify(folder.source) !== JSON.stringify(choice.source)
+        || !matchesTranslationEnvironment(folder.translation, choice.translation) || JSON.stringify(folder.nativeScope) !== JSON.stringify(choice.nativeScope))) throw invalid();
       version.current++;
-      update(before => ({ ...resetPreparation(before), folder, fileName: "" }));
+      update(before => ({ ...resetPreparation(before), translation: choice.translation, folder, fileName: "" }));
     });
   }
   async function preflight(proof: () => boolean = live, dispose?: () => void) {
     const before = current(), ticket = version.current, meta = metadata(projectRef.current, before.targetLocale);
-    if (!before.folder || !before.fileName || !available() || !proof() || !editable()) { dispose?.(); return; }
-    await withReadCleanup(dispose, () => run(async () => {
-      const checked = await translationCommands.preflight({ ...session, selectionId: before.folder!.selectionId, fileName: before.fileName, targetLocale: before.targetLocale });
+    if (!before.folder || !before.fileName || !before.confirmed || !available() || !proof() || !editable()) { dispose?.(); return; }
+    await withReadCleanup(dispose, () => runPlugin(async () => {
+      const attemptId = await executionCommands.identity(session);
       if (!live() || !proof() || ticket !== version.current || meta !== metadata(projectRef.current, before.targetLocale) || current().folder !== before.folder) return;
-      if (checked.fileName !== before.fileName || checked.targetLocale !== before.targetLocale) throw invalid();
-      update(value => ({ ...value, preflight: checked, confirmed: false }));
+      await dispatchPlugin({ pendingKind: "capture", request: { ...session, selectionId: before.folder!.selectionId,
+        fileName: before.fileName, languageConfirmed: true, attemptId } });
     }));
   }
-  function settleStart(request: TranslationStartRequest) {
-    if (!live() || current().pendingStart !== request) return;
-    update(before => ({ ...before, attempt: request.attemptId, pendingStart: null, checkingStart: false, startRetryAllowed: false,
+  function acceptStart(request: PluginStartRequest) {
+    update(before => before.pendingStart === request ? { ...before, extractionAttempt: request.attemptId, pendingStart: null,
+      checkingStart: false, startRetryAllowed: false,
       ...(before.editSeq === submittedStartSeq.current ? { preview: null, batchCapture: null, rowAction: null, batchOutcome: null, batchDetails: [] } : {}),
-      stale: before.stale || !available(request.targetLocale), confirmed: false, failure: null }));
+      stale: before.stale || submittedVersion.current !== version.current, confirmed: false, failure: null } : before);
   }
-  async function lookupStart(request: TranslationStartRequest, originalFailure = current().failure) {
-    if (!live() || current().pendingStart !== request) return;
-    update(before => ({ ...before, checkingStart: true, startRetryAllowed: false, failure: null }));
+  async function readStart(request: PluginStartRequest, checker: boolean) {
+    const intent = current().pendingPlugin;
+    const original = () => live() && (checker ? intent?.pendingKind === "start-check" && current().pendingPlugin === intent : current().pendingStart === request);
+    if (!original()) return;
+    update(before => ({ ...before, checkingStart: true, startRetryAllowed: false }));
     try {
-      const result = await translationCommands.startAction(request);
-      if (!live() || current().pendingStart !== request) return;
-      if (confirmTranslationStart(request, result) !== null) { settleStart(request); return; }
-      update(before => ({ ...before, checkingStart: false, startRetryAllowed: true, failure: originalFailure }));
-    } catch (error) {
-      if (!live() || current().pendingStart !== request) return;
-      update(before => ({ ...before, checkingStart: false, startRetryAllowed: false, failure: commandFailure(error, "outcome-unknown") }));
-    }
+      const value = await executionCommands.pluginStartAction({ ...session, attemptId: request.attemptId, inputDigest: request.inputDigest,
+        operation: checker ? "translation-semantic-check" : "translation-extract" });
+      if (!original()) return;
+      if (value) {
+        if (checker) update(before => ({ ...before, checkAttempt: request.attemptId, pendingPlugin: null, checkingStart: false, startRetryAllowed: false, failure: null }));
+        else acceptStart(request);
+        reads.invalidate(["execution"], false);
+      } else update(before => ({ ...before, startRetryAllowed: true }));
+    } finally { if (original()) update(before => ({ ...before, checkingStart: false })); }
   }
-  async function checkStart() {
-    const request = current().pendingStart, failure = current().failure;
-    if (request) await run(() => lookupStart(request, failure), true);
-  }
-  async function dispatchStart(request: TranslationStartRequest, recovering = false) {
+  async function dispatchStart(request: PluginStartRequest, recovering = false) {
     if (!live()) return;
-    update(before => ({ ...before, pendingStart: request, checkingStart: false, startRetryAllowed: false }));
+    Object.freeze(request);
+    update(before => ({ ...before, pendingStart: request, startRetryAllowed: false }));
     try {
-      const attempt = await translationCommands.start(request);
+      const attempt = await translationCommands.startPlugin(request);
       if (!live() || current().pendingStart !== request) return;
       if (attempt !== request.attemptId) throw invalid();
-      settleStart(request);
+      acceptStart(request);
     } catch (error) {
       if (!live() || current().pendingStart !== request) return;
-      if (hasUnknownOutcome(error)) { await lookupStart(request, commandFailure(error, "outcome-unknown")); return; }
-      if (!recovering) update(before => ({ ...before, pendingStart: null }));
+      if (hasUnknownOutcome(error)) {
+        await readStart(request, false);
+        if (!live() || current().pendingStart !== request) return;
+      } else if (!recovering) update(before => ({ ...before, pendingStart: null }));
+      // A definite retry rejection classifies this invocation only. It cannot
+      // revoke the first unknown dispatch or restore checked-absence evidence.
       throw error;
     }
   }
   async function start(proof: () => boolean = live, dispose?: () => void) {
     const before = current(), ticket = version.current, meta = metadata(projectRef.current, before.targetLocale);
-    if (!before.folder || !before.preflight || !before.confirmed || before.attempt || !available() || !proof() || !editable()) { dispose?.(); return; }
-    await withReadCleanup(dispose, () => run(async () => {
+    if (!before.folder || !before.preflight || before.producerConsent !== before.preflight.inputDigest || !before.confirmed || before.extractionAttempt || !available() || !proof() || !editable()) { dispose?.(); return; }
+    await withReadCleanup(dispose, () => runPlugin(async () => {
       const scope = await sourceCommands.scope(session);
-      if (!fresh(before, ticket, meta, proof) || scope.currentSnapshot !== before.preflight!.sourceSnapshotId) return;
-      const attemptId = await executionCommands.identity(session);
+      if (!fresh(before, ticket, meta, proof) || scope.currentSnapshot !== before.preflight!.source.sourceSnapshotId) return;
+      const grantId = await executionCommands.identity(session);
       if (!fresh(before, ticket, meta, proof)) return;
       const latest = await sourceCommands.scope(session);
       if (!fresh(before, ticket, meta, proof) || latest.currentSnapshot !== scope.currentSnapshot || latest.revision !== scope.revision) { revoke(); return; }
-      submittedStartSeq.current = before.editSeq;
-      await dispatchStart({ ...session, attemptId, selectionId: before.folder!.selectionId, fileName: before.preflight!.fileName,
-        targetLocale: before.preflight!.targetLocale, expectedFileDigest: before.preflight!.fileDigest,
-        expectedSourceSnapshotId: before.preflight!.sourceSnapshotId, languageConfirmed: true });
+      submittedVersion.current = ticket; submittedStartSeq.current = before.editSeq;
+      await dispatchStart({ ...session, attemptId: before.preflight!.attemptId, inputDigest: before.preflight!.inputDigest,
+        grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true });
     }));
   }
-  async function retryStart() { const request = current().pendingStart; if (request && current().startRetryAllowed) await run(() => dispatchStart(request, true), true); }
+  async function retryStart() { const request = current().pendingStart; if (request && current().startRetryAllowed) await runPlugin(() => dispatchStart(request, true), true); }
+  function acceptProjectionStart(intent: Extract<TranslationPluginPending, { pendingKind: "start-projection" }>) {
+    update(before => before.pendingPlugin === intent ? { ...before, attempt: intent.request.attemptId, pendingPlugin: null,
+      preview: null, rowAction: null, batchCapture: null, startRetryAllowed: false, failure: null,
+      stale: submittedProjectionVersion.current !== version.current } : before);
+  }
+  async function readProjectionStart(intent: Extract<TranslationPluginPending, { pendingKind: "start-projection" }>) {
+    const review = current().projection;
+    const original = () => live() && current().pendingPlugin === intent;
+    if (!original()) return;
+    update(before => ({ ...before, checkingStart: true, startRetryAllowed: false }));
+    try {
+      if (!review || review.attemptId !== intent.request.attemptId || review.inputDigest !== intent.request.inputDigest) throw invalid();
+      const value = await translationCommands.projectionStartAction(intent.request);
+      if (!original()) return;
+      if (current().projection !== review) throw invalid();
+      if (value) {
+        if (value.translationAttemptId !== review.translationAttemptId || value.translationResultId !== review.translationResultId) throw invalid();
+        acceptProjectionStart(intent);
+        reads.invalidate(["execution"], false);
+      } else update(before => ({ ...before, startRetryAllowed: true }));
+    } finally { if (live()) update(before => ({ ...before, checkingStart: false })); }
+  }
+  async function dispatchPlugin(intent: TranslationPluginPending, recovering = false) {
+    if (!live()) return;
+    update(before => ({ ...before, pendingPlugin: intent, startRetryAllowed: false }));
+    try {
+      switch (intent.pendingKind) {
+        case "capture": {
+          const folder = current().folder;
+          if (!folder || folder.selectionId !== intent.request.selectionId) throw invalid();
+          const value = await translationCommands.preflightPlugin(intent.request);
+          if (!live() || current().pendingPlugin !== intent) return;
+          if (value.attemptId !== intent.request.attemptId || value.targetLocale !== folder.targetLocale
+            || JSON.stringify(value.source) !== JSON.stringify(folder.source)
+            || JSON.stringify(value.translation) !== JSON.stringify(folder.translation)) throw invalid();
+          update(before => ({ ...before, preflight: value, producerConsent: null }));
+          break;
+        }
+        case "prepare-check": {
+          const value = await translationCommands.prepareCheck(intent.request);
+          if (!live() || current().pendingPlugin !== intent) return;
+          if (value.attemptId !== intent.request.attemptId || value.translationAttemptId !== intent.request.translationAttemptId
+            || value.translationResultId !== intent.request.translationResultId || !matchesTranslationEnvironment(value.translation, intent.request.translation)
+            || JSON.stringify(value.source) !== JSON.stringify(current().folder?.source)) throw invalid();
+          update(before => ({ ...before, checkReview: value, checkerConsent: null, checkAttempt: null }));
+          break;
+        }
+        case "start-check": {
+          const id = await translationCommands.startCheck(intent.request);
+          if (!live() || current().pendingPlugin !== intent) return;
+          if (id !== intent.request.attemptId) throw invalid();
+          update(before => ({ ...before, checkAttempt: id }));
+          break;
+        }
+        case "finish-check":
+          await translationCommands.finishCheck(intent.request);
+          if (!live() || current().pendingPlugin !== intent) return;
+          reads.invalidate(["execution", "translation"]);
+          break;
+        case "prepare-projection": {
+          const value = await translationCommands.prepareProjection(intent.request);
+          if (!live() || current().pendingPlugin !== intent) return;
+          if (value.attemptId !== intent.request.attemptId || value.translationAttemptId !== intent.request.translationAttemptId
+            || value.translationResultId !== intent.request.translationResultId || value.targetLocale !== current().folder?.targetLocale
+            || JSON.stringify(value.source) !== JSON.stringify(current().folder?.source)) throw invalid();
+          update(before => ({ ...before, projection: value }));
+          break;
+        }
+        case "start-projection": {
+          const id = await translationCommands.startProjection(intent.request);
+          if (!live() || current().pendingPlugin !== intent) return;
+          if (id !== intent.request.attemptId) throw invalid();
+          acceptProjectionStart(intent);
+          break;
+        }
+      }
+      if (live()) update(before => before.pendingPlugin === intent ? { ...before, pendingPlugin: null } : before);
+    } catch (error) {
+      if (!recovering && !hasUnknownOutcome(error)) update(before => before.pendingPlugin === intent ? { ...before, pendingPlugin: null } : before);
+      else if (intent.pendingKind === "start-check") {
+        await readStart(intent.request, true);
+        if (!live() || current().pendingPlugin !== intent) return;
+      } else if (intent.pendingKind === "start-projection") {
+        await readProjectionStart(intent);
+        if (!live() || current().pendingPlugin !== intent) return;
+      }
+      throw error;
+    }
+  }
+  async function prepareCheck(resultId: string, proof: () => boolean = live) {
+    const before = current(), ticket = version.current;
+    if (!before.preflight || !before.extractionAttempt || !proof() || !available()) return;
+    await runPlugin(async () => {
+      const attemptId = await executionCommands.identity(session);
+      if (!live() || !proof() || ticket !== version.current || current().extractionAttempt !== before.extractionAttempt) return;
+      await dispatchPlugin({ pendingKind: "prepare-check", request: { ...session, translationAttemptId: before.extractionAttempt!,
+        translationResultId: resultId, attemptId, translation: translationRequest(before.preflight!.translation) } });
+    });
+  }
+  async function startCheck(proof: () => boolean = live) {
+    const review = current().checkReview, ticket = version.current;
+    if (!review || current().checkerConsent !== review.inputDigest || current().checkAttempt || !proof() || !available()) return;
+    await runPlugin(async () => {
+      const grantId = await executionCommands.identity(session);
+      if (!live() || !proof() || ticket !== version.current || current().checkReview !== review || current().checkerConsent !== review.inputDigest) return;
+      await dispatchPlugin({ pendingKind: "start-check", request: { ...session, attemptId: review.attemptId, inputDigest: review.inputDigest,
+        grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true } });
+    });
+  }
+  async function finishCheck(resultId: string) {
+    const review = current().checkReview;
+    if (!review || current().checkAttempt !== review.attemptId) return;
+    await runPlugin(() => dispatchPlugin({ pendingKind: "finish-check", request: { ...session, translationAttemptId: review.translationAttemptId,
+      translationResultId: review.translationResultId, attemptId: review.attemptId, resultId } }));
+  }
+  async function prepareProjection(resultId: string, proof: () => boolean = live) {
+    const before = current(), ticket = version.current;
+    if (!before.extractionAttempt || !proof() || !available()) return;
+    await runPlugin(async () => {
+      const attemptId = await executionCommands.identity(session);
+      if (!live() || !proof() || ticket !== version.current || current().extractionAttempt !== before.extractionAttempt) return;
+      await dispatchPlugin({ pendingKind: "prepare-projection", request: { ...session, translationAttemptId: before.extractionAttempt!, translationResultId: resultId, attemptId } });
+    });
+  }
+  async function startProjection() {
+    const projection = current().projection;
+    if (projection) await runPlugin(async () => {
+      submittedProjectionVersion.current = version.current;
+      await dispatchPlugin({ pendingKind: "start-projection", request: { ...session, attemptId: projection.attemptId, inputDigest: projection.inputDigest } });
+    });
+  }
+  async function retryPlugin() {
+    const original = current().pendingPlugin;
+    if (original && (!["start-check", "start-projection"].includes(original.pendingKind) || current().startRetryAllowed)) await runPlugin(() => dispatchPlugin(original, true), true);
+  }
+  async function cancelTask(detail: AttemptDetail) {
+    if (!live() || ![current().extractionAttempt, current().checkAttempt, current().attempt].includes(detail.attemptId)) return;
+    await tasks.cancel({ taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" }, live);
+  }
   function showAttempt(attempt: string) {
-    if (!editable()) return false;
+    if (!editable() || hasActive()) return false;
     version.current++; update(before => ({ ...resetPreparation(before), attempt })); return true;
   }
   function ready(page: TranslationPreview) {
@@ -345,7 +567,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
     mutation.current = token; return true;
   }
   function releaseMutation() {
-    if (!mutation.current || current().uncertain.length || current().batchProgress) return;
+    if (!mutation.current || pending() || current().batchProgress) return;
     draftsRef.current.releaseMutation(mutation.current); mutation.current = null;
   }
   function original(basis: TranslationPreview, row: TranslationPreviewRow, decision: TranslationDecision, actionId: string, recoveryUnitId: string): TranslationImportPending {
@@ -373,6 +595,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
       batchDetails: before.batchDetails.map(value => value.actionId === pending.request.actionId ? { ...value, status: "applied" } : value),
       batchOutcome: before.batchOutcome && before.batchDetails.some(value => value.actionId === pending.request.actionId && value.status === "unknown")
         ? { ...before.batchOutcome, unknown: before.batchOutcome.unknown - 1, applied: before.batchOutcome.applied + 1 } : before.batchOutcome }));
+    reads.invalidate(["translation", "review"]);
     releaseMutation(); return checked;
   }
   async function dispatch(pending: TranslationImportPending, recovering = false): Promise<BatchStatus> {
@@ -498,6 +721,11 @@ export function TranslationImportSession({ project, children }: { project: Proje
     const pending = current().uncertain.find(value => value.request.actionId === actionId);
     if (pending?.receiptChecked) await run(async () => { await dispatch(pending, true); releaseMutation(); }, true);
   }
-  return <ImportContext.Provider value={{ state, current, setTarget, setFile, confirmLanguage, setStrategy, chooseFolder,
-    preflight, start, checkStart, retryStart, showAttempt, ready, page, chooseRow, cancelConfirmation, applyRow, captureBatch, applyBatch, checkReceipt, retryAction }}>{children}</ImportContext.Provider>;
+  return <ImportContext.Provider value={{ state, current, hasPending: pending, hasActive, setTranslation, consentProducer, consentChecker, resetPlugin,
+    setTarget, setFile, confirmLanguage, setStrategy, chooseFolder, preflight, start, retryStart,
+    checkStart: async () => { const request = current().pendingStart; if (request) await runPlugin(() => readStart(request, false), true); },
+    checkPluginStart: async () => { const pending = current().pendingPlugin; if (pending?.pendingKind === "start-check") await runPlugin(() => readStart(pending.request, true), true); },
+    checkProjectionStart: async () => { const pending = current().pendingPlugin; if (pending?.pendingKind === "start-projection") await runPlugin(() => readProjectionStart(pending), true); },
+    prepareCheck, startCheck, finishCheck,
+    prepareProjection, startProjection, retryPlugin, cancelTask, showAttempt, ready, page, chooseRow, cancelConfirmation, applyRow, captureBatch, applyBatch, checkReceipt, retryAction }}>{children}</ImportContext.Provider>;
 }

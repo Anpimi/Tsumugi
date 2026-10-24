@@ -8,9 +8,14 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{
-    content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, SourceBundle, TranslationBundle},
+    content::SourceBundle,
     execution::{Cancellation, ErrorCode, ExecutionError, ExecutionId},
 };
+
+use tsumugi_core::content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, TranslationBundle};
+
+mod destination;
+pub(crate) use destination::Destination;
 
 fn error(code: ErrorCode, reason: &str) -> ExecutionError {
     ExecutionError::new(code, reason)
@@ -113,7 +118,7 @@ pub(crate) mod platform;
 
 #[cfg(any(windows, target_os = "macos"))]
 pub struct Selection {
-    webvtt: bool,
+        webvtt: bool,
     root: PathBuf,
     root_file: File,
     identity: platform::Identity,
@@ -139,7 +144,7 @@ impl Selection {
         let root = platform::final_path(&root_file)?;
         let identity = platform::identity(&root_file)?;
         Ok(Self {
-            webvtt: false,
+                        webvtt: false,
             root,
             root_file,
             identity,
@@ -153,67 +158,32 @@ impl Selection {
             .to_string_lossy()
             .into()
     }
-    pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
+        pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
         let mut selected = Self::authorize(path)?;
         selected.webvtt = true;
         Ok(selected)
     }
-    pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
-        self.verify()?;
-        Ok(&self.root)
-    }
-    #[cfg(target_os = "macos")]
-    pub(crate) fn ensure_i18n_directory(&self) -> Result<(), ExecutionError> {
-        use std::os::fd::AsRawFd;
-        self.verify()?;
-        let name = c"i18n";
-        // The only created child is the declared output directory of this selection.
-        if unsafe { libc::mkdirat(self.root_file.as_raw_fd(), name.as_ptr(), 0o700) } == -1
-            && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
-        {
-            return Err(io(std::io::Error::last_os_error()));
-        }
-        let child = platform::open_child(&self.root_file, std::ffi::OsStr::new("i18n"), true)?;
-        if platform::final_path(&child)? != self.root.join("i18n") {
-            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
-        }
-        self.verify()
-    }
-    pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
-        self.verify()?;
-        let i18n_path = self.root.join("i18n");
-        let i18n = platform::open(&i18n_path, true)?;
-        if platform::final_path(&i18n)? != i18n_path {
-            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
-        }
-        let entries = listing(&i18n_path, &|| Ok(()))?;
-        Ok(entries
-            .into_iter()
-            .filter(|(name, directory)| {
-                !directory && content::declared_locale(&format!("i18n/{name}")).is_ok()
-            })
-            .map(|(name, _)| name)
-            .collect())
-    }
-    pub fn capture_translation(
+    /// Capture only the fixed material recipe from a selected immutable package.
+    /// Approval of the root remains a native picker responsibility; neither the
+    /// resource nor an IPC string authorizes another directory.
+    pub fn capture_declared(
         &self,
-        file_name: &str,
-        target_locale: &str,
-        source_snapshot_id: ExecutionId,
+        binding: &tsumugi_plugin_sdk::SourceImportBinding,
+        language: &str,
         cancel: &Cancellation,
-    ) -> Result<TranslationBundle, ExecutionError> {
-        self.capture_translation_inner(file_name, target_locale, source_snapshot_id, cancel, || {})
+    ) -> Result<SourceBundle, ExecutionError> {
+        self.capture_declared_inner(binding, language, cancel, || {})
     }
-    fn capture_translation_inner(
+    fn capture_declared_inner(
         &self,
-        file_name: &str,
-        target_locale: &str,
-        source_snapshot_id: ExecutionId,
+        binding: &tsumugi_plugin_sdk::SourceImportBinding,
+        language: &str,
         cancel: &Cancellation,
         opened: impl FnOnce(),
-    ) -> Result<TranslationBundle, ExecutionError> {
-        let logical_path = format!("i18n/{file_name}");
-        content::declared_locale(&logical_path)?;
+    ) -> Result<SourceBundle, ExecutionError> {
+        binding
+            .validate()
+            .map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))?;
         self.verify()?;
         let started = Instant::now();
         let check = || {
@@ -225,7 +195,186 @@ impl Selection {
                 Ok(())
             }
         };
-        let i18n_path = self.root.join("i18n");
+        let mut files = Vec::new();
+        let mut identities = Vec::new();
+        for material in &binding.declaration.materials {
+            check()?;
+            let path = self.root.join(&material.logical_path);
+            let file = platform::open(&path, false)?;
+            let identity = platform::identity(&file)?;
+            if platform::final_path(&file)? != path || identities.contains(&identity) {
+                return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+            }
+            identities.push(identity);
+            #[cfg(target_os = "macos")]
+            let stamp = platform::stamp(&file)?;
+            files.push((
+                path,
+                file,
+                material.max_bytes as usize,
+                #[cfg(target_os = "macos")]
+                stamp,
+            ));
+        }
+        opened();
+        let mut materials = Vec::new();
+        for entry in &mut files {
+            materials.push(read(&mut entry.1, entry.2, &check)?);
+        }
+        for (entry, bytes) in files.iter_mut().zip(&materials) {
+            if *bytes != read(&mut entry.1, entry.2, &check)?
+                || platform::final_path(&entry.1)? != entry.0
+            {
+                return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+            }
+            #[cfg(target_os = "macos")]
+            platform::verify_file(&entry.1, &entry.0, entry.3)?;
+        }
+        self.verify()?;
+        let bundle = SourceBundle::capture_declared(binding, materials, language)?;
+        check()?;
+        Ok(bundle)
+    }
+    pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
+        self.verify()?;
+        Ok(&self.root)
+    }
+    /// Recorded selection identity for project-thread metadata comparisons.
+    /// Actual filesystem work must still verify the held selection on the IO worker.
+    pub(crate) fn destination_path(&self) -> &Path {
+        &self.root
+    }
+    /// List immediate non-directory names with the declared suffix. Capture
+    /// still checks each actual file; names do not authorize links or aliases.
+    pub fn declared_translation_files(
+        &self,
+        binding: &tsumugi_plugin_sdk::TranslationImportBinding,
+    ) -> Result<Vec<String>, ExecutionError> {
+        binding
+            .validate()
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-import-binding"))?;
+        self.translation_file_listing(
+            &binding.declaration.material.logical_directory,
+            &binding.declaration.material.extension,
+        )
+    }
+    fn translation_file_listing(
+        &self,
+        directory: &str,
+        extension: &str,
+    ) -> Result<Vec<String>, ExecutionError> {
+        self.verify()?;
+        let path = self.root.join(directory);
+        let held = platform::open(&path, true)?;
+        if platform::final_path(&held)? != path {
+            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+        }
+        let entries = listing(&path, &|| Ok(()))?;
+        if platform::identity(&platform::open(&path, true)?)? != platform::identity(&held)? {
+            return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+        }
+        self.verify()?;
+        let suffix = format!(".{extension}");
+        Ok(entries
+            .into_iter()
+            .filter(|(name, directory)| {
+                !directory && name.len() > suffix.len() && name.ends_with(&suffix)
+            })
+            .map(|(name, _)| name)
+            .collect())
+    }
+        pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
+        Ok(self
+            .translation_file_listing("i18n", "json")?
+            .into_iter()
+            .filter(|name| content::declared_locale(&format!("i18n/{name}")).is_ok())
+            .collect())
+    }
+    /// Capture exact UTF-8 bytes under the held native selection. No JSON,
+    /// filename language or native-key interpretation happens in this boundary.
+    pub fn capture_declared_translation(
+        &self,
+        binding: &tsumugi_plugin_sdk::TranslationImportBinding,
+        file_name: &str,
+        cancel: &Cancellation,
+    ) -> Result<tsumugi_plugin_sdk::CapturedTextArtifact, ExecutionError> {
+        binding
+            .validate()
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-import-binding"))?;
+        let material = &binding.declaration.material;
+        tsumugi_plugin_sdk::validate_portable_package_path(file_name)
+            .map_err(|_| error(ErrorCode::Unauthorized, "unauthorized-selection"))?;
+        if file_name.contains('/')
+            || !file_name.ends_with(&format!(".{}", material.extension))
+            || file_name.len() <= material.extension.len() + 1
+        {
+            return Err(error(ErrorCode::InvalidInput, "translation-file"));
+        }
+        let bytes = self.capture_translation_material_inner(
+            &material.logical_directory,
+            file_name,
+            material.max_bytes as usize,
+            cancel,
+            || {},
+        )?;
+        let utf8 = String::from_utf8(bytes)
+            .map_err(|_| error(ErrorCode::InvalidInput, "unsupported-encoding"))?;
+        Ok(tsumugi_plugin_sdk::CapturedTextArtifact {
+            id: ExecutionId::new().to_string(),
+            logical_path: format!("{}/{file_name}", material.logical_directory),
+            role: material.role.clone(),
+            sha256: tsumugi_plugin_sdk::payload_digest(&utf8),
+            utf8,
+        })
+    }
+        pub fn capture_translation(
+        &self,
+        file_name: &str,
+        target_locale: &str,
+        source_snapshot_id: ExecutionId,
+        cancel: &Cancellation,
+    ) -> Result<TranslationBundle, ExecutionError> {
+        self.capture_translation_inner(file_name, target_locale, source_snapshot_id, cancel, || {})
+    }
+        fn capture_translation_inner(
+        &self,
+        file_name: &str,
+        target_locale: &str,
+        source_snapshot_id: ExecutionId,
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+    ) -> Result<TranslationBundle, ExecutionError> {
+        let logical_path = format!("i18n/{file_name}");
+        content::declared_locale(&logical_path)?;
+        let bytes = self.capture_translation_material_inner(
+            "i18n",
+            file_name,
+            MAX_SOURCE_BYTES,
+            cancel,
+            opened,
+        )?;
+        TranslationBundle::capture(&logical_path, &bytes, target_locale, source_snapshot_id)
+    }
+    fn capture_translation_material_inner(
+        &self,
+        directory: &str,
+        file_name: &str,
+        limit: usize,
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+    ) -> Result<Vec<u8>, ExecutionError> {
+        self.verify()?;
+        let started = Instant::now();
+        let check = || {
+            if cancel.is_requested() {
+                Err(error(ErrorCode::Cancelled, "cancelled"))
+            } else if started.elapsed() > Duration::from_secs(30) {
+                Err(error(ErrorCode::Busy, "capture-timeout"))
+            } else {
+                Ok(())
+            }
+        };
+        let i18n_path = self.root.join(directory);
         let i18n = platform::open(&i18n_path, true)?;
         if platform::final_path(&i18n)? != i18n_path {
             return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
@@ -239,16 +388,17 @@ impl Selection {
         #[cfg(target_os = "macos")]
         let stamp = platform::stamp(&file)?;
         opened();
-        let bytes = read(&mut file, MAX_SOURCE_BYTES, &check)?;
-        if bytes != read(&mut file, MAX_SOURCE_BYTES, &check)?
+        let bytes = read(&mut file, limit, &check)?;
+        if bytes != read(&mut file, limit, &check)?
             || before != listing(&i18n_path, &check)?
+            || platform::identity(&platform::open(&i18n_path, true)?)? != platform::identity(&i18n)?
         {
             return Err(error(ErrorCode::DependencyConflict, "source-changed"));
         }
         #[cfg(target_os = "macos")]
         platform::verify_file(&file, &path, stamp)?;
         self.verify()?;
-        TranslationBundle::capture(&logical_path, &bytes, target_locale, source_snapshot_id)
+        Ok(bytes)
     }
     fn verify(&self) -> Result<(), ExecutionError> {
         if platform::identity(&self.root_file)? != self.identity
@@ -259,14 +409,14 @@ impl Selection {
         }
         Ok(())
     }
-    pub fn capture(
+        pub fn capture(
         &self,
         language: &str,
         cancel: &Cancellation,
     ) -> Result<SourceBundle, ExecutionError> {
         self.capture_inner(language, cancel, || {})
     }
-    fn capture_inner(
+        fn capture_inner(
         &self,
         language: &str,
         cancel: &Cancellation,
@@ -359,6 +509,179 @@ impl Selection {
         SourceBundle::capture(&manifest_bytes, &source_bytes, language)
     }
 }
+
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod translation_import_tests {
+    use super::*;
+
+    fn binding() -> tsumugi_plugin_sdk::TranslationImportBinding {
+        let manifest = tsumugi_plugin_sdk::parse_manifest(include_bytes!(
+            "../../../../../../../crates/plugin-sdk/tests/fixtures/translation-import.manifest.json"
+        ))
+        .unwrap();
+        let mut declaration = tsumugi_plugin_sdk::parse_translation_import_declaration(include_bytes!(
+            "../../../../../../../crates/plugin-sdk/tests/fixtures/translation-import.declaration.json"
+        )).unwrap();
+        declaration.material.logical_directory = "localized/records".into();
+        declaration.material.extension = "txt".into();
+        declaration.bind(&manifest, &"a".repeat(64)).unwrap()
+    }
+    fn fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("localized/records")).unwrap();
+        root
+    }
+
+    #[test]
+    fn declared_translation_capture_preserves_raw_bytes_without_interpreting_names_or_text() {
+        let root = fixture();
+        let raw = "\u{feff}// uninterpreted 中文 👩🏽‍💻 é\r\nopaque text\r\n";
+        fs::write(root.path().join("localized/records/not-a-locale.txt"), raw).unwrap();
+        fs::write(
+            root.path().join("localized/records/default.txt"),
+            b"domain must decide",
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("localized/records/ignored.json"),
+            b"excluded",
+        )
+        .unwrap();
+        fs::create_dir(root.path().join("localized/records/folder.txt")).unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let binding = binding();
+        assert_eq!(
+            selected.declared_translation_files(&binding).unwrap(),
+            vec!["default.txt", "not-a-locale.txt"]
+        );
+        let captured = selected
+            .capture_declared_translation(&binding, "not-a-locale.txt", &Cancellation::default())
+            .unwrap();
+        assert_eq!(captured.logical_path, "localized/records/not-a-locale.txt");
+        assert_eq!(captured.role, binding.declaration.material.role);
+        assert_eq!(captured.utf8.as_bytes(), raw.as_bytes());
+        assert_eq!(captured.sha256, tsumugi_plugin_sdk::payload_digest(raw));
+        assert_eq!(
+            fs::read(root.path().join(&captured.logical_path)).unwrap(),
+            raw.as_bytes()
+        );
+    }
+
+    #[test]
+    fn declared_translation_capture_enforces_whole_file_n_and_n_plus_one_limit() {
+        let root = fixture();
+        let binding = binding();
+        let path = root.path().join("localized/records/limit.txt");
+        let raw = "x".repeat(binding.declaration.material.max_bytes as usize);
+        fs::write(&path, &raw).unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        assert_eq!(
+            selected
+                .capture_declared_translation(&binding, "limit.txt", &Cancellation::default())
+                .unwrap()
+                .utf8,
+            raw
+        );
+        fs::write(&path, format!("{raw}x")).unwrap();
+        let error = selected
+            .capture_declared_translation(&binding, "limit.txt", &Cancellation::default())
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.stage, "limit-exceeded");
+    }
+
+    #[test]
+    fn declared_translation_capture_refuses_cancel_invalid_utf8_and_escaping_or_wrong_suffix_names()
+    {
+        let root = fixture();
+        let binding = binding();
+        fs::write(root.path().join("localized/records/text.txt"), b"held").unwrap();
+        fs::write(root.path().join("localized/records/invalid.txt"), [0xff]).unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        for name in [
+            "../text.txt",
+            "nested/text.txt",
+            "/text.txt",
+            "text.txt\\escape",
+            ".txt",
+            "text.json",
+        ] {
+            assert!(
+                selected
+                    .capture_declared_translation(&binding, name, &Cancellation::default())
+                    .is_err(),
+                "{name}"
+            );
+        }
+        let cancel = Cancellation::default();
+        cancel.request();
+        assert_eq!(
+            selected
+                .capture_declared_translation(&binding, "text.txt", &cancel)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert_eq!(
+            selected
+                .capture_declared_translation(&binding, "invalid.txt", &Cancellation::default())
+                .unwrap_err()
+                .stage,
+            "unsupported-encoding"
+        );
+        assert_eq!(
+            fs::read(root.path().join("localized/records/text.txt")).unwrap(),
+            b"held"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn declared_translation_capture_refuses_linked_file_directory_and_changed_open_file() {
+        use std::os::unix::fs::symlink;
+        let root = fixture();
+        let binding = binding();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("external.txt"), b"outside").unwrap();
+        symlink(
+            outside.path().join("external.txt"),
+            root.path().join("localized/records/linked.txt"),
+        )
+        .unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        assert!(
+            selected
+                .capture_declared_translation(&binding, "linked.txt", &Cancellation::default())
+                .is_err()
+        );
+        let path = root.path().join("localized/records/changed.txt");
+        fs::write(&path, b"before").unwrap();
+        let error = selected
+            .capture_translation_material_inner(
+                "localized/records",
+                "changed.txt",
+                131072,
+                &Cancellation::default(),
+                || {
+                    fs::write(&path, b"after ").unwrap();
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::DependencyConflict);
+        fs::rename(
+            root.path().join("localized/records"),
+            root.path().join("localized/original"),
+        )
+        .unwrap();
+        symlink(outside.path(), root.path().join("localized/records")).unwrap();
+        assert!(selected.declared_translation_files(&binding).is_err());
+        assert!(
+            selected
+                .capture_declared_translation(&binding, "external.txt", &Cancellation::default())
+                .is_err()
+        );
+    }
+}
 fn listing(
     path: &Path,
     check: &impl Fn() -> Result<(), ExecutionError>,
@@ -410,8 +733,27 @@ fn read(
 
 #[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    read_resource_input(path, "json", 128 * 1024)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn read_tmx_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    read_resource_input(path, "tmx", tsumugi_core::MAX_TMX_INPUT_BYTES)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) fn read_tbx_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    read_resource_input(path, "tbx", tsumugi_core::MAX_TBX_INPUT_BYTES)
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn read_resource_input(
+    path: &Path,
+    extension: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ExecutionError> {
     if !path.is_absolute()
-        || path.extension().is_none_or(|extension| extension != "json")
+        || path.extension().is_none_or(|actual| actual != extension)
         || path
             .components()
             .any(|component| matches!(component, std::path::Component::ParentDir))
@@ -435,7 +777,7 @@ pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError>
     }
     #[cfg(target_os = "macos")]
     let stamp = platform::stamp(&file)?;
-    let bytes = read(&mut file, 128 * 1024, &|| Ok(()))?;
+    let bytes = read(&mut file, max_bytes, &|| Ok(()))?;
     #[cfg(target_os = "macos")]
     platform::verify_file(&file, path, stamp)?;
     if file.metadata().map_err(io)?.len() != bytes.len() as u64 {
@@ -449,6 +791,16 @@ pub(crate) fn read_resource_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
     Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
 }
 
+#[cfg(not(any(windows, target_os = "macos")))]
+pub(crate) fn read_tmx_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
+    Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub(crate) fn read_tbx_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
+    Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+}
+
 // Other platforms are not silently given weaker capture guarantees.
 #[cfg(not(any(windows, target_os = "macos")))]
 pub struct Selection;
@@ -457,22 +809,47 @@ impl Selection {
     pub fn authorize(_: PathBuf) -> Result<Self, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
-    pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
+        pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
         Self::authorize(path)
     }
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    pub(crate) fn destination_path(&self) -> &Path {
+        Path::new("")
+    }
     pub fn label(&self) -> String {
         String::new()
     }
-    pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
+        pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
-    pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
+    pub fn capture_declared(
+        &self,
+        _: &tsumugi_plugin_sdk::SourceImportBinding,
+        _: &str,
+        _: &Cancellation,
+    ) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
-    pub fn capture_translation(
+    pub fn declared_translation_files(
+        &self,
+        _: &tsumugi_plugin_sdk::TranslationImportBinding,
+    ) -> Result<Vec<String>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+    pub fn capture_declared_translation(
+        &self,
+        _: &tsumugi_plugin_sdk::TranslationImportBinding,
+        _: &str,
+        _: &Cancellation,
+    ) -> Result<tsumugi_plugin_sdk::CapturedTextArtifact, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+        pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+        pub fn capture_translation(
         &self,
         _: &str,
         _: &str,
@@ -771,6 +1148,130 @@ mod tests {
     }
 }
 
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod source_import_tests {
+    use super::*;
+    fn binding() -> tsumugi_plugin_sdk::SourceImportBinding {
+        let manifest = tsumugi_plugin_sdk::parse_manifest(include_bytes!(
+            "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.manifest.json"
+        ))
+        .unwrap();
+        tsumugi_plugin_sdk::parse_source_import_declaration(include_bytes!(
+            "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.declaration.json"
+        ))
+        .unwrap()
+        .bind(
+            &manifest,
+            &"a".repeat(64),
+            &tsumugi_plugin_sdk::parse_review_declaration(include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.review.json"
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+    fn fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("materials")).unwrap();
+        fs::create_dir(root.path().join("metadata")).unwrap();
+        fs::write(
+            root.path().join("materials/raw.txt"),
+            "\u{feff}raw 👩🏽‍💻 é\r\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("metadata/header.txt"), b"opaque companion").unwrap();
+        root
+    }
+    #[test]
+    fn source_import_capture_reads_only_declared_files_and_retains_original_bytes() {
+        let root = fixture();
+        fs::write(root.path().join("unrelated.txt"), b"excluded").unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let bundle = selected
+            .capture_declared(&binding(), "en-US", &Cancellation::default())
+            .unwrap();
+        assert_eq!(bundle.files.len(), 2);
+        assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
+        assert_eq!(bundle.files[1].utf8, "opaque companion");
+        fs::write(root.path().join("materials/raw.txt"), b"new bytes").unwrap();
+        assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
+    }
+    #[test]
+    fn source_import_capture_refuses_missing_oversized_invalid_utf8_and_cancelled_material() {
+        for case in 0..4 {
+            let root = fixture();
+            let selected = Selection::authorize(root.path().into()).unwrap();
+            let cancel = Cancellation::default();
+            match case {
+                0 => fs::remove_file(root.path().join("metadata/header.txt")).unwrap(),
+                1 => fs::write(root.path().join("materials/raw.txt"), vec![b'x'; 131073]).unwrap(),
+                2 => fs::write(root.path().join("materials/raw.txt"), [0xff]).unwrap(),
+                _ => cancel.request(),
+            }
+            assert!(
+                selected
+                    .capture_declared(&binding(), "en-US", &cancel)
+                    .is_err(),
+                "case {case}"
+            );
+        }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn source_import_capture_refuses_links_fifo_aliases_and_changes_after_open() {
+        use std::os::unix::fs::symlink;
+        for case in 0..6 {
+            let root = fixture();
+            let selected = Selection::authorize(root.path().into()).unwrap();
+            let source = root.path().join("materials/raw.txt");
+            let header = root.path().join("metadata/header.txt");
+            if case < 4 {
+                match case {
+                    0 => {
+                        fs::remove_file(&source).unwrap();
+                        symlink(&header, &source).unwrap();
+                    }
+                    1 => {
+                        fs::rename(root.path().join("materials"), root.path().join("moved"))
+                            .unwrap();
+                        symlink(root.path().join("moved"), root.path().join("materials")).unwrap();
+                    }
+                    2 => {
+                        fs::remove_file(&header).unwrap();
+                        fs::hard_link(&source, &header).unwrap();
+                    }
+                    _ => {
+                        use std::os::unix::ffi::OsStrExt;
+                        fs::remove_file(&source).unwrap();
+                        let path = std::ffi::CString::new(source.as_os_str().as_bytes()).unwrap();
+                        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+                    }
+                }
+                assert!(
+                    selected
+                        .capture_declared(&binding(), "en-US", &Cancellation::default())
+                        .is_err(),
+                    "case {case}"
+                );
+            } else {
+                let result = selected.capture_declared_inner(
+                    &binding(),
+                    "en-US",
+                    &Cancellation::default(),
+                    || {
+                        if case == 4 {
+                            fs::write(&source, b"changed").unwrap();
+                        } else {
+                            fs::rename(&source, root.path().join("old.txt")).unwrap();
+                            fs::write(&source, "\u{feff}raw 👩🏽‍💻 é\r\n").unwrap();
+                        }
+                    },
+                );
+                assert_eq!(result.unwrap_err().code, ErrorCode::DependencyConflict);
+            }
+        }
+    }
+}
 #[cfg(all(test, target_os = "macos"))]
 mod macos_tests {
     use super::*;

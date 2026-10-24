@@ -3,19 +3,71 @@ import fixture from "../test/fixtures/releaseCommands.contract.json";
 import { confirmReleaseDelivery, confirmReleasePreview, releaseCommands, type DeliveryPreview, type DeliveryView, type ReleaseExceptionKind, type ReleaseView } from "./releaseCommands";
 import * as validators from "./generated/release.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import { pluginBuildPackage, pluginBuildWorkflow, savedPluginBuild } from "./testSupport/pluginBuildFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
-it("round trips the shared build and delivery contracts through all nine adapters", async () => {
-  const requestChecks = { session: validators.validateRequestSession, build: validators.validateRequestBuild,
+it("reads the typed saved build with its exact original identity and without execution calls", async () => {
+  expect(validators.validateRequestSavedPluginBuild(pluginBuildWorkflow.savedRead)).toBe(true);
+  expect(validators.validateResponseSavedPluginBuild(savedPluginBuild)).toBe(true);
+  invoke.mockResolvedValue(savedPluginBuild);
+  expect(await releaseCommands.savedBuild(pluginBuildWorkflow.savedRead)).toEqual(savedPluginBuild);
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenLastCalledWith("read_saved_plugin_build", { request: pluginBuildWorkflow.savedRead });
+  expect(savedPluginBuild.locales[0].result?.artifacts.map(file => file.logicalPath)).toEqual(pluginBuildWorkflow.review.choices[0].outputPaths);
+});
+
+it("retains separate complete build execution bindings and refuses the legacy environment shape", () => {
+  const build = savedPluginBuild.build;
+  for (const [role, execution] of [["builder", build.builderExecution], ["checker", build.checkerExecution]] as const) {
+    const capability = build.binding[role];
+    const component = pluginBuildPackage.manifest.components.find(component => component.id === capability.provider.componentId);
+    if (!component) throw new Error("Missing canonical build component");
+    expect(execution).toEqual({ capability, componentScope: component.scope, applicationScope: null,
+      profile: build.binding.declaration.profile, environment: pluginBuildWorkflow.review.build.environment });
+  }
+  const { builderExecution, checkerExecution, ...withoutExecutions } = build;
+  for (const incomplete of [
+    { ...withoutExecutions, checkerExecution }, { ...withoutExecutions, builderExecution },
+    { ...withoutExecutions, environment: builderExecution.environment },
+  ]) expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, build: incomplete })).toBe(false);
+});
+
+it("bounds saved build counts and refuses artifact bytes in the read-only projection", () => {
+  const locale = savedPluginBuild.locales[0], artifact = locale.result!.artifacts[0];
+  for (const count of [-1, 4294967296, 0.5, "2"]) {
+    expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, locales: [{ ...locale, targetCount: count }] })).toBe(false);
+    expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, locales: [{ ...locale,
+      result: { ...locale.result, artifacts: [{ ...artifact, byteLength: count }] } }] })).toBe(false);
+  }
+  expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, locales: [{ ...locale,
+    result: { ...locale.result, artifacts: [{ ...artifact, utf8: "unrequested output bytes" }] } }] })).toBe(false);
+});
+
+it.each(["project", "attempt", "item", "paths", "artifact-id", "status", "non-success"] as const)("rejects a saved build projection with mismatched %s without retry", async mismatch => {
+  const value = structuredClone(savedPluginBuild), other = pluginBuildWorkflow.prepareCheck.attemptId;
+  if (mismatch === "project") value.projectId = other;
+  if (mismatch === "attempt") value.attemptId = other;
+  if (mismatch === "item") value.locales[0].status.itemId = other;
+  if (mismatch === "paths") value.locales[0].choice.outputPaths = ["unrequested.txt"];
+  if (mismatch === "artifact-id") value.locales[0].result!.artifacts[1].id = value.locales[0].result!.artifacts[0].id;
+  if (mismatch === "status") value.locales[0].status.execution = "failed";
+  if (mismatch === "non-success" && value.locales[0].result) value.locales[0].result.outcome = "failed";
+  invoke.mockResolvedValue(value);
+  await expect(releaseCommands.savedBuild(pluginBuildWorkflow.savedRead)).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("round trips the shared delivery contracts through all seven adapters", async () => {
+  const requestChecks = { session: validators.validateRequestSession,
     release: validators.validateRequestRelease, preview: validators.validateRequestPreview,
     export: validators.validateRequestExport, reconcile: validators.validateRequestReconcile };
   const responseChecks = { identity: validators.validateResponseIdentity, releases: validators.validateResponseReleases,
     selection: validators.validateResponseSelection, preview: validators.validateResponsePreview,
     delivery: validators.validateResponseDelivery, deliveries: validators.validateResponseDeliveries,
-    buildAttempt: validators.validateResponseBuildAttempt, deliveryAction: validators.validateResponseDeliveryAction };
+    deliveryAction: validators.validateResponseDeliveryAction };
   for (const [key, check] of Object.entries(requestChecks)) {
     const value = fixture.requests[key as keyof typeof fixture.requests];
     expect(check(value), `requests.${key}`).toBe(true);
@@ -27,8 +79,6 @@ it("round trips the shared build and delivery contracts through all nine adapter
     expect(check(JSON.parse(JSON.stringify(value))), key).toBe(true);
   }
   const cases = [
-    ["start_locale_build", fixture.requests.build, fixture.responses.identity, () => releaseCommands.start(fixture.requests.build)],
-    ["read_locale_build_attempt", fixture.requests.build, fixture.responses.buildAttempt, () => releaseCommands.buildAttempt(fixture.requests.build)],
     ["read_delivery_action", fixture.requests.reconcile, fixture.responses.deliveryAction, () => releaseCommands.deliveryAction(fixture.requests.reconcile)],
     ["list_releases", fixture.requests.session, fixture.responses.releases, () => releaseCommands.releases(fixture.requests.session)],
     ["choose_delivery_folder", fixture.requests.session, fixture.responses.selection, () => releaseCommands.choose(fixture.requests.session)],
@@ -43,15 +93,12 @@ it("round trips the shared build and delivery contracts through all nine adapter
     expect(invoke).toHaveBeenLastCalledWith(command, { request });
   }
   invoke.mockResolvedValueOnce(null);
-  expect(await releaseCommands.buildAttempt(fixture.requests.build)).toBeNull();
-  invoke.mockResolvedValueOnce(null);
   expect(await releaseCommands.deliveryAction(fixture.requests.reconcile)).toBeNull();
 });
 
 it("preserves precise counts, Unicode, nulls and closed states in nested release data", () => {
   expect(fixture.responses.releases[0].sourceFiles[0].logicalPath).toContain("木桶 👩🏽‍💻 é");
   expect(validators.validateResponseSelection(null)).toBe(true);
-  expect(validators.validateResponseBuildAttempt(null)).toBe(true);
   expect(validators.validateResponseDeliveryAction(null)).toBe(true);
   expect(validators.validateResponsePreview({ ...fixture.responses.preview, selectionId: "short" })).toBe(false);
   expect(validators.validateResponseReleases([{ ...fixture.responses.releases[0], unexpected: true }])).toBe(false);
@@ -67,10 +114,9 @@ it("preserves precise counts, Unicode, nulls and closed states in nested release
   expect(validators.validateResponsePreview({ ...fixture.responses.preview, files: [{ ...fixture.responses.preview.files[0], state: "unknown" }] })).toBe(false);
 });
 
-it("keeps malformed or misbound build and delivery acknowledgements unknown without replay", async () => {
+it("keeps malformed or misbound delivery acknowledgements unknown without replay", async () => {
   const other = fixture.responses.releases[0].sourceSnapshotId;
   const cases = [
-    [other, () => releaseCommands.start(fixture.requests.build)],
     [{ ...fixture.responses.preview, releaseId: other }, () => releaseCommands.preview(fixture.requests.preview)],
     [{ ...fixture.responses.preview, selectionId: other }, () => releaseCommands.preview(fixture.requests.preview)],
     [{ ...fixture.responses.delivery, actionId: other }, () => releaseCommands.export(fixture.requests.export)],
@@ -79,8 +125,6 @@ it("keeps malformed or misbound build and delivery acknowledgements unknown with
     [null, () => releaseCommands.export(fixture.requests.export)],
     [[{ ...fixture.responses.delivery, releaseId: other }], () => releaseCommands.deliveries(fixture.requests.release)],
     [{ ...fixture.responses.delivery, actionId: other }, () => releaseCommands.reconcile(fixture.requests.reconcile)],
-    [{ ...fixture.responses.buildAttempt, attemptId: other }, () => releaseCommands.buildAttempt(fixture.requests.build)],
-    [{ ...fixture.responses.buildAttempt, operation: "ai-translation" }, () => releaseCommands.buildAttempt(fixture.requests.build)],
     [{ ...fixture.responses.deliveryAction, actionId: other }, () => releaseCommands.deliveryAction(fixture.requests.reconcile)],
   ] as const;
   for (const [response, call] of cases) {

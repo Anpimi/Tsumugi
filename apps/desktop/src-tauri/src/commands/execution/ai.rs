@@ -1,9 +1,78 @@
 use super::ai_wire::{AiConfig, AiItemView, AiOutputView, AiPreviewView, ProviderBudget};
 use super::*;
+use crate::commands::connections;
 use tsumugi_core::ai::AiPreview;
+mod automation;
+pub(super) use automation::PreparedTracking;
+#[cfg(test)]
+pub(super) use automation::commit_candidate;
+pub use automation::{EffectPhase, EffectView};
 #[derive(Default)]
 pub(super) struct AiSession {
     preview: Option<(AiPreview, FixedInput)>,
+    automation: automation::Automation,
+}
+impl AiSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        self.automation.stop_package(package);
+    }
+    pub(super) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        self.automation.package_active(package)
+    }
+    #[cfg(test)]
+    pub(super) fn pause_check_computation(&mut self, probe: review::ComputeProbe) {
+        self.automation.compute_probe = Some(probe);
+    }
+    pub(super) fn track(
+        &mut self,
+        store: &ProjectStore,
+        input: &FixedInput,
+        consent: Option<work_plans::CheckerConsent>,
+    ) -> Result<(), ExecutionError> {
+        self.automation.track(store, input, consent)
+    }
+    pub(super) fn prepare_service_tracking(
+        &mut self,
+        store: &ProjectStore,
+        prepared: &tsumugi_core::application::PreparedWorkPlanServiceGeneration,
+        consent: Option<work_plans::CheckerConsent>,
+    ) -> Result<PreparedTracking<'_>, ExecutionError> {
+        self.automation
+            .prepare_service_tracking(store, prepared, consent)
+    }
+    pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
+        self.automation.tick(store, runtime);
+    }
+    pub(super) fn release_terminal_service_origins(
+        &mut self,
+        store: &ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), ExecutionError> {
+        self.automation
+            .release_terminal_service_origins(store, runtime)
+    }
+    pub(super) fn prepare_runtime_tick(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<Option<work_plans::CheckerConsent>, CommandError> {
+        self.automation.prepare_runtime_tick(store, runtime)
+    }
+    pub(super) fn active(&self) -> bool {
+        self.automation.active()
+    }
+    pub(super) fn plan_active(&self, plan: ExecutionId) -> bool {
+        self.automation.plan_active(plan)
+    }
+    pub(super) fn stop(&mut self) {
+        self.automation.stop();
+    }
 }
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AiPreviewRequest {config:AiConfig,locale:String,unit_ids:Vec<ExecutionId>});
 request!(
@@ -18,6 +87,13 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     AiReadRequest {
         attempt_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    AiEffectRetryRequest {
+        attempt_id: ExecutionId,
+        item_id: ExecutionId
     }
 );
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -35,11 +111,17 @@ pub struct AiRow {
     item_id: ExecutionId,
     result_id: Option<ExecutionId>,
     output: Option<AiOutputView>,
+    saved_revision_id: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    candidate_decision: Option<tsumugi_core::CandidateDecision>,
+    automation: Option<EffectView>,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiView {
+    plan_id: Option<ExecutionId>,
+    plan_generation: Option<Revision>,
     budget: Option<ProviderBudget>,
     config: AiConfig,
     recipe: String,
@@ -73,9 +155,13 @@ mod wire_tests {
         round_trip!("requests", "preview", AiPreviewRequest);
         round_trip!("requests", "start", AiStartRequest);
         round_trip!("requests", "read", AiReadRequest);
+        round_trip!("requests", "effectRetry", AiEffectRetryRequest);
         round_trip!("responses", "prepared", AiPrepared);
         round_trip!("responses", "identity", ExecutionId);
         round_trip!("responses", "view", AiView);
+        round_trip!("responses", "automaticView", AiView);
+        round_trip!("requests", "automaticRead", AiReadRequest);
+        round_trip!("responses", "effectRetry", bool);
         let mut value = fixture["responses"]["view"].clone();
         value["rows"][0]["output"]["usage"]["promptTokens"] = serde_json::json!(1);
         assert!(serde_json::from_value::<AiView>(value).is_err());
@@ -90,6 +176,7 @@ pub async fn preview_ai_translation(
     state: State<'_, AppState>,
     request: AiPreviewRequest,
 ) -> Result<AiPrepared, CommandError> {
+    let connections = connections::captured_store(&state);
     state
         .sessions
         .run(
@@ -104,6 +191,7 @@ pub async fn preview_ai_translation(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
+                connections::verify_configs(connections.as_ref(), std::slice::from_ref(&request.config))?;
                 let preview = store
                     .preview_ai(request.config.into(), &request.locale, &request.unit_ids)
                     .map_err(map_ai)?;
@@ -140,6 +228,7 @@ pub async fn start_ai_translation(
     state: State<'_, AppState>,
     request: AiStartRequest,
 ) -> Result<ExecutionId, CommandError> {
+    let connections = connections::captured_store(&state);
     state
         .sessions
         .run(
@@ -217,6 +306,7 @@ pub async fn start_ai_translation(
                         "ai-preview",
                     )));
                 }
+                connections::verify_configs(connections.as_ref(), std::slice::from_ref(&preview.config))?;
                 host.runtime.submit(store, &input).map_err(map_ai)?;
                 Ok(request.attempt_id)
             },
@@ -259,22 +349,118 @@ pub async fn read_ai_translation(
                         } else {
                             None
                         };
+                        let saved_revision_id =
+                            store.saved_ai_candidate(request.attempt_id, row.status.item_id)?;
+                        let candidate_decision = saved_revision_id.map(|revision| store.translation_candidate_decision(request.project_id,revision)).transpose()?.flatten();
+                        let receipt = match (input.envelope().automation, saved_revision_id) {
+                            (Some(lease), Some(revision)) => {
+                                store.automatic_selection_for_candidate(lease, revision)?
+                            }
+                            _ => None,
+                        };
+                        let automation = if let Some(receipt) = receipt {
+                            Some(EffectView {
+                                phase: automation::phase_for(&receipt),
+                                action_id: Some(receipt.request.action_id),
+                                receipt: Some(receipt),
+                                error: None,
+                                retryable: false,
+                            })
+                        } else if let Some(view) = host
+                            .ai
+                            .automation
+                            .view(request.attempt_id, row.status.item_id)
+                        {
+                            Some(view)
+                        } else if let Some(lease) = input.envelope().automation {
+                            let plan = store.work_plan(lease.plan_id)?;
+                            let checks = plan
+                                .options
+                                .requests(tsumugi_core::application::AutomationEffect::RunChecks);
+                            let selection = plan.options.selection_policy
+                                != tsumugi_core::application::SelectionPolicy::CandidatesOnly;
+                            (checks || selection || saved_revision_id.is_some()).then_some(
+                                EffectView {
+                                    // Reopening can display the saved candidate,
+                                    // but cannot reconstruct an unfinished checker
+                                    // session or claim that its QA was recorded.
+                                    phase: if checks || selection {
+                                        EffectPhase::Cancelled
+                                    } else {
+                                        EffectPhase::Saved
+                                    },
+                                    action_id: None,
+                                    receipt: None,
+                                    error: None,
+                                    retryable: false,
+                                },
+                            )
+                        } else {
+                            None
+                        };
                         Ok(AiRow {
                             item: item.into(),
                             item_id: row.status.item_id,
                             result_id: row.result_id,
                             output: output.map(Into::into),
+                            saved_revision_id,
+                            candidate_decision,
+                            automation,
                         })
                     })
                     .collect::<Result<Vec<_>, ExecutionError>>()
                     .map_err(map_ai)?;
+                // Continued attempts share the original plan's charged budget;
+                // a child-only summary would hide prior requests and unknowns.
+                let budget_owner = match input.envelope().automation {
+                    Some(lease) => {
+                        store
+                            .work_plan(lease.plan_id)
+                            .map_err(map_read)?
+                            .execution_input()
+                            .map_err(map_read)?
+                            .task_id
+                    }
+                    None => input.envelope().task_id,
+                };
                 Ok(AiView {
-                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?.map(Into::into),
-                    config: settings.config.into(),
+                    plan_id: input.envelope().automation.map(|lease| lease.plan_id),
+                    plan_generation: input.envelope().automation.map(|lease| lease.generation),
+                    budget: store.provider_budget(budget_owner).map_err(map_read)?.map(Into::into),
+                    config: settings.config,
                     recipe: settings.recipe,
                     detail,
                     rows,
                 })
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn retry_work_plan_effect(
+    state: State<'_, AppState>,
+    request: AiEffectRetryRequest,
+) -> Result<bool, CommandError> {
+    state
+        .sessions
+        .run(
+            "retry_work_plan_effect",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.ai
+                    .automation
+                    .retry(store, request.attempt_id, request.item_id)
+                    .map_err(map_adopt)?;
+                Ok(true)
             },
         )
         .await

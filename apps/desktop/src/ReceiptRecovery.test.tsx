@@ -11,6 +11,7 @@ import { sourceRowFixture } from "./testSupport/sourceFixture";
 import type { ReviewWrite } from "./reviewCommands";
 import type { ProjectView } from "./projectCommands";
 import resourceFixture from "../test/fixtures/resourceCommands.contract.json";
+import { validateResponseCapture } from "./generated/resource.validators";
 import errors from "../test/fixtures/commandErrors.contract.json";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -23,7 +24,7 @@ function Probe() { const a = useReviewDraftSession(), b = useResourceDraftSessio
   useLayoutEffect(() => { review = a; resource = b; reads = c; }); return null; }
 const cases = [
   ["decision", "write_review_decision", "read_review_decision_action", "decision"],
-  ["check", "run_review_checks", "read_review_check_action", ""],
+  ["check", "prepare_review_checks", "read_review_check_action", ""],
   ["waiver", "waive_review_issue", "read_review_waiver_action", "waiver"],
   ["fallback", "allow_source_fallback", "read_review_fallback_action", "fallback"],
   ["term", "save_term", "read_term_save_action", "term"],
@@ -51,22 +52,31 @@ function receipt(kind: Case[0], request: Wire): object {
     text: request.text, reason: request.reason, previousRevisionId: request.expectedRevisionId ?? null };
   if (kind === "capture") return { captureId: fixtureIdentity(815), unitId: request.unitId, locale: request.locale,
     sourceRevisionId: request.sourceRevisionId, budgetBytes: request.budgetBytes, included: [], omitted: [] };
-  return { actionId: request.actionId, decision: request.decision, revision: null };
+  return { request, actionId: request.actionId, decision: request.decision, revision: null };
 }
-function pending(test: Case) { return test[0] === "decision" || test[0] === "check" || test[0] === "waiver" || test[0] === "fallback" ? review.current() : resource.current(); }
+function pending(test: Case) {
+  const value = ["decision", "check", "waiver", "fallback"].includes(test[0]) ? review.current() : resource.current();
+  return { ...value, pendingCheckedMissing: "retryAllowed" in value ? value.retryAllowed : value.pendingCheckedMissing,
+    checkingAction: Boolean(value.checkingAction) };
+}
+
 async function prepare(test: Case) {
   renderWorkbench(<Probe />, project);
   await act(async () => {
     if (["decision", "check", "waiver", "fallback"].includes(test[0])) { review.setSelected(target); review.setActor("Reviewer A"); review.editReason(target, "Original A"); }
     if (test[0] === "term") resource.editTerm({ source: "Barrel", aliases: ["Cask"], target: "A", protected: false, scopeUnitId: null, reason: "Original A" }, "Cask, ");
     if (test[0] === "context" || test[0] === "capture") { resource.beginContext(row, null); resource.editContext("A"); resource.editContextReason("Original A"); }
-    if (test[0] === "file") await resource.openPreview(resourceFixture.responses.preview.capture);
+    if (test[0] === "file") {
+      const capture: unknown = resourceFixture.responses.preview.capture;
+      if (!validateResponseCapture(capture) || capture === null) throw new Error("Invalid canonical resource capture");
+      await resource.openPreview(capture);
+    }
   });
 }
 function start(test: Case) {
   switch (test[0]) {
     case "decision": return review.decide("approve", () => true);
-    case "check": return review.check(() => true);
+    case "check": return review.prepareCheck(() => true);
     case "waiver": return review.waive("a".repeat(64), true, null, () => true);
     case "fallback": return review.fallback(true, () => true);
     case "term": return resource.saveTerm();
@@ -136,14 +146,14 @@ for (const test of cases) {
 }
 it("an original term read preserves B and raw aliases while the owner remains hidden", async () => {
   const test = cases[4]; mode = "deferred"; useCase(test); await prepare(test); let work!: Promise<void>;
-  act(() => { work = start(test); }); await waitFor(() => expect(resource.current().checkingAction).toBe(true));
+  act(() => { work = start(test); }); await waitFor(() => expect(Boolean(resource.current().checkingAction)).toBe(true));
   act(() => resource.editTerm({ ...resource.current().termDraft, target: "B", reason: "New B" }, "Cask, B raw, "));
   await act(async () => { finish({ request: lastOriginal, receipt: lastReceipt }); await work; });
   expect(resource.current()).toMatchObject({ pending: null, newerTerm: true, termDraft: { target: "B", reason: "New B" }, aliasInput: "Cask, B raw, " });
 });
 it("an original context read preserves B text and reason", async () => {
   const test = cases[5]; mode = "deferred"; useCase(test); await prepare(test); let work!: Promise<void>;
-  act(() => { work = start(test); }); await waitFor(() => expect(resource.current().checkingAction).toBe(true));
+  act(() => { work = start(test); }); await waitFor(() => expect(Boolean(resource.current().checkingAction)).toBe(true));
   act(() => { resource.editContext("B"); resource.editContextReason("New B"); });
   await act(async () => { finish({ request: lastOriginal, receipt: lastReceipt }); await work; });
   expect(resource.current()).toMatchObject({ pending: null, newerContext: true, contextDraft: "B", contextReason: "New B" });

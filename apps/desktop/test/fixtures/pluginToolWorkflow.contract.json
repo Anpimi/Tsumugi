@@ -1,0 +1,293 @@
+{
+  "request": {
+    "package": {
+      "plugin": {
+        "publisher": "org.tsumugi.examples",
+        "id": "philosophy",
+        "version": "0.1.0-alpha.1"
+      },
+      "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "resourceId": "agent-query-tool",
+    "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "view": {
+    "settingsRevision": "1",
+    "resourceId": "agent-query-tool",
+    "binding": {
+      "declaration": {
+        "name": "philosophy_query",
+        "title": "Philosophy terminology lookup",
+        "capabilityId": "query",
+        "profile": {
+          "id": "org.tsumugi.examples.philosophy-terminology",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "supportingResources": [
+          "terminology"
+        ],
+        "skill": "concept-review",
+        "description": "Query explicitly selected philosophical concepts using the exact captured terminology resource. Returned preferences are unadopted suggestions."
+      },
+      "capability": {
+        "provider": {
+          "plugin": {
+            "publisher": "org.tsumugi.examples",
+            "id": "philosophy",
+            "version": "0.1.0-alpha.1"
+          },
+          "componentId": "knowledge",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "declaration": {
+          "contract": {
+            "id": "org.tsumugi.examples.philosophy-query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "org.tsumugi.examples.philosophy-query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "org.tsumugi.examples.philosophy-query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "org.tsumugi.examples.philosophy-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "org.tsumugi.examples.philosophy-terminology",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 65536,
+            "maxOutputBytes": 65536,
+            "concurrency": 1,
+            "timeoutMs": 5000
+          }
+        }
+      },
+      "resources": [
+        {
+          "contributionId": "terminology",
+          "schema": {
+            "id": "org.tsumugi.examples.terminology-resource",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        }
+      ]
+    },
+    "packageOrigin": {
+      "sourceId": "manual-local",
+      "publisherId": "user-approved"
+    },
+    "environment": {
+      "protocolVersion": 1,
+      "platform": {
+        "operatingSystem": "macos",
+        "architecture": "aarch64"
+      },
+      "sdkVersion": "0.1.0-alpha.1",
+      "processProtocol": 3,
+      "profile": "node-system-libraries-v1",
+      "toolVersion": "26.10.0",
+      "tool": {
+        "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+        "entrypoint": "bin/node"
+      },
+      "host": {
+        "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+        "entrypoint": "dist/main.js"
+      }
+    },
+    "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "runtimeOrigin": {
+      "sourceId": "captured-runtime",
+      "publisherId": "user-approved"
+    },
+    "componentScope": "project"
+  },
+  "prepare": {
+    "sessionToken": "session-1",
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "tool": {
+      "package": {
+        "plugin": {
+          "publisher": "org.tsumugi.examples",
+          "id": "philosophy",
+          "version": "0.1.0-alpha.1"
+        },
+        "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "resourceId": "agent-query-tool",
+      "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "attemptId": "00000000-0000-4000-8000-000000000701",
+    "payloads": [
+      {
+        "text": "Synthetic Unicode 👩🏽‍💻 é",
+        "queryId": "query-1"
+      }
+    ]
+  },
+  "preflight": {
+    "attemptId": "00000000-0000-4000-8000-000000000701",
+    "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "tool": {
+      "settingsRevision": "1",
+      "resourceId": "agent-query-tool",
+      "binding": {
+        "declaration": {
+          "name": "philosophy_query",
+          "title": "Philosophy terminology lookup",
+          "capabilityId": "query",
+          "profile": {
+            "id": "org.tsumugi.examples.philosophy-terminology",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "supportingResources": [
+            "terminology"
+          ],
+          "skill": "concept-review",
+          "description": "Query explicitly selected philosophical concepts using the exact captured terminology resource. Returned preferences are unadopted suggestions."
+        },
+        "capability": {
+          "provider": {
+            "plugin": {
+              "publisher": "org.tsumugi.examples",
+              "id": "philosophy",
+              "version": "0.1.0-alpha.1"
+            },
+            "componentId": "knowledge",
+            "contributionId": "query",
+            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "declaration": {
+            "contract": {
+              "id": "org.tsumugi.examples.philosophy-query",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "org.tsumugi.examples.philosophy-query-input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "org.tsumugi.examples.philosophy-query-output",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "org.tsumugi.examples.philosophy-error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [
+              {
+                "id": "org.tsumugi.examples.philosophy-terminology",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            ],
+            "effect": "read-only",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 65536,
+              "maxOutputBytes": 65536,
+              "concurrency": 1,
+              "timeoutMs": 5000
+            }
+          }
+        },
+        "resources": [
+          {
+            "contributionId": "terminology",
+            "schema": {
+              "id": "org.tsumugi.examples.terminology-resource",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          }
+        ]
+      },
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 3,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "runtimeOrigin": {
+        "sourceId": "captured-runtime",
+        "publisherId": "user-approved"
+      },
+      "componentScope": "project"
+    },
+    "items": [
+      {
+        "itemId": "00000000-0000-4000-8000-000000000702",
+        "payload": {
+          "text": "Synthetic Unicode 👩🏽‍💻 é",
+          "queryId": "query-1"
+        }
+      }
+    ],
+    "applicationScope": null,
+    "applicationCapabilities": []
+  },
+  "start": {
+    "sessionToken": "session-1",
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "attemptId": "00000000-0000-4000-8000-000000000701",
+    "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "grantId": "00000000-0000-4000-8000-000000000703",
+    "expiresAtMs": "18446744073709551615",
+    "unsandboxedExecution": true,
+    "applicationExecution": false
+  },
+  "discard": {
+    "sessionToken": "session-1",
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "attemptId": "00000000-0000-4000-8000-000000000701"
+  }
+}

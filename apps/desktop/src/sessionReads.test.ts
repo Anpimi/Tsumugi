@@ -119,6 +119,47 @@ it("reports semantic scopes without revoking preparation for unchanged focus che
   unsubscribe();
 });
 
+it("delivers queued semantic hints before confirming a fresh dependent read", async () => {
+  const fixture = setup(); await settle();
+  const changes = vi.fn(); fixture.reads.subscribeChanges(changes);
+  fixture.set(snapshot("1"));
+  fixture.emit({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["translation"] });
+  expect(changes).not.toHaveBeenCalled();
+  await fixture.reads.synchronizeFresh(); await settle();
+  expect(changes).toHaveBeenCalledExactlyOnceWith(["translation"]);
+  await vi.advanceTimersByTimeAsync(50); await settle();
+  expect(changes).toHaveBeenCalledOnce();
+});
+
+it("starts fresh change confirmation after an older snapshot flight settles", async () => {
+  let held = false, sequence = "0", finish!: (value: ProjectChanges) => void;
+  const fixture = setup({ snapshot: () => held ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(snapshot(sequence)) });
+  await settle();
+  const before = fixture.wire.snapshot.mock.calls.length;
+  held = true;
+  const previous = fixture.reads.synchronize();
+  sequence = "1";
+  const current = fixture.reads.synchronizeFresh();
+  await settle();
+  expect(fixture.wire.snapshot).toHaveBeenCalledTimes(before + 1);
+  held = false; finish(snapshot("0"));
+  await previous; await current; await settle();
+  expect(fixture.wire.snapshot).toHaveBeenCalledTimes(before + 2);
+  expect(fixture.wire.snapshot).toHaveBeenLastCalledWith({ ...context, afterSequence: "0" });
+  fixture.emit({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["translation"] });
+  const calls = fixture.wire.snapshot.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(50); await settle();
+  expect(fixture.wire.snapshot).toHaveBeenCalledTimes(calls);
+});
+
+it("refuses dependent confirmation when the current change snapshot is unavailable", async () => {
+  let unavailable = false;
+  const fixture = setup({ snapshot: () => unavailable ? Promise.reject(new Error("Snapshot unavailable")) : Promise.resolve(snapshot()) });
+  await settle(); unavailable = true;
+  await expect(fixture.reads.synchronizeFresh()).rejects.toThrow("Current project changes could not be confirmed");
+  expect(fixture.reads.status()).toBe(true);
+});
+
 it("permanently retires the bridge and ignores delayed registration, hints and attempts to restart", async () => {
   let registered!: (stop: () => void) => void;
   const fixture = setup({ listen: () => new Promise(resolve => { registered = resolve; }) });

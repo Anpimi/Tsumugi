@@ -1,3 +1,8 @@
+import { ReviewFindings } from "./ReviewFindings";
+import { AiSemanticReview } from "./AiSemanticReview";
+import { ReviewCheckerDetails, ReviewDiagnosticDetails, checkerIdentity, capturedRuleLabel, ruleIdentity } from "./ReviewCheckers";
+import { TextReviewSelections } from "./TextReviewSelections";
+import { reviewFindingLabel } from "./reviewLabels";
 import { reviewReasonKey } from "./reviewLabels";
 import { commandFailure, failureReason, CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
@@ -9,10 +14,16 @@ import type { ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { reviewCommands as commands, type Eligibility, type EligibilityReason,
   type ReviewHistoryPage, type ReviewSummaryPage, type ReviewTarget, type WorkPage } from "./reviewCommands";
-import { reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
+import { isHumanReviewPending, reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
 import { useWorkbenchCommands, type ReviewFallbackCommandPayload, type ReviewWaiverCommandPayload } from "./workbenchCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ChangeScope } from "./sessionReads";
+import type { ReviewHandoffPresentation } from "./sessionNavigation";
+import { currentDiagnosticRun, diagnosticIntentMatchesTarget, type ReviewDiagnosticIntent, type ReviewEditorHandoff, type ReviewEditorReturn } from "./reviewDiagnosticNavigation";
+import { semanticReviewKey } from "./aiSemanticReviewQueries";
+import { reviewFindingsKey } from "./reviewQueries";
+import type { AiSemanticReviewView } from "./aiSemanticReviewCommands";
+import type { ReviewFindingView } from "./reviewCommands";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -34,9 +45,13 @@ const HISTORY_FIRST_SCOPES: ChangeScope[] = ["source", "translation", "resources
 // cannot refetch while that cursor transition is committing.
 const HISTORY_LATER_SCOPES: ChangeScope[] = ["source", "translation", "resources"];
 
-export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
-  project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
+export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, onOpenConnections, onReturnToAi, handoff, ref }: {
+  project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string, handoff?: ReviewEditorHandoff) => boolean | Promise<boolean>;
   ref?: Ref<ReviewHandle>;
+  onOpenExtensions?: () => void;
+  onOpenConnections?: () => void;
+  onReturnToAi?: () => Promise<boolean>;
+  handoff?: ReviewHandoffPresentation;
 }) {
   const { t } = useTranslation();
   const session = executionContext(project);
@@ -52,6 +67,10 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const setReason = owner.setReason;
   const decide = owner.decide;
   const check = owner.check;
+  const prepareCheck = owner.prepareCheck;
+  const { advisoryChecks, checkReview: currentCheckReview, checkConsent } = owner.state;
+  const slotConsentKey = owner.slotConsentKey;
+  const checkersConfirmed = owner.checkersConfirmed();
   const cancelCheck = owner.cancelCheck;
   const [open, setOpen] = useWorkbenchView("review");
   const [tab, setTab] = useWorkbenchState<Tab>("review", "tab", "review");
@@ -61,6 +80,9 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [pageAfter, setPageAfter] = useWorkbenchState("review", "pageAfter", 0);
   const [historyCursor, setHistoryCursor] = useWorkbenchState("review", "historyCursor", { unitId: "", locale: "", offset: 0 });
   const [workCursor, setWorkCursor] = useWorkbenchState("review", "workCursor", { locale, offset: 0 });
+  const [editorOrigin, setEditorOrigin] = useWorkbenchState<ReviewEditorReturn | null>("review", "editorOrigin", null);
+  const [editorReturned, setEditorReturned] = useWorkbenchState<ReviewEditorReturn | null>("review", "editorReturned", null);
+  const returnFocus = useRef<HTMLButtonElement>(null), focusedReturn = useRef<ReviewEditorReturn | null>(null);
   const [languages, setLanguages] = useWorkbenchState<string[]>("review", "languages", project.metadata.targetLocales);
   const [assessment, setAssessment] = useWorkbenchState<{ projectId: string; sessionToken: string; reviewLocale: string; locales: string[] } | null>("review", "assessment", null);
   const reason = failureReason(reasonValue) ?? "";
@@ -163,7 +185,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const invalidDraftLocale = invalidDraftKey?.slice(0, invalidDraftKey.indexOf(":"));
   const invalidPendingLocale = pending && !project.metadata.targetLocales.includes(pending.request.locale) ? pending.request.locale : null;
   const removedLocale = targetRemoved ? locale : invalidChosenLocale ?? invalidDraftLocale ?? invalidPendingLocale;
-  const retainedReview = hasDraft || chosenCount > 0 || !!pending || owner.inFlight() || batchRunning;
+  const retainedReview = hasDraft || chosenCount > 0 || !!pending || owner.inFlight() || batchRunning
+    || !!currentCheckReview || checkConsent.length > 0 || advisoryChecks.length > 0 || owner.semantic.dirty();
   // The primary content belongs to the business capture, including its checked
   // receipts. Query can refresh the comparison without replacing that evidence.
   const displayTarget = selected;
@@ -176,6 +199,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     && comparisonIntent.locale === selected.locale && comparisonIntent.basis === selected.basis
     && comparisonIntent.currentBasis === currentFacts.basis && comparisonIntent.fallbackId === (currentFacts.currentFallback?.fallbackId ?? null);
   const checkTarget = currentFacts ?? displayTarget;
+  const displayedCheck = checkTarget?.currentCheck;
   const commandScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
   function currentTarget() {
     const target = owner.current().selected;
@@ -192,6 +216,32 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const version = query?.state.dataUpdateCount;
     return () => alive.current && !reads.retired && generation.current === ticket && !!value && !!target
       && currentTarget() === value && query?.state.dataUpdateCount === version && sameTargetBasis(value, target);
+  }
+  function editorReturn(unitId: string): ReviewEditorReturn {
+    if (tab === "review" && editorOrigin?.locale === locale && editorOrigin.unitId === unitId) return editorOrigin;
+    return { ...session, locale, unitId, tab: tab === "work" ? "work" : "review", summaryScope, pageAfter, workOffset };
+  }
+  async function openEditor(target: ReviewTarget, diagnostic?: ReviewDiagnosticIntent, findingsOffset = 0) {
+    if (!alive.current || reads.retired || disabled || !targetAvailable || owner.inFlight() || owner.current().pending) return false;
+    if (diagnostic) {
+      const latest = owner.current().selected;
+      const semantic = diagnostic.source.purpose === "ai-semantic" ? (() => {
+        const view = reads.client.getQueryState<AiSemanticReviewView | null>(reads.key(semanticReviewKey(diagnostic.source.origin.attemptId)));
+        // Preflight belongs to the clicked page. Navigation acceptance still
+        // rereads the first-page current-run identity before opening the editor.
+        const findings = reads.client.getQueryState<ReviewFindingView>(reads.key(reviewFindingsKey(target.unitId, target.locale, findingsOffset)));
+        const ready = (state: typeof view | typeof findings) => state?.status === "success" && state.fetchStatus === "idle" && !state.error && !state.isInvalidated;
+        return { view: ready(view) ? view?.data : null, findings: ready(findings) ? findings?.data : null };
+      })() : undefined;
+      if (!latest || !sameTargetBasis(target, latest) || !diagnosticIntentMatchesTarget(diagnostic, target, semantic)) {
+        setNotice("error"); setReason("diagnostic-stale"); return false;
+      }
+    }
+    const opened = await onOpenTranslation({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, target.locale,
+      { returnTo: editorReturn(target.unitId), ...(diagnostic ? { diagnostic: { ...diagnostic, basis: target.basis,
+        basisEvidence: target.basisEvidence, translationText: target.translationText } } : {}) });
+    if (!opened && alive.current && !reads.retired) { setNotice("error"); setReason("editor-unavailable"); }
+    return opened;
   }
   function runFreshAction(run: (proof: () => boolean) => Promise<void>) {
     const before = owner.current(), target = before.selected, ticket = generation.current;
@@ -220,22 +270,30 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     return { enabled: true };
   }
   const decisionAvailability = () => reviewActionAvailability(true);
-  const checkAvailability = () => reviewActionAvailability(false);
+  const prepareCheckAvailability = () => reviewActionAvailability(false);
+  const checkAvailability = () => {
+    const available = reviewActionAvailability(false);
+    return available.enabled && !owner.checkersConfirmed() ? { enabled: false, reason: "unavailable" as const } : available;
+  };
   function cancelAvailability() {
     if (!open || tab !== "review" || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
     const current = owner.current();
-    if (!current.selected || !current.activeCheckId) return { enabled: false, reason: "unavailable" as const };
-    return { enabled: true };
-  }
-  function pendingAvailability() {
-    if (!open || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
-    if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
-    if (!owner.current().pending) return { enabled: false, reason: "unavailable" as const };
+    if (!current.selected || !(current.activeCheckId ?? (current.pending?.kind === "check" ? current.pending.request.actionId : null))) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
   function retryAvailability() {
-    const available = pendingAvailability();
-    return !available.enabled ? available : owner.current().pendingCheckedMissing ? available : { enabled: false, reason: "unavailable" as const };
+    if (!open || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
+    if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
+    const current = owner.current();
+    if (!current.pending || !current.retryAllowed) return { enabled: false, reason: "unavailable" as const };
+    return { enabled: true };
+  }
+  function checkPendingAvailability() {
+    if (!open || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
+    if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
+    const current = owner.current();
+    return current.pending && !current.checkingAction
+      ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
   }
   function targetActionAvailability(payload: ReviewFallbackCommandPayload | ReviewWaiverCommandPayload | undefined) {
     const available = reviewActionAvailability(false);
@@ -325,20 +383,25 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       binding: null, risk: "runs-review-checks", confirmation: "none", availability: checkAvailability,
       handler: () => runFreshAction(check),
     });
+    const removePrepareCheck = commandRegistry.register({
+      id: "review.prepare-checks", nameKey: "review.prepareCheck", category: "review", scope: commandScope,
+      binding: null, risk: "runs-review-checks", confirmation: "none", availability: prepareCheckAvailability,
+      handler: () => runFreshAction(prepareCheck),
+    });
     const removeCancel = commandRegistry.register({
       id: "review.cancel-checks", nameKey: "review.cancelCheck", category: "review", scope: commandScope,
       binding: null, risk: "cancels-review-checks", confirmation: "none", availability: cancelAvailability,
       handler: () => { void cancelCheck(); },
     });
-    const removePendingCheck = commandRegistry.register({
-      id: "review.check-pending", nameKey: "review.checkAction", category: "review", scope: commandScope,
-      binding: null, risk: "reads-review", confirmation: "none", availability: pendingAvailability,
-      handler: () => { void owner.checkPending(); },
-    });
     const removeRetry = commandRegistry.register({
       id: "review.retry-pending", nameKey: "review.retry", category: "review", scope: commandScope,
       binding: null, risk: "retries-review-action", confirmation: "none", availability: retryAvailability,
       handler: () => { void owner.retryPending(); },
+    });
+    const removeCheckPending = commandRegistry.register({
+      id: "review.check-pending", nameKey: "review.checkSaved", category: "review", scope: commandScope,
+      binding: null, risk: "reads-review", confirmation: "none", availability: checkPendingAvailability,
+      handler: () => { void owner.checkPending(); },
     });
     const removeAllowFallback = commandRegistry.register({
       id: "review.allow-fallback", nameKey: "review.fallback", category: "review", scope: commandScope,
@@ -373,7 +436,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       handler: owner.stopBatch,
     });
     return () => { removeStop(); removeBatch(); removeRevokeWaiver(); removeGrantWaiver(); removeWithdrawFallback(); removeAllowFallback();
-      removePendingCheck(); removeRetry(); removeCancel(); removeCheck(); removeRequestChanges(); removeApprove(); };
+      removeCheckPending(); removeRetry(); removeCancel(); removeCheck(); removePrepareCheck(); removeRequestChanges(); removeApprove(); };
   });
   function captureSelected() {
     const current = owner.current(), target = current.selected;
@@ -401,6 +464,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   useLayoutEffect(() => { setComparisonIntent(null); setCompletedComparison(null); }, [open, locale, targetScope]);
   useLayoutEffect(() => { if (tab !== "review") { setComparisonIntent(null); setCompletedComparison(null); } }, [tab]);
   useLayoutEffect(() => {
+    const target = owner.current().selected;
+    if (handoff && target?.unitId === handoff.unitId && target.locale === handoff.locale && target.basis === handoff.basis) {
+      // This exact fresh comparison was explicitly requested from the AI row.
+      // A later query basis still requires the original comparison action.
+      setComparisonIntent(handoff);
+    }
+  }, [handoff]);
+  useLayoutEffect(() => {
     setWorkCursor(current => current.locale === locale ? current : { locale, offset: 0 });
   }, [locale]);
   useLayoutEffect(() => {
@@ -416,6 +487,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (scopes.includes("project") || CURRENT_SCOPES.some(scope => scopes.includes(scope))) semanticRevision.current++;
   }), [reads]);
   useEffect(() => { if (open) heading.current?.focus(); }, [open, tab]);
+  useEffect(() => {
+    if (!open || !editorReturned || editorReturned.locale !== locale || editorReturned.tab !== tab || focusedReturn.current === editorReturned
+      || (tab === "work" ? workBusy : summaryBusy)) return;
+    focusedReturn.current = editorReturned;
+    (returnFocus.current ?? heading.current)?.focus();
+  }, [open, tab, locale, editorReturned, workBusy, summaryBusy, work, page]);
   useEffect(() => {
     // First entry into a language retains the existing explicit capture boundary.
     // A failed/cancelled capture needs an explicit retry, including after remount.
@@ -445,16 +522,17 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     setCompletedComparison(null);
   }, [completedComparison, currentFacts, selected, pending, owner.state.completionVersion]);
   useImperativeHandle(ref, () => ({
-    showWork() { setTab("work"); setOpen(true); if (open && tab === "work" && targetAvailable) void workRead.refetch(); },
+    showWork() { setEditorOrigin(null); setEditorReturned(null); setTab("work"); setOpen(true); if (open && tab === "work" && targetAvailable) void workRead.refetch(); },
     allowLeave(current: () => boolean = () => true) {
       leaveProof.current = current;
       const currentOwner = owner.current();
       if (owner.inFlight() || currentOwner.batchRunning || currentOwner.pending) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); }
-      if (!Object.values(currentOwner.drafts).some(value => value.length > 0) && Object.keys(currentOwner.chosen).length === 0) return Promise.resolve(true);
+      if (!Object.values(currentOwner.drafts).some(value => value.length > 0) && Object.keys(currentOwner.chosen).length === 0
+        && !currentOwner.checkReview && currentOwner.checkConsent.length === 0 && currentOwner.advisoryChecks.length === 0 && !owner.semantic.dirty()) return Promise.resolve(true);
       setOpen(true); setLeavePrompt(true);
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
     },
-    allowNavigate() { generation.current++; selecting.current = false; setSelectionBusy(false); setCaptureBusy(false); return Promise.resolve(true); },
+    allowNavigate() { if (owner.current().pending?.kind === "finding" || owner.semantic.reserved()) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); } generation.current++; selecting.current = false; setSelectionBusy(false); setCaptureBusy(false); return Promise.resolve(true); },
   }));
 
   async function captureSummary(after = 0) {
@@ -500,6 +578,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   async function selectUnit(unitId: string) {
     if (!currentLocale(locale) || reads.retired) return;
     const capture = captureSelected();
+    const origin = tab === "work" ? editorReturn(unitId) : null;
     const ticket = ++generation.current;
     setCaptureBusy(false);
     selecting.current = true; setSelectionBusy(true); setSelectionFailure(null); setSelectionIntent({ unitId, locale });
@@ -525,6 +604,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
         const selectedNow = owner.current().selected;
         setComparisonIntent(selectedNow ? { unitId: selectedNow.unitId, locale: selectedNow.locale, basis: selectedNow.basis,
           currentBasis: value.basis, fallbackId: value.currentFallback?.fallbackId ?? null } : null);
+        setEditorOrigin(origin); setEditorReturned(null);
         setHistoryCursor({ unitId, locale, offset: 0 }); setTab("review");
       }
     } catch (error) {
@@ -576,6 +656,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   function finishLeave(discard: boolean) {
     if (discard && leaveProof.current && !leaveProof.current()) { setLeavePrompt(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; }
     setLeavePrompt(false);
+    if (discard && owner.semantic.reserved()) { leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; return; }
     if (discard) { owner.clear(); setOpen(false); }
     leaveResolver.current?.(discard); leaveResolver.current = null; leaveProof.current = null;
   }
@@ -585,52 +666,54 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (value.code === "issue-waiver") return t("review.waived");
     return queueReason(value.code);
   }
-  function findingLabel(rule: string, code: string) {
-    if (rule === "required-translation") return t(code === "empty" ? "review.issueEmpty" : "review.issueMissing");
-    if (rule === "placeholders") return t("review.issueMarker");
-    if (rule === "format") return t("review.issueFormat");
-    return t(code === "conflict" ? "review.issueConflict" : "review.issueTerm");
-  }
-  function ruleLabel(rule: string) {
-    if (rule === "required-translation") return t("review.ruleRequired");
-    if (rule === "placeholders") return t("review.rulePlaceholders");
-    if (rule === "format") return t("review.ruleFormat");
-    return t("review.ruleTerminology");
-  }
   function ruleStatusLabel(status: string) {
     return t(status === "passed" ? "review.passed" : status === "not-applicable" ? "review.notApplicable"
       : status === "findings" ? "review.findings" : status === "failed" ? "review.checkFailed"
-      : status === "cancelled" ? "review.checkCancelled" : "review.qaUnavailable");
+      : status === "cancelled" ? "review.checkCancelled" : status === "unknown" ? "review.checkUnknown" : "review.qaUnavailable");
   }
   function ruleReasonLabel(status: string) {
     return t(status === "not-applicable" ? "review.noSelectedTranslationReason" : status === "failed" ? "review.checkFailedHelp"
-      : status === "cancelled" ? "review.checkCancelledHelp" : "review.placeholderUnavailable");
+      : status === "cancelled" ? "review.checkCancelledHelp" : status === "unknown" ? "review.checkUnknownHelp" : "review.incompleteCoverageHelp");
   }
 
   return <>
     <WorkbenchPanel open={open} title={t("review.title")} description={t("review.description")} className="source-dialog review-dialog" onBack={requestClose} backDisabled={disabled}>
+        {onReturnToAi ? <><p>{t("ai.reviewHandoff.currentOnly")}</p><button className="secondary-button" disabled={disabled || owner.inFlight() || busyMutation || batchRunning || !!pending}
+          onClick={() => { void onReturnToAi(); }}>{t("ai.workspace.returnToWork")}</button></> : null}
         {project.metadata.targetLocales.length === 0 ? <p>{t("review.noLocale")}</p> : null}
         {project.metadata.targetLocales.length > 0 || retainedReview ? <>
           <div className="review-header-fields">
-            <label>{t("review.targetLocale")}<select value={locale} disabled={busyMutation} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
+            <label>{t("review.targetLocale")}<select value={locale} disabled={disabled || busyMutation} onChange={event => { setEditorOrigin(null); setEditorReturned(null); setLocale(event.target.value); setSelected(null); }}>
               {targetRemoved ? <option value={locale}>{locale}</option> : null}
               {project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}
             </select></label>
             <label>{t("review.reviewer")}<input value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
           </div>
           <div className="form-actions" role="tablist" aria-label={t("review.title")}>
-            {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => setTab(value)}>
+            {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => { setEditorOrigin(null); setEditorReturned(null); setTab(value); }}>
               {t(value === "review" ? "review.reviewTab" : value === "work" ? "review.workTab" : "review.eligibilityTab")}
             </button>)}
           </div>
+          {editorReturned?.locale === locale && editorReturned.tab === tab ? <><p role="status">{t("review.diagnosticNavigation.returned")}</p>
+            {tab === "work" && work && !workBusy && !workFailure && !work.items.some(item => item.unitId === editorReturned.unitId)
+              ? <p role="status">{t("review.diagnosticNavigation.returnedMissing")}</p> : null}</> : null}
           {removedLocale ? <p role="status">{t("review.removedTarget", { locale: removedLocale })}</p> : null}
-          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
-          {pending && !owner.inFlight() && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
+          {owner.state.checkingAction ? <p role="status">{t(pending && !isHumanReviewPending(pending) ? "review.checkingCheck" : "review.checkingSaved")}</p> : notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t(pending && isHumanReviewPending(pending) ? "review.actionUnknown" : "review.checkActionUnknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "diagnostic-stale" ? t("review.diagnosticNavigation.stale") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
+          {pending && !owner.inFlight() && !owner.state.checkingAction && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
-          {pending ? <div className="execution-actions"><button className="secondary-button" disabled={!pendingAvailability().enabled} onClick={() => commandRegistry.dispatch("review.check-pending", commandScope)}>{t(owner.state.checkingAction ? "review.checkingAction" : "review.checkAction")}</button><button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button>{owner.state.pendingCheckedMissing ? <p role="status">{t("review.actionMissing")}</p> : null}</div> : null}
+          {pending?.kind === "finding" ? <section aria-label={t("review.advisoryFindings.originalAction")}>
+            <h4>{t("review.advisoryFindings.originalAction")}</h4><p>{t("review.advisoryFindings.originalHelp")}</p>
+            <p>{pending.request.actor}: {pending.request.reason}</p>
+            <p>{t(pending.request.disposition === "rejected" ? "review.advisoryFindings.reject" : pending.request.disposition === "restored" ? "review.advisoryFindings.restore" : "review.advisoryFindings.repairRecorded")}</p>
+            <details><summary>{t("review.advisoryFindings.basis")}</summary><p>{pending.request.actionId}</p><p>{pending.request.runId}</p><p>{pending.request.issueId}</p><p>{pending.basisEvidence.sourceRevisionId}</p></details>
+          </section> : null}
+          {pending ? <button className="secondary-button" disabled={!checkPendingAvailability().enabled}
+            onClick={() => commandRegistry.dispatch("review.check-pending", commandScope)}>{t("review.checkSaved")}</button> : null}
+          {pending && owner.state.retryAllowed ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
           {batchRunning ? <button className="secondary-button" disabled={!stopBatchAvailability().enabled} onClick={() => commandRegistry.dispatch("review.stop-batch", commandScope)}>{t("review.batchCancel")}</button> : null}
+          {tab === "review" ? <AiSemanticReview project={project} active={open && tab === "review" && !leavePrompt} disabled={disabled || !!pending || busyMutation || batchRunning} currentTarget={currentTarget} onOpenConnections={onOpenConnections} /> : null}
           {tab === "review" ? <div className="review-columns">
             <section aria-label={t("review.reviewTab")} aria-busy={summaryBusy}>
               <div className="form-actions"><button className="secondary-button" disabled={busy || summaryBusy || !targetAvailable} onClick={refresh}>{t("review.refresh")}</button>
@@ -644,7 +727,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
               {!page ? !summaryBusy && !summaryFailure ? <p>{t("review.noSource")}</p> : null : <><div className="review-list">{page.rows.map(target => <div className="review-list-row" key={target.unitId}>
                 <input type="checkbox" aria-label={`${t("review.batch")}: ${target.nativeKey}`} checked={!!chosen[draftKey(target)]} disabled={busy || summaryBusy || !targetAvailable || !target.selectionId || (!chosen[draftKey(target)] && chosenCount >= MAX_BATCH)}
                   onChange={event => owner.toggleChosen(target, event.target.checked)} />
-                <button className="text-button" aria-current={selected?.unitId === target.unitId ? "true" : undefined} disabled={busy || !targetAvailable} onClick={() => void selectUnit(target.unitId)}>{target.nativeKey}</button>
+                <button ref={editorReturned?.unitId === target.unitId ? returnFocus : undefined} className="text-button" aria-current={selected?.unitId === target.unitId ? "true" : undefined} disabled={busy || !targetAvailable} onClick={() => void selectUnit(target.unitId)}>{target.nativeKey}</button>
               </div>)}</div></>}
               {page || pageAfter > 0 ? <div className="form-actions"><button className="secondary-button" disabled={busy || summaryBusy || !targetAvailable || pageAfter === 0} onClick={() => loadPage(0)}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || summaryBusy || !targetAvailable || !page || page.nextOrdinal === null} onClick={() => { if (page?.nextOrdinal != null) loadPage(page.nextOrdinal); }}>{t("review.nextPage")}</button></div> : null}
             </section>
@@ -660,10 +743,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                 {selectedStale || fallbackIdentityChanged ? <strong>{t("review.earlierContent")}</strong> : null}
                 <h3>{displayTarget.nativeKey}</h3><p><strong>{t("review.source")}</strong> {displayTarget.sourceText}</p>
                 <p><strong>{t("review.translation")}</strong> {displayTarget.translationText ?? t("review.missingTranslation")}</p>
-                <button className="text-button" disabled={!targetAvailable} onClick={async () => {
-                  const destination = { target: { unitId: displayTarget.unitId, sourceRevisionId: displayTarget.sourceRevisionId, key: displayTarget.nativeKey, sourceText: displayTarget.sourceText }, locale: displayTarget.locale };
-                  if (!await onOpenTranslation(destination.target, destination.locale) && alive.current) { setNotice("error"); setReason("editor-unavailable"); }
-                }}>{t("review.openTranslation")}</button>
+                <button className="text-button" disabled={!targetAvailable} onClick={() => void openEditor(displayTarget)}>{t("review.openTranslation")}</button>
                 <p>{displayTarget.currentDecision?.kind === "approve" ? t("review.currentApproval") : displayTarget.currentDecision?.kind === "request-changes" ? t("review.changesRequested") : t("review.approvalMissing")}</p>
                 {displayTarget.currentFallback ? <p>{t("review.fallbackActive")}</p> : null}
                 {selectedStale || fallbackIdentityChanged ? <div role="status" className="execution-feedback">
@@ -678,16 +758,31 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                 <div className="form-actions"><button className="primary-button" disabled={!decisionAvailability().enabled} onClick={() => commandRegistry.dispatch("review.approve", commandScope)}>{t("review.approve")}</button>
                   <button className="secondary-button" disabled={!decisionAvailability().enabled} onClick={() => commandRegistry.dispatch("review.request-changes", commandScope)}>{t("review.requestChanges")}</button>
                   {!selected.selectionId && fallbackPayload ? <button className="secondary-button" disabled={!fallbackAvailability(fallbackPayload, !selected.currentFallback).enabled} onClick={() => commandRegistry.dispatch(selected.currentFallback ? "review.withdraw-fallback" : "review.allow-fallback", commandScope, fallbackPayload)}>{t(selected.currentFallback ? "review.withdrawFallback" : "review.fallback")}</button> : null}</div>
-                <div className="form-actions"><button className="secondary-button" disabled={!checkAvailability().enabled} onClick={() => commandRegistry.dispatch("review.run-checks", commandScope)}>{busy ? t("review.checking") : t("review.check")}</button>{activeCheckId ? <button className="secondary-button" disabled={!cancelAvailability().enabled} onClick={() => commandRegistry.dispatch("review.cancel-checks", commandScope)}>{t("review.cancelCheck")}</button> : null}</div>
-                <h4>{t("review.qaCurrent")}</h4>{!checkTarget?.currentCheck || !sameTargetBasis(displayTarget, checkTarget) || checkTarget.currentCheck.basis !== checkTarget.basis ? <p>{t("review.qaMissing")}</p> : checkTarget.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                <p>{t("review.formatChecksRequired")}</p>
+                <TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([session, selected.unitId, selected.locale])}
+                  disabled={busy || pending !== null || disabled} onOpenExtensions={onOpenExtensions}
+                  onSnapshotRevision={owner.observeSettingsRevision} onChange={owner.setAdvisoryChecks} />
+                {currentCheckReview ? currentCheckReview.view.checkers.map(slot => <fieldset key={checkerIdentity(slot.checker)}>
+                  <legend>{t("review.checkerConsentScope", { plugin: `${slot.checker.provider.plugin.publisher}/${slot.checker.provider.plugin.id} ${slot.checker.provider.plugin.version}`, profile: slot.checker.profile.id })}</legend>
+                  <ReviewCheckerDetails view={slot.plugin} />
+                  <label className="source-check"><input type="checkbox" checked={checkConsent.includes(slotConsentKey(slot))} disabled={busy || disabled}
+                    onChange={event => owner.setCheckerConsent(slot.attemptId, slot.inputDigest, event.target.checked)} />{t("review.checkConsent")}</label>
+                </fieldset>) : null}
+                <div className="form-actions">{currentCheckReview ? <button className="secondary-button" disabled={!checkAvailability().enabled || !checkersConfirmed} onClick={() => commandRegistry.dispatch("review.run-checks", commandScope)}>{busy ? t("review.checking") : t("review.check")}</button>
+                  : <button className="secondary-button" disabled={!prepareCheckAvailability().enabled} onClick={() => commandRegistry.dispatch("review.prepare-checks", commandScope)}>{t("review.prepareCheck")}</button>}{activeCheckId || pending?.kind === "check" ? <button className="secondary-button" disabled={!cancelAvailability().enabled} onClick={() => commandRegistry.dispatch("review.cancel-checks", commandScope)}>{t("review.cancelCheck")}</button> : null}</div>
+                <h4>{t("review.qaCurrent")}</h4>{!displayedCheck || !sameTargetBasis(displayTarget, checkTarget) || displayedCheck.basis !== checkTarget.basis ? <p>{t("review.qaMissing")}</p> : displayedCheck.rules.map(rule => <div key={ruleIdentity(rule.key)} className="review-rule"><strong>{capturedRuleLabel(t, displayedCheck, rule)}</strong> — {ruleStatusLabel(rule.status)}
                   {rule.reason ? <p>{ruleReasonLabel(rule.status)}</p> : null}
                   {rule.findings.map(finding => {
                     const waiver = checkTarget.currentWaivers.find(value => value.issueId === finding.issueId);
                     const payload = waiverPayload(selected, finding.issueId, waiver?.waiverId ?? null);
-                    return <div key={finding.issueId}><p>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>
+                    return <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.detail ? `: ${finding.detail}` : ""}</p><ReviewDiagnosticDetails run={displayedCheck} rule={rule} code={finding.code}
+                      onLocate={currentTarget() && currentDiagnosticRun(displayTarget, displayedCheck) ? diagnostic => { void openEditor(displayTarget, { runId: displayedCheck.runId, source: { purpose: "qa" }, diagnostic }); } : undefined} />
                       {waiver ? <><p>{t("review.waived")}</p><button className="text-button" disabled={!waiverAvailability(payload, false).enabled} onClick={() => commandRegistry.dispatch("review.revoke-waiver", commandScope, payload)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={!waiverAvailability(payload, true).enabled} onClick={() => commandRegistry.dispatch("review.grant-waiver", commandScope, payload)}>{t("review.waive")}</button> : null}</div>;
                   })}
                 </div>)}
+                <ReviewFindings project={project} target={displayTarget} active={open && tab === "review" && targetAvailable}
+                  available={() => reviewActionAvailability(false)} currentTarget={currentTarget} freshReadProof={freshReadProof}
+                  onOpenTranslation={() => openEditor(displayTarget)} onLocateDiagnostic={(target, intent, offset) => openEditor(target, intent, offset)} />
                 <details><summary>{t("review.history")}</summary>
                   {historyLoading ? <p role="status">{t("review.historyLoading")}</p> : null}
                   {historyFailure && !historyRead.isFetching ? <div role="alert">{t("review.historyUnavailable")}
@@ -697,9 +792,10 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                   {history && !historyFailure && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
                   {history?.decisions.map(item => <p key={item.decisionId}>{item.createdAt} · {item.actor} · {t(item.kind === "approve" ? "review.currentApproval" : "review.changesRequested")}{item.decisionId === displayTarget.currentDecision?.decisionId ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   {history?.checks.map(item => <div key={item.runId} className="review-history-check"><p>{item.createdAt} · {t("review.qaRun")} · {item.validatorVersion}{item.runId === displayTarget.currentCheck?.runId ? "" : ` · ${t("review.earlier")}`}</p>
-                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                    <ul>{item.rules.map(rule => <li key={ruleIdentity(rule.key)}><strong>{capturedRuleLabel(t, item, rule)}</strong> — {ruleStatusLabel(rule.status)}
                       {rule.reason ? ` · ${ruleReasonLabel(rule.status)}` : ""}
-                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</li>)}</ul> : null}
+                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{reviewFindingLabel(t, finding.rule, finding.code)}
+                        {finding.detail ? <p>{finding.detail}</p> : null}<ReviewDiagnosticDetails run={item} rule={rule} code={finding.code} /></li>)}</ul> : null}
                     </li>)}</ul>
                   </div>)}
                   {history?.waivers.map(item => <p key={item.waiverId}>{item.createdAt} · {item.actor} · {t(item.grant ? "review.waived" : "review.revokeWaiver")}{displayTarget.currentWaivers.some(waiver => waiver.waiverId === item.waiverId) ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
@@ -712,7 +808,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
           {tab === "work" ? <section><div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable} onClick={() => void workRead.refetch()}>{t("review.refresh")}</button></div>
             {workLoading ? <p role="status">{t("review.workLoading")}</p> : null}
             {workFailure && !workRead.isFetching ? <div role="alert">{t("review.error", { reason: failureReason(workFailure) ?? "failed" })}<CommandFailureDetails failure={workFailure} /></div> : null}
-            {work ? <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}</> : targetAvailable && !workLoading && !workFailure ? <p>{t("review.selectEntry")}</p> : null}
+            {work ? <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button ref={editorReturned?.unitId === item.unitId ? returnFocus : undefined} className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}</> : targetAvailable && !workLoading && !workFailure ? <p>{t("review.selectEntry")}</p> : null}
             {work || workOffset > 0 ? <div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || workOffset === 0} onClick={() => setWorkCursor({ locale, offset: 0 })}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || !work || work.nextOffset === null} onClick={() => { if (work?.nextOffset != null) setWorkCursor({ locale, offset: work.nextOffset }); }}>{t("review.nextPage")}</button></div> : null}
           </section> : null}
           {tab === "eligibility" ? <section><p>{t("review.policy")}</p><p>{t("review.buildWarning")}</p><fieldset><legend>{t("review.chooseLanguages")}</legend>{project.metadata.targetLocales.map(value => <label key={value}><input type="checkbox" checked={languages.includes(value)} onChange={event => { setAssessment(null); setLanguages(previous => event.target.checked ? [...previous, value] : previous.filter(item => item !== value)); }} />{value}</label>)}</fieldset>

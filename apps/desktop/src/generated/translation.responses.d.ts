@@ -2,6 +2,65 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+export type CandidateDisposition = "rejected" | "restored";
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux" | "windows";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
+export type UnsignedDecimal = string;
 export type TranslationOrigin = "import" | "manual" | "ai";
 export type TranslationMatch =
   "unique" | "unmatched" | "ambiguous" | "selected-conflict" | "source-changed" | "applied";
@@ -10,15 +69,24 @@ export interface Responses {
   action: TranslationSelection | null;
   adoptionAction: AdoptionActionRead | null;
   attempt: ExecutionId;
+  candidateAction: CandidateDecision | null;
+  candidateDecision: CandidateDecision;
+  checkReview: TranslationCheckReview;
+  checked: null;
   files: string[];
   history: TranslationHistory;
+  pluginPreflight: PluginTranslationPreflight;
+  pluginSelection: PluginTranslationSelection | null;
   preflight: TranslationPreflight;
   prepared: AdoptionAction;
   preview: TranslationPreview;
+  projectionReview: TranslationProjectionReview;
+  projectionStartAction: TranslationProjectionStartRead | null;
   saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
   selectionAction: TranslationSelection | null;
+  source: TranslationSourceContext;
   startAction: TranslationImportStartRead | null;
 }
 export interface TranslationSelection {
@@ -57,6 +125,182 @@ export interface ChangeReference {
   kind: string;
   revision: Revision;
 }
+export interface CandidateDecision {
+  request: CandidateDecisionWrite;
+  sourceSnapshotId: ExecutionId;
+}
+export interface CandidateDecisionWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: CandidateDisposition;
+  expectedDecisionId: ExecutionId | null;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TranslationCheckReview {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  rules: ContractRef[];
+  source: TranslationSourceContext;
+  translation: PluginTranslationView;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+/**
+ * Immutable matching scopes from the current adopted source. This observation
+ * allocates no identities and grants neither execution nor adoption authority.
+ */
+export interface TranslationSourceContext {
+  contentRevision: Revision;
+  nativeScopes: TranslationNativeScope[];
+  profile: ContractRef;
+  sourceSetId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+}
+/**
+ * Captured from the current adopted source. The plugin supplies canonical
+ * native values under this exact policy; Core must never normalize them again.
+ */
+export interface TranslationNativeScope {
+  namespace: string;
+  policy: ContractRef;
+}
+export interface PluginTranslationView {
+  checker: CapabilityBinding;
+  declaration: TranslationImportDeclaration;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+export interface TranslationImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  material: TranslationMaterialDeclaration;
+  profile: ContractRef;
+  semanticRules: ContractRef[];
+}
+/**
+ * Metadata describing one selected file relative to an explicitly granted
+ * directory. No glob, executable discovery or filesystem authority is implied.
+ */
+export interface TranslationMaterialDeclaration {
+  extension: string;
+  logicalDirectory: string;
+  maxBytes: number;
+  role: string;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
+}
 export interface TranslationHistory {
   current: TranslationSelection | null;
   currentText: string | null;
@@ -70,6 +314,7 @@ export interface TranslationRevision {
   actionId: ExecutionId;
   artifactId: ExecutionId | null;
   attemptId: ExecutionId | null;
+  candidateDecision?: CandidateDecision | null;
   contributors: ExecutionId[];
   declaredLocale: string | null;
   fileDigest: string | null;
@@ -85,6 +330,28 @@ export interface TranslationRevision {
   sourceSnapshotId: ExecutionId;
   text: string;
   unitId: ExecutionId;
+}
+export interface PluginTranslationPreflight {
+  attemptId: ExecutionId;
+  file: PluginSourceFile;
+  inputDigest: string;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translation: PluginTranslationView;
+}
+export interface PluginSourceFile {
+  byteLength: number;
+  logicalPath: string;
+  role: string;
+  sha256: string;
+}
+export interface PluginTranslationSelection {
+  folderName: string;
+  nativeScope: TranslationNativeScope;
+  selectionId: ExecutionId;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translation: PluginTranslationView;
 }
 export interface TranslationPreflight {
   count: number;
@@ -131,12 +398,12 @@ export interface TranslationPreviewRow {
 export interface TranslationEntry {
   artifactId: ExecutionId;
   /**
-   * Half-open UTF-8 byte offsets in the captured file, including JSON quotes.
+   * Optional half-open UTF-8 byte offsets for the original display evidence.
    *
    * @minItems 2
    * @maxItems 2
    */
-  keyByteRange: [number, number];
+  keyByteRange: [number, number] | null;
   nativeKey: string;
   ordinal: number;
   text: string;
@@ -147,6 +414,27 @@ export interface TranslationEntry {
    * @maxItems 2
    */
   valueByteRange: [number, number];
+}
+export interface TranslationProjectionReview {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  itemCount: number;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+/**
+ * Historical proof of one exact built-in match projection being enqueued.
+ * The producer association is evidence, not current qualification or permission.
+ */
+export interface TranslationProjectionStartRead {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
 }
 /**
  * Immutable confirmation of one save, including the basis for the next edit.

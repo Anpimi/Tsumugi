@@ -5,55 +5,158 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
-use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
+use tsumugi_core::{TaskView, execution::*};
+use tsumugi_plugin_sdk as sdk;
+pub(super) mod mcp_retrieval;
+mod package_lifecycle;
+use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
+
+#[cfg(all(test, target_os = "macos"))]
+pub(super) mod test_fixtures;
 
 macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
-        list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
-        cancel_execution_task,read_execution_cancellation_action,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
-        read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         source::select_source,source::select_webvtt_source,source::read_webvtt_integration,source::preflight_source,source::start_source_import,source::read_source_import_start,
+        super::mcp::read_mcp_share_session,super::mcp::prepare_mcp_share,
+        super::mcp::authorize_mcp_share,super::mcp::read_mcp_share,super::mcp::revoke_mcp_share,
+        super::source_hooks::read_source_maintenance_hook_session,
+        super::source_hooks::read_source_maintenance_hook,
+        super::source_hooks::stop_source_maintenance_hook,
+        super::mcp_retrieval::read_mcp_retrieval_session,
+        super::mcp_retrieval::discover_mcp_terms,
+        super::mcp_retrieval::read_mcp_retrieval,
+        super::mcp_retrieval::prepare_mcp_term_query,
+        super::mcp_retrieval::start_mcp_term_query,
+        super::mcp_retrieval::stop_mcp_retrieval,
+        super::mcp_retrieval::capture_mcp_glossary,
+        super::connections::read_model_connections,
+        super::connections::change_model_connections,
+        super::connections::read_model_connection_action,
+        super::connections::resolve_model_connection,
+        super::plugins::read_plugin_inventory,
+        super::plugins::defaults::install_plugin_defaults,
+        super::plugins::packages::select_plugin_package, super::plugins::packages::install_plugin_package,
+        super::plugins::packs::select_plugin_pack, super::plugins::packs::install_plugin_pack,
+        super::plugins::repositories::select_plugin_repository, super::plugins::repositories::read_plugin_repositories,
+        super::plugins::repositories::refresh_plugin_repository, super::plugins::repositories::resume_plugin_repository,
+        super::plugins::repositories::install_repository_packages,
+        super::plugins::packages::cleanup::remove_plugin_approval, super::plugins::packages::cleanup::uninstall_plugin_package,
+        super::plugins::packages::set_plugin_enabled, super::plugins::packages::read_plugin_package,
+        super::plugins::packages::lookup_plugin_capability,
+        super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
+        super::plugins::translations::read_plugin_translation,
+        super::plugins::tools::read_plugin_tool,
+        super::plugins::ui::read_plugin_ui,
+        super::plugins::generation::read_plugin_generation_component,
+        super::plugins::reviews::text::read_plugin_text_review, super::plugins::reviews::text::read_plugin_text_reviews,
+        super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
+        super::plugins::runtimes::set_plugin_native_host_approval,
+        list_execution_tasks,read_execution_task_activity,read_execution_task,read_execution_attempt,read_execution_output,
+        cancel_execution_task,read_execution_cancellation_action,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
+        read_execution_receipt,execution_status,read_plugin_execution_start,quiesce_execution,create_execution_identity,
+        tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
+        crate::commands::plugins::application::read_application_plugin_instance,
+        crate::commands::plugins::application::stop_application_plugin_instance,
+        crate::commands::plugins::application::stop_application_plugin_instances,
+        crate::commands::plugins::application::resume_application_plugin_instances,
+        source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
+        source::plugin::prepare_source_check,source::plugin::start_source_check,source::plugin::finish_source_check,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
-        source::read_content_scope,source::prepare_source_adoption,source::read_source_adoption_action,source::read_source_integration,
+        source::read_source_integration,
+        source::read_content_scope,source::read_source_context,source::read_source_context_block,source::prepare_source_adoption,source::read_source_adoption_action,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
         source::estimate_source_update,source::read_source_impact,
-        source::translation::list_translation_files,source::translation::preflight_translation,
-        source::translation::start_translation_import,source::translation::read_translation_import_start,source::translation::read_translation_preview,
+        source::translation::list_translation_files,source::translation::preflight_translation,source::translation::start_translation_import,source::translation::read_translation_import_start,
+        source::plugin_translation::read_plugin_translation_source,source::plugin_translation::select_plugin_translation,
+        source::plugin_translation::list_plugin_translation_files,source::plugin_translation::preflight_plugin_translation,
+        source::plugin_translation::start_plugin_translation,source::plugin_translation::prepare_translation_check,
+        source::plugin_translation::start_translation_check,source::plugin_translation::finish_translation_check,
+        source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,source::plugin_translation::read_translation_projection_start,
+        source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_adoption_action,source::translation::read_translation_history,
         source::translation::read_translation_action,
         source::translation::read_translation_save_action,
         source::translation::read_translation_selection_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
-        resource::read_term_save_action,resource::read_context_save_action,resource::read_context_capture_action,resource::read_resource_decision_action,
-        resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
-        resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
-        resource::read_context_revision,resource::save_context,resource::capture_context,
+        source::translation::decide_translation_candidate,source::translation::read_translation_candidate_action,
+        resource::preview_tmx_exchange,resource::preview_tbx_exchange,resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
+        resource::read_correction_term_basis,resource::capture_correction_term,resource::read_correction_term_action,resource::read_resource_decision_action,
+        resource::save_term,resource::read_term_save_action,resource::read_terms,resource::read_term_history,resource::resolve_terms,
+        resource::read_context_revision,resource::save_context,resource::read_context_save_action,resource::capture_context,resource::read_context_capture_action,
+        resource::decide_context_fact,resource::read_context_fact_decisions,resource::read_context_fact_action,resource::read_context_fact_history,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
-        review::read_review_decision_action,review::read_review_waiver_action,review::read_review_fallback_action,review::read_review_check_action,
-        review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
+        review::read_review_findings,review::read_review_finding_action,review::write_review_finding,
+        review::read_review_check_action,review::read_review_decision_action,review::read_review_waiver_action,review::read_review_fallback_action,
+        review::semantic::prepare_ai_semantic_review,review::semantic::start_ai_semantic_review,review::semantic::read_ai_semantic_review,review::semantic::read_ai_semantic_review_start_action,
+        review::read_review_page,review::read_review_target,review::read_review_diagnostic_location,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
-        review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
+        review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
         release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
-        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_start_action,ai::read_ai_translation,
+        ai::read_ai_start_action,
+        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
+        release::plugin::prepare_plugin_build,release::plugin::start_plugin_build,
+        release::plugin::read_saved_plugin_build,
+        release::plugin::prepare_artifact_check,release::plugin::start_artifact_check,
+        release::plugin::finish_artifact_check,release::plugin::cancel_plugin_build_preparation,
+        release::plugin::workflow::read_artifact_check_workflow_session,
+        release::plugin::workflow::prepare_artifact_check_workflow,
+        release::plugin::workflow::start_artifact_check_workflow,
+        release::plugin::workflow::read_artifact_check_workflow,
+        release::plugin::workflow::stop_artifact_check_workflow,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_start_action,arena::read_arena_translation,
-        arena::create_arena_comparison,arena::read_arena_comparison_action,arena::read_arena_comparison,arena::list_arena_comparisons,
-        arena::reveal_arena_identity,arena::read_arena_reveal_target,arena::save_arena_merge,arena::read_arena_merge_action,$($extra),*
+        arena::create_arena_comparison,arena::read_arena_comparison,arena::read_arena_comparison_action,arena::list_arena_comparisons,
+        arena::reveal_arena_identity,arena::read_arena_reveal_target,arena::save_arena_merge,arena::read_arena_merge_action,
+        strategy::capture_context_strategy,strategy::read_context_strategy,strategy::list_context_strategies,
+        strategy::capture_strategy_suite,strategy::prepare_strategy_evaluation,strategy::start_strategy_evaluation,
+        strategy::read_strategy_evaluation,strategy::list_strategy_evaluations,
+        strategy::read_strategy_evaluation_start,strategy::read_strategy_evaluation_start_action,strategy::read_strategy_candidate_save_action,
+        strategy::save_strategy_evaluation_candidate,
+        strategy::record_strategy_judgment,strategy::promote_context_strategy,strategy::withdraw_context_strategy,
+        strategy::read_context_strategy_default,strategy::list_context_strategy_defaults,strategy::read_strategy_action,
+        review::plugin::prepare_strategy_evaluation_checks,review::plugin::run_strategy_evaluation_checks,
+        work_plans::read_maintenance_assessment,work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,work_plans::read_work_plan_start_action,
+        work_plans::generation::prepare_work_plan_generation_component,
+        work_plans::generation::start_work_plan_generation_component,
+        work_plans::generation::read_work_plan_generation_component_start,
+        work_plans::generation::discard_work_plan_generation_component,
+        work_plans::agent::open_work_plan_agent_scope,
+        work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,
+        work_plans::agent::delegate_work_plan_agent_scope,
+        work_plans::agent::reconcile_work_plan_agent_execution,
+        work_plans::agent::read_work_plan_agent_generation_attempt,work_plans::agent::read_work_plan_agent_generation_output,
+        work_plans::broker::prepare_work_plan_agent_tool,work_plans::broker::start_work_plan_agent_tool,
+        work_plans::broker::read_work_plan_agent_tool_attempt,work_plans::broker::read_work_plan_agent_tool_output,
+        work_plans::guidance::read_work_plan_agent_guidance,work_plans::guidance::read_work_plan_agent_skill,
+        work_plans::guidance::read_work_plan_agent_resource,
+        work_plans::team::read_work_plan_team_history,work_plans::team::read_work_plan_team_post,
+        work_plans::coordination::read_work_plan_team_execution,
+        work_plans::coordination::read_work_plan_team_work_tools,
+        work_plans::recovery::prepare_work_plan_team_recovery,
+        work_plans::recovery::authorize_work_plan_team_recovery,
+        work_plans::recovery::read_work_plan_team_recovery_action,
+        work_plans::recovery::read_work_plan_team_recovery_state,
+        work_plans::recovery::end_work_plan_team_recovery,
+        work_plans::team::publish_work_plan_team_discussion,work_plans::team::read_work_plan_team_publication_action,
+        work_plans::team::send_work_plan_team_message,work_plans::team::read_work_plan_team_message_action,
+        work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,work_plans::read_work_plan_authorization_action,work_plans::read_work_plan_control_action,
+        work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
 -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     #[cfg(feature = "execution-test-host")]
-    {
-        handlers!(seed_execution_fixture)
-    }
+    { handlers!(seed_execution_fixture) }
     #[cfg(not(feature = "execution-test-host"))]
-    {
-        handlers!()
-    }
+    { production_handler() }
+}
+
+pub(super) fn production_handler<R: tauri::Runtime>()
+-> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    handlers!()
 }
 
 #[cfg(feature = "execution-test-host")]
@@ -107,13 +210,23 @@ pub(super) struct ExecutionHost {
     runtime: ExecutionRuntime,
     handlers: BTreeMap<String, Arc<dyn AdoptionHandler>>,
     queries: Vec<QueryJob>,
-    retired_queries: Vec<JoinHandle<()>>,
+    retired_queries: Vec<RetiredQuery>,
+    package_controls: BTreeMap<ExecutionId, PackageControl>,
+    package_work: Vec<std::sync::Weak<PackageWorkState>>,
     quiescing: bool,
     last_error: Option<CommandError>,
     source: source::SourceSession,
     release: release::ReleaseSession,
     ai: ai::AiSession,
+    semantic_review: review::semantic::AiSemanticReviewSession,
+    review: review::ReviewSession,
     arena: arena::ArenaSession,
+    strategy: strategy::StrategySession,
+    work_plans: work_plans::WorkPlanSession,
+    tools: tools::ToolSession,
+    mcp_runner: Arc<mcp_retrieval::McpRunner>,
+    plugin_registrations: Vec<PluginExecutionBinding>,
+    service_factory: Option<Arc<dyn tsumugi_plugin_host::core::ProjectServiceFactory>>,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -123,25 +236,57 @@ struct QueryJob {
     pending_outcome: Option<QueryOutcome>,
 }
 impl ExecutionHost {
+    pub(super) fn allow_mcp_capture(&self) -> Result<(), CommandError> {
+        self.allow_mutation()
+    }
+    pub(super) fn is_quiescing(&self) -> bool {
+        self.quiescing
+    }
     fn new(store: &ProjectStore) -> Result<Self, CommandError> {
+        Self::with_member_factory(store, |_| None)
+    }
+    fn with_member_factory(
+        store: &ProjectStore,
+        member: impl FnOnce(ExecutionId) -> Option<Arc<work_plans::member::MemberFactory>>,
+    ) -> Result<Self, CommandError> {
         #[allow(unused_mut)]
         let mut host = Self {
             runtime: ExecutionRuntime::new(store).map_err(map_read)?,
             handlers: BTreeMap::new(),
             queries: Vec::new(),
             retired_queries: Vec::new(),
+            package_controls: BTreeMap::new(),
+            package_work: Vec::new(),
             quiescing: false,
             last_error: None,
             source: source::SourceSession::default(),
             release: release::ReleaseSession::default(),
             ai: ai::AiSession::default(),
+            semantic_review: review::semantic::AiSemanticReviewSession::default(),
+            review: review::ReviewSession::default(),
             arena: arena::ArenaSession::default(),
+            strategy: strategy::StrategySession::default(),
+            work_plans: work_plans::WorkPlanSession::default(),
+            tools: tools::ToolSession::default(),
+            mcp_runner: Arc::default(),
+            plugin_registrations: Vec::new(),
+            service_factory: None,
         };
+        host.runtime
+            .register(host.mcp_runner.clone())
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::application::MCP_TERM_QUERY_OPERATION.into(),
+            Arc::new(tsumugi_core::McpTermQueryAdoptionHandler),
+        );
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::SourceRunner))
             .map_err(map_read)?;
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::TranslationRunner))
+            .map_err(map_read)?;
+        host.runtime
+            .register_read_only(Arc::new(tsumugi_core::content::TranslationProjectionRunner))
             .map_err(map_read)?;
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::BuildRunner))
@@ -153,15 +298,54 @@ impl ExecutionHost {
             .register_read_only(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;
         let provider_service = Arc::new(tsumugi_core::ai::provider::ProviderService::default());
+        let member = member(host.runtime.generation());
+        if let Some(member) = &member {
+            host.runtime.register_with_policy(
+                Arc::new(tsumugi_core::ai::team::TeamWorkRunner::new(
+                    provider_service.clone(), member.clone(),
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            ).map_err(map_read)?;
+        }
+        let translation = match member {
+            Some(member) => tsumugi_core::ai::AiRunner::with_member_executor(
+                provider_service.clone(), member,
+            ),
+            None => tsumugi_core::ai::AiRunner::with_service(provider_service.clone()),
+        };
         host.runtime
-            .register_with_policy(Arc::new(tsumugi_core::ai::AiRunner::with_service(provider_service.clone())), tsumugi_core::execution::RecoveryPolicy::ExternalUnknown)
+            .register_with_policy(
+                Arc::new(translation),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            )
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::ai::OPERATION.into(),
             Arc::new(tsumugi_core::AiAdoptionHandler),
         );
+        host.handlers.insert(
+            tsumugi_core::ai::team::OPERATION.into(),
+            Arc::new(tsumugi_core::TeamTranslationAdoptionHandler),
+        );
         host.runtime
-            .register_with_policy(Arc::new(tsumugi_core::ai::arena::ArenaRunner::with_service(provider_service)), tsumugi_core::execution::RecoveryPolicy::ExternalUnknown)
+            .register_with_policy(
+                Arc::new(tsumugi_core::ai::semantic_review::AiSemanticReviewRunner::with_service(
+                    provider_service.clone(),
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            )
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::ai::semantic_review::OPERATION.into(),
+            Arc::new(tsumugi_core::ai::semantic_review::AiSemanticReviewAdoptionHandler),
+        );
+        host.runtime
+            .register_with_policy(
+                Arc::new(tsumugi_core::ai::arena::ArenaRunner::with_service(
+                    provider_service,
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            )
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::ai::arena::OPERATION.into(),
@@ -193,16 +377,120 @@ impl ExecutionHost {
     }
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
+            || self.package_lifecycle_active()
+            || self.package_work_active()
             || self.source.is_active()
+            || self.release.is_active()
+            || self.ai.active()
+            || self.review.active()
+            || self.tools.active()
+            || self.work_plans.generation_preparation_active()
             || !self.queries.is_empty()
+            || !self.retired_queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
+    }
+    fn finish_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        if self.package_lifecycle_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-lifecycle-active",
+            ));
+        }
+        if self.package_work_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-work-draining",
+            ));
+        }
+        if self.release.delivery_is_active() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "delivery-active"));
+        }
+        if self.release.plugin.is_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "artifact-workflow-draining",
+            ));
+        }
+        if self.review.active() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "review-check-active"));
+        }
+        if self.ai.active() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "work-effect-active"));
+        }
+        // Retiring a query revokes its reply path, not its runner/file lifetime.
+        // Never rotate the runtime or permit project close while it still runs.
+        if !self.retired_queries.is_empty() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "outcome-query-draining",
+            ));
+        }
+        self.runtime.finish_quiesce(store)?;
+        self.package_controls.clear();
+        self.quiescing = false;
+        Ok(())
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
-        self.runtime.tick(store).map_err(map_read)
+        release::plugin::workflow::tick(self, store)?;
+        self.mcp_runner
+            .reap(store, &self.runtime)
+            .map_err(map_read)?;
+        let workflow_authority = release::plugin::workflow::prepare_runtime_tick(self, store)?;
+        let review_authority = self.review.prepare_runtime_tick(store, &mut self.runtime)?;
+        self.review.tick(store, &mut self.runtime)?;
+        let checker_consent = self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
+        let mut dispatch = || self.runtime.tick(store).map_err(map_read);
+        if let (
+            Some((workflow_plugins, workflow_revision)),
+            Some((review_plugins, review_revision)),
+        ) = (&workflow_authority, &review_authority)
+        {
+            if workflow_revision != review_revision
+                || !Arc::ptr_eq(workflow_plugins, review_plugins)
+            {
+                return Err(review::checkers::stale());
+            }
+        }
+        match (workflow_authority.or(review_authority), checker_consent) {
+            (Some((plugins, revision)), consent) => {
+                if consent.as_ref().is_some_and(|consent| {
+                    consent.settings_revision != revision
+                        || !Arc::ptr_eq(&consent.plugins, &plugins)
+                }) {
+                    return Err(review::checkers::stale());
+                }
+                plugins.with_environment_revision(revision, dispatch)?;
+            }
+            (None, Some(consent)) => consent.with_current_environment(dispatch)?,
+            (None, None) => dispatch()?,
+        }
+        release::plugin::workflow::tick(self, store)?;
+        self.ai.tick(store, &mut self.runtime);
+        self.ai
+            .release_terminal_service_origins(store, &mut self.runtime)
+            .map_err(map_recover)?;
+        if self.quiescing {
+            match self.finish_quiesce(store) {
+                Ok(()) => {}
+                Err(error) if error.code == ErrorCode::Busy => {}
+                Err(error) => return Err(map_recover(error)),
+            }
+        }
+        Ok(())
     }
     fn poll_queries(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
-        self.retired_queries.retain(|thread| !thread.is_finished());
+        let mut remaining = Vec::new();
+        for query in self.retired_queries.drain(..) {
+            if query.thread.is_finished() {
+                // Join completes the thread's cleanup; dropping a finished
+                // handle alone would detach its final lifetime boundary.
+                let _ = query.thread.join();
+            } else {
+                remaining.push(query);
+            }
+        }
+        self.retired_queries = remaining;
         let mut index = 0;
         while index < self.queries.len() {
             if let Some(outcome) = self.queries[index].pending_outcome.as_ref() {
@@ -221,7 +509,7 @@ impl ExecutionHost {
                     }
                 }
                 let job = self.queries.remove(index);
-                self.retired_queries.push(job.thread);
+                self.retired_queries.push(RetiredQuery::new(job));
                 result.map_err(map_recover)?;
                 continue;
             }
@@ -233,17 +521,17 @@ impl ExecutionHost {
                 }
                 Ok(Err(error)) => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(map_recover(error));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(CommandError::unknown(CommandStage::ExecutionRecover));
                 }
                 Err(mpsc::TryRecvError::Empty) if expired => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(CommandError::unknown(CommandStage::ExecutionRecover));
                 }
                 Err(mpsc::TryRecvError::Empty) => index += 1,
@@ -252,14 +540,36 @@ impl ExecutionHost {
         Ok(())
     }
     fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
+        if self.package_lifecycle_active() {
+            return Err(map_recover(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-lifecycle-active",
+            )));
+        }
         // Persist already received evidence before revoking late callbacks.
         // Storage failure retains the session and pending evidence for retry.
         self.poll_queries(store)?;
         self.quiescing = true;
+        for work in self
+            .package_work
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+        {
+            work.stop();
+        }
         self.source.stop();
+        self.tools.stop();
+        self.review.stop();
+        self.strategy.stop();
+        self.ai.stop();
+        self.work_plans.stop();
         self.release.stop();
+        // Per-slot revocation requires the still-owned live runtime generation.
+        // Drain admitted checker grants before Core withdraws the whole epoch.
+        self.review.prepare_runtime_tick(store, &mut self.runtime)?;
+        self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
         for job in self.queries.drain(..) {
-            self.retired_queries.push(job.thread);
+            self.retired_queries.push(RetiredQuery::new(job));
         }
         match self.runtime.begin_quiesce(store) {
             Ok(()) => Ok(()),
@@ -277,7 +587,94 @@ impl ExecutionHost {
             Ok(())
         }
     }
+    fn register_plugin(
+        &mut self,
+        runner: Arc<tsumugi_plugin_host::core::RunnerProxy>,
+        binding: PluginExecutionBinding,
+    ) -> Result<(), ExecutionError> {
+        self.allow_package(&package_lifecycle::binding_package(&binding))?;
+        // One capability/environment registration serves request profiles.
+        // Core validates each fixed request's profile independently.
+        if self.plugin_registrations.iter().any(|previous| {
+            previous.capability == binding.capability
+                && previous.environment == binding.environment
+                && previous.application_scope == binding.application_scope
+        }) {
+            return Ok(());
+        }
+        if self.plugin_registrations.len() >= 128 {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "plugin-registration-limit",
+            ));
+        }
+        let runner = if binding.capability.declaration.permissions.iter().any(|permission| {
+            matches!(permission, tsumugi_plugin_sdk::PermissionRequest::ProjectService { contract }
+                if *contract == tsumugi_plugin_sdk::generation_service_contract())
+        }) {
+            let factory = self.service_factory.as_ref().ok_or_else(|| {
+                ExecutionError::new(ErrorCode::Unauthorized, "project-service-session")
+            })?;
+            Arc::new((*runner).clone().with_service_factory(factory.clone()))
+        } else {
+            runner
+        };
+        self.runtime.register(runner)?;
+        self.plugin_registrations.push(binding);
+        Ok(())
+    }
 }
+impl SessionManager {
+    pub(super) fn begin_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+        package: plugins::PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(context) = &self.services {
+            context
+                .plugins
+                .begin_application_cleanup(action, &package)?;
+        }
+        if let Some(active) = self.active.as_mut() {
+            let (host, store) = active.execution_parts()?;
+            host.begin_package_cleanup(store, action, package)?;
+        }
+        Ok(())
+    }
+    pub(super) fn finish_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+    ) -> Result<(), CommandError> {
+        if let Some(context) = &self.services {
+            context.plugins.finish_application_cleanup(action)?;
+        }
+        if let Some(active) = self.active.as_mut() {
+            let (host, store) = active.execution_parts()?;
+            host.finish_package_cleanup(store, action)?;
+        }
+        Ok(())
+    }
+    pub(super) fn complete_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+        package: &plugins::PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(context) = &self.services {
+            context
+                .plugins
+                .complete_application_cleanup(action, package)?;
+        }
+        if let Some(host) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.execution.as_mut())
+        {
+            host.complete_package_cleanup_if_present(action, package)?;
+        }
+        Ok(())
+    }
+}
+
 impl ActiveSession {
     pub(super) fn execution_status_view(&mut self) -> Result<RuntimeStatus, CommandError> {
         let (host, store) = self.execution_parts()?;
@@ -290,12 +687,54 @@ impl ActiveSession {
     }
     fn execution_parts(&mut self) -> Result<(&mut ExecutionHost, &mut ProjectStore), CommandError> {
         if self.execution.is_none() {
-            self.execution = Some(ExecutionHost::new(&self.store)?);
+            let services = self.services.clone();
+            let token = self.token.clone();
+            let project = ExecutionId::parse(&self.store.metadata()
+                .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
+                .project_id().to_string()).map_err(map_read)?;
+            let mut host = if let Some(context) = services {
+                ExecutionHost::with_member_factory(&self.store, move |generation| {
+                    Some(Arc::new(work_plans::member::MemberFactory::new(
+                        context, token, project, generation,
+                    )))
+                })?
+            } else {
+                ExecutionHost::new(&self.store)?
+            };
+            if let Some(context) = &self.services {
+                host.service_factory =
+                    Some(Arc::new(work_plans::generation::GenerationFactory::new(
+                        context.clone(),
+                        self.token.clone(),
+                        host.runtime.generation(),
+                        ExecutionId::parse(
+                            &self
+                                .store
+                                .metadata()
+                                .map_err(|error| {
+                                    map_persistence_error(error, CommandStage::ExecutionRead)
+                                })?
+                                .project_id()
+                                .to_string(),
+                        )
+                        .map_err(map_read)?,
+                    )));
+            }
+            self.execution = Some(host);
         }
         Ok((
             self.execution.as_mut().expect("initialized"),
             &mut self.store,
         ))
+    }
+    pub(super) fn pause_idle_automation(
+        &mut self,
+        stage: CommandStage,
+    ) -> Result<(), CommandError> {
+        self.ensure_execution_idle(stage)?;
+        self.store
+            .pause_active_work_plans()
+            .map_err(|error| map_execution(error, stage))
     }
     pub(super) fn ensure_execution_idle(&self, stage: CommandStage) -> Result<(), CommandError> {
         if let Some(host) = &self.execution {
@@ -321,7 +760,9 @@ pub(super) fn tick_sessions(sessions: &mut SessionManager) {
     }
 }
 
-fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
+pub(super) fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
+    #[cfg(test)]
+    eprintln!("desktop test core-error code={:?} command_stage={stage:?} core_stage={}", error.code, error.stage);
     let code = match error.code {
         ErrorCode::InvalidInput => CommandErrorCode::InvalidInput,
         ErrorCode::LimitExceeded => CommandErrorCode::LimitExceeded,
@@ -360,18 +801,91 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $($(#[$attribute])* pub $field:$kind,)* }
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum PluginStartOperation {
+    SourceImport,
+    SourceSemanticCheck,
+    TranslationExtract,
+    TranslationSemanticCheck,
+    LocaleBuild,
+    ArtifactSemanticCheck,
+    PluginToolQuery,
+}
+impl PluginStartOperation {
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::SourceImport => tsumugi_core::content::OPERATION,
+            Self::SourceSemanticCheck => tsumugi_core::execution::SOURCE_CHECK_OPERATION,
+            Self::TranslationExtract => tsumugi_core::content::TRANSLATION_EXTRACTION_OPERATION,
+            Self::TranslationSemanticCheck => tsumugi_core::execution::TRANSLATION_CHECK_OPERATION,
+            Self::LocaleBuild => tsumugi_core::content::BUILD_OPERATION,
+            Self::ArtifactSemanticCheck => tsumugi_core::execution::ARTIFACT_CHECK_OPERATION,
+            Self::PluginToolQuery => tools::OPERATION,
+        }
+    }
+}
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PluginStartReadRequest {
+        attempt_id: ExecutionId,
+        input_digest: String,
+        operation: PluginStartOperation
+    }
+);
+#[tauri::command]
+pub async fn read_plugin_execution_start(
+    state: State<'_, AppState>,
+    request: PluginStartReadRequest,
+) -> Result<Option<PluginStartActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_plugin_execution_start",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .plugin_input_start_action_read(
+                    request.project_id,
+                    request.attempt_id,
+                    request.operation.operation(),
+                    &request.input_digest,
+                )
+                .map_err(map_read)
+            },
+        )
+        .await
+}
+request!(
+    #[derive(PartialEq, Eq)]
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PluginStartRequest {
+        attempt_id: ExecutionId,
+        input_digest: String,
+        grant_id: ExecutionId,
+        expires_at_ms: UnsignedDecimal,
+        unsandboxed_execution: bool
+    }
+);
 pub(super) mod ai;
 pub(super) mod ai_wire;
 pub(super) mod arena;
 pub(super) mod release;
 pub(super) mod resource;
-pub(super) mod resource_wire;
 pub(super) mod review;
-pub(super) mod review_wire;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;
-pub(super) mod source_wire;
+pub(super) mod strategy;
+pub(super) mod tools;
+pub(super) mod work_plans;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     SessionRequest {}
@@ -380,6 +894,13 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     ListRequest {
         after: Revision,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TaskActivityRequest {
         #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
         limit: u32
     }
@@ -410,6 +931,17 @@ request!(
         result_id: ExecutionId
     }
 );
+
+/// Read-only display projection. The stored ResultEnvelope remains unchanged.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionOutputView {
+    #[serde(flatten)]
+    pub result: ResultEnvelope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_failure: Option<sdk::SourceExtractionError>,
+}
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     CancelRequest {
@@ -418,15 +950,33 @@ request!(
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] RecoveryRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action:RecoveryAction, item_ids:Vec<ExecutionId> });
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ContinuationRequest { action: ContinuationAction });
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ContinuationReadRequest { action_id: ExecutionId });
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ContinuationListRequest {
-    source_attempt_id: ExecutionId,
-    after: Revision,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TaskViewRequest { task_id: ExecutionId });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContinuationRequest {
+        action: ContinuationAction
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContinuationReadRequest {
+        action_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContinuationListRequest {
+        source_attempt_id: ExecutionId,
+        after: Revision,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TaskViewRequest {
+        task_id: ExecutionId
+    }
+);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -497,27 +1047,7 @@ pub struct AttemptSummary {
     pub attempt_id: ExecutionId,
     pub sequence: Revision,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct ItemView {
-    pub status: ItemStatus,
-    pub scope: Scope,
-    pub result_id: Option<ExecutionId>,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct AttemptDetail {
-    pub attempt_id: ExecutionId,
-    pub task_id: ExecutionId,
-    pub operation: String,
-    pub progress: Progress,
-    pub items: Vec<ItemView>,
-    pub recovery: RecoveryPlan,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    pub next_offset: Option<u32>,
-}
+pub use tsumugi_core::AttemptDetail;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -580,6 +1110,8 @@ pub async fn execution_status(
             "execution_status",
             CommandStage::ExecutionRead,
             move |sessions| {
+                let hook_active = sessions.source_hooks.is_active();
+                let retrieval_active = sessions.mcp_retrieval.active();
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -588,7 +1120,7 @@ pub async fn execution_status(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 Ok(RuntimeStatus {
-                    active: host.active(store)?,
+                    active: host.active(store)? || hook_active || retrieval_active,
                     quiescing: host.quiescing,
                     query_count: host.queries.len() as u32,
                     error: host.last_error.clone(),
@@ -618,6 +1150,32 @@ pub async fn list_execution_tasks(
                     .store
                     .execution_tasks(request.after, request.limit)
                     .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_execution_task_activity(
+    state: State<'_, AppState>,
+    request: TaskActivityRequest,
+) -> Result<tsumugi_core::TaskActivity, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_task_activity",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                match active.execution.as_ref() {
+                    Some(host) => host.runtime.task_activity(&active.store, request.limit),
+                    None => active.store.execution_task_activity(request.limit, &[]),
+                }
+                .map_err(map_read)
             },
         )
         .await
@@ -697,66 +1255,108 @@ fn attempt_detail(
     offset: u32,
     limit: u32,
 ) -> Result<AttemptDetail, CommandError> {
-    let view = host.runtime.attempt(store, attempt_id).map_err(map_read)?;
-    let input = store.execution_input(attempt_id).map_err(map_read)?;
-    let total = view.items.len();
-    if offset as usize > total {
-        return Err(CommandError::invalid_input(
-            CommandStage::ExecutionRead,
-            Some("offset"),
-        ));
-    }
-    let items = view
-        .items
-        .into_iter()
-        .skip(offset as usize)
-        .take(limit as usize)
-        .map(|status| {
-            Ok(ItemView {
-                scope: input.item(status.item_id).map_err(map_read)?.scope.clone(),
-                result_id: store
-                    .execution_current_result(attempt_id, status.item_id)
-                    .map_err(map_read)?,
-                status,
-            })
+    store
+        .execution_attempt_detail(
+            attempt_id,
+            host.runtime.is_active(attempt_id),
+            offset,
+            limit,
+        )
+        .map_err(|error| {
+            if error.code == ErrorCode::InvalidInput && error.stage == "offset" {
+                CommandError::invalid_input(CommandStage::ExecutionRead, Some("offset"))
+            } else {
+                map_read(error)
+            }
         })
-        .collect::<Result<Vec<_>, CommandError>>()?;
-    let mut recovery = store
-        .execution_recovery(attempt_id, host.runtime.is_active(attempt_id))
-        .map_err(map_read)?;
-    // A unit can span pages. Return it on each page containing a member so its
-    // full scope remains explicit before an action is requested.
-    recovery.units.retain(|unit| {
-        items
-            .iter()
-            .any(|item| unit.item_ids.contains(&item.status.item_id))
-    });
-    if view.operation == tsumugi_core::ai::OPERATION {
-        for unit in &mut recovery.units {
-            unit.actions.retain(|a| {
-                !matches!(
-                    a,
-                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
-                )
-            });
-        }
-    }
-    let end = offset + items.len() as u32;
-    Ok(AttemptDetail {
-        attempt_id: view.attempt_id,
-        task_id: view.task_id,
-        operation: view.operation,
-        progress: view.progress,
-        items,
-        recovery,
-        next_offset: ((end as usize) < total).then_some(end),
-    })
 }
+
+fn source_failure(
+    store: &ProjectStore,
+    result: &ResultEnvelope,
+) -> Result<Option<sdk::SourceExtractionError>, ExecutionError> {
+    let Some(evidence) = &result.plugin else {
+        return Ok(None);
+    };
+    let sdk::InvocationOutcome::Failed { error } = &evidence.result.outcome else {
+        return Ok(None);
+    };
+    if result.outcome != ExecutionState::Failed
+        || error.schema != sdk::source_extraction_error_contract()
+    {
+        return Ok(None);
+    }
+    // A reused result belongs to its original attempt, not the request that
+    // selected it. Read that immutable input to bind any reported artifact.
+    let input = store.execution_input(result.attempt_id)?;
+    let envelope = input.envelope();
+    let Some(binding) = &envelope.plugin else {
+        return Ok(None);
+    };
+    let [item] = envelope.items.as_slice() else {
+        return Ok(None);
+    };
+    if item.item_id != result.item_id || binding.capability.declaration.error_schema != error.schema
+    {
+        return Ok(None);
+    }
+    let artifacts = match envelope.operation.as_str() {
+        tsumugi_core::content::OPERATION
+            if binding.capability.declaration.input_schema
+                == sdk::source_extraction_input_contract() =>
+        {
+            let Ok(source) =
+                serde_json::from_value::<sdk::SourceExtractionInput>(item.payload.clone())
+            else {
+                return Ok(None);
+            };
+            if source.validate().is_err() {
+                return Ok(None);
+            }
+            source.artifacts
+        }
+        SOURCE_CHECK_OPERATION
+            if binding.capability.declaration.input_schema
+                == sdk::source_extraction_check_input_contract() =>
+        {
+            let Ok(check) =
+                serde_json::from_value::<sdk::SourceExtractionCheckInput>(item.payload.clone())
+            else {
+                return Ok(None);
+            };
+            if check.validate().is_err() {
+                return Ok(None);
+            }
+            check.source.artifacts
+        }
+        _ => return Ok(None),
+    };
+    Ok(parse_public_source_failure(error, &artifacts))
+}
+
+fn parse_public_source_failure(
+    error: &sdk::EncodedPayload,
+    artifacts: &[sdk::CapturedTextArtifact],
+) -> Option<sdk::SourceExtractionError> {
+    if error.schema != sdk::source_extraction_error_contract() {
+        return None;
+    }
+    let failure = sdk::parse_source_extraction_error(error.utf8.as_bytes()).ok()?;
+    if failure
+        .artifact_id
+        .as_ref()
+        .is_some_and(|id| !artifacts.iter().any(|artifact| &artifact.id == id))
+    {
+        return None;
+    }
+    Some(failure)
+}
+
 #[tauri::command]
 pub async fn read_execution_output(
     state: State<'_, AppState>,
     request: OutputRequest,
-) -> Result<ResultEnvelope, CommandError> {
+) -> Result<ExecutionOutputView, CommandError> {
     state
         .sessions
         .run(
@@ -769,11 +1369,16 @@ pub async fn read_execution_output(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                active
+                let result = active
                     .store
                     .execution_result(request.attempt_id, request.result_id)
-                    .map(|result| result.envelope().clone())
-                    .map_err(map_read)
+                    .map_err(map_read)?;
+                let result = result.envelope().clone();
+                let source_failure = source_failure(&active.store, &result).map_err(map_read)?;
+                Ok(ExecutionOutputView {
+                    result,
+                    source_failure,
+                })
             },
         )
         .await
@@ -815,46 +1420,138 @@ pub async fn cancel_execution_task(
         .await
 }
 #[tauri::command]
-pub async fn read_execution_task_view(state: State<'_, AppState>, request: TaskViewRequest) -> Result<TaskView, CommandError> {
-    state.sessions.run("read_execution_task_view", CommandStage::ExecutionRead, move |sessions| {
-        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
-        active.store.execution_task(request.task_id).map_err(map_read)
-    }).await
+pub async fn read_execution_task_view(
+    state: State<'_, AppState>,
+    request: TaskViewRequest,
+) -> Result<TaskView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_task_view",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .execution_task(request.task_id)
+                    .map_err(map_read)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub async fn read_execution_continuation(state: State<'_, AppState>, request: ContinuationReadRequest) -> Result<Option<ContinuationReceipt>, CommandError> {
-    state.sessions.run("read_execution_continuation", CommandStage::ExecutionRead, move |sessions| {
-        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
-        active.store.read_execution_continuation(request.action_id).map_err(map_read)
-    }).await
+pub async fn read_execution_continuation(
+    state: State<'_, AppState>,
+    request: ContinuationReadRequest,
+) -> Result<Option<ContinuationReceipt>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_continuation",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .read_execution_continuation(request.action_id)
+                    .map_err(map_read)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub async fn read_execution_continuations(state: State<'_, AppState>, request: ContinuationListRequest) -> Result<ContinuationPage, CommandError> {
-    state.sessions.run("read_execution_continuations", CommandStage::ExecutionRead, move |sessions| {
-        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
-        let receipts = active.store.execution_continuation_page(request.source_attempt_id, request.after, request.limit).map_err(map_read)?;
-        // A full page always offers a cursor; an empty final page confirms completion.
-        let next = if receipts.len() == request.limit as usize { receipts.last().map(|receipt| receipt.sequence) } else { None };
-        Ok(ContinuationPage { receipts, next })
-    }).await
+pub async fn read_execution_continuations(
+    state: State<'_, AppState>,
+    request: ContinuationListRequest,
+) -> Result<ContinuationPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_continuations",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let receipts = active
+                    .store
+                    .execution_continuation_page(
+                        request.source_attempt_id,
+                        request.after,
+                        request.limit,
+                    )
+                    .map_err(map_read)?;
+                // A full page always offers a cursor; an empty final page confirms completion.
+                let next = if receipts.len() == request.limit as usize {
+                    receipts.last().map(|receipt| receipt.sequence)
+                } else {
+                    None
+                };
+                Ok(ContinuationPage { receipts, next })
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub async fn continue_execution(state: State<'_, AppState>, request: ContinuationRequest) -> Result<ContinuationReceipt, CommandError> {
-    state.sessions.run("continue_execution", CommandStage::ExecutionRecover, move |sessions| {
-        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRecover)?;
-        if request.action.project_id != request.project_id {
-            return Err(map_recover(ExecutionError::new(ErrorCode::Unauthorized, "continuation-project")));
-        }
-        // A historical receipt is readable even when fresh mutation is unavailable.
-        // Keep session/project read authorization, without renewing run authority.
-        if let Some(receipt) = active.store.execution_continuation(request.action.action_id).map_err(map_recover)? {
-            return if receipt.action == request.action.canonical().map_err(map_recover)? { Ok(receipt) }
-                else { Err(map_recover(ExecutionError::new(ErrorCode::ResultMismatch, "continuation-identity"))) };
-        }
-        let (host, store) = active.execution_parts()?;
-        host.allow_mutation()?;
-        host.runtime.resume(store, &request.action).map_err(map_recover)
-    }).await
+pub async fn continue_execution(
+    state: State<'_, AppState>,
+    request: ContinuationRequest,
+) -> Result<ContinuationReceipt, CommandError> {
+    state
+        .sessions
+        .run(
+            "continue_execution",
+            CommandStage::ExecutionRecover,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRecover,
+                )?;
+                if request.action.project_id != request.project_id {
+                    return Err(map_recover(ExecutionError::new(
+                        ErrorCode::Unauthorized,
+                        "continuation-project",
+                    )));
+                }
+                // A historical receipt is readable even when fresh mutation is unavailable.
+                // Keep session/project read authorization, without renewing run authority.
+                if let Some(receipt) = active
+                    .store
+                    .execution_continuation(request.action.action_id)
+                    .map_err(map_recover)?
+                {
+                    return if receipt.action == request.action.canonical().map_err(map_recover)? {
+                        Ok(receipt)
+                    } else {
+                        Err(map_recover(ExecutionError::new(
+                            ErrorCode::ResultMismatch,
+                            "continuation-identity",
+                        )))
+                    };
+                }
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.runtime
+                    .resume(store, &request.action)
+                    .map_err(map_recover)
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn recover_execution(
@@ -873,8 +1570,14 @@ pub async fn recover_execution(
                     request.project_id,
                     CommandStage::ExecutionRecover,
                 )?;
-                if matches!(request.action, RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure) {
-                    return Err(map_recover(ExecutionError::new(ErrorCode::InvalidInput, "continuation-identity-required")));
+                if matches!(
+                    request.action,
+                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                ) {
+                    return Err(map_recover(ExecutionError::new(
+                        ErrorCode::InvalidInput,
+                        "continuation-identity-required",
+                    )));
                 }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
@@ -915,7 +1618,10 @@ pub async fn recover_execution(
                 };
                 match request.action {
                     RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure => {
-                        return Err(map_recover(ExecutionError::new(ErrorCode::InvalidInput, "continuation-identity-required")));
+                        return Err(map_recover(ExecutionError::new(
+                            ErrorCode::InvalidInput,
+                            "continuation-identity-required",
+                        )));
                     }
                     RecoveryAction::ValidateOutput => {
                         for item in selected {
@@ -1125,6 +1831,21 @@ pub async fn quiesce_execution(
             "quiesce_execution",
             CommandStage::ExecutionQuiesce,
             move |sessions| {
+                // Authenticate before revoking the original external recipient.
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionQuiesce,
+                )?;
+                sessions.mcp.close();
+                sessions.mcp_retrieval.close();
+                let hook_result = {
+                    let active = sessions.active.as_mut().expect("authorized session");
+                    sessions.source_hooks.close(&mut active.store)
+                };
+                let hook_active = sessions.source_hooks.is_active();
+                let retrieval_active = sessions.mcp_retrieval.active();
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -1135,14 +1856,19 @@ pub async fn quiesce_execution(
                 if !host.quiescing {
                     host.begin_quiesce(store)?;
                 }
-                match host.runtime.finish_quiesce(store) {
-                    Ok(()) => host.quiescing = false,
+                match host.finish_quiesce(store) {
+                    Ok(()) => {}
                     Err(error) if error.code == ErrorCode::Busy => {}
                     Err(error) => return Err(map_execution(error, CommandStage::ExecutionQuiesce)),
                 }
+                if let Err(error) = hook_result {
+                    if error.code != CommandErrorCode::Busy {
+                        return Err(error);
+                    }
+                }
                 Ok(RuntimeStatus {
-                    active: host.active(store)?,
-                    quiescing: host.quiescing,
+                    active: host.active(store)? || hook_active || retrieval_active,
+                    quiescing: host.quiescing || hook_active || retrieval_active,
                     query_count: 0,
                     error: host.last_error.clone(),
                 })

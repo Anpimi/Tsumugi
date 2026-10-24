@@ -1,0 +1,1222 @@
+//! Accepted Review work uses independent original runtime channels and the
+//! single Core QA adoption boundary. Previews cannot grant execution authority.
+use super::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
+use super::*;
+use crate::commands::plugins::ApplicationPlugins;
+use std::collections::BTreeSet;
+use tsumugi_core::{
+    AdvisoryReviewCheck, CapturedReviewCheckExecution, PreparedReviewCheck, ReviewCheckOrigin,
+    ReviewCheckerKey, StrategyActionReceipt, StrategyCheckReceipt, StrategyCheckRequest,
+};
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewCheckStartRequest { check: ReviewCheckRequest, executions: Vec<PluginStartRequest> }
+);
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewCheckerPreflightView {
+    pub checker: ReviewCheckerKey,
+    pub attempt_id: ExecutionId,
+    pub input_digest: String,
+    pub plugin: ReviewCheckerView,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewPluginCheckView {
+    pub action_id: ExecutionId,
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub basis: String,
+    pub checkers: Vec<ReviewCheckerPreflightView>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ReviewCheckPreparation {
+    Recorded { run: CheckRun },
+    Plugin { view: ReviewPluginCheckView },
+}
+
+#[derive(Clone)]
+struct Slot {
+    key: ReviewCheckerKey,
+    input: FixedInput,
+    environment: CheckerEnvironment,
+    start: Option<PluginStartRequest>,
+}
+struct Preflight {
+    prepared: PreparedReviewCheck,
+    request: CheckRequest,
+    slots: Vec<Slot>,
+    view: ReviewPluginCheckView,
+}
+type Reply = Box<dyn FnOnce(Result<CapturedReviewCheckExecution, CommandError>) + Send>;
+struct Job {
+    request: CheckRequest,
+    executions: Vec<PluginStartRequest>,
+    _registration: ReviewCheckRegistration,
+    cancellation: Cancellation,
+    plugins: Arc<ApplicationPlugins>,
+    settings_revision: UnsignedDecimal,
+    slots: Vec<Slot>,
+    prepared: PreparedReviewCheck,
+    attached: bool,
+    observing: bool,
+    terminal: bool,
+    authorization_attempted: bool,
+    rejected_before_dispatch: bool,
+    reply: Option<Reply>,
+    cancellation_sent: bool,
+    cancellation_actions: Vec<ExecutionId>,
+}
+impl Job {
+    fn cancel_channels(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), CommandError> {
+        if self.cancellation_sent {
+            return Ok(());
+        }
+        for (slot, action) in self.slots.iter().zip(&self.cancellation_actions) {
+            if let Some(start) = &slot.start {
+                runtime
+                    .revoke_plugin(store, start.grant_id)
+                    .map_err(map_adopt)?;
+            }
+            match store.execution_input(slot.input.envelope().attempt_id) {
+                Ok(_) => {
+                    runtime
+                        .cancel(store, slot.input.envelope().task_id, *action)
+                        .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                }
+                Err(error)
+                    if error.code == ErrorCode::InvalidInput
+                        && error.stage == "execution-storage" => {}
+                Err(error) => return Err(map_read(error)),
+            }
+        }
+        self.cancellation_sent = true;
+        Ok(())
+    }
+}
+#[derive(Default)]
+pub(in crate::commands::execution) struct ReviewSession {
+    preflight: Option<Preflight>,
+    jobs: BTreeMap<ExecutionId, Job>,
+}
+impl ReviewSession {
+    pub(in crate::commands::execution) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        if self.preflight.as_ref().is_some_and(|preflight| {
+            preflight
+                .slots
+                .iter()
+                .any(|slot| package_lifecycle::matches_input(package, &slot.input))
+        }) {
+            self.preflight = None;
+        }
+        for job in self.jobs.values().filter(|job| {
+            job.slots
+                .iter()
+                .any(|slot| package_lifecycle::matches_input(package, &slot.input))
+        }) {
+            // A joint check is one dependent action. Its original channels keep
+            // their own cancellation receipts; independent actions stay live.
+            job.cancellation.request();
+        }
+    }
+    pub(in crate::commands::execution) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        self.jobs.values().any(|job| {
+            job.slots
+                .iter()
+                .any(|slot| package_lifecycle::matches_input(package, &slot.input))
+                && (job.attached
+                    || ((job.authorization_attempted
+                        || job.slots.iter().any(|slot| slot.start.is_some()))
+                        && !job.terminal))
+        })
+    }
+    pub(in crate::commands::execution) fn active(&self) -> bool {
+        self.jobs.values().any(|job| {
+            job.attached
+                || ((job.authorization_attempted
+                    || job.slots.iter().any(|slot| slot.start.is_some()))
+                    && !job.terminal)
+        })
+    }
+    pub(in crate::commands::execution) fn stop(&mut self) {
+        self.preflight = None;
+        for job in self.jobs.values() {
+            job.cancellation.request();
+        }
+    }
+    /// Withdraw the original grants before queued manual checks can dispatch.
+    /// The returned snapshot guards the ordinary runtime's actual tick as well.
+    pub(in crate::commands::execution) fn prepare_runtime_tick(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<Option<(Arc<ApplicationPlugins>, UnsignedDecimal)>, CommandError> {
+        let mut authority = None;
+        for job in self.jobs.values_mut() {
+            let needs_authority = job.slots.iter().any(|slot| slot.start.is_some())
+                && (job.attached || !job.terminal);
+            if !job.cancellation.is_requested() && needs_authority {
+                if let Err(error) = job
+                    .plugins
+                    .with_environment_revision(job.settings_revision, || Ok(()))
+                {
+                    if matches!(
+                        error.code,
+                        CommandErrorCode::Busy
+                            | CommandErrorCode::StorageFailed
+                            | CommandErrorCode::OutcomeUnknown
+                    ) {
+                        return Err(error);
+                    }
+                    job.cancellation.request();
+                }
+            }
+            if job.cancellation.is_requested() {
+                job.cancel_channels(store, runtime)?;
+            } else if needs_authority {
+                if authority.as_ref().is_some_and(|(plugins, revision)| {
+                    *revision != job.settings_revision || !Arc::ptr_eq(plugins, &job.plugins)
+                }) {
+                    return Err(stale());
+                }
+                authority = Some((job.plugins.clone(), job.settings_revision));
+            }
+        }
+        self.jobs
+            .retain(|_, job| job.attached || !job.cancellation_sent);
+        Ok(authority)
+    }
+    pub(in crate::commands::execution) fn tick(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), CommandError> {
+        for job in self.jobs.values_mut() {
+            if job.cancellation.is_requested() && !job.cancellation_sent {
+                job.cancel_channels(store, runtime)?;
+            }
+            if !job.observing {
+                // Detached error replies do not detach their original channels
+                // from authority/cancellation. Real terminal frames determine
+                // whether the retained retry occupies active project work.
+                job.terminal = true;
+                for slot in &job.slots {
+                    match store.execution_attempt(slot.input.envelope().attempt_id, false) {
+                        Ok(status) => {
+                            if status.items.is_empty() {
+                                return Err(map_read(ExecutionError::new(
+                                    ErrorCode::CorruptLedger,
+                                    "review-check-item",
+                                )));
+                            }
+                            if status.items.iter().any(|item| {
+                                matches!(
+                                    item.execution,
+                                    ExecutionState::Queued | ExecutionState::Dispatched
+                                )
+                            }) {
+                                job.terminal = false;
+                            }
+                        }
+                        Err(error)
+                            if error.code == ErrorCode::InvalidInput
+                                && error.stage == "execution-storage" =>
+                        {
+                            // Metadata rejection creates neither an input nor a
+                            // channel. An attempted authorization may instead
+                            // have committed before returning an unknown error.
+                            if slot.start.is_some() || job.authorization_attempted {
+                                job.terminal = false;
+                            }
+                        }
+                        Err(error) => return Err(map_read(error)),
+                    }
+                }
+                continue;
+            }
+            let observed = (|| {
+                if job.cancellation.is_requested() {
+                    return Err(cancelled());
+                }
+                let mut origins = Vec::with_capacity(job.slots.len());
+                for slot in &job.slots {
+                    let attempt = slot.input.envelope().attempt_id;
+                    let status = runtime.attempt(store, attempt).map_err(map_read)?;
+                    let item = status.items.first().ok_or_else(|| {
+                        map_read(ExecutionError::new(
+                            ErrorCode::CorruptLedger,
+                            "review-check-item",
+                        ))
+                    })?;
+                    if matches!(
+                        item.execution,
+                        ExecutionState::Queued | ExecutionState::Dispatched
+                    ) {
+                        return Ok(None);
+                    }
+                    let result = store
+                        .execution_current_result(attempt, item.item_id)
+                        .map_err(map_read)?
+                        .ok_or_else(|| CommandError::unknown(CommandStage::ExecutionAdopt))?;
+                    origins.push(ReviewCheckOrigin {
+                        checker: slot.key.clone(),
+                        attempt_id: attempt,
+                        result_id: result,
+                    });
+                }
+                store
+                    .capture_review_check_execution(job.prepared.clone(), &origins)
+                    .map(Some)
+                    .map_err(map_adopt)
+            })();
+            let result = match observed {
+                Ok(None) => continue,
+                Err(error)
+                    if matches!(
+                        error.code,
+                        CommandErrorCode::Busy | CommandErrorCode::StorageFailed
+                    ) =>
+                {
+                    return Err(error);
+                }
+                Ok(Some(capture)) => Ok(capture),
+                Err(error) => Err(error),
+            };
+            job.observing = false;
+            if let Some(reply) = job.reply.take() {
+                reply(result);
+            }
+        }
+        Ok(())
+    }
+}
+fn cancelled() -> CommandError {
+    map_adopt(ExecutionError::new(
+        ErrorCode::Cancelled,
+        "review-check-cancelled",
+    ))
+}
+fn stale() -> CommandError {
+    super::checkers::stale()
+}
+// The original Review owner carries either a selected target or a separately
+// identified experiment output. Strategy checks never impersonate a selection.
+#[derive(Clone, Debug, PartialEq)]
+enum CheckTarget {
+    Selected {
+        unit_id: ExecutionId,
+        locale: String,
+        expected_basis: String,
+    },
+    Strategy(StrategyCheckRequest),
+}
+#[derive(Clone, Debug, PartialEq)]
+struct CheckRequest {
+    session_token: String,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    advisory_checks: Vec<crate::commands::plugins::reviews::PluginTextReviewSelection>,
+    target: CheckTarget,
+}
+impl From<ReviewCheckRequest> for CheckRequest {
+    fn from(request: ReviewCheckRequest) -> Self {
+        Self {
+            session_token: request.session_token,
+            project_id: request.project_id,
+            action_id: request.action_id,
+            advisory_checks: request.advisory_checks,
+            target: CheckTarget::Selected {
+                unit_id: request.unit_id,
+                locale: request.locale,
+                expected_basis: request.expected_basis,
+            },
+        }
+    }
+}
+#[derive(Clone)]
+struct CheckStart {
+    session_token: String,
+    project_id: ExecutionId,
+    check: CheckRequest,
+    executions: Vec<PluginStartRequest>,
+}
+enum CheckOutcome {
+    Selected(CheckRun),
+    Strategy(StrategyCheckReceipt),
+}
+enum CheckPreparation {
+    Recorded(CheckOutcome),
+    Plugin(ReviewPluginCheckView),
+}
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    StrategyCheckCommand {
+        check: StrategyCheckRequest
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    StrategyCheckStartRequest { check: StrategyCheckCommand, executions: Vec<PluginStartRequest> }
+);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum StrategyCheckPreparation {
+    Recorded { receipt: StrategyCheckReceipt },
+    Plugin { view: ReviewPluginCheckView },
+}
+fn strategy_request(request: StrategyCheckCommand) -> Result<CheckRequest, CommandError> {
+    if request.project_id != request.check.project_id {
+        return Err(stale());
+    }
+    Ok(CheckRequest {
+        session_token: request.session_token,
+        project_id: request.project_id,
+        action_id: request.check.action_id,
+        advisory_checks: Vec::new(),
+        target: CheckTarget::Strategy(request.check),
+    })
+}
+fn preflight_view(
+    request: &CheckRequest,
+    prepared: &PreparedReviewCheck,
+    slots: &[Slot],
+) -> Result<ReviewPluginCheckView, CommandError> {
+    let plan = prepared.plan().ok_or_else(stale)?;
+    Ok(ReviewPluginCheckView {
+        action_id: request.action_id,
+        unit_id: plan.unit_id(),
+        locale: plan.domain_input().target_language.clone(),
+        basis: plan.review_basis().into(),
+        checkers: slots
+            .iter()
+            .map(|slot| {
+                Ok(ReviewCheckerPreflightView {
+                    checker: slot.key.clone(),
+                    attempt_id: slot.input.envelope().attempt_id,
+                    input_digest: slot.input.digest().into(),
+                    plugin: slot.environment.view()?,
+                })
+            })
+            .collect::<Result<_, CommandError>>()?,
+    })
+}
+fn capture(
+    store: &ProjectStore,
+    request: &CheckRequest,
+    choices: &[AdvisoryReviewCheck],
+) -> Result<PreparedReviewCheck, CommandError> {
+    match &request.target {
+        CheckTarget::Selected {
+            unit_id,
+            locale,
+            expected_basis,
+        } => store
+            .prepare_review_check(
+                request.project_id,
+                *unit_id,
+                locale,
+                expected_basis,
+                request.action_id,
+                choices,
+            )
+            .map_err(map_adopt),
+        CheckTarget::Strategy(check) => {
+            if !choices.is_empty() || !request.advisory_checks.is_empty() {
+                return Err(stale());
+            }
+            store
+                .prepare_strategy_evaluation_check(check)
+                .map_err(map_adopt)
+        }
+    }
+}
+fn recorded(
+    store: &ProjectStore,
+    request: &CheckRequest,
+) -> Result<Option<CheckOutcome>, CommandError> {
+    let CheckTarget::Selected {
+        unit_id,
+        locale,
+        expected_basis,
+    } = &request.target
+    else {
+        let CheckTarget::Strategy(check) = &request.target else {
+            unreachable!()
+        };
+        return match store
+            .read_strategy_action(request.project_id, request.action_id)
+            .map_err(map_read)?
+        {
+            None => Ok(None),
+            Some(StrategyActionReceipt::Check { receipt }) if receipt.request == *check => {
+                Ok(Some(CheckOutcome::Strategy(receipt)))
+            }
+            Some(_) => Err(stale()),
+        };
+    };
+    let Some(run) = store
+        .review_check_action(request.project_id, request.action_id)
+        .map_err(map_read)?
+    else {
+        return Ok(None);
+    };
+    if run.unit_id != *unit_id || run.locale != *locale || run.basis != *expected_basis {
+        return Err(stale());
+    }
+    let choices = run
+        .evidence
+        .as_ref()
+        .map(|e| e.advisory_checks.as_slice())
+        .unwrap_or(&[]);
+    if choices.len() != request.advisory_checks.len() {
+        return Err(stale());
+    }
+    for (saved, selected) in choices.iter().zip(&request.advisory_checks) {
+        if saved.binding.checker.provider.plugin != selected.package.plugin
+            || saved.binding.checker.provider.package_digest != selected.package.package_digest
+            || saved.declaration_resource_id != selected.resource_id
+            || saved.execution.environment.digest().map_err(|_| stale())?
+                != selected.environment_digest
+            || saved.rules != selected.rules
+        {
+            return Err(stale());
+        }
+    }
+    capture(store, request, choices)?
+        .recorded_run()
+        .cloned()
+        .ok_or_else(stale)
+        .map(|run| Some(CheckOutcome::Selected(run)))
+}
+
+#[tauri::command]
+pub async fn prepare_review_checks(
+    state: State<'_, AppState>,
+    request: ReviewCheckRequest,
+) -> Result<ReviewCheckPreparation, CommandError> {
+    match prepare_checks(state, request.into()).await? {
+        CheckPreparation::Recorded(CheckOutcome::Selected(run)) => {
+            Ok(ReviewCheckPreparation::Recorded { run })
+        }
+        CheckPreparation::Plugin(view) => Ok(ReviewCheckPreparation::Plugin { view }),
+        _ => Err(stale()),
+    }
+}
+#[tauri::command]
+pub async fn prepare_strategy_evaluation_checks(
+    state: State<'_, AppState>,
+    request: StrategyCheckCommand,
+) -> Result<StrategyCheckPreparation, CommandError> {
+    match prepare_checks(state, strategy_request(request)?).await? {
+        CheckPreparation::Recorded(CheckOutcome::Strategy(receipt)) => {
+            Ok(StrategyCheckPreparation::Recorded { receipt })
+        }
+        CheckPreparation::Plugin(view) => Ok(StrategyCheckPreparation::Plugin { view }),
+        _ => Err(stale()),
+    }
+}
+
+async fn prepare_checks(
+    state: State<'_, AppState>,
+    request: CheckRequest,
+) -> Result<CheckPreparation, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let prior = lease
+        .run(
+            "prepare_review_checks.recorded",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                if let Some(run) = recorded(store, &initial)? {
+                    return Ok(Some(CheckPreparation::Recorded(run)));
+                }
+                host.allow_mutation()?;
+                if let Some(job) = host.review.jobs.get(&initial.action_id) {
+                    if job.request != initial {
+                        return Err(stale());
+                    }
+                    let current = capture(
+                        store,
+                        &initial,
+                        job.prepared.plan().ok_or_else(stale)?.advisory_checks(),
+                    )?;
+                    for slot in &job.slots {
+                        current
+                            .validate_execution_input(&slot.input)
+                            .map_err(map_adopt)?;
+                    }
+                    return Ok(Some(CheckPreparation::Plugin(preflight_view(
+                        &initial,
+                        &job.prepared,
+                        &job.slots,
+                    )?)));
+                }
+                if let Some(preflight) = &host.review.preflight {
+                    if preflight.request == initial {
+                        let current = capture(
+                            store,
+                            &initial,
+                            preflight
+                                .prepared
+                                .plan()
+                                .ok_or_else(stale)?
+                                .advisory_checks(),
+                        )?;
+                        for slot in &preflight.slots {
+                            current
+                                .validate_execution_input(&slot.input)
+                                .map_err(map_adopt)?;
+                        }
+                        return Ok(Some(CheckPreparation::Plugin(preflight.view.clone())));
+                    }
+                }
+                Ok(None)
+            },
+        )
+        .await?;
+    if let Some(view) = prior {
+        return Ok(view);
+    }
+    let plugins = state.plugins.clone();
+    let selected = request.advisory_checks.clone();
+    let initial = request.clone();
+    let selected_work = lease
+        .run(
+            "prepare_review_checks.advisory_capture",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.begin_package_work(
+                    initial
+                        .advisory_checks
+                        .iter()
+                        .map(|choice| choice.package.clone())
+                        .collect(),
+                )
+            },
+        )
+        .await?;
+    let accepted_work = selected_work.clone();
+    let choices = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            accepted_work.check()?;
+            capture_advisory(&plugins, &selected)
+        })
+        .await?;
+    let initial = request.clone();
+    let captured = lease
+        .run(
+            "prepare_review_checks.capture",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                if let Some(outcome) = recorded(store, &initial)? {
+                    return Ok(Err(outcome));
+                }
+                host.allow_mutation()?;
+                selected_work.check()?;
+                let prepared = capture(store, &initial, &choices)?;
+                let work = host.begin_package_work(
+                    prepared
+                        .execution_inputs()
+                        .iter()
+                        .filter_map(package_lifecycle::input_package)
+                        .collect(),
+                )?;
+                Ok(Ok((prepared, work)))
+            },
+        )
+        .await?;
+    let (prepared, work) = match captured {
+        Ok(captured) => captured,
+        Err(outcome) => return Ok(CheckPreparation::Recorded(outcome)),
+    };
+    if let Some(run) = prepared.recorded_run() {
+        return Ok(CheckPreparation::Recorded(CheckOutcome::Selected(
+            run.clone(),
+        )));
+    }
+    let plan = prepared.plan().ok_or_else(stale)?.clone();
+    let inputs = prepared.execution_inputs().to_vec();
+    let plugins = state.plugins.clone();
+    let accepted_work = work.clone();
+    let slots = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            accepted_work.check()?;
+            plan.checkers()
+                .iter()
+                .zip(inputs)
+                .map(|(checker, input)| {
+                    Ok(Slot {
+                        key: checker.key.clone(),
+                        input,
+                        environment: CheckerEnvironment::capture(
+                            &plugins,
+                            checker,
+                            plan.binding(),
+                            plan.advisory_checks(),
+                        )?,
+                        start: None,
+                    })
+                })
+                .collect::<Result<Vec<_>, CommandError>>()
+        })
+        .await?;
+    lease
+        .run(
+            "prepare_review_checks.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                if let Some(outcome) = recorded(store, &request)? {
+                    return Ok(CheckPreparation::Recorded(outcome));
+                }
+                host.allow_mutation()?;
+                work.check()?;
+                let current = capture(
+                    store,
+                    &request,
+                    prepared.plan().ok_or_else(stale)?.advisory_checks(),
+                )?;
+                if let Some(run) = current.recorded_run() {
+                    return Ok(CheckPreparation::Recorded(CheckOutcome::Selected(
+                        run.clone(),
+                    )));
+                }
+                for slot in &slots {
+                    current
+                        .validate_execution_input(&slot.input)
+                        .map_err(map_adopt)?;
+                }
+                let view = preflight_view(&request, &prepared, &slots)?;
+                // A new preview replaces only an explicitly rejected metadata
+                // attempt. Accepted or uncertain channels retain their exact
+                // original consent and their recovery/cancellation entry.
+                host.review.jobs.retain(|action, job| {
+                    *action == request.action_id || job.attached || !job.rejected_before_dispatch
+                });
+                host.review.preflight = Some(Preflight {
+                    prepared,
+                    request,
+                    slots,
+                    view: view.clone(),
+                });
+                Ok(CheckPreparation::Plugin(view))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn run_review_checks(
+    state: State<'_, AppState>,
+    request: ReviewCheckStartRequest,
+) -> Result<CheckRun, CommandError> {
+    let start = CheckStart {
+        session_token: request.session_token,
+        project_id: request.project_id,
+        check: request.check.into(),
+        executions: request.executions,
+    };
+    match run_checks(state, start).await? {
+        CheckOutcome::Selected(run) => Ok(run),
+        _ => Err(stale()),
+    }
+}
+#[tauri::command]
+pub async fn run_strategy_evaluation_checks(
+    state: State<'_, AppState>,
+    request: StrategyCheckStartRequest,
+) -> Result<StrategyCheckReceipt, CommandError> {
+    let start = CheckStart {
+        session_token: request.session_token,
+        project_id: request.project_id,
+        check: strategy_request(request.check)?,
+        executions: request.executions,
+    };
+    match run_checks(state, start).await? {
+        CheckOutcome::Strategy(receipt) => Ok(receipt),
+        _ => Err(stale()),
+    }
+}
+
+async fn run_checks(
+    state: State<'_, AppState>,
+    request: CheckStart,
+) -> Result<CheckOutcome, CommandError> {
+    if request.session_token != request.check.session_token
+        || request.project_id != request.check.project_id
+        || request.executions.iter().any(|execution| {
+            execution.session_token != request.session_token
+                || execution.project_id != request.project_id
+        })
+    {
+        return Err(stale());
+    }
+    let registry = Arc::clone(&state.review_check_cancellations);
+    let (cancellation, inserted) = {
+        let mut checks = registry
+            .lock()
+            .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?;
+        if let Some((session, project, cancellation)) = checks.get(&request.check.action_id) {
+            if session != &request.session_token || *project != request.project_id {
+                return Err(CommandError::simple(
+                    CommandErrorCode::SessionInvalid,
+                    CommandStage::ExecutionAdopt,
+                ));
+            }
+            (cancellation.clone(), false)
+        } else {
+            let cancellation = Cancellation::default();
+            checks.insert(
+                request.check.action_id,
+                (
+                    request.session_token.clone(),
+                    request.project_id,
+                    cancellation.clone(),
+                ),
+            );
+            (cancellation, true)
+        }
+    };
+    let mut registration = inserted.then(|| ReviewCheckRegistration {
+        registry,
+        action: request.check.action_id,
+    });
+    let lease = state.sessions.lease(CommandStage::ExecutionAdopt)?;
+    let initial = request.clone();
+    let token = cancellation.clone();
+    let job_plugins = state.plugins.clone();
+    let admitted = lease.submit(
+        "run_review_checks.capture",
+        CommandStage::ExecutionAdopt,
+        move |sessions| {
+            let active = authorized(
+                sessions,
+                &initial.session_token,
+                initial.project_id,
+                CommandStage::ExecutionAdopt,
+            )?;
+            let (host, store) = active.execution_parts()?;
+            if let Some(run) = recorded(store, &initial.check)? {
+                return Ok(Err(run));
+            }
+            if let Some(job) = host
+                .review
+                .jobs
+                .get(&initial.check.action_id)
+                .filter(|job| job.attached)
+            {
+                if job.request != initial.check || job.executions != initial.executions {
+                    return Err(stale());
+                }
+                // Cancellation requests do not resolve an accepted action's
+                // result while its original continuation is still attached.
+                return Err(CommandError::unknown(CommandStage::ExecutionAdopt));
+            }
+            host.allow_mutation()?;
+            if token.is_requested() {
+                return Err(cancelled());
+            }
+            if !host.review.jobs.contains_key(&initial.check.action_id)
+                && host.review.jobs.len() >= 2
+            {
+                return Err(CommandError::simple(
+                    CommandErrorCode::Busy,
+                    CommandStage::ExecutionAdopt,
+                ));
+            }
+            let (prepared, slots) =
+                if let Some(job) = host.review.jobs.get(&initial.check.action_id) {
+                    if job.request != initial.check || job.executions != initial.executions {
+                        return Err(stale());
+                    }
+                    (job.prepared.clone(), job.slots.clone())
+                } else {
+                    let preflight = host
+                        .review
+                        .preflight
+                        .as_ref()
+                        .filter(|p| p.request == initial.check)
+                        .ok_or_else(stale)?;
+                    (preflight.prepared.clone(), preflight.slots.clone())
+                };
+            if slots.len() != initial.executions.len() {
+                return Err(stale());
+            }
+            let current = capture(
+                store,
+                &initial.check,
+                prepared.plan().ok_or_else(stale)?.advisory_checks(),
+            )?;
+            let mut identities = BTreeSet::new();
+            for (slot, execution) in slots.iter().zip(&initial.executions) {
+                if !execution.unsandboxed_execution {
+                    return Err(map_adopt(ExecutionError::new(
+                        ErrorCode::Unauthorized,
+                        "plugin-consent-required",
+                    )));
+                }
+                if execution.attempt_id != slot.input.envelope().attempt_id
+                    || execution.input_digest != slot.input.digest()
+                    || !identities.insert(execution.grant_id)
+                    || slot.start.as_ref().is_some_and(|start| start != execution)
+                {
+                    return Err(stale());
+                }
+                current
+                    .validate_execution_input(&slot.input)
+                    .map_err(map_adopt)?;
+                if slot.start.is_none() {
+                    PluginConsent {
+                        unsandboxed_execution: execution.unsandboxed_execution,
+                        application_execution: false,
+                    }
+                    .validate(&slot.input, execution.expires_at_ms.get())
+                    .map_err(map_adopt)?;
+                }
+            }
+            let settings_revision = slots
+                .first()
+                .ok_or_else(stale)?
+                .environment
+                .settings_revision();
+            if slots
+                .iter()
+                .any(|slot| slot.environment.settings_revision() != settings_revision)
+            {
+                return Err(stale());
+            }
+            if let Some(job) = host.review.jobs.get_mut(&initial.check.action_id) {
+                job.attached = true;
+            } else {
+                host.review.jobs.insert(
+                    initial.check.action_id,
+                    Job {
+                        request: initial.check.clone(),
+                        executions: initial.executions.clone(),
+                        _registration: registration.take().ok_or_else(stale)?,
+                        cancellation: token,
+                        plugins: job_plugins,
+                        settings_revision,
+                        slots: slots.clone(),
+                        prepared: prepared.clone(),
+                        attached: true,
+                        observing: false,
+                        terminal: false,
+                        authorization_attempted: false,
+                        rejected_before_dispatch: false,
+                        reply: None,
+                        cancellation_sent: false,
+                        cancellation_actions: slots.iter().map(|_| ExecutionId::new()).collect(),
+                    },
+                );
+            }
+            Ok(Ok((prepared, slots)))
+        },
+    )?;
+    let io = state.io.clone();
+    let plugins = state.plugins.clone();
+    let admission_plugins = plugins.clone();
+    #[cfg(test)]
+    let probe = {
+        let mut pending = state.review_compute_probe.lock().unwrap();
+        if pending
+            .as_ref()
+            .is_some_and(|probe| probe.action == request.check.action_id)
+        {
+            pending.take()
+        } else {
+            None
+        }
+    };
+    tauri::async_runtime::spawn(async move {
+        let mut attached = false;
+        let mut metadata_rejected = false;
+        let work = async {
+            let (prepared, slots) = match admitted.await? {
+                Ok(value) => {
+                    attached = true;
+                    value
+                }
+                Err(run) => return Ok(run),
+            };
+            let loaded = io
+                .run(CommandStage::ExecutionAdopt, move || {
+                    slots
+                        .into_iter()
+                        .map(|slot| {
+                            let environment = slot.environment.reopen(&plugins)?;
+                            let runner = if slot.start.is_none() {
+                                Some(environment.clone().runner()?)
+                            } else {
+                                None
+                            };
+                            Ok((slot, environment, runner))
+                        })
+                        .collect::<Result<Vec<_>, CommandError>>()
+                })
+                .await;
+            metadata_rejected = loaded
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.outcome == CommandOutcome::Rejected);
+            let loaded = loaded?;
+            let settings_revision = loaded.first().ok_or_else(stale)?.1.settings_revision();
+            if loaded
+                .iter()
+                .any(|(_, environment, _)| environment.settings_revision() != settings_revision)
+            {
+                return Err(stale());
+            }
+            let commit_plugins = admission_plugins.clone();
+            let (sender, mut receiver) = tauri::async_runtime::channel(1);
+            let dispatch = request.clone();
+            let token = cancellation.clone();
+            lease
+                .run(
+                    "run_review_checks.dispatch",
+                    CommandStage::ExecutionAdopt,
+                    move |sessions| {
+                        let active = authorized(
+                            sessions,
+                            &dispatch.session_token,
+                            dispatch.project_id,
+                            CommandStage::ExecutionAdopt,
+                        )?;
+                        let (host, store) = active.execution_parts()?;
+                        host.allow_mutation()?;
+                        if token.is_requested() {
+                            return Err(cancelled());
+                        }
+                        let current = capture(
+                            store,
+                            &dispatch.check,
+                            prepared.plan().ok_or_else(stale)?.advisory_checks(),
+                        )?;
+                        for ((slot, environment, runner), execution) in
+                            loaded.into_iter().zip(&dispatch.executions)
+                        {
+                            current
+                                .validate_execution_input(&slot.input)
+                                .map_err(map_adopt)?;
+                            admission_plugins.with_environment_revision(
+                                environment.settings_revision(),
+                                || {
+                                    if let Some(runner) = runner {
+                                        host.register_plugin(
+                                            runner,
+                                            slot.input
+                                                .envelope()
+                                                .plugin
+                                                .clone()
+                                                .ok_or_else(stale)?,
+                                        )
+                                        .map_err(map_adopt)?;
+                                        // COMMIT can precede a failing grant
+                                        // activation. Such a retry must not be
+                                        // discarded as a metadata-only failure.
+                                        host.review
+                                            .jobs
+                                            .get_mut(&dispatch.check.action_id)
+                                            .ok_or_else(stale)?
+                                            .authorization_attempted = true;
+                                        host.runtime
+                                            .authorize_plugin(
+                                                store,
+                                                execution.grant_id,
+                                                &slot.input,
+                                                execution.expires_at_ms.get(),
+                                                PluginConsent {
+                                                    unsandboxed_execution: true,
+                                                    application_execution: false,
+                                                },
+                                            )
+                                            .map_err(map_adopt)?;
+                                        host.review
+                                            .jobs
+                                            .get_mut(&dispatch.check.action_id)
+                                            .ok_or_else(stale)?
+                                            .slots
+                                            .iter_mut()
+                                            .find(|s| s.key == slot.key)
+                                            .ok_or_else(stale)?
+                                            .start = Some(execution.clone());
+                                        if let Some(preflight) = host
+                                            .review
+                                            .preflight
+                                            .as_mut()
+                                            .filter(|p| p.request == dispatch.check)
+                                        {
+                                            preflight
+                                                .slots
+                                                .iter_mut()
+                                                .find(|s| s.key == slot.key)
+                                                .ok_or_else(stale)?
+                                                .start = Some(execution.clone());
+                                        }
+                                    }
+                                    host.runtime.submit(store, &slot.input).map_err(map_adopt)?;
+                                    Ok(())
+                                },
+                            )?;
+                        }
+                        let job = host
+                            .review
+                            .jobs
+                            .get_mut(&dispatch.check.action_id)
+                            .ok_or_else(stale)?;
+                        job.observing = true;
+                        job.reply = Some(Box::new(move |result| {
+                            let _ = sender.try_send(result);
+                        }));
+                        Ok(())
+                    },
+                )
+                .await?;
+            let captured = receiver
+                .recv()
+                .await
+                .ok_or_else(|| CommandError::unknown(CommandStage::ExecutionAdopt))??;
+            let token = cancellation.clone();
+            let computed = io
+                .run(CommandStage::ExecutionAdopt, move || {
+                    #[cfg(test)]
+                    if let Some(probe) = probe {
+                        probe.reached.send(()).unwrap();
+                        probe.release.recv_timeout(Duration::from_secs(10)).unwrap();
+                    }
+                    captured.compute(&token).map_err(map_adopt)
+                })
+                .await?;
+            let commit = request.clone();
+            let token = cancellation.clone();
+            lease
+                .run(
+                    "run_review_checks.commit",
+                    CommandStage::ExecutionAdopt,
+                    move |sessions| {
+                        let active = authorized(
+                            sessions,
+                            &commit.session_token,
+                            commit.project_id,
+                            CommandStage::ExecutionAdopt,
+                        )?;
+                        let (host, store) = active.execution_parts()?;
+                        if let Some(run) = recorded(store, &commit.check)? {
+                            return Ok(run);
+                        }
+                        host.allow_mutation()?;
+                        commit_plugins.with_environment_revision(
+                            settings_revision,
+                            || match &commit.check.target {
+                                CheckTarget::Selected { .. } => store
+                                    .commit_review_evidence(computed, &token)
+                                    .map(CheckOutcome::Selected)
+                                    .map_err(map_adopt),
+                                CheckTarget::Strategy(check) => store
+                                    .commit_strategy_evaluation_check(check, computed, &token)
+                                    .map(CheckOutcome::Strategy)
+                                    .map_err(map_adopt),
+                            },
+                        )
+                    },
+                )
+                .await
+        }
+        .await;
+        if !attached {
+            return work;
+        }
+        let stop_channels = cancellation.is_requested()
+            || work
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.reason.as_deref() == Some("plugin-settings-changed"));
+        let completed = work.is_ok();
+        let cleanup = lease
+            .run(
+                "run_review_checks.finish",
+                CommandStage::ExecutionRead,
+                move |sessions| {
+                    let active = authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionRead,
+                    )?;
+                    let (host, store) = active.execution_parts()?;
+                    if let Some(job) = host.review.jobs.get_mut(&request.check.action_id) {
+                        let stop_channels = stop_channels || job.cancellation.is_requested();
+                        job.attached = false;
+                        job.observing = false;
+                        job.reply = None;
+                        job.rejected_before_dispatch = metadata_rejected
+                            && !job.authorization_attempted
+                            && job.slots.iter().all(|slot| slot.start.is_none());
+                        if stop_channels && !job.cancellation_sent {
+                            job.cancellation.request();
+                            job.cancel_channels(store, &mut host.runtime)?;
+                        }
+                        if completed || job.cancellation_sent {
+                            host.review.jobs.remove(&request.check.action_id);
+                        }
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        cleanup?;
+        work
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,6 +1,6 @@
 import { useWorkbenchState } from "./WorkbenchFrame";
 import { reviewReasonKey } from "./reviewLabels";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { QueryKey } from "@tanstack/react-query";
 import type { ProjectView } from "./projectCommands";
@@ -11,15 +11,64 @@ import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { sourceReads } from "./sourceQueries";
 import { useWorkbenchCommands, type CommandAvailability, type SourceHistoryContentCommandPayload,
   type SourceLineageCommandPayload, type SourceImpactCommandPayload, type SourceImpactTargetCommandPayload } from "./workbenchCommands";
-import type { LineageEvidence, SourceImpactRow } from "./sourceCommands";
+import { sourceCommands as commands, type ContentPage, type Coverage, type SourceOccurrence, type SourceHistory, type LineageEvidence, type SourceImpactRow } from "./sourceCommands";
 
-export function LineageEvidenceView({ evidence }: { evidence: LineageEvidence[] }) {
+export function useSourceOccurrenceLabel() {
   const { t } = useTranslation();
+  return (occurrence: SourceOccurrence) => occurrence.nativeIdentity?.display.value ?? t("source.entryLabel", { number: String(occurrence.ordinal + 1) });
+}
+
+function SourceReferenceView({ reference, coverage, label }: { reference: SourceOccurrence["source"]; coverage: Coverage[] | undefined; label: string }) {
+  const { t } = useTranslation();
+  const file = coverage?.find(item => item.artifactId === reference.artifactId);
+  const encodings = { "utf8-byte": t("source.referenceEncoding.utf8"), utf16: t("source.referenceEncoding.utf16"), grapheme: t("source.referenceEncoding.grapheme") };
+  const encoding = encodings[reference.range.encoding];
+  return <p>{label} · {file?.logicalPath ?? t("source.referenceUnavailable")} · {t("source.referenceRange", { encoding, start: String(reference.range.start), end: String(reference.range.end) })}</p>;
+}
+
+/** Coverage comes from the captured snapshot or result, never a domain path convention. */
+export function SourceOccurrenceOrigin({ occurrence, coverage, readCoverage, children }: { occurrence: SourceOccurrence; coverage?: Coverage[]; readCoverage?: () => Promise<Coverage[]>; children?: ReactNode }) {
+  const { t } = useTranslation();
+  const [loaded, setLoaded] = useState<Coverage[] | undefined>();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const generation = useRef(0);
+  useEffect(() => () => { generation.current++; }, []);
+  async function load() {
+    if (coverage !== undefined || loaded !== undefined || busy || !readCoverage) return;
+    const ticket = ++generation.current;
+    setBusy(true); setFailed(false);
+    try { const next = await readCoverage(); if (generation.current === ticket) setLoaded(next); }
+    catch { if (generation.current === ticket) setFailed(true); }
+    finally { if (generation.current === ticket) setBusy(false); }
+  }
+  const files = coverage ?? loaded;
+  return <details onToggle={event => { if (event.currentTarget.open) void load(); }}><summary>{t("source.origin")}</summary>
+    {busy ? <p role="status">{t("execution.working")}</p> : null}
+    {failed ? <><p role="alert">{t("source.referenceUnavailable")}</p><button type="button" className="text-button" disabled={busy} onClick={() => void load()}>{t("execution.refresh")}</button></> : null}
+    <SourceReferenceView reference={occurrence.source} coverage={files} label={t("source.text")} />
+    {occurrence.nativeIdentity?.display.source ? <SourceReferenceView reference={occurrence.nativeIdentity.display.source} coverage={files} label={t("source.key")} /> : null}
+    {children}
+  </details>;
+}
+
+export async function readSourceHistoryCoverage(context: ReturnType<typeof executionContext>, snapshotId: string): Promise<Coverage[]> {
+  const page = await commands.historyContent({ ...context, snapshotId, query: "", after: 0, limit: 1 });
+  if (page.snapshotId !== snapshotId) throw new Error("Source history snapshot mismatch");
+  return page.coverage;
+}
+
+export function LineageEvidenceView({ evidence, project, history }: { evidence: LineageEvidence[]; project: ProjectView; history?: SourceHistory | null }) {
+  const { t } = useTranslation();
+  const label = useSourceOccurrenceLabel();
+  const context = executionContext(project);
   return evidence.length ? <ul>{evidence.map(edge => <li key={edge.old.occurrenceId}>
-    <strong>{edge.old.occurrence.key}</strong><pre>{edge.old.occurrence.text}</pre>
+    <strong>{label(edge.old.occurrence)}</strong><pre>{edge.old.occurrence.text}</pre>
     <p>{t(edge.decision === "continue" ? "source.evidenceDecision.continue" : edge.decision === "reject" ? "source.evidenceDecision.reject" : edge.appliedRelation === "unchanged" ? "source.evidenceAutomatic" : "source.evidenceDecision.candidate")} · {edge.actor ?? t("source.proposed")}</p>
     {edge.reason ? <p>{edge.reason}</p> : null}
-    <details><summary>{t("source.origin")}</summary><p>{edge.old.occurrence.namespace} · i18n/default.json · {edge.old.occurrence.valueByteRange.join("–")}</p><p>{edge.policy}</p><code>{edge.oldSnapshotId}</code><br /><code>{edge.actionId}</code></details>
+    <SourceOccurrenceOrigin key={`${project.sessionToken}:${project.metadata.projectId}:${edge.oldSnapshotId}:${edge.old.occurrenceId}`} occurrence={edge.old.occurrence} coverage={history?.snapshots.find(entry => entry.snapshotId === edge.oldSnapshotId)?.coverage} readCoverage={() => readSourceHistoryCoverage(context, edge.oldSnapshotId)}>
+      <details><summary>{t("execution.diagnostic")}</summary><p>{edge.policy}</p><code>{edge.oldSnapshotId}</code><br /><code>{edge.actionId}</code></details>
+    </SourceOccurrenceOrigin>
   </li>)}</ul> : <p>{t("source.noEarlierEvidence")}</p>;
 }
 
@@ -32,10 +81,11 @@ export function SourceReadFeedback({ error, fetching, retry, impact = false, mes
 }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 
-export function SourceHistoryPanel({ project, disabled, active = true, onHistoryCursor }: {
-  project: ProjectView; disabled: boolean; active?: boolean; onHistoryCursor?: (offset: number) => void;
+export function SourceHistoryPanel({ project, disabled, active = true, onHistoryCursor, onOpenNotice }: {
+  project: ProjectView; disabled: boolean; active?: boolean; onHistoryCursor?: (offset: number) => void; onOpenNotice?: (sourceActionId: string) => void;
 }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const label = useSourceOccurrenceLabel();
   const session = executionContext(project), commandScope = { ...session, area: "source" as const };
   const [offset, setOffset] = useWorkbenchState<number | null>("source", "history.offset", null), [snapshotId, setSnapshotId] = useWorkbenchState<string | null>("source", "history.snapshot", null);
   const [query, setQuery] = useWorkbenchState("source", "history.query", ""), [appliedQuery, setAppliedQuery] = useWorkbenchState("source", "history.appliedQuery", ""), [after, setAfter] = useWorkbenchState("source", "history.after", 0);
@@ -98,6 +148,7 @@ export function SourceHistoryPanel({ project, disabled, active = true, onHistory
     <SourceReadFeedback error={historyRead.error} fetching={active && historyRead.isFetching} retry={() => historyPage(offset ?? 0)} />
     {history ? <><p>{t("source.historyCount", { count: history.total })}</p><ul>{history.snapshots.map(entry => <li key={entry.snapshotId}>
       <button className="text-button" disabled={!contentAvailability(contentPayload(entry.snapshotId, query, 0), true).enabled} onClick={() => dispatchContent(contentPayload(entry.snapshotId, query, 0))}>{t("source.snapshotLabel", { revision: String(entry.revision) })} · {t(entry.current ? "source.currentSnapshot" : "source.historicalSnapshot")}</button>
+      {onOpenNotice ? <button type="button" className="text-button" disabled={!common(true).enabled || !ready(historyOptions.key)} onClick={() => onOpenNotice(entry.actionId)}>{t("sourceHook.history")}</button> : null}
       <details><summary>{t("source.fingerprint")}</summary><code>{entry.snapshotId}</code><p>{entry.total}</p><code>{entry.resultDigest}</code>{entry.coverage.map(file => <p key={file.artifactId}>{file.logicalPath}<br /><code>{file.sha256}</code></p>)}</details>
     </li>)}</ul>{history.nextOffset !== null ? <button className="secondary-button" disabled={!common(true).enabled || !ready(historyOptions.key)} onClick={() => historyPage(history.nextOffset!)}>{t("execution.nextPage")}</button> : null}</> : null}
     {snapshotId ? <><label className="source-field">{t("source.searchHistory")}<input value={query} maxLength={256} onChange={event => setQuery(event.target.value)} /></label>
@@ -106,11 +157,11 @@ export function SourceHistoryPanel({ project, disabled, active = true, onHistory
       {after > 0 ? <button className="secondary-button" disabled={!contentAvailability(contentPayload(snapshotId, appliedQuery, 0), true).enabled} onClick={() => dispatchContent(contentPayload(snapshotId, appliedQuery, 0))}>{t("execution.firstPage")}</button> : null}
     </> : null}
     {page ? <><h4>{t("source.historicalSnapshot")}</h4><p>{t("source.historyMatches", { count: page.total })}</p>
-      <ul>{page.rows.map(row => <li key={row.occurrenceId}><strong>{row.occurrence.key}</strong><pre>{row.occurrence.text}</pre>
+      <ul>{page.rows.map(row => <li key={row.occurrenceId}><strong>{label(row.occurrence)}</strong><pre>{row.occurrence.text}</pre>
         <button className="text-button" disabled={!common(true).enabled || !ready(contentOptions.key) || lineageRead.isFetching} onClick={() => registry.dispatch("source.read-lineage", commandScope, lineagePayload(row.occurrence.ordinal))}>{t("source.lineageHistory")}</button></li>)}</ul>
       {page.nextOrdinal !== null ? <button className="secondary-button" disabled={!contentAvailability(contentPayload(snapshotId!, appliedQuery, page.nextOrdinal), true).enabled} onClick={() => dispatchContent(contentPayload(snapshotId!, appliedQuery, page.nextOrdinal!))}>{t("execution.nextPage")}</button> : null}</> : null}
     {ordinal !== null ? <SourceReadFeedback error={lineageRead.error} fetching={active && lineageRead.isFetching} retry={() => registry.dispatch("source.read-lineage", commandScope, lineagePayload(ordinal))} /> : null}
-    {active && !lineageRead.error && !lineageRead.isFetching && lineageRead.data ? <LineageEvidenceView evidence={lineageRead.data} /> : null}
+    {active && !lineageRead.error && !lineageRead.isFetching && lineageRead.data ? <LineageEvidenceView evidence={lineageRead.data} project={project} history={history} /> : null}
   </section>;
 }
 
@@ -118,6 +169,7 @@ export function SourceImpactPanel({ project, snapshotId, active = true, disabled
   project: ProjectView; snapshotId: string; active?: boolean; disabled?: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
 }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const label = useSourceOccurrenceLabel();
   const session = executionContext(project), commandScope = { ...session, area: "source" as const };
   const [locale, setLocale] = useWorkbenchState("source", `impact.${snapshotId}.locale`, project.metadata.targetLocales[0] ?? ""), [requestedLocale, setRequestedLocale] = useWorkbenchState("source", `impact.${snapshotId}.requestedLocale`, locale);
   const [after, setAfter] = useWorkbenchState("source", `impact.${snapshotId}.after`, 0), [navigationFailed, setNavigationFailed] = useState(false);
@@ -199,13 +251,13 @@ export function SourceImpactPanel({ project, snapshotId, active = true, disabled
     {navigationFailed ? <p role="alert">{t("source.navigationBlocked")}</p> : null}
     {after > 0 && !page ? <button className="secondary-button" disabled={!common(false, true).enabled || impactRead.isFetching} onClick={() => readImpact(0)}>{t("execution.firstPage")}</button> : null}
     {page ? <><p role="status">{t("source.impactSummary", { locale: page.summary.locale, preserved: String(page.summary.preserved), reassess: String(page.summary.reassess), unresolved: String(page.summary.unresolved), total: String(page.summary.total) })}</p><p>{t("source.impactCoverage")}</p>
-      <ul>{page.rows.map(row => <li key={row.current.occurrenceId}><strong>{row.current.occurrence.key}</strong> · {t(`source.impactStatus.${row.status}`)}<pre>{row.current.occurrence.text}</pre>
+      <ul>{page.rows.map(row => <li key={row.current.occurrenceId}><strong>{label(row.current.occurrence)}</strong> · {t(`source.impactStatus.${row.status}`)}<pre>{row.current.occurrence.text}</pre>
         {onOpenTranslation && targetPayload(row) ? <button type="button" className="text-button" disabled={!targetAvailability(targetPayload(row)!, true).enabled} onClick={() => registry.dispatch("source.open-translation", commandScope, targetPayload(row)!)}>{t("translation.openEditor")}</button> : null}
         {row.previous ? <details><summary>{t("source.previous")}</summary><pre>{row.previous.occurrence.text}</pre><code>{row.previous.sourceRevisionId}</code>
           <h5>{t("source.previousBases")}</h5>{row.previousBases.length ? row.previousBases.map(basis => <div key={basis.actionId}><p>{t(basis.kind === "review" ? "source.historicalReview" : "source.historicalCheck")}</p><pre>{basis.translationText}</pre><code>{basis.evidence.selectionId}</code><br /><code>{basis.evidence.revisionId}</code><br /><code>{basis.basis}</code><p>{t("source.historicalBasisNotice")}</p></div>) : <p>{t("source.noPreviousBasis")}</p>}
         </details> : null}
         <ul>{row.reasons.map(reason => <li key={reason}>{reasonLabel(reason)}<details><summary>{t("execution.diagnostic")}</summary><code>{reason}</code></details></li>)}</ul>
-        <details><summary>{t("source.currentBasis")}</summary><code>{row.current.sourceRevisionId}</code><br /><code>{row.selectionId}</code><br /><code>{row.translationRevisionId}</code><br /><code>{row.reviewBasis}</code><LineageEvidenceView evidence={row.lineage} /></details>
+        <details><summary>{t("source.currentBasis")}</summary><code>{row.current.sourceRevisionId}</code><br /><code>{row.selectionId}</code><br /><code>{row.translationRevisionId}</code><br /><code>{row.reviewBasis}</code><LineageEvidenceView evidence={row.lineage} project={project} /></details>
       </li>)}</ul><button className="secondary-button" disabled={!common(false, true).enabled || impactRead.isFetching} onClick={() => readImpact(0)}>{t("execution.firstPage")}</button>
       {page.nextOrdinal !== null ? <button className="secondary-button" disabled={!common(true, true).enabled} onClick={() => readImpact(page.nextOrdinal!)}>{t("execution.nextPage")}</button> : null}</> : null}
   </section>;

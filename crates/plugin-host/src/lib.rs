@@ -7,6 +7,8 @@ pub mod catalog;
 mod child;
 #[cfg(feature = "core-adapter")]
 pub mod core;
+#[cfg(feature = "core-adapter")]
+pub mod member;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod filesystem;
 mod host_error;

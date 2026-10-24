@@ -1,0 +1,5745 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "ActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "AiConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrency": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "connectionProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ModelConnectionReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."
+          },
+          "contextStrategy": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextStrategyReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable project provenance, independent of current defaults or consent."
+          },
+          "credentialEnv": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxOutputTokens": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRequests": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRetries": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "shareContext": {
+            "type": "boolean"
+          },
+          "shareTerms": {
+            "type": "boolean"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          },
+          "timeoutSeconds": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tokenField": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contextStrategy",
+          "endpoint",
+          "model",
+          "credentialEnv",
+          "tokenField",
+          "maxItems",
+          "concurrency",
+          "maxRequests",
+          "maxOutputTokens",
+          "maxRetries",
+          "timeoutSeconds",
+          "shareTerms",
+          "shareContext",
+          "sourceContext"
+        ],
+        "type": "object"
+      },
+      "CandidateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "candidateId"
+        ],
+        "type": "object"
+      },
+      "CaptureContextStrategy": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "exceptions": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "sourceContext",
+          "reason",
+          "exceptions"
+        ],
+        "type": "object"
+      },
+      "CaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/CaptureContextStrategy"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "CaptureStrategyEvaluation": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "suiteId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "candidateId",
+          "suiteId"
+        ],
+        "type": "object"
+      },
+      "CaptureStrategySuite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "calibrationUnitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "config": {
+            "$ref": "#/definitions/AiConfig"
+          },
+          "holdoutUnitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "candidateId",
+          "config",
+          "calibrationUnitIds",
+          "holdoutUnitIds"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyReference": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "revisionId",
+          "candidateId"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      "EvaluationPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/CaptureStrategyEvaluation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "EvaluationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "evaluationId"
+        ],
+        "type": "object"
+      },
+      "EvaluationStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "evaluationId",
+          "attemptId",
+          "digest",
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "JudgmentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "judgment": {
+            "$ref": "#/definitions/StrategyJudgmentRequest"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "judgment"
+        ],
+        "type": "object"
+      },
+      "LocaleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionReference": {
+        "additionalProperties": false,
+        "description": "A persistent data identity, never a credential, execution grant or consent.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "storeId",
+          "profileId",
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "PageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "PluginStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
+      "PromoteContextStrategy": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "evaluationId"
+        ],
+        "type": "object"
+      },
+      "PromoteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "promotion": {
+            "$ref": "#/definitions/PromoteContextStrategy"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "promotion"
+        ],
+        "type": "object"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "SaveCandidateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "evaluationId",
+          "itemId",
+          "resultId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "SourceContextSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "extracted": {
+            "type": "boolean"
+          },
+          "inferred": {
+            "type": "boolean"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neighbors": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "extracted",
+          "inferred",
+          "neighbors",
+          "maxBytes",
+          "maxItems"
+        ],
+        "type": "object"
+      },
+      "StrategyCheckCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "check": {
+            "$ref": "#/definitions/StrategyCheckRequest"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "check"
+        ],
+        "type": "object"
+      },
+      "StrategyCheckRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "evaluationId",
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "StrategyCheckStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "check": {
+            "$ref": "#/definitions/StrategyCheckCommand"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/definitions/PluginStartRequest"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "check",
+          "executions"
+        ],
+        "type": "object"
+      },
+      "StrategyJudgmentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "elapsedSeconds": {
+            "description": "Explicit human reports, never provider/clock measurements.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedJudgmentId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modifiedCharacters": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          },
+          "preference": {
+            "$ref": "#/definitions/StrategyPreference"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "evaluationId",
+          "unitId",
+          "preference",
+          "notes"
+        ],
+        "type": "object"
+      },
+      "StrategyPreference": {
+        "enum": [
+          "candidate-preferred",
+          "equivalent",
+          "baseline-preferred"
+        ],
+        "type": "string"
+      },
+      "SuiteCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/CaptureStrategySuite"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
+      "WithdrawContextStrategy": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "WithdrawRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "withdrawal": {
+            "$ref": "#/definitions/WithdrawContextStrategy"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "withdrawal"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "action": {
+        "$ref": "#/definitions/ActionRequest"
+      },
+      "candidate": {
+        "$ref": "#/definitions/CandidateRequest"
+      },
+      "capture": {
+        "$ref": "#/definitions/CaptureRequest"
+      },
+      "judgment": {
+        "$ref": "#/definitions/JudgmentRequest"
+      },
+      "locale": {
+        "$ref": "#/definitions/LocaleRequest"
+      },
+      "page": {
+        "$ref": "#/definitions/PageRequest"
+      },
+      "prepare": {
+        "$ref": "#/definitions/EvaluationPrepareRequest"
+      },
+      "prepareCheck": {
+        "$ref": "#/definitions/StrategyCheckCommand"
+      },
+      "promote": {
+        "$ref": "#/definitions/PromoteRequest"
+      },
+      "read": {
+        "$ref": "#/definitions/EvaluationRequest"
+      },
+      "readStart": {
+        "$ref": "#/definitions/EvaluationRequest"
+      },
+      "runCheck": {
+        "$ref": "#/definitions/StrategyCheckStartRequest"
+      },
+      "saveAction": {
+        "$ref": "#/definitions/SaveCandidateRequest"
+      },
+      "saveCandidate": {
+        "$ref": "#/definitions/SaveCandidateRequest"
+      },
+      "start": {
+        "$ref": "#/definitions/EvaluationStartRequest"
+      },
+      "startAction": {
+        "$ref": "#/definitions/EvaluationStartRequest"
+      },
+      "suite": {
+        "$ref": "#/definitions/SuiteCaptureRequest"
+      },
+      "withdraw": {
+        "$ref": "#/definitions/WithdrawRequest"
+      }
+    },
+    "required": [
+      "capture",
+      "candidate",
+      "locale",
+      "page",
+      "suite",
+      "prepare",
+      "read",
+      "readStart",
+      "startAction",
+      "saveAction",
+      "start",
+      "judgment",
+      "promote",
+      "withdraw",
+      "action",
+      "saveCandidate",
+      "prepareCheck",
+      "runCheck"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:strategy:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AdoptionAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "parameters": true,
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "operation",
+          "resultIds",
+          "cancellationRevision",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "AdoptionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/definitions/ChangeReference"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "requestDigest",
+          "changes"
+        ],
+        "type": "object"
+      },
+      "AdvisoryReviewCheck": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.",
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "declarationResourceId": {
+            "type": "string"
+          },
+          "execution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "binding",
+          "execution",
+          "declarationResourceId",
+          "resourcePins",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "AiConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "concurrency": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "connectionProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ModelConnectionReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."
+          },
+          "contextStrategy": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextStrategyReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Immutable project provenance, independent of current defaults or consent."
+          },
+          "credentialEnv": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxOutputTokens": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRequests": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRetries": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "shareContext": {
+            "type": "boolean"
+          },
+          "shareTerms": {
+            "type": "boolean"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          },
+          "timeoutSeconds": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tokenField": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contextStrategy",
+          "endpoint",
+          "model",
+          "credentialEnv",
+          "tokenField",
+          "maxItems",
+          "concurrency",
+          "maxRequests",
+          "maxOutputTokens",
+          "maxRetries",
+          "timeoutSeconds",
+          "shareTerms",
+          "shareContext",
+          "sourceContext"
+        ],
+        "type": "object"
+      },
+      "AiItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "omissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "projectContext": {
+            "$ref": "#/definitions/ProjectFactCapture"
+          },
+          "resourceBaseline": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextCapture"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceText": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          },
+          "terms": {
+            "items": {
+              "$ref": "#/definitions/SharedTerm"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "sourceSnapshotId",
+          "nativeKey",
+          "sourceLocale",
+          "sourceText",
+          "targetLocale",
+          "terms",
+          "context",
+          "sourceContext",
+          "projectContext",
+          "omissions",
+          "resourceBaseline"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ArenaConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "blind": {
+            "type": "boolean"
+          },
+          "concurrency": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxRequests": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "parentAttemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/definitions/AiConfig"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "variants",
+          "maxItems",
+          "maxRequests",
+          "concurrency",
+          "blind",
+          "parentAttemptId"
+        ],
+        "type": "object"
+      },
+      "ArenaItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "$ref": "#/definitions/AiItemView"
+          },
+          "slot": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sourceOrder": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slot",
+          "sourceOrder",
+          "item"
+        ],
+        "type": "object"
+      },
+      "ArenaPreviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/ArenaConfig"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/definitions/ArenaItemView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "config",
+          "items",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CaptureContextStrategy": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "exceptions": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "sourceContext",
+          "reason",
+          "exceptions"
+        ],
+        "type": "object"
+      },
+      "CaptureStrategyEvaluation": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "suiteId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "candidateId",
+          "suiteId"
+        ],
+        "type": "object"
+      },
+      "CaptureStrategySuite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "calibrationUnitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "config": {
+            "$ref": "#/definitions/AiConfig"
+          },
+          "holdoutUnitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "candidateId",
+          "config",
+          "calibrationUnitIds",
+          "holdoutUnitIds"
+        ],
+        "type": "object"
+      },
+      "ChangeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "CheckFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "waivable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "issueId",
+          "rule",
+          "code",
+          "detail",
+          "severity",
+          "waivable"
+        ],
+        "type": "object"
+      },
+      "CheckFinding2": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/definitions/FindingSeverity"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "target",
+          "severity"
+        ],
+        "type": "object"
+      },
+      "CheckImplementation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "core",
+                "type": "string"
+              },
+              "validator": {
+                "$ref": "#/definitions/ContractRef"
+              }
+            },
+            "required": [
+              "kind",
+              "validator"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "plugin",
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/definitions/ProviderSelectionBinding"
+              }
+            },
+            "required": [
+              "kind",
+              "provider"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckKey": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation": {
+            "$ref": "#/definitions/CheckImplementation"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "implementation"
+        ],
+        "type": "object"
+      },
+      "CheckOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "findings": {
+                "items": {
+                  "$ref": "#/definitions/CheckFinding2"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "completed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "findings"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/NotApplicableBasis"
+              },
+              "kind": {
+                "const": "not-applicable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "cancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckRequirement": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "notApplicable": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/NotApplicableBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopeDigest": {
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "waivable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "inputDigest",
+          "scopeDigest",
+          "targets",
+          "mandatory",
+          "waivable",
+          "notApplicable"
+        ],
+        "type": "object"
+      },
+      "CheckResult": {
+        "additionalProperties": false,
+        "properties": {
+          "coveredTargets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CheckOutcome"
+          },
+          "scopeDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "inputDigest",
+          "scopeDigest",
+          "coveredTargets",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "CheckRuleResult": {
+        "additionalProperties": false,
+        "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/definitions/CheckFinding"
+            },
+            "type": "array"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "key",
+          "mandatory",
+          "status",
+          "reason",
+          "findings"
+        ],
+        "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "diagnosticId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RecoveryGuidance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
+      "ConflictEvidence": {
+        "description": "Values compared at the rejecting boundary, without user text or credentials.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "expected": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "translation-selection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "review-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-waiver",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-fallback",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "build-eligibility",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "comparison-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "context-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expected": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "content-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextFactDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/ContextFactWrite"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "ContextFactDisposition": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "replace",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "reject-inference",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "restore",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextFactWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/SourceFactBasis"
+          },
+          "disposition": {
+            "$ref": "#/definitions/ContextFactDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "expectedDecisionId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ContextRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "unitId",
+          "locale",
+          "text",
+          "reason",
+          "previousRevisionId"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "evidence": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/CorrectionTermEvidence"
+              }
+            ],
+            "description": "Exact reads project `current` from the original correction chain;\nimmutable action receipts retain its value at capture time."
+          },
+          "exceptions": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sourceContext": {
+            "$ref": "#/definitions/SourceContextSelection"
+          }
+        },
+        "required": [
+          "candidateId",
+          "projectId",
+          "locale",
+          "evidence",
+          "sourceContext",
+          "reason",
+          "exceptions",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyCandidatePage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ContextStrategyCandidate"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyDefaultPage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ContextStrategyDefaultRevision"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyDefaultRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextStrategyReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "actionId",
+          "projectId",
+          "locale",
+          "previousRevisionId",
+          "reference",
+          "evaluationId"
+        ],
+        "type": "object"
+      },
+      "ContextStrategyReference": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "revisionId",
+          "candidateId"
+        ],
+        "type": "object"
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "afterText": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "beforeSourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "beforeSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "beforeText": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "sourceText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "sourceText",
+          "beforeText",
+          "afterText",
+          "beforeSourceSnapshotId",
+          "beforeSourceRevisionId",
+          "current"
+        ],
+        "type": "object"
+      },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
+      },
+      "FindingSeverity": {
+        "enum": [
+          "warning",
+          "error"
+        ],
+        "type": "string"
+      },
+      "ModelConnectionReference": {
+        "additionalProperties": false,
+        "description": "A persistent data identity, never a credential, execution grant or consent.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "storeId",
+          "profileId",
+          "revision",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "NotApplicableBasis": {
+        "additionalProperties": false,
+        "description": "A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.",
+        "properties": {
+          "basisDigest": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "basisDigest"
+        ],
+        "type": "object"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginExecutionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "componentScope": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ComponentScope"
+              }
+            ],
+            "description": "Captured from the selected component, never inferred from a result."
+          },
+          "environment": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+              }
+            ],
+            "description": "Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "capability",
+          "componentScope",
+          "applicationScope",
+          "profile",
+          "environment"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
+      "PluginReviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "declaration",
+          "checker",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "resourcePins",
+          "rules",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "Prepared": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "canStart": {
+            "type": "boolean"
+          },
+          "evaluation": {
+            "$ref": "#/definitions/StrategyEvaluation"
+          },
+          "preview": {
+            "$ref": "#/definitions/ArenaPreviewView"
+          }
+        },
+        "required": [
+          "evaluation",
+          "preview",
+          "attemptId",
+          "canStart"
+        ],
+        "type": "object"
+      },
+      "ProjectFactCapture": {
+        "description": "Pinned local decisions are separate from raw SDK facts and the provider projection.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "not-selected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "decisions": {
+                "items": {
+                  "$ref": "#/definitions/ContextFactDecision"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "selected",
+                "type": "string"
+              },
+              "manual": {
+                "type": "boolean"
+              },
+              "scope": {
+                "$ref": "#/definitions/SourceContextRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "scope",
+              "manual",
+              "decisions"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PromoteContextStrategy": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "evaluationId",
+          "expectedRevisionId"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "RecoveryGuidance": {
+        "description": "A read or user decision to make before another mutation; never replay authority.",
+        "enum": [
+          "reconcile-original",
+          "review-current",
+          "choose-destination"
+        ],
+        "type": "string"
+      },
+      "RequiredCheckSet": {
+        "additionalProperties": false,
+        "description": "Wire projection of the host's captured union. Receiving this from a plugin\ndoes not make it a trusted policy or permit it to replace the expected set.",
+        "properties": {
+          "policy": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/definitions/CheckRequirement"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "policy",
+          "requirements"
+        ],
+        "type": "object"
+      },
+      "ReviewBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contextRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "termRevisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId",
+          "revisionId",
+          "contextRevisionId",
+          "termRevisionIds"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "advisoryChecks": {
+            "items": {
+              "$ref": "#/definitions/AdvisoryReviewCheck"
+            },
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "$ref": "#/definitions/TextReviewDiagnostic"
+            },
+            "type": "array"
+          },
+          "origins": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckOriginEvidence"
+            },
+            "type": "array"
+          },
+          "qaBasis": {
+            "type": "string"
+          },
+          "requiredChecks": {
+            "$ref": "#/definitions/RequiredCheckSet"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/definitions/CheckResult"
+            },
+            "type": "array"
+          },
+          "sourceBinding": {
+            "$ref": "#/definitions/SourceReviewBinding"
+          }
+        },
+        "required": [
+          "qaBasis",
+          "requiredChecks",
+          "results",
+          "sourceBinding",
+          "advisoryChecks",
+          "origins",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckOriginEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "checker": {
+            "$ref": "#/definitions/ReviewCheckerKey"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ReviewInvocationOutcome"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "checker",
+          "attemptId",
+          "inputDigest",
+          "resultId",
+          "resultDigest",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckerKey": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckerPreflightView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "checker": {
+            "$ref": "#/definitions/ReviewCheckerKey"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/ReviewCheckerView"
+          }
+        },
+        "required": [
+          "checker",
+          "attemptId",
+          "inputDigest",
+          "plugin"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckerView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "format",
+                "type": "string"
+              },
+              "plugin": {
+                "$ref": "#/definitions/PluginReviewView"
+              }
+            },
+            "required": [
+              "kind",
+              "plugin"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "advisory-text",
+                "type": "string"
+              },
+              "plugin": {
+                "$ref": "#/definitions/PluginTextReviewView"
+              }
+            },
+            "required": [
+              "kind",
+              "plugin"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ReviewDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ReviewRuleDeclaration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "ReviewInvocationOutcome": {
+        "enum": [
+          "succeeded",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "ReviewPluginCheckView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "checkers": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckerPreflightView"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "unitId",
+          "locale",
+          "basis",
+          "checkers"
+        ],
+        "type": "object"
+      },
+      "ReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+        "properties": {
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
+      },
+      "SelectedSourceContext": {
+        "additionalProperties": false,
+        "properties": {
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/definitions/SelectedSourceFact"
+            },
+            "type": "array"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "neighbors": {
+            "items": {
+              "$ref": "#/definitions/SourceContextNeighbor"
+            },
+            "type": "array"
+          },
+          "observations": {
+            "$ref": "#/definitions/SourceContextObservations"
+          },
+          "omissions": {
+            "$ref": "#/definitions/SourceContextOmissions"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "selection": {
+            "$ref": "#/definitions/SourceContextSelection"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId",
+          "selection",
+          "observations",
+          "facts",
+          "neighbors",
+          "omissions"
+        ],
+        "type": "object"
+      },
+      "SelectedSourceFact": {
+        "additionalProperties": false,
+        "description": "One whole fact, with the original block target and source references.",
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fact": {
+            "$ref": "#/definitions/SourceContextFact"
+          },
+          "factIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "factIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SharedTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "protected": {
+            "type": "boolean"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "revisionId",
+          "source",
+          "target",
+          "protected"
+        ],
+        "type": "object"
+      },
+      "SourceContextAdjacency": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SourceContextDirection"
+              }
+            ],
+            "description": "The neighbor's position relative to this selected occurrence."
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "SourceContextCapture": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "not-selected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "selected",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/SelectedSourceContext"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextDirection": {
+        "enum": [
+          "before",
+          "after"
+        ],
+        "type": "string"
+      },
+      "SourceContextFact": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Unique only inside this block; it is not a project revision or entity ID.",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/SourceContextFactKind"
+          },
+          "origin": {
+            "$ref": "#/definitions/SourceContextFactOrigin"
+          },
+          "text": {
+            "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "SourceContextFactKind": {
+        "description": "Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.",
+        "enum": [
+          "speaker",
+          "role",
+          "scene",
+          "time",
+          "location",
+          "note"
+        ],
+        "type": "string"
+      },
+      "SourceContextFactOrigin": {
+        "description": "References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "extracted",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "sources"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "inferred",
+                "type": "string"
+              },
+              "rationale": {
+                "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "rationale",
+              "sources"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextNeighbor": {
+        "additionalProperties": false,
+        "properties": {
+          "adjacentTo": {
+            "items": {
+              "$ref": "#/definitions/SourceContextAdjacency"
+            },
+            "type": "array"
+          },
+          "occurrence": {
+            "$ref": "#/definitions/SourceContextOccurrence"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "occurrence",
+          "text",
+          "adjacentTo"
+        ],
+        "type": "object"
+      },
+      "SourceContextObservations": {
+        "additionalProperties": false,
+        "description": "Missing, explicitly empty and unknown schema observations are distinct.",
+        "properties": {
+          "emptyBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knownBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knownFacts": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "missingBlocks": {
+            "type": "boolean"
+          },
+          "neighborOccurrences": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownRequiredBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownSamples": {
+            "items": {
+              "$ref": "#/definitions/UnknownSourceBlockSample"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "missingBlocks",
+          "knownBlocks",
+          "knownFacts",
+          "emptyBlocks",
+          "unknownBlocks",
+          "unknownRequiredBlocks",
+          "neighborOccurrences",
+          "unknownSamples"
+        ],
+        "type": "object"
+      },
+      "SourceContextOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "localOccurrenceId": {
+            "type": "string"
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/SourceReference"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "localOccurrenceId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "SourceContextOmissionReason": {
+        "enum": [
+          "not-selected",
+          "byte-budget",
+          "item-limit"
+        ],
+        "type": "string"
+      },
+      "SourceContextOmissionSample": {
+        "description": "A pointer only; omitted text and rationale never enter the capture.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "blockIndex": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "factIndex": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fact",
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/definitions/SourceContextOmissionReason"
+              }
+            },
+            "required": [
+              "kind",
+              "blockIndex",
+              "factIndex",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "neighbor",
+                "type": "string"
+              },
+              "occurrenceId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "reason": {
+                "$ref": "#/definitions/SourceContextOmissionReason"
+              }
+            },
+            "required": [
+              "kind",
+              "occurrenceId",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextOmissions": {
+        "additionalProperties": false,
+        "properties": {
+          "byteBudget": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "extracted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "inferred": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "itemLimit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neighbors": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "notSelected": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/definitions/SourceContextOmissionSample"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "extracted",
+          "inferred",
+          "neighbors",
+          "notSelected",
+          "byteBudget",
+          "itemLimit",
+          "samples"
+        ],
+        "type": "object"
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "SourceContextSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "extracted": {
+            "type": "boolean"
+          },
+          "inferred": {
+            "type": "boolean"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "neighbors": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "extracted",
+          "inferred",
+          "neighbors",
+          "maxBytes",
+          "maxItems"
+        ],
+        "type": "object"
+      },
+      "SourceFactBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "fact": {
+            "$ref": "#/definitions/SelectedSourceFact"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "sourceResultId",
+          "sourceResultDigest",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
+        ],
+        "type": "object"
+      },
+      "SourceReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
+      "StrategyActionReceiptView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "candidate": {
+                "$ref": "#/definitions/ContextStrategyCandidate"
+              },
+              "kind": {
+                "const": "candidate",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/CaptureContextStrategy"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "candidate"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "suite",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/CaptureStrategySuite"
+              },
+              "suite": {
+                "$ref": "#/definitions/StrategySuiteView"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "suite"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "evaluation": {
+                "$ref": "#/definitions/StrategyEvaluation"
+              },
+              "kind": {
+                "const": "evaluation",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/CaptureStrategyEvaluation"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "evaluation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "check",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/StrategyCheckReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "judgment": {
+                "$ref": "#/definitions/StrategyJudgment"
+              },
+              "kind": {
+                "const": "judgment",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "judgment"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "promoted",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/PromoteContextStrategy"
+              },
+              "revision": {
+                "$ref": "#/definitions/ContextStrategyDefaultRevision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "withdrawn",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/WithdrawContextStrategy"
+              },
+              "revision": {
+                "$ref": "#/definitions/ContextStrategyDefaultRevision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "revision"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "StrategyCandidateSaveRead": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/AdoptionActionRead"
+          },
+          "request": {
+            "$ref": "#/definitions/StrategyCandidateSaveRequest"
+          }
+        },
+        "required": [
+          "request",
+          "adoption"
+        ],
+        "type": "object"
+      },
+      "StrategyCandidateSaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "evaluationId",
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "StrategyCheckPreparation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/StrategyCheckReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "plugin",
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/definitions/ReviewPluginCheckView"
+              }
+            },
+            "required": [
+              "kind",
+              "view"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "StrategyCheckReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "evidence": {
+            "$ref": "#/definitions/ReviewCheckEvidence"
+          },
+          "request": {
+            "$ref": "#/definitions/StrategyCheckRequest"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/CheckRuleResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "request",
+          "revisionId",
+          "basis",
+          "rules",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "StrategyCheckRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "evaluationId",
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "StrategyEvaluation": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "request": {
+            "$ref": "#/definitions/CaptureStrategyEvaluation"
+          },
+          "suiteId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "evaluationId",
+          "request",
+          "projectId",
+          "candidateId",
+          "suiteId",
+          "locale",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "StrategyEvaluationPage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/StrategyEvaluation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "StrategyEvaluationSlot": {
+        "additionalProperties": false,
+        "description": "Original profile roles, independent of Arena's randomized display labels.",
+        "properties": {
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slot": {
+            "description": "Zero is the direct baseline; one is the proposed context selection.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "itemId",
+          "unitId",
+          "slot",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "StrategyEvaluationStartRead": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "evaluationId",
+          "attemptId",
+          "taskId",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "StrategyEvaluationView": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/definitions/ContextStrategyCandidate"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/definitions/StrategyCheckReceipt"
+            },
+            "type": "array"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "evaluation": {
+            "$ref": "#/definitions/StrategyEvaluation"
+          },
+          "judgments": {
+            "items": {
+              "$ref": "#/definitions/StrategyJudgment"
+            },
+            "type": "array"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/definitions/StrategyEvaluationSlot"
+            },
+            "type": "array"
+          },
+          "suite": {
+            "$ref": "#/definitions/StrategySuiteView"
+          }
+        },
+        "required": [
+          "evaluation",
+          "candidate",
+          "suite",
+          "slots",
+          "checks",
+          "judgments",
+          "current"
+        ],
+        "type": "object"
+      },
+      "StrategyJudgment": {
+        "additionalProperties": false,
+        "properties": {
+          "baselineResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "candidateResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "judgmentId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "request": {
+            "$ref": "#/definitions/StrategyJudgmentRequest"
+          }
+        },
+        "required": [
+          "judgmentId",
+          "request",
+          "baselineResultId",
+          "candidateResultId"
+        ],
+        "type": "object"
+      },
+      "StrategyJudgmentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "elapsedSeconds": {
+            "description": "Explicit human reports, never provider/clock measurements.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "evaluationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedJudgmentId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modifiedCharacters": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          },
+          "preference": {
+            "$ref": "#/definitions/StrategyPreference"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "evaluationId",
+          "unitId",
+          "expectedJudgmentId",
+          "preference",
+          "notes",
+          "elapsedSeconds",
+          "modifiedCharacters"
+        ],
+        "type": "object"
+      },
+      "StrategyPreference": {
+        "enum": [
+          "candidate-preferred",
+          "equivalent",
+          "baseline-preferred"
+        ],
+        "type": "string"
+      },
+      "StrategySuiteUnit": {
+        "additionalProperties": false,
+        "properties": {
+          "holdout": {
+            "type": "boolean"
+          },
+          "reviewBasis": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "sourceBinding": {
+            "$ref": "#/definitions/SourceReviewBinding"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "terms": {
+            "$ref": "#/definitions/TermResolution"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "holdout",
+          "sourceRevisionId",
+          "reviewBasis",
+          "terms",
+          "sourceBinding"
+        ],
+        "type": "object"
+      },
+      "StrategySuiteView": {
+        "additionalProperties": false,
+        "properties": {
+          "candidateId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/definitions/ArenaPreviewView"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "request": {
+            "$ref": "#/definitions/CaptureStrategySuite"
+          },
+          "suiteId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/definitions/StrategySuiteUnit"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "suiteId",
+          "request",
+          "candidateId",
+          "projectId",
+          "locale",
+          "preview",
+          "units",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "TermOrigin": {
+        "enum": [
+          "manual",
+          "external"
+        ],
+        "type": "string"
+      },
+      "TermResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/TermResolutionEntry"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "TermResolutionEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "conflicting": {
+            "items": {
+              "$ref": "#/definitions/TermRevision"
+            },
+            "type": "array"
+          },
+          "selected": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TermRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "selected",
+          "conflicting"
+        ],
+        "type": "object"
+      },
+      "TermRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "captureId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "externalEntryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "originKind": {
+            "$ref": "#/definitions/TermOrigin"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeUnitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "termId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "revisionId",
+          "termId",
+          "locale",
+          "source",
+          "aliases",
+          "target",
+          "protected",
+          "scopeUnitId",
+          "reason",
+          "originKind",
+          "captureId",
+          "externalEntryId",
+          "previousRevisionId",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "TextReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/TextReviewDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "TextReviewDeclaration": {
+        "additionalProperties": false,
+        "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/TextReviewDisposition"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/TextReviewRuleDeclaration"
+            },
+            "type": "array"
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "disposition",
+          "supportingResources",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "TextReviewDiagnostic": {
+        "additionalProperties": false,
+        "description": "Optional public presentation associated with one actual finding. Diagnostic\nprose is not authenticated or sanitized by these structural checks.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewLocation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resourceEntry": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewResourceEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "code",
+          "target",
+          "location",
+          "detail",
+          "suggestion",
+          "resourceEntry"
+        ],
+        "type": "object"
+      },
+      "TextReviewDisposition": {
+        "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+        "enum": [
+          "advisory"
+        ],
+        "type": "string"
+      },
+      "TextReviewField": {
+        "enum": [
+          "source",
+          "translation"
+        ],
+        "type": "string"
+      },
+      "TextReviewLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "$ref": "#/definitions/TextReviewField"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "field",
+          "range"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourceBinding": {
+        "additionalProperties": false,
+        "description": "A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourceEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "entryId"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourcePin": {
+        "additionalProperties": false,
+        "description": "Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "TextReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation",
+          "title",
+          "description"
+        ],
+        "type": "object"
+      },
+      "UnknownSourceBlockSample": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
+      "WithdrawContextStrategy": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "locale",
+          "expectedRevisionId"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "action": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/StrategyActionReceiptView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "adoption": {
+        "$ref": "#/definitions/AdoptionReceipt"
+      },
+      "candidate": {
+        "$ref": "#/definitions/ContextStrategyCandidate"
+      },
+      "candidates": {
+        "$ref": "#/definitions/ContextStrategyCandidatePage"
+      },
+      "check": {
+        "$ref": "#/definitions/StrategyCheckReceipt"
+      },
+      "checkPreparation": {
+        "$ref": "#/definitions/StrategyCheckPreparation"
+      },
+      "default": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextStrategyDefaultRevision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "defaults": {
+        "$ref": "#/definitions/ContextStrategyDefaultPage"
+      },
+      "error": {
+        "$ref": "#/definitions/CommandError"
+      },
+      "evaluation": {
+        "$ref": "#/definitions/StrategyEvaluationView"
+      },
+      "evaluations": {
+        "$ref": "#/definitions/StrategyEvaluationPage"
+      },
+      "identity": {
+        "$ref": "#/definitions/ExecutionId"
+      },
+      "judgment": {
+        "$ref": "#/definitions/StrategyJudgment"
+      },
+      "prepared": {
+        "$ref": "#/definitions/Prepared"
+      },
+      "saveAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/StrategyCandidateSaveRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/StrategyEvaluationStartRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "startReceipt": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "suite": {
+        "$ref": "#/definitions/StrategySuiteView"
+      }
+    },
+    "required": [
+      "candidate",
+      "candidates",
+      "suite",
+      "prepared",
+      "evaluation",
+      "evaluations",
+      "judgment",
+      "default",
+      "defaults",
+      "action",
+      "checkPreparation",
+      "check",
+      "identity",
+      "startReceipt",
+      "startAction",
+      "saveAction",
+      "adoption",
+      "error"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:strategy:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

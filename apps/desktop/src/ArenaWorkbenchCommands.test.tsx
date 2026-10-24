@@ -26,7 +26,7 @@ const project: ProjectView = { sessionToken: "arena-command-session", locator: "
   metadata: { projectId: fixtureIdentity(500), displayName: "Arena commands", sourceLocale: "en", targetLocales: ["zh-CN", "ja"], metadataRevision: "1" } };
 const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "arena" as const };
 const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureIdentity(302), sourceSnapshotId: fixtureIdentity(300),
-  nativeKey: "first", sourceLocale: "en", sourceText: "Hello {name}", targetLocale: "zh-CN", terms: [], context: null,
+  nativeKey: "first", sourceLocale: "en", sourceText: "Hello {name}", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"}, projectContext: {kind:"not-selected" as const},
   omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
 let owner: ReturnType<typeof useArenaDraftSession>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let tasks: ReturnType<typeof useExecutionTaskSession>, prepared: ArenaPrepared, view: ArenaView, comparison: ComparisonView, action: AdoptionAction;
@@ -86,7 +86,7 @@ beforeEach(async () => {
   comparison = { comparisonId: fixtureIdentity(330), unitId: item.unitId, locale: item.targetLocale, sourceRevisionId: item.sourceRevisionId,
     sourceText: item.sourceText, nativeKey: item.nativeKey, selectionId: fixtureIdentity(320), selectedRevisionId: fixtureIdentity(321), selectedText: "First {name}",
     basis: "basis", blind: true, revealed: false, rows: [321, 322].map((id, index) => ({ revisionId: fixtureIdentity(id), text: `${index ? "Second" : "First"} {name}`,
-      sourceRevisionId: item.sourceRevisionId, originKind: "manual", contributors: [], model: null, recipe: null, basisCurrent: true })) };
+      sourceRevisionId: item.sourceRevisionId, originKind: "manual", contributors: [], model: null, recipe: null, basisCurrent: true, candidateDisposition: null })) };
   let identity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
     const request = payload.request;
@@ -585,4 +585,17 @@ it("keeps cancellation of the original checked Task available after a real backg
   expect(dispatch).toHaveBeenCalledWith("arena.cancel-task", scope, payload);
   expect(tasks.current(aiTask)?.target).toEqual({ taskId: aiTask, attemptId: aiAttempt, origin: "arena" });
   expect(payloads("cancel_execution_task")[0]).toMatchObject({ ...reads.context, taskId: aiTask });
+});
+
+it("shows rejection in a blind comparison and enables direct use only after a restored read",async()=>{
+  await open();comparison={...comparison,selectedRevisionId:comparison.rows[1].revisionId,selectedText:comparison.rows[1].text,rows:comparison.rows.map((row,index)=>({...row,originKind:index===0?"ai" as const:"manual" as const,candidateDisposition:index===0?"rejected" as const:null}))};
+  await compare();
+  await screen.findByText(i18n.t("candidateDecisions.rejected"));
+  const useButtons=screen.getAllByRole("button",{name:i18n.t("arena.use")});expect(useButtons[0]).toBeDisabled();
+  expect(screen.getByText(comparison.rows[0].text,{selector:"pre"})).toBeVisible();
+  expect(registry.dispatch("arena.select-candidate",scope,selectPayload())).toBe(false);expect(calls("select_translation_revision")).toHaveLength(0);
+  comparison={...comparison,rows:comparison.rows.map((row,index)=>({...row,candidateDisposition:index===0?"restored" as const:null}))};
+  act(()=>reads.invalidate(["translation"]));
+  await screen.findByText(i18n.t("candidateDecisions.restored"));await waitFor(()=>expect(screen.getAllByRole("button",{name:i18n.t("arena.use")})[0]).toBeEnabled());
+  expect(calls("reveal_arena_identity")).toHaveLength(0);expect(comparison.revealed).toBe(false);
 });

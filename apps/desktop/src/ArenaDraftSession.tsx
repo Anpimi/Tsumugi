@@ -3,14 +3,16 @@ import { arenaCommands, defaultArenaConfig, confirmArenaComparison, confirmArena
 import type { StartRequest, RevealRequest } from "./generated/arena.requests";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt } from "./executionCommands";
 import { translationCommands, confirmTranslationSelection, type TranslationSelectRequest, type TranslationSelection } from "./translationCommands";
-import { validateResponseIdentity, validateResponseAdoptionAction, validateResponseAction, validateResponseAdoption } from "./generated/execution.validators";
+import { validateResponseIdentity, validateResponseAction, validateResponseAdoption, validateResponseAdoptionAction } from "./generated/execution.validators";
 import { validateResponsePrepared, validateResponseView, validateResponseComparison, validateResponseStartAction, validateResponseRevealTarget } from "./generated/arena.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import type { AiConfig, AiItem } from "./aiCommands";
+import { editedAiConfig, sameAiConfig, validSourceContextSelection, type AiConfig, type AiItem } from "./aiCommands";
+import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
+import type { ConnectionReadView } from "./connectionCommands";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import type { TranslationHistory } from "./translationCommands";
 
@@ -31,15 +33,13 @@ type Pending = PendingState & (
 );
 interface State {
   config: ArenaConfig; locale: string; selected: string[]; prepared: ArenaPrepared | null; consent: boolean;
-  dirty: boolean; editSeq: number; sourceGeneration: number; staleReason: "source" | "preview" | null;
+  dirty: boolean; editSeq: number; sourceGeneration: number; staleReason: "source" | "preview" | "connection" | null;
   unit: string; references: string[]; comparisonBlind: boolean; comparisonId: string | null; draft: MergeDraft | null;
   attempt: string | null; started: { prepared: ArenaPrepared; taskId: string | null } | null;
   pending: Pending | null; saved: Record<string, Receipt>; busy: boolean; failure: CommandFailure | null;
   notice: "saved" | "merged" | "selected" | "reconciled" | "repeatCost" | "identitiesVisible" | null;
 }
-const aiKeys = ["endpoint", "model", "credentialEnv", "tokenField", "maxItems", "concurrency", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds", "shareTerms", "shareContext"] as const;
 const aiLimits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
-const sameAiConfig = (left: AiConfig, right: AiConfig) => aiKeys.every(key => left[key] === right[key]);
 function sameConfig(left: ArenaConfig, right: ArenaConfig) {
   return left.maxItems === right.maxItems && left.maxRequests === right.maxRequests && left.concurrency === right.concurrency && left.blind === right.blind
     && (left.parentAttemptId ?? null) === (right.parentAttemptId ?? null) && left.variants.length === right.variants.length
@@ -50,7 +50,8 @@ function validConfig(config: ArenaConfig, count: number) {
     && count > 0 && count <= config.maxItems && count * config.variants.length <= 100
     && Number.isInteger(config.maxRequests) && config.maxRequests >= count * config.variants.length && config.maxRequests <= 300
     && Number.isInteger(config.concurrency) && config.concurrency >= 1 && config.concurrency <= 2
-    && config.variants.every(variant => aiLimits.every(([key,min,max]) => Number.isInteger(variant[key]) && variant[key] >= min && variant[key] <= max));
+    && config.variants.every(variant => validSourceContextSelection(variant.sourceContext)
+      && aiLimits.every(([key,min,max]) => Number.isInteger(variant[key]) && variant[key] >= min && variant[key] <= max));
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -61,7 +62,7 @@ function invalidAck(): never { throw new Error("Invalid Arena business acknowled
 function itemProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale,item.resourceBaseline,
     item.terms.map(term => [term.revisionId,term.source,term.target,term.protected]),
-    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.omissions]);
+    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.sourceContext,item.projectContext,item.omissions]);
 }
 function sourceProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale]);
@@ -118,7 +119,7 @@ export function confirmArenaView(view: ArenaView, attemptId: string, prepared?: 
 }
 function comparisonBasis(view: ComparisonView) {
   return JSON.stringify([view.comparisonId,view.unitId,view.locale,view.sourceRevisionId,view.sourceText,view.selectionId,view.basis,
-    view.rows.map(row => [row.revisionId,row.sourceRevisionId,row.text,row.basisCurrent])]);
+    view.rows.map(row => [row.revisionId,row.sourceRevisionId,row.text,row.basisCurrent,row.candidateDisposition])]);
 }
 function confirmComparisonRead(view: ComparisonView, comparisonId: string) {
   if (!validateResponseComparison(view) || view.comparisonId !== comparisonId || view.rows.length < 2 || view.rows.length > 4
@@ -129,6 +130,7 @@ function confirmComparisonRead(view: ComparisonView, comparisonId: string) {
 
 function useArenaOwner(project: ProjectView) {
   const reads = useSessionReads(), translations = useTranslationDraftSession(), tasks = useExecutionTaskSession();
+  const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<State>(() => freeze({config:defaultArenaConfig(),locale:project.metadata.targetLocales[0] ?? "",selected:[],prepared:null,consent:false,
     dirty:false,editSeq:0,sourceGeneration:0,staleReason:null,unit:"",references:[],comparisonBlind:false,comparisonId:null,draft:null,
@@ -148,6 +150,20 @@ function useArenaOwner(project: ProjectView) {
   function update(change: (before: State) => State) { if (live()) { stateRef.current = freeze(change(current())); setState(stateRef.current); } }
   function available(locale = current().locale) { return !!locale && projectRef.current.metadata.targetLocales.includes(locale); }
   function reserved() { return !!flight.current || !!current().pending; }
+  function connectionCurrent() { return current().config.variants.every(config => connectionConfigCurrent(connections.current(), config)); }
+  function selectConnection(slot: number, view: ConnectionReadView | null, id: string, expectedEditSeq: number) {
+    const before = current(), config = before.config.variants[slot];
+    if (!live() || reserved() || !config || before.editSeq !== expectedEditSeq) return false;
+    let next: AiConfig;
+    if (!id) next = { ...config, connectionProfile: null };
+    else {
+      if (!view || connections.current() !== view) return false;
+      const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
+      if (!reference || !profile) return false;
+      next = { ...config, ...profile.connection, connectionProfile: reference };
+    }
+    edit("config", { ...before.config, variants: before.config.variants.map((value, index) => index === slot ? next : value) }); return true;
+  }
   function reserveTranslation() { if (mutation.current) return false; mutation.current = draftsRef.current.reserveMutation(); return mutation.current !== null; }
   function releaseTranslation() { const token = mutation.current; mutation.current = null; if (token) draftsRef.current.releaseMutation(token); }
   async function run(work: () => Promise<void>, recovery = false) {
@@ -172,6 +188,12 @@ function useArenaOwner(project: ProjectView) {
     version.current++;
     update(before => ({ ...before,prepared:null,consent:false,staleReason:reason,draft:before.draft ? {...before.draft,stale:true} : null }));
   }
+  useLayoutEffect(() => {
+    const view = connections.current(), before = current();
+    if (view && !reserved() && (before.prepared || before.consent) && !before.config.variants.every(config => connectionConfigCurrent(view, config))) {
+      version.current++; update(value => ({ ...value, prepared: null, consent: false, staleReason: "connection" }));
+    }
+  }, [connections.state, state.busy, state.pending, state.config, state.prepared, state.consent]);
   useEffect(() => reads.subscribeChanges(scopes => {
     if (scopes.some(scope => scope === "project" || scope === "source" || scope === "resources")) {
       revoke(scopes.includes("source") ? "source" : "preview");
@@ -187,12 +209,12 @@ function useArenaOwner(project: ProjectView) {
     version.current++;
     update(value => ({ ...value,[key]:fixed(next),dirty:true,editSeq:value.editSeq+1,failure:null,notice:null,
       ...(["config","locale","selected"].includes(key) ? {prepared:null,consent:false,staleReason:null} : {}),
-      ...(key === "locale" ? {unit:"",references:[],comparisonId:null} : {}) }));
+      ...(key === "locale" ? {unit:"",references:[],comparisonId:null,...(next!==before.locale?{config:fixed({...value.config,variants:value.config.variants.map(variant=>({...variant,contextStrategy:null}))})}:{})} : {}) }));
   }
   function canPreview() {
     const before = current();
     return live() && !reserved() && project.metadata.targetLocales.includes(before.locale) && !!before.locale
-      && validateResponseIdentity(session.projectId) && before.selected.length > 0;
+      && validateResponseIdentity(session.projectId) && before.selected.length > 0 && connectionCurrent();
   }
   async function preview() {
     const before = current(), ticket = version.current;
@@ -397,7 +419,7 @@ function useArenaOwner(project: ProjectView) {
   }
   function canStart() {
     const before = current(), prepared = before.prepared;
-    return live() && !reserved() && project.metadata.targetLocales.includes(before.locale) && !!before.locale && before.consent && !!prepared
+    return live() && !reserved() && project.metadata.targetLocales.includes(before.locale) && !!before.locale && before.consent && !!prepared && connectionCurrent()
       && sameConfig(before.config,prepared.preview.config) && validConfig(before.config,before.selected.length)
       && prepared.preview.items.every(row => row.item.unitId === before.selected[row.sourceOrder] && row.item.targetLocale === before.locale);
   }
@@ -430,6 +452,22 @@ function useArenaOwner(project: ProjectView) {
       && before.references.length >= 2 && before.references.length <= 4 && new Set(before.references).size === before.references.length
       && before.references.every(validateResponseIdentity);
   }
+  /** A checked read may open offline choices without replacing model preparation
+   * or a separate editor draft. Existing choices require explicit disposal. */
+  function receiveComparisonTarget(unitId: string, locale: string, revisionId: string, expected: State) {
+    const before = current();
+    if (!live() || before !== expected || reserved() || before.draft || !available(locale)
+      || draftsRef.current.candidates.blocked() || draftsRef.current.mutationReserved || draftsRef.current.protection.blocked()
+      || draftsRef.current.current()?.pending || draftsRef.current.current()?.pendingSelection
+      || draftsRef.current.current()?.saving || draftsRef.current.current()?.selecting
+      || !validateResponseIdentity(unitId) || !validateResponseIdentity(revisionId)
+      || (before.locale !== locale && (before.dirty || before.prepared || before.attempt || before.selected.length > 0))
+      || (before.references.length > 0 && (before.unit !== unitId || before.locale !== locale || !before.references.includes(revisionId)))) return false;
+    version.current++;
+    update(value => ({ ...value, unit: unitId, locale, references: value.references.length ? value.references : [revisionId],
+      comparisonId: null, dirty: true, editSeq: value.editSeq + 1, failure: null, notice: null }));
+    return true;
+  }
   async function compare() {
     const before = current(), ticket = version.current;
     if (!canCompare() || !available()) return;
@@ -448,7 +486,7 @@ function useArenaOwner(project: ProjectView) {
   }
   function canSelect(view: ComparisonView, revisionId: string) {
     return live() && !reserved() && !translations.mutationReserved && comparisonCurrent(view)
-      && view.rows.some(row => row.revisionId === revisionId && row.sourceRevisionId === view.sourceRevisionId);
+      && view.rows.some(row => row.revisionId === revisionId && row.sourceRevisionId === view.sourceRevisionId && row.candidateDisposition !== "rejected");
   }
   async function select(view: ComparisonView, revisionId: string) {
     if (!canSelect(view,revisionId) || !reserveTranslation()) return;
@@ -558,7 +596,7 @@ function useArenaOwner(project: ProjectView) {
       const actionId = await executionCommands.identity(session);
       if (!proof()) return;
       await dispatch({kind:"adopt",request:fixed({...session,attemptId,actionId,unitId:captured.unitId,resultIds:[captured.resultId]}),candidate:captured,
-        action:null,receipt:null,checking:false,editSeq:before.editSeq,uncertain:false,retryAllowed:false},false,proof);
+        action:null,receipt:null,editSeq:before.editSeq,uncertain:false,retryAllowed:false,checking:false},false,proof);
     }));
   }
   async function checkPending() {
@@ -605,14 +643,17 @@ function useArenaOwner(project: ProjectView) {
     update(before => ({...before,config:defaultArenaConfig(),locale:projectRef.current.metadata.targetLocales[0] ?? "",selected:[],prepared:null,consent:false,dirty:false,editSeq:before.editSeq+1,
       unit:"",references:[],comparisonBlind:false,comparisonId:null,draft:null,attempt:null,started:null,staleReason:null,failure:null,notice:null})); return true;
   }
-  return {...state,current,reserved,targetAvailable,canPreview,preview,canStart,start,readView,readComparison,canCompare,compare,canSelect,select,reveal,canBeginMerge,beginMerge,editMerge,canSaveMerge,mergeBasisCurrent,saveMerge,refreshMerge,
-    canAdopt,adopt,checkPending,retryPending,showAttempt,newRound,reset,
-    setConfig:(value: SetStateAction<ArenaConfig>) => edit("config",value),setLocale:(value: SetStateAction<string>) => edit("locale",value),
+  return {...state,current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,readView,readComparison,canCompare,compare,canSelect,select,reveal,canBeginMerge,beginMerge,editMerge,canSaveMerge,mergeBasisCurrent,saveMerge,refreshMerge,
+    canAdopt,adopt,checkPending,retryPending,showAttempt,newRound,reset,receiveComparisonTarget,
+    setConfig:(value: SetStateAction<ArenaConfig>) => edit("config",before => {
+      const next = typeof value === "function" ? value(before) : value;
+      return { ...next, variants: next.variants.map((config, index) => before.variants[index] ? editedAiConfig(before.variants[index], config) : config) };
+    }),setLocale:(value: SetStateAction<string>) => edit("locale",value),
     setSelected:(value: SetStateAction<string[]>) => edit("selected",value),setReferences:(value: SetStateAction<string[]>) => edit("references",value),
     setComparisonBlind:(value: SetStateAction<boolean>) => edit("comparisonBlind",value),
     setUnit:(unit: string) => { if (!reserved() && !current().draft) { version.current++; update(before => ({...before,unit,references:[],comparisonId:null})); } },
     openComparison:(comparisonId: string) => { if (!reserved() && !current().draft && validateResponseIdentity(comparisonId)) update(before => ({...before,comparisonId})); },
-    setConsent:(consent: boolean) => { if (!reserved() && current().prepared && available()) update(before => ({...before,consent})); },
+    setConsent:(consent: boolean) => { if (!reserved() && current().prepared && available() && (!consent || connectionCurrent())) update(before => ({...before,consent})); },
     discardMerge:() => { if (!reserved()) update(before => ({...before,draft:null})); },
     clearSelectedRange:() => { if (!reserved()) edit("selected",[]); },
     reportFailure:(failure: CommandFailure) => update(before => ({...before,failure}))};

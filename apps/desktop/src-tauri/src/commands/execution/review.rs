@@ -1,4 +1,9 @@
 use super::*;
+use tsumugi_core::{ReviewFindingDecision, ReviewFindingView, ReviewFindingWrite};
+pub(in crate::commands::execution) mod checkers;
+pub(in crate::commands) mod semantic;
+pub(in crate::commands) mod plugin;
+pub(super) use plugin::ReviewSession;
 
 #[cfg(test)]
 mod contracts {
@@ -27,7 +32,11 @@ mod contracts {
         round_trip!("requests", "scope", ReviewScopeRequest);
         round_trip!("requests", "history", ReviewHistoryRequest);
         round_trip!("requests", "decision", ReviewWriteRequest);
-        round_trip!("requests", "check", ReviewCheckRequest);
+        round_trip!("requests", "prepareCheck", ReviewCheckRequest);
+        round_trip!("requests", "checkAction", ReviewCheckRequest);
+        round_trip!("responses", "checkAction", Option<tsumugi_core::ReviewCheckActionRead>);
+        round_trip!("requests", "check", plugin::ReviewCheckStartRequest);
+        round_trip!("responses", "prepareCheck", plugin::ReviewCheckPreparation);
         round_trip!("requests", "cancelCheck", ReviewCancelCheckRequest);
         round_trip!("requests", "waiver", WaiverRequest);
         round_trip!("requests", "fallback", FallbackRequest);
@@ -49,17 +58,14 @@ mod contracts {
         round_trip!("responses", "editor", ReviewEditorSnapshot);
         let mut summary = fixture["responses"]["summary"].clone();
         summary["rows"][0]["currentCheck"]["hasIncomplete"] = serde_json::json!(true);
-        let core: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summary).unwrap();
+        let core: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summary.clone()).unwrap();
         assert!(core.rows[0].current_check.as_ref().unwrap().has_incomplete);
         assert_eq!(
-            serde_json::to_value(ReviewSummaryPage::try_from(core).unwrap()).unwrap(),
-            fixture["responses"]["summary"]
+            serde_json::to_value(core).unwrap(),
+            summary
         );
-        assert_eq!(
-            super::super::review_wire::ReviewCheckOutcome::try_from(tsumugi_core::ReviewCheckOutcome::Unknown)
-                .unwrap_err().code,
-            ErrorCode::DependencyConflict
-        );
+        let unknown = tsumugi_core::ReviewCheckOutcome::Unknown;
+        assert_eq!(serde_json::from_value::<tsumugi_core::ReviewCheckOutcome>(serde_json::to_value(unknown).unwrap()).unwrap(), unknown);
         let mut optional = fixture["requests"]["decision"].clone();
         optional["decision"]
             .as_object_mut()
@@ -78,6 +84,13 @@ mod contracts {
         let mut unknown = fixture["responses"]["check"].clone();
         unknown["outcome"] = serde_json::json!("passed");
         assert!(serde_json::from_value::<CheckRun>(unknown).is_err());
+        let mut extra = fixture["responses"]["check"].clone();
+        extra["evidence"]["results"][0]["key"]["implementation"]["permission"] =
+            serde_json::json!("granted");
+        assert!(serde_json::from_value::<CheckRun>(extra).is_err());
+        let mut unknown_result = fixture["responses"]["check"].clone();
+        unknown_result["evidence"]["results"][0]["outcome"]["kind"] = serde_json::json!("passed");
+        assert!(serde_json::from_value::<CheckRun>(unknown_result).is_err());
         let mut unknown = fixture["requests"]["decision"].clone();
         unknown["decision"]["kind"] = serde_json::json!("accept-all");
         assert!(serde_json::from_value::<ReviewWriteRequest>(unknown).is_err());
@@ -90,12 +103,11 @@ mod contracts {
     }
 }
 use tsumugi_core::{
-    Eligibility, FallbackDecision, FallbackWrite, ReviewDecision,
-    ReviewNeighbor, ReviewScopeCapture,
-    ReviewWrite, Waiver, WaiverWrite, WorkPage,
+    CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewDiagnosticLocation,
+    ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
 };
 
-use super::review_wire::{CheckRun, ReviewEditorSnapshot, ReviewHistoryPage, ReviewPage, ReviewSummaryPage, ReviewTarget};
 
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewPageRequest {
     locale: String,
@@ -108,6 +120,15 @@ request!(
     ReviewTargetRequest {
         unit_id: ExecutionId,
         locale: String
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewDiagnosticLocationRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        run_id: ExecutionId,
+        diagnostic: sdk::TextReviewDiagnostic
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewSummaryPageRequest {
@@ -148,11 +169,13 @@ request!(
 );
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    #[derive(PartialEq, Eq)]
     ReviewCheckRequest {
         unit_id: ExecutionId,
         locale: String,
         expected_basis: String,
-        action_id: ExecutionId
+        action_id: ExecutionId,
+        advisory_checks: Vec<crate::commands::plugins::reviews::PluginTextReviewSelection>
     }
 );
 request!(
@@ -215,8 +238,7 @@ pub async fn read_review_summary_page(
                         &request.query,
                         request.scope_id,
                     )
-                    .and_then(TryInto::try_into)
-                    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                                        .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
         .await
@@ -241,8 +263,7 @@ pub async fn read_review_editor_snapshot(
                 )?
                 .store
                 .review_editor_snapshot(request.project_id, request.unit_id, &request.locale)
-                .and_then(TryInto::try_into)
-                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
         .await
@@ -338,8 +359,7 @@ pub async fn read_review_page(
                         request.limit,
                         request.query.as_deref().unwrap_or(""),
                     )
-                    .and_then(TryInto::try_into)
-                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                                    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
         .await
@@ -364,7 +384,37 @@ pub async fn read_review_target(
                 )?
                 .store
                 .review_target(request.project_id, request.unit_id, &request.locale)
-                .and_then(TryInto::try_into)
+                                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_review_diagnostic_location(
+    state: State<'_, AppState>,
+    request: ReviewDiagnosticLocationRequest,
+) -> Result<ReviewDiagnosticLocation, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_diagnostic_location",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_diagnostic_location(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.run_id,
+                    &request.diagnostic,
+                )
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
@@ -396,12 +446,32 @@ pub async fn read_review_history(
                     request.offset,
                     request.limit,
                 )
-                .and_then(TryInto::try_into)
-                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
         .await
 }
+
+#[tauri::command]
+pub async fn read_review_check_action(
+    state: State<'_, AppState>, request: ReviewCheckRequest,
+) -> Result<Option<tsumugi_core::ReviewCheckActionRead>, CommandError> {
+    state.sessions.run("read_review_check_action",CommandStage::ExecutionRead,move |sessions| {
+        let session = authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?;
+        let original = tsumugi_core::ReviewCheckActionRequest {
+            project_id: request.project_id, action_id: request.action_id, unit_id: request.unit_id,
+            locale: request.locale, expected_basis: request.expected_basis,
+            advisory_checks: request.advisory_checks.into_iter().map(|selected| tsumugi_core::ReviewCheckActionSelection {
+                plugin: selected.package.plugin, package_digest: selected.package.package_digest,
+                resource_id: selected.resource_id, environment_digest: selected.environment_digest, rules: selected.rules,
+            }).collect(),
+        };
+        session.store.review_check_action_read(&original).map_err(map_read)
+    }).await
+}
+
+
+
 
 #[tauri::command]
 pub async fn write_review_decision(
@@ -436,6 +506,7 @@ pub async fn write_review_decision(
         .await
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 enum CheckCapture {
     Recorded(tsumugi_core::CheckRun),
     Prepared(tsumugi_core::PreparedReviewCheck),
@@ -461,11 +532,14 @@ impl Drop for ReviewCheckRegistration {
     }
 }
 
-#[tauri::command]
-pub async fn run_review_checks(
+#[cfg(any(test, feature = "execution-test-host"))]
+pub async fn run_fixture_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
 ) -> Result<CheckRun, CommandError> {
+    if !request.advisory_checks.is_empty() {
+        return Err(checkers::stale());
+    }
     let cancellation = Cancellation::default();
     let running_checks = Arc::clone(&state.review_check_cancellations);
     {
@@ -594,7 +668,7 @@ pub async fn run_review_checks(
     })
     .await
     .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
-    .and_then(|run| run.try_into().map_err(|error| mapped(error, CommandStage::ExecutionAdopt)))
+
 }
 
 #[tauri::command]
@@ -692,10 +766,12 @@ pub async fn read_review_work(
 ) -> Result<WorkPage, CommandError> {
     state
         .sessions
-        .run(
+        .lease(CommandStage::ExecutionRead)?
+        .submit_review_read(
             "read_review_work",
-            CommandStage::ExecutionRead,
-            move |sessions| {
+            request.session_token.clone(),
+            request.project_id,
+            move |sessions, cancellation| {
                 authorized(
                     sessions,
                     &request.session_token,
@@ -703,15 +779,16 @@ pub async fn read_review_work(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .review_work_page(
+                .review_work_page_with_cancel(
                     request.project_id,
                     &request.locale,
                     request.offset,
                     request.limit,
+                    cancellation,
                 )
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
-        )
+        )?
         .await
 }
 
@@ -722,8 +799,48 @@ pub async fn read_review_eligibility(
 ) -> Result<Eligibility, CommandError> {
     state
         .sessions
-        .run(
+        .lease(CommandStage::ExecutionRead)?
+        .submit_review_read(
             "read_review_eligibility",
+            request.session_token.clone(),
+            request.project_id,
+            move |sessions, cancellation| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_eligibility_with_cancel(request.project_id, &request.locales, cancellation)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )?
+        .await
+}
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewFindingWriteRequest {
+        finding: ReviewFindingWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewFindingActionRequest {
+        action_id: ExecutionId
+    }
+);
+
+#[tauri::command]
+pub async fn read_review_findings(
+    state: State<'_, AppState>,
+    request: ReviewHistoryRequest,
+) -> Result<ReviewFindingView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_findings",
             CommandStage::ExecutionRead,
             move |sessions| {
                 authorized(
@@ -733,7 +850,13 @@ pub async fn read_review_eligibility(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .review_eligibility(request.project_id, &request.locales)
+                .review_findings(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
@@ -831,35 +954,59 @@ pub async fn read_review_fallback_action(
         .await
 }
 
+
 #[tauri::command]
-pub async fn read_review_check_action(
+pub async fn read_review_finding_action(
     state: State<'_, AppState>,
-    request: ReviewCheckRequest,
-) -> Result<Option<super::review_wire::ReviewCheckActionRead>, CommandError> {
+    request: ReviewFindingActionRequest,
+) -> Result<Option<ReviewFindingDecision>, CommandError> {
     state
         .sessions
         .run(
-            "read_review_check_action",
+            "read_review_finding_action",
             CommandStage::ExecutionRead,
             move |sessions| {
-                let session = authorized(
+                authorized(
                     sessions,
                     &request.session_token,
                     request.project_id,
                     CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_finding_action_read(request.project_id, request.action_id)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn write_review_finding(
+    state: State<'_, AppState>,
+    request: ReviewFindingWriteRequest,
+) -> Result<ReviewFindingDecision, CommandError> {
+    state
+        .sessions
+        .run(
+            "write_review_finding",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                if request.finding.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionAdopt,
+                        Some("review-project"),
+                    ));
+                }
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
                 )?;
-                session
-                    .store
-                    .review_check_action_read(&tsumugi_core::ReviewCheckActionRequest {
-                        project_id: request.project_id,
-                        action_id: request.action_id,
-                        unit_id: request.unit_id,
-                        locale: request.locale,
-                        expected_basis: request.expected_basis,
-                        advisory_checks: Vec::new(),
-                    })
-                    .and_then(|read| read.map(TryInto::try_into).transpose())
-                    .map_err(map_read)
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .write_review_finding(&request.finding)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
             },
         )
         .await

@@ -6,7 +6,7 @@ import fixture from "../test/fixtures/executionCommands.contract.json";
 import { ExecutionTasks } from "./ExecutionTasks";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { useSessionReads } from "./SessionReadProvider";
-import { useWorkbenchCommands, type TaskActionCommandPayload, type TaskConfirmedCommandPayload, type TaskPendingCommandPayload, type TaskHistoryCommandPayload } from "./workbenchCommands";
+import { useWorkbenchCommands, type TaskActionCommandPayload, type TaskConfirmedCommandPayload, type TaskPendingCommandPayload, type TaskHistoryCommandPayload, type TaskSavedBuildCommandPayload } from "./workbenchCommands";
 import type { AttemptDetail, PrepareRequest, ContinuationRequest, ContinuationReceipt, AdoptionAction, Receipt } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import { validateResponseAttempt } from "./generated/execution.validators";
@@ -21,10 +21,11 @@ const scope = { projectId: project.metadata.projectId, sessionToken: project.ses
 let owner: ReturnType<typeof useExecutionTaskSession>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let value: AttemptDetail, records: ContinuationReceipt[], pendingPrepare: PrepareRequest;
 const preview = vi.fn();
+const savedRoute = vi.fn<(attemptId:string)=>Promise<boolean>>();
 function Probe() { const tasks = useExecutionTaskSession(), queries = useSessionReads(), commands = useWorkbenchCommands();
   useLayoutEffect(() => { owner = tasks; reads = queries; registry = commands; }); return null; }
 function Harness({ mounted = true, project: current = project }: { mounted?: boolean; project?: ProjectView }) {
-  return <><Probe />{mounted ? <ExecutionTasks project={current} disabled={false} onSourcePreview={preview} onTranslationPreview={preview} onAiPreview={preview} onArenaPreview={preview} /> : null}</>;
+  return <><Probe />{mounted ? <ExecutionTasks project={current} disabled={false} onSourcePreview={preview} onTranslationPreview={preview} onAiPreview={preview} onArenaPreview={preview} onSavedBuild={savedRoute} /> : null}</>;
 }
 function calls(command: string) { return invoke.mock.calls.filter(([name]) => name === command); }
 function payloads(command: string) { return calls(command).map(([, payload]) => payload.request); }
@@ -61,7 +62,7 @@ function historyPayload(record: ContinuationReceipt): TaskHistoryCommandPayload 
   attemptId: record.attemptId, sequence: record.sequence, requestDigest: record.requestDigest, sourceInputDigest: record.sourceInputDigest, inputDigest: record.inputDigest, cursor: "0" }; }
 function queryKey() { return reads.key(["tasks",value.taskId,null,"0","0",0]); }
 beforeEach(async () => {
-  await i18n.changeLanguage("en-US"); preview.mockReset(); value = makeDetail(); records = []; pendingPrepare = {...fixture.prepare};
+  await i18n.changeLanguage("en-US"); preview.mockReset();savedRoute.mockReset();savedRoute.mockResolvedValue(false); value = makeDetail(); records = []; pendingPrepare = {...fixture.prepare};
   let identity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
     const request = payload.request;
@@ -103,7 +104,7 @@ async function capture(action: TaskActionCommandPayload["action"] = "adopt-resul
 it("registers the scoped Tasks commands and routes a fixed adoption through the real confirmation buttons", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(command=>command.category==="tasks").map(command=>command.id).sort()).toEqual([
-    "tasks.adopt-result","tasks.cancel-task","tasks.check-cancellation","tasks.confirm-cancellation","tasks.open-preview","tasks.query-outcome","tasks.reconcile-adoption","tasks.reconcile-continuation",
+    "tasks.adopt-result","tasks.cancel-task","tasks.check-cancellation","tasks.confirm-cancellation","tasks.open-preview","tasks.open-saved-build","tasks.query-outcome","tasks.reconcile-adoption","tasks.reconcile-continuation",
     "tasks.resume-undispatched","tasks.retry-adoption","tasks.retry-cancellation","tasks.retry-continuation","tasks.retry-safe-failure","tasks.submit-action","tasks.validate-output",
     "tasks.view-continuation","tasks.view-output","tasks.view-receipt",
   ]);
@@ -304,7 +305,7 @@ it("routes current source preview and checked output/receipt reads using exact t
   expect(registry.dispatch("tasks.view-output",scope,{...output,itemId:fixtureIdentity(999)})).toBe(false);
   await user.click(screen.getByRole("button",{name:"View saved output"}));await screen.findByText(/"saved": "A"/);
   value=makeDetail();value.recovery.units[0].actions=["view-receipt"];value.recovery.units[0].receiptId=fixture.prepare.actionId;
-  pendingPrepare={...fixture.prepare};act(()=>reads.client.setQueryData(queryKey(),{runtime:fixture.status,tasks:[],attempts:[{attemptId:value.attemptId,sequence:"1"}],detail:structuredClone(value)}));
+  pendingPrepare={...fixture.prepare};act(()=>reads.client.setQueryData(queryKey(),{runtime:fixture.status,tasks:[],task:{...fixture.task,taskId:value.taskId,operation:value.operation,cancellationRevision:"0"},attempts:[{attemptId:value.attemptId,sequence:"1"}],detail:structuredClone(value)}));
   const receipt={kind:"task-receipt" as const,taskId:value.taskId,attemptId:value.attemptId,operation:value.operation,unitId:value.recovery.units[0].unitId,actionId:fixture.prepare.actionId};
   await waitFor(()=>expect(registry.describe("tasks.view-receipt",scope,receipt)?.availability.enabled).toBe(true));
   expect(registry.dispatch("tasks.view-receipt",scope,{...receipt,actionId:fixtureIdentity(999)})).toBe(false);
@@ -362,7 +363,13 @@ it("checks actual receipt absence before replaying an unknown adoption and keeps
 });
 
 it("keeps the fixed revision-zero capture when the complete Tasks consumer remounts before confirmation", async () => {
-  value=makeDetail("resume-undispatched");const{rendered,user}=await open();await capture("resume-undispatched");
+  value=makeDetail("resume-undispatched");const{rendered,user}=await open();
+  const original=invoke.getMockImplementation()!,captureReads:unknown[]=[];
+  invoke.mockImplementation((command:string,payload:unknown)=>{
+    if(command==="read_execution_task_view"&&owner.currentActivity()?.phase==="capturing")captureReads.push(structuredClone(payload));
+    return original(command,payload);
+  });
+  await capture("resume-undispatched");
   const captured=owner.currentActivity()?.intent;expect(captured?.cancellationRevision).toBe("0");
   rendered.rerender(<Harness mounted={false} project={project} />,project);
   rendered.rerender(<Harness project={project} />,project);
@@ -371,5 +378,63 @@ it("keeps the fixed revision-zero capture when the complete Tasks consumer remou
   await user.click(within(screen.getByRole("dialog",{name:"Continue remaining work"})).getByRole("button",{name:"Continue remaining work"}));
   await waitFor(()=>expect(owner.currentActivity()?.phase).toBe("recorded"));
   expect(payloads("continue_execution")[0].action).toMatchObject({expectedCancellationRevision:"0",unitId:captured?.unit.unitId,itemIds:captured?.unit.remainingItemIds});
-  expect(calls("read_execution_task_view")).toHaveLength(1);
+  expect(captureReads).toEqual([{request:{...fixture.session,taskId:captured?.taskId}}]);
+  expect(payloads("read_execution_task_view").every(request=>request.projectId===fixture.session.projectId&&request.sessionToken===fixture.session.sessionToken&&request.taskId===captured?.taskId)).toBe(true);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("continue_execution")).toHaveLength(1);
+});
+
+
+it("awaits an exact saved-build route and keeps its current Task when the destination owner refuses",async()=>{
+  value.operation="locale-build";value.recovery.units[0].actions=[];const {user}=await open();
+  const payload:TaskSavedBuildCommandPayload={kind:"task-saved-build",taskId:value.taskId,attemptId:value.attemptId,operation:"locale-build",itemId:null,resultId:null};
+  expect(registry.describe("tasks.open-saved-build",scope,payload)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("tasks.open-saved-build",{...scope,sessionToken:"old"},payload)).toBe(false);
+  expect(registry.dispatch("tasks.open-saved-build",scope,{...payload,taskId:fixtureIdentity(989)})).toBe(false);
+  expect(registry.dispatch("tasks.open-saved-build",scope,{...payload,itemId:value.items[0].status.itemId,resultId:fixtureIdentity(988)})).toBe(false);
+  const response=deferred<boolean>();savedRoute.mockReturnValue(response.promise);
+  const button=screen.getByRole("button",{name:i18n.t("releasePlugin.savedOpen")});
+  await user.click(button);
+  expect(savedRoute.mock.calls).toEqual([[value.attemptId]]);
+  expect(screen.getByRole("heading",{name:i18n.t("execution.title")})).toBeVisible();
+  expect(registry.dispatch("tasks.open-saved-build",scope,payload)).toBe(false);
+  await act(async()=>response.resolve(false));
+  expect(await screen.findByText(i18n.t("execution.savedBuildBlocked"))).toBeInTheDocument();
+  expect(screen.getByRole("heading",{name:i18n.t("execution.title")})).toBeVisible();
+  expect(calls("create_execution_identity")).toHaveLength(0);expect(calls("prepare_execution_adoption")).toHaveLength(0);
+});
+
+it.each(["retired","replaced"] as const)("ignores a saved-build route accepted after the original session is %s",async boundary=>{
+  value.operation="locale-build";value.recovery.units[0].actions=[];
+  const {rendered,user}=await open(),response=deferred<boolean>();
+  const payload:TaskSavedBuildCommandPayload={kind:"task-saved-build",taskId:value.taskId,attemptId:value.attemptId,operation:"locale-build",itemId:null,resultId:null};
+  savedRoute.mockReturnValue(response.promise);
+  await user.click(screen.getByRole("button",{name:i18n.t("releasePlugin.savedOpen")}));
+  expect(savedRoute.mock.calls).toEqual([[value.attemptId]]);
+  if(boundary==="retired")act(()=>reads.retire());
+  else {
+    const replacement={...project,sessionToken:"replacement-saved-route-session"};
+    rendered.rerender(<Harness project={replacement}/>,replacement);
+  }
+  await act(async()=>{response.resolve(true);await response.promise;});
+  expect(screen.getByRole("heading",{name:i18n.t("execution.title")})).toBeVisible();
+  expect(registry.dispatch("tasks.open-saved-build",scope,payload)).toBe(false);
+  expect(savedRoute).toHaveBeenCalledTimes(1);
+  expect(calls("read_saved_plugin_build")).toHaveLength(0);
+  expect(calls("create_execution_identity")).toHaveLength(0);
+  expect(calls("prepare_execution_adoption")).toHaveLength(0);
+});
+
+it("blocks a saved-build route while an original continuation remains unknown without clearing its captured scope",async()=>{
+  value=makeDetail("resume-undispatched");value.operation="locale-build";value.items[0].status.execution="queued";
+  const {rendered}=await open();await capture("resume-undispatched");
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args)=>command==="continue_execution"?Promise.reject(new Error("ACK lost")):original(command,args));
+  await act(async()=>{expect(registry.dispatch("tasks.submit-action",scope,confirmedPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.currentActivity()?.phase).toBe("unknown"));
+  const captured=owner.currentActivity(),payload:TaskSavedBuildCommandPayload={kind:"task-saved-build",taskId:value.taskId,attemptId:value.attemptId,operation:"locale-build",itemId:null,resultId:null};
+  expect(registry.dispatch("tasks.open-saved-build",scope,payload)).toBe(false);expect(savedRoute).not.toHaveBeenCalled();
+  rendered.rerender(<Harness mounted={false} project={project}/>,project);
+  expect(registry.describe("tasks.open-saved-build",scope,payload)).toBeUndefined();expect(owner.currentActivity()).toBe(captured);
+  expect(calls("continue_execution")).toHaveLength(1);expect(calls("read_saved_plugin_build")).toHaveLength(0);
 });

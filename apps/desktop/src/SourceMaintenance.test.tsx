@@ -1,16 +1,18 @@
 import { useLayoutEffect } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render as renderEvidence, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { SourceHistoryPanel, SourceImpactPanel } from "./SourceMaintenance";
+import { SourceHistoryPanel, SourceImpactPanel, LineageEvidenceView } from "./SourceMaintenance";
 import { useWorkbenchCommands, type SourceImpactTargetCommandPayload } from "./workbenchCommands";
 import { executionContext } from "./executionCommands";
-import type { ContentScope } from "./sourceCommands";
+import type { ContentScope, LineageEvidence } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { sourceContentFixture, sourceHistoryFixture, sourceImpactFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { validateResponseLineage } from "./generated/source.validators";
+import { sourcePageFixture } from "./testSupport/sourceFixture";
 import fixture from "../test/fixtures/sourceCommands.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -293,4 +295,64 @@ it("ignores a rejected destination callback after its original source consumer u
   view.rerender(<SourceImpactPanel project={project} snapshotId={snapshotId} onOpenTranslation={open} />);
   await screen.findByRole("button", { name: "Edit this key" });
   expect(screen.queryByText(i18n.t("source.navigationBlocked"))).not.toBeInTheDocument();
+});
+
+function lineageFixture(): LineageEvidence[] {
+  if (!validateResponseLineage(fixture.lineage)) throw new Error("Invalid synthetic source lineage fixture");
+  return structuredClone(fixture.lineage);
+}
+
+it.each([
+  ["en-US", "Source location and identity", "UTF-16 code units range [2, 8)"],
+  ["zh-CN", "来源位置与身份", "UTF-16 码元范围 [2, 8)"],
+])("keeps an original identity spelling and labels its source coordinate encoding in %s", async (locale, origin, range) => {
+  await i18n.changeLanguage(locale);
+  const evidence = lineageFixture();
+  evidence[0].old.occurrence.nativeIdentity!.value = "canonical-name";
+  evidence[0].old.occurrence.nativeIdentity!.display.value = "Original Name 原文";
+  evidence[0].old.occurrence.source.range = { encoding: "utf16", start: 2, end: 8 };
+  const history = { ...fixture.history, snapshots: [{ ...fixture.history.snapshots[0],
+    coverage: [{ ...fixture.page.coverage[0], logicalPath: "captions/original.vtt" }] }] };
+  renderEvidence(<LineageEvidenceView evidence={evidence} project={project} history={history} />);
+  expect(screen.getByText("Original Name 原文")).toBeInTheDocument();
+  expect(screen.queryByText("canonical-name")).not.toBeInTheDocument();
+  await userEvent.setup().click(screen.getByText(origin));
+  expect(screen.getByText(text => text.endsWith(range))).toBeVisible();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it("reads historical coverage only when requested and retries a failed read without changing evidence", async () => {
+  const evidence = lineageFixture();
+  const source = sourcePageFixture({ snapshotId: evidence[0].oldSnapshotId,
+    coverage: [{ ...fixture.page.coverage[0], logicalPath: "captions/original.vtt" }] });
+  invoke.mockRejectedValueOnce(new Error("Synthetic read failure")).mockResolvedValueOnce(source);
+  renderEvidence(<LineageEvidenceView evidence={evidence} project={project} />);
+  expect(invoke).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.click(screen.getByText("Source location and identity"));
+  await screen.findByRole("alert");
+  expect(screen.getByText("Same stable key")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(screen.getByText(/Original text · captions\/original\.vtt/)).toBeVisible());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(invoke).toHaveBeenLastCalledWith("read_source_history_content", { request: { ...fixture.session,
+    snapshotId: evidence[0].oldSnapshotId, query: "", after: 0, limit: 1 } });
+  expect(evidence).toEqual(fixture.lineage);
+});
+
+it("does not display late file metadata from a replaced historical snapshot", async () => {
+  let complete!: (value: unknown) => void;
+  const original = lineageFixture();
+  const replacement = lineageFixture();
+  replacement[0].oldSnapshotId = "00000000-0000-4000-8000-000000000015";
+  replacement[0].old.occurrence.nativeIdentity!.display.value = "Replacement name";
+  invoke.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  const view = renderEvidence(<LineageEvidenceView evidence={original} project={project} />);
+  await userEvent.setup().click(screen.getByText("Source location and identity"));
+  await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+  view.rerender(<LineageEvidenceView evidence={replacement} project={project} />);
+  await act(async () => complete(sourcePageFixture({ snapshotId: original[0].oldSnapshotId,
+    coverage: [{ ...fixture.page.coverage[0], logicalPath: "captions/stale.vtt" }] })));
+  expect(screen.getByText("Replacement name")).toBeInTheDocument();
+  expect(screen.queryByText(/captions\/stale\.vtt/)).not.toBeInTheDocument();
 });

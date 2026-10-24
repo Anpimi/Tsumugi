@@ -112,8 +112,103 @@
         ],
         "type": "object"
       },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
       },
       "HistoryContentRequest": {
         "additionalProperties": false,
@@ -282,6 +377,147 @@
         ],
         "type": "object"
       },
+      "PluginCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "selectionId",
+          "sourceLanguage",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginSourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginSourceSelectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "PluginStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
       "PreviewRequest": {
         "additionalProperties": false,
         "properties": {
@@ -388,6 +624,62 @@
         ],
         "type": "object"
       },
+      "SourceCheckFinishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "SourceCheckPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "sourceAttemptId",
+          "sourceResultId",
+          "attemptId",
+          "source"
+        ],
+        "type": "object"
+      },
       "SourceConfirmation": {
         "additionalProperties": false,
         "properties": {
@@ -433,6 +725,16 @@
             ],
             "default": null
           },
+          "maintenanceHook": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "resultDigest": {
             "type": "string"
           },
@@ -441,10 +743,263 @@
           }
         },
         "required": [
+          "maintenanceHook",
           "resultDigest",
           "identityPolicy",
           "expectedContentRevision",
           "sourceLanguage"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "payloadBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "payloadBytes"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/SourceContextBlockBasis"
+          },
+          "descriptor": {
+            "$ref": "#/definitions/SourceContextBlockDescriptor"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "basis",
+          "descriptor"
+        ],
+        "type": "object"
+      },
+      "SourceContextReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookActivation": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "sessionEpoch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policyVersion",
+          "sessionEpoch",
+          "locale",
+          "after",
+          "limit",
+          "expiresAtMs"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "sourceActionId"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookStopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "stop": {
+            "$ref": "#/definitions/StopSourceMaintenanceHook"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "stop"
         ],
         "type": "object"
       },
@@ -475,6 +1030,34 @@
           "attemptId"
         ],
         "type": "object"
+      },
+      "StopSourceMaintenanceHook": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "activation": {
+            "$ref": "#/definitions/SourceMaintenanceHookActivation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceActionId",
+          "actionId",
+          "activation"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
       }
     },
     "properties": {
@@ -486,6 +1069,12 @@
       },
       "capture": {
         "$ref": "#/definitions/CaptureRequest"
+      },
+      "checkFinish": {
+        "$ref": "#/definitions/SourceCheckFinishRequest"
+      },
+      "checkPrepare": {
+        "$ref": "#/definitions/SourceCheckPrepareRequest"
       },
       "comparison": {
         "$ref": "#/definitions/ComparisonRequest"
@@ -505,11 +1094,35 @@
       "lineage": {
         "$ref": "#/definitions/LineageRequest"
       },
+      "maintenanceHook": {
+        "$ref": "#/definitions/SourceMaintenanceHookReadRequest"
+      },
+      "maintenanceHookSession": {
+        "$ref": "#/definitions/SessionRequest"
+      },
+      "maintenanceHookStop": {
+        "$ref": "#/definitions/SourceMaintenanceHookStopRequest"
+      },
+      "pluginCapture": {
+        "$ref": "#/definitions/PluginCaptureRequest"
+      },
+      "pluginSelect": {
+        "$ref": "#/definitions/PluginSourceSelectRequest"
+      },
+      "pluginStart": {
+        "$ref": "#/definitions/PluginStartRequest"
+      },
       "preview": {
         "$ref": "#/definitions/PreviewRequest"
       },
       "session": {
         "$ref": "#/definitions/SessionRequest"
+      },
+      "sourceContext": {
+        "$ref": "#/definitions/SourceContextReadRequest"
+      },
+      "sourceContextBlock": {
+        "$ref": "#/definitions/SourceContextBlockReadRequest"
       },
       "start": {
         "$ref": "#/definitions/StartRequest"
@@ -523,15 +1136,25 @@
       "capture",
       "start",
       "startAction",
+      "maintenanceHookSession",
+      "maintenanceHook",
+      "maintenanceHookStop",
       "preview",
       "content",
+      "sourceContext",
+      "sourceContextBlock",
       "comparison",
       "history",
       "historyContent",
       "lineage",
       "impact",
       "adopt",
-      "adoptionAction"
+      "adoptionAction",
+      "pluginSelect",
+      "pluginCapture",
+      "pluginStart",
+      "checkPrepare",
+      "checkFinish"
     ],
     "title": "Requests",
     "type": "object",
@@ -640,6 +1263,102 @@
         ],
         "type": "object"
       },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
       "ChangeReference": {
         "additionalProperties": false,
         "properties": {
@@ -659,6 +1378,520 @@
           "revision"
         ],
         "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "diagnosticId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RecoveryGuidance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ConflictEvidence": {
+        "description": "Values compared at the rejecting boundary, without user text or credentials.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "expected": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "translation-selection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "review-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-waiver",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-fallback",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "build-eligibility",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "comparison-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "context-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expected": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "content-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "ContentPage": {
         "additionalProperties": false,
@@ -805,9 +2038,173 @@
         ],
         "type": "object"
       },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
+      "ErrorCode": {
+        "enum": [
+          "invalid-input",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled",
+          "outcome-unknown",
+          "unauthorized",
+          "busy",
+          "storage-failed",
+          "corrupt-ledger"
+        ],
+        "type": "string"
+      },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
+      },
+      "ExecutionError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/ErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "stage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "itemIds"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
       },
       "FileCoverage": {
         "additionalProperties": false,
@@ -990,6 +2387,532 @@
         ],
         "type": "object"
       },
+      "MaintenanceAction": {
+        "enum": [
+          "keep",
+          "recheck",
+          "repair",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "MaintenanceAssessment": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "coverage": {
+            "type": "string"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/MaintenanceRow"
+            },
+            "type": "array"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "locale",
+          "after",
+          "limit",
+          "nextOrdinal",
+          "rows",
+          "coverage",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "MaintenanceRow": {
+        "additionalProperties": false,
+        "properties": {
+          "mappingUnresolved": {
+            "type": "boolean"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "protection": {
+            "$ref": "#/definitions/WorkProtection"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reviewBasis": {
+            "type": "string"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceText": {
+            "type": "string"
+          },
+          "suggested": {
+            "$ref": "#/definitions/MaintenanceAction"
+          },
+          "translationRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "nativeKey",
+          "sourceText",
+          "translationText",
+          "selectionId",
+          "translationRevisionId",
+          "reviewBasis",
+          "protection",
+          "mappingUnresolved",
+          "reasons",
+          "suggested"
+        ],
+        "type": "object"
+      },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "NativeIdentityDisplay": {
+        "additionalProperties": false,
+        "description": "Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.",
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ],
+        "type": "object"
+      },
+      "NativeIdentityEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "display": {
+            "$ref": "#/definitions/NativeIdentityDisplay"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "value": {
+            "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "value",
+          "policy",
+          "display"
+        ],
+        "type": "object"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
+      "PluginSourceFile": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLength": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalPath",
+          "role",
+          "byteLength",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "PluginSourcePreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/definitions/PluginSourceFile"
+            },
+            "type": "array"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceView"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "sourceLanguage",
+          "source",
+          "files"
+        ],
+        "type": "object"
+      },
+      "PluginSourceSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "folderName": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceView"
+          }
+        },
+        "required": [
+          "selectionId",
+          "folderName",
+          "source"
+        ],
+        "type": "object"
+      },
+      "PluginSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/SourceImportDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "extractor": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "review": {
+            "$ref": "#/definitions/ReviewBinding"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "extractor",
+          "checker",
+          "review",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
       "Preflight": {
         "additionalProperties": false,
         "properties": {
@@ -1026,6 +2949,51 @@
           "files"
         ],
         "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "RecoveryGuidance": {
+        "description": "A read or user decision to make before another mutation; never replay authority.",
+        "enum": [
+          "reconcile-original",
+          "review-current",
+          "choose-destination"
+        ],
+        "type": "string"
       },
       "ReviewBasis": {
         "additionalProperties": false,
@@ -1083,9 +3051,167 @@
         ],
         "type": "object"
       },
+      "ReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
+      "ReviewDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ReviewRuleDeclaration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "ReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+        "properties": {
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation"
+        ],
+        "type": "object"
+      },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
         "type": "string"
+      },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
       },
       "SourceChange": {
         "additionalProperties": false,
@@ -1241,6 +3367,41 @@
         ],
         "type": "object"
       },
+      "SourceCheckReview": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceView"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "sourceAttemptId",
+          "sourceResultId",
+          "source",
+          "rules"
+        ],
+        "type": "object"
+      },
       "SourceConfirmation": {
         "additionalProperties": false,
         "properties": {
@@ -1286,6 +3447,16 @@
             ],
             "default": null
           },
+          "maintenanceHook": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "resultDigest": {
             "type": "string"
           },
@@ -1294,6 +3465,7 @@
           }
         },
         "required": [
+          "maintenanceHook",
           "resultDigest",
           "identityPolicy",
           "expectedContentRevision",
@@ -1302,6 +3474,556 @@
           "lineage",
           "actor",
           "lineageBaseSnapshot"
+        ],
+        "type": "object"
+      },
+      "SourceContextAdjacency": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SourceContextDirection"
+              }
+            ],
+            "description": "The neighbor's position relative to this selected occurrence."
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlock": {
+        "additionalProperties": false,
+        "description": "The block's index and local target retain its identity inside the exact\nresult. `None` facts means an unsupported version; `Some` with an empty list\nis the domain's explicit empty observation. Missing blocks remain missing.",
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "facts": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceContextFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "facts"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "payloadBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "payloadBytes"
+        ],
+        "type": "object"
+      },
+      "SourceContextBlockDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/definitions/SourceContextBlockBasis"
+          },
+          "descriptor": {
+            "$ref": "#/definitions/SourceContextBlockDescriptor"
+          },
+          "payloadUtf8": {
+            "description": "Original UTF-8 text, without parsing, normalization or reserialization.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "descriptor",
+          "payloadUtf8"
+        ],
+        "type": "object"
+      },
+      "SourceContextDirection": {
+        "enum": [
+          "before",
+          "after"
+        ],
+        "type": "string"
+      },
+      "SourceContextFact": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Unique only inside this block; it is not a project revision or entity ID.",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/SourceContextFactKind"
+          },
+          "origin": {
+            "$ref": "#/definitions/SourceContextFactOrigin"
+          },
+          "text": {
+            "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "SourceContextFactKind": {
+        "description": "Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.",
+        "enum": [
+          "speaker",
+          "role",
+          "scene",
+          "time",
+          "location",
+          "note"
+        ],
+        "type": "string"
+      },
+      "SourceContextFactOrigin": {
+        "description": "References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "extracted",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "sources"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "inferred",
+                "type": "string"
+              },
+              "rationale": {
+                "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "rationale",
+              "sources"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextFacts": {
+        "additionalProperties": false,
+        "description": "The surrounding DomainBlock supplies Snapshot/Unit/Occurrence applicability.\nEmpty facts report an explicit empty observation; absence is not that report.",
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/definitions/SourceContextFact"
+            },
+            "maxItems": 32,
+            "type": "array"
+          }
+        },
+        "required": [
+          "facts"
+        ],
+        "type": "object"
+      },
+      "SourceContextNeighbor": {
+        "additionalProperties": false,
+        "properties": {
+          "adjacentTo": {
+            "items": {
+              "$ref": "#/definitions/SourceContextAdjacency"
+            },
+            "type": "array"
+          },
+          "occurrence": {
+            "$ref": "#/definitions/SourceContextOccurrence"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceRevisionId",
+          "occurrence",
+          "text",
+          "adjacentTo"
+        ],
+        "type": "object"
+      },
+      "SourceContextObservations": {
+        "additionalProperties": false,
+        "description": "Missing, explicitly empty and unknown schema observations are distinct.",
+        "properties": {
+          "emptyBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knownBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knownFacts": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "missingBlocks": {
+            "type": "boolean"
+          },
+          "neighborOccurrences": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownRequiredBlocks": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknownSamples": {
+            "items": {
+              "$ref": "#/definitions/UnknownSourceBlockSample"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "missingBlocks",
+          "knownBlocks",
+          "knownFacts",
+          "emptyBlocks",
+          "unknownBlocks",
+          "unknownRequiredBlocks",
+          "neighborOccurrences",
+          "unknownSamples"
+        ],
+        "type": "object"
+      },
+      "SourceContextOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "localOccurrenceId": {
+            "type": "string"
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/SourceReference"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "localOccurrenceId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "SourceContextPage": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/SourceContextPageEntry"
+            },
+            "type": "array"
+          },
+          "localUnitId": {
+            "type": "string"
+          },
+          "nextAfter": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "observations": {
+            "$ref": "#/definitions/SourceContextObservations"
+          },
+          "occurrenceCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "totalEntries": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "contentRevision",
+          "sourceAttemptId",
+          "sourceResultId",
+          "sourceResultDigest",
+          "sourceLocale",
+          "localUnitId",
+          "occurrenceCount",
+          "observations",
+          "entries",
+          "after",
+          "nextAfter",
+          "totalEntries"
+        ],
+        "type": "object"
+      },
+      "SourceContextPageEntry": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "block",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/SourceContextBlock"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "stored-block",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/SourceContextBlockDescriptor"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "neighbor",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/SourceContextNeighbor"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
         ],
         "type": "object"
       },
@@ -1569,6 +4291,54 @@
         ],
         "type": "object"
       },
+      "SourceImportDeclaration": {
+        "additionalProperties": false,
+        "description": "All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "extractor": {
+            "type": "string"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/definitions/SourceMaterialDeclaration"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "reviewResource": {
+            "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+            "type": "string"
+          },
+          "revisionPolicy": {
+            "$ref": "#/definitions/SourceRevisionPolicy"
+          },
+          "semanticRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "materials",
+          "extractor",
+          "checker",
+          "reviewResource",
+          "revisionPolicy",
+          "semanticRules"
+        ],
+        "type": "object"
+      },
       "SourceImportStart": {
         "additionalProperties": false,
         "properties": {
@@ -1613,6 +4383,379 @@
         ],
         "type": "object"
       },
+      "SourceMaintenanceHookActivation": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "sessionEpoch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policyVersion",
+          "sessionEpoch",
+          "locale",
+          "after",
+          "limit",
+          "expiresAtMs"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookCause": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "contentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceActionId",
+          "attemptId",
+          "resultId",
+          "resultDigest",
+          "sourceSnapshotId",
+          "contentRevision"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "callbacksDrained": {
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CommandError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/SourceMaintenanceHookReadState"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sourceActionId",
+          "state",
+          "view",
+          "callbacksDrained",
+          "error"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "activation": {
+            "$ref": "#/definitions/SourceMaintenanceHookActivation"
+          },
+          "assessment": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/MaintenanceAssessment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cause": {
+            "$ref": "#/definitions/SourceMaintenanceHookCause"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/definitions/SourceMaintenanceHookPhase"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "runId",
+          "cause",
+          "activation",
+          "phase",
+          "assessment",
+          "error"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookPhase": {
+        "enum": [
+          "prepared",
+          "pending",
+          "running",
+          "observed",
+          "failed",
+          "stopped",
+          "expired",
+          "superseded",
+          "interrupted",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "SourceMaintenanceHookReadState": {
+        "enum": [
+          "action-not-known",
+          "not-enabled",
+          "prepared",
+          "adopted"
+        ],
+        "type": "string"
+      },
+      "SourceMaintenanceHookSession": {
+        "additionalProperties": false,
+        "properties": {
+          "defaultLifetimeMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxLifetimeMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "sessionEpoch": {
+            "type": "string"
+          },
+          "windowLimit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "policyVersion",
+          "sessionEpoch",
+          "defaultLifetimeMs",
+          "maxLifetimeMs",
+          "windowLimit"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookStopReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "request": {
+            "$ref": "#/definitions/StopSourceMaintenanceHook"
+          }
+        },
+        "required": [
+          "request",
+          "admissionClosed"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookStopResult": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "not-known",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "stopped",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/SourceMaintenanceHookStopReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceMaintenanceHookStopped": {
+        "additionalProperties": false,
+        "properties": {
+          "callbacksDrained": {
+            "type": "boolean"
+          },
+          "request": {
+            "$ref": "#/definitions/StopSourceMaintenanceHook"
+          },
+          "result": {
+            "$ref": "#/definitions/SourceMaintenanceHookStopResult"
+          }
+        },
+        "required": [
+          "request",
+          "result",
+          "callbacksDrained"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookView": {
+        "additionalProperties": false,
+        "properties": {
+          "activation": {
+            "$ref": "#/definitions/SourceMaintenanceHookActivation"
+          },
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "cause": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookCause"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/definitions/SourceMaintenanceHookPhase"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookStopReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sourceActionId",
+          "activation",
+          "cause",
+          "phase",
+          "admissionClosed",
+          "stop",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "SourceMaterialDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "logicalPath": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalPath",
+          "role",
+          "maxBytes"
+        ],
+        "type": "object"
+      },
       "SourceOccurrence": {
         "additionalProperties": false,
         "properties": {
@@ -1620,6 +4763,7 @@
             "$ref": "#/definitions/ExecutionId"
           },
           "identityBasis": {
+            "description": "Opaque digest of the exact captured revision policy, text, protected\nfragments and only the policy-selected domain blocks.",
             "type": "string"
           },
           "key": {
@@ -1635,9 +4779,31 @@
             },
             "maxItems": 2,
             "minItems": 2,
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "namespace": {
+            "type": "string"
+          },
+          "nativeIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/NativeIdentityEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operationOccurrenceId": {
+            "type": "string"
+          },
+          "operationSourceRevisionId": {
+            "type": "string"
+          },
+          "operationUnitId": {
             "type": "string"
           },
           "ordinal": {
@@ -1646,11 +4812,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "source": {
+            "$ref": "#/definitions/SourceReference"
+          },
           "text": {
             "type": "string"
           },
           "valueByteRange": {
-            "description": "Half-open UTF-8 byte offsets into the original artifact, not the decoded text.",
+            "description": "Derived UTF-8 coordinates for existing readers; original coordinates are\nretained in `source`, including their explicit encoding.",
             "items": {
               "format": "uint32",
               "maximum": 4294967295,
@@ -1670,7 +4839,48 @@
           "text",
           "keyByteRange",
           "valueByteRange",
-          "identityBasis"
+          "identityBasis",
+          "operationUnitId",
+          "operationOccurrenceId",
+          "operationSourceRevisionId",
+          "source",
+          "nativeIdentity"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
+        ],
+        "type": "object"
+      },
+      "SourceRevisionPolicy": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted policy owner before a proposal is received. Only\nthese exact block schemas contribute opaque bytes to source revisions.",
+        "properties": {
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "revisionBasis": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "revisionBasis"
         ],
         "type": "object"
       },
@@ -1687,6 +4897,118 @@
         "required": [
           "selectionId",
           "folderName"
+        ],
+        "type": "object"
+      },
+      "StopSourceMaintenanceHook": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "activation": {
+            "$ref": "#/definitions/SourceMaintenanceHookActivation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceActionId",
+          "actionId",
+          "activation"
+        ],
+        "type": "object"
+      },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "UnknownSourceBlockSample": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "target",
+          "schema",
+          "handling"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
+      "WorkProtection": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "revision",
+          "protected"
         ],
         "type": "object"
       }
@@ -1710,6 +5032,9 @@
       },
       "cancelled": {
         "type": "null"
+      },
+      "checkReview": {
+        "$ref": "#/definitions/SourceCheckReview"
       },
       "comparison": {
         "$ref": "#/definitions/SourceChangePage"
@@ -1735,8 +5060,30 @@
         },
         "type": "array"
       },
+      "maintenanceHook": {
+        "$ref": "#/definitions/SourceMaintenanceHookObservation"
+      },
+      "maintenanceHookSession": {
+        "$ref": "#/definitions/SourceMaintenanceHookSession"
+      },
+      "maintenanceHookStopped": {
+        "$ref": "#/definitions/SourceMaintenanceHookStopped"
+      },
       "page": {
         "$ref": "#/definitions/ContentPage"
+      },
+      "pluginPreflight": {
+        "$ref": "#/definitions/PluginSourcePreflight"
+      },
+      "pluginSelection": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginSourceSelection"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "preflight": {
         "$ref": "#/definitions/Preflight"
@@ -1754,6 +5101,12 @@
           }
         ]
       },
+      "sourceContext": {
+        "$ref": "#/definitions/SourceContextPage"
+      },
+      "sourceContextBlock": {
+        "$ref": "#/definitions/SourceContextBlockDetail"
+      },
       "startAction": {
         "anyOf": [
           {
@@ -1770,17 +5123,25 @@
       "integration",
       "selection",
       "preflight",
+      "maintenanceHookSession",
+      "maintenanceHook",
+      "maintenanceHookStopped",
       "attempt",
       "cancelled",
       "scope",
       "page",
+      "sourceContext",
+      "sourceContextBlock",
       "comparison",
       "history",
       "lineage",
       "estimates",
       "impact",
       "action",
-      "adoptionAction"
+      "adoptionAction",
+      "pluginSelection",
+      "pluginPreflight",
+      "checkReview"
     ],
     "title": "Responses",
     "type": "object",

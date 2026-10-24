@@ -17,7 +17,17 @@ fn source_wire_fixture_matches_rust_types() {
     round_trip::<StartRequest>(&fixture["start"]);
     round_trip::<PreviewRequest>(&fixture["preview"]);
     round_trip::<ContentRequest>(&fixture["content"]);
+    round_trip::<SourceContextReadRequest>(&fixture["sourceContextRequest"]);
+    round_trip::<tsumugi_core::SourceContextPage>(&fixture["sourceContext"]);
     round_trip::<SourceAdoptRequest>(&fixture["prepare"]);
+    let action_read = json!({
+        "adoption": fixture["prepare"],
+        "unitId": ExecutionId::new(),
+    });
+    round_trip::<SourceAdoptionActionRequest>(&action_read);
+    let mut unexpected = action_read;
+    unexpected["sessionToken"] = json!("not-an-outer-session");
+    assert!(serde_json::from_value::<SourceAdoptionActionRequest>(unexpected).is_err());
     round_trip::<ContentPage>(&fixture["page"]);
     round_trip::<Preflight>(&fixture["preflight"]);
     round_trip::<content::IntegrationDescriptor>(&fixture["integration"]);
@@ -28,9 +38,9 @@ fn source_wire_fixture_matches_rust_types() {
     round_trip::<LineageRequest>(&fixture["lineageRequest"]);
     round_trip::<ImpactRequest>(&fixture["impactRequest"]);
     round_trip::<content::SourceHistory>(&fixture["history"]);
-    round_trip::<Vec<super::super::source_wire::LineageEvidence>>(&fixture["lineage"]);
+    round_trip::<Vec<content::LineageEvidence>>(&fixture["lineage"]);
     round_trip::<SourceChangePage>(&fixture["comparison"]);
-    round_trip::<super::super::source_wire::SourceImpactPage>(&fixture["impact"]);
+    round_trip::<content::SourceImpactPage>(&fixture["impact"]);
     round_trip::<Vec<content::SourceImpactSummary>>(&fixture["estimates"]);
     let mut rounded = fixture["history"].clone();
     rounded["snapshots"][0]["revision"] = serde_json::json!(9_007_199_254_740_993u64);
@@ -51,7 +61,7 @@ fn source_wire_fixture_matches_rust_types() {
     assert!(serde_json::from_value::<SourceChangePage>(unknown_kind).is_err());
     let mut unknown_status = fixture["impact"].clone();
     unknown_status["rows"][0]["status"] = serde_json::json!("future-status");
-    assert!(serde_json::from_value::<super::super::source_wire::SourceImpactPage>(unknown_status).is_err());
+    assert!(serde_json::from_value::<content::SourceImpactPage>(unknown_status).is_err());
     let mut unknown = fixture["prepare"].clone();
     unknown["confirmation"]["requiredExtension"] = serde_json::json!("unknown/v1");
     assert!(serde_json::from_value::<SourceAdoptRequest>(unknown).is_err());
@@ -81,6 +91,215 @@ fn call(
         },
     )
     .map(|r| r.deserialize::<Value>().unwrap())
+}
+
+#[test]
+fn source_context_ipc_requires_current_session_and_does_not_mutate_empty_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({
+            "destination":directory.path().join("project"), "displayName":"Source context reads",
+            "sourceLocale":"en", "targetLocales":["zh-CN"]
+        }),
+    )
+    .unwrap();
+    let request = json!({"sessionToken":project["sessionToken"], "projectId":project["metadata"]["projectId"],
+        "sourceSnapshotId":ExecutionId::new(), "unitId":ExecutionId::new(),
+        "sourceRevisionId":ExecutionId::new(), "locale":"zh-CN", "after":0, "limit":4});
+    let database = directory.path().join("project/project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let missing = call(&window, "read_source_context", request.clone()).unwrap_err();
+    assert_eq!(missing["reason"], "source-context-snapshot");
+    for field in ["sessionToken", "projectId"] {
+        let mut foreign = request.clone();
+        foreign[field] = if field == "sessionToken" {
+            json!("foreign-session")
+        } else {
+            json!(ExecutionId::new())
+        };
+        let error = call(&window, "read_source_context", foreign).unwrap_err();
+        assert_eq!(error["code"], "session-invalid");
+    }
+    let mut authority = request.clone();
+    authority["approved"] = json!(true);
+    assert!(call(&window, "read_source_context", authority).is_err());
+    let mut overflow = request;
+    overflow["after"] = json!(4_294_967_296u64);
+    assert!(call(&window, "read_source_context", overflow).is_err());
+    assert_eq!(std::fs::read(database).unwrap(), before);
+}
+
+#[test]
+fn candidate_decision_ipc_requires_current_session_matching_project_and_read_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({
+            "destination":directory.path().join("project"), "displayName":"Candidate authorization",
+            "sourceLocale":"en", "targetLocales":["zh-CN"]
+        }),
+    )
+    .unwrap();
+    let context = json!({"sessionToken":project["sessionToken"], "projectId":project["metadata"]["projectId"]});
+    let request = json!({"sessionToken":context["sessionToken"], "projectId":context["projectId"],
+        "decision":{"projectId":context["projectId"], "actionId":ExecutionId::new(), "unitId":ExecutionId::new(),
+        "locale":"zh-CN", "revisionId":ExecutionId::new(), "sourceRevisionId":ExecutionId::new(),
+        "expectedSelectionId":null, "expectedDecisionId":null, "disposition":"rejected",
+        "actor":"Synthetic reviewer", "reason":"Does not fit this entry"}});
+    let lookup = json!({"sessionToken":context["sessionToken"], "projectId":context["projectId"],
+        "actionId":request["decision"]["actionId"], "unitId":request["decision"]["unitId"], "locale":"zh-CN"});
+    let database = directory.path().join("project/project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let status = call(&window, "execution_status", context.clone()).unwrap();
+
+    // Authorized requests reach the real Core owner, which rejects missing
+    // source/revision evidence rather than granting authority from the wire.
+    assert_eq!(
+        call(&window, "decide_translation_candidate", request.clone()).unwrap_err()["reason"],
+        "translation-source"
+    );
+    assert_eq!(
+        call(&window, "read_translation_candidate_action", lookup.clone()).unwrap_err()["reason"],
+        "translation-project"
+    );
+    for (command, original) in [
+        ("decide_translation_candidate", &request),
+        ("read_translation_candidate_action", &lookup),
+    ] {
+        for field in ["sessionToken", "projectId"] {
+            let mut foreign = original.clone();
+            foreign[field] = if field == "sessionToken" {
+                json!("inactive-session")
+            } else {
+                json!(ExecutionId::new())
+            };
+            assert_eq!(
+                call(&window, command, foreign).unwrap_err()["code"],
+                "session-invalid"
+            );
+        }
+        let mut unknown = original.clone();
+        unknown["approved"] = json!(true);
+        assert!(call(&window, command, unknown).is_err());
+    }
+    let mut mismatched = request.clone();
+    mismatched["decision"]["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "decide_translation_candidate", mismatched).unwrap_err()["reason"],
+        "unauthorized-selection"
+    );
+    let mut nested_authority = request;
+    nested_authority["decision"]["approved"] = json!(true);
+    assert!(call(&window, "decide_translation_candidate", nested_authority).is_err());
+    assert_eq!(call(&window, "execution_status", context).unwrap(), status);
+    assert_eq!(std::fs::read(database).unwrap(), before);
+}
+
+#[test]
+fn context_fact_ipc_checks_session_inner_scope_and_strict_actions_without_side_effects() {
+    let directory = tempfile::tempdir().unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(&window,"create_project",json!({
+        "destination":directory.path().join("project"),"displayName":"Fact decision authorization",
+        "sourceLocale":"en","targetLocales":["zh-CN"]
+    })).unwrap();
+    let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
+    let scope = json!({"projectId":context["projectId"],"sourceSnapshotId":ExecutionId::new(),
+        "unitId":ExecutionId::new(),"sourceRevisionId":ExecutionId::new(),"locale":"zh-CN"});
+    let write = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"decision":{
+        "actionId":ExecutionId::new(),"basis":{"scope":scope,"sourceResultId":ExecutionId::new(),"sourceResultDigest":"a".repeat(64),
+            "fact":{"blockIndex":0,"factIndex":0,"target":{"kind":"unit","id":"synthetic-entry"},
+                "schema":{"id":"tsumugi.source-context-facts","schemaVersion":1,"behaviorVersion":1},"handling":"preserve","inRevisionBasis":true,
+                "fact":{"id":"role","kind":"role","text":"Synthetic inference","origin":{"kind":"inferred","rationale":"Synthetic evidence",
+                    "sources":[{"artifactId":"synthetic-source","range":{"encoding":"utf8-byte","start":0,"end":4}}]}}}},
+        "expectedDecisionId":null,"disposition":{"kind":"reject-inference"},"actor":"Synthetic reviewer","reason":"Unconfirmed inference"
+    }});
+    let read = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"scope":scope,"facts":[{"blockIndex":0,"factIndex":0}]});
+    let action = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"actionId":write["decision"]["actionId"]});
+    let history = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":scope["unitId"],"locale":"zh-CN","offset":0,"limit":10});
+    let database = directory.path().join("project/project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let status = call(&window, "execution_status", context.clone()).unwrap();
+    // These valid wire requests reach the existing Core owner; missing source
+    // facts never become accepted decisions or another execution authority.
+    assert_eq!(
+        call(&window, "decide_context_fact", write.clone()).unwrap_err()["reason"],
+        "source-context-snapshot"
+    );
+    assert_eq!(
+        call(&window, "read_context_fact_decisions", read.clone()).unwrap_err()["reason"],
+        "source-context-snapshot"
+    );
+    assert_eq!(
+        call(&window, "read_context_fact_action", action.clone()).unwrap(),
+        Value::Null
+    );
+    assert!(call(&window, "read_context_fact_history", history.clone()).is_err());
+    for (command, original) in [
+        ("decide_context_fact", &write),
+        ("read_context_fact_decisions", &read),
+        ("read_context_fact_action", &action),
+        ("read_context_fact_history", &history),
+    ] {
+        for field in ["sessionToken", "projectId"] {
+            let mut foreign = original.clone();
+            foreign[field] = if field == "sessionToken" {
+                json!("inactive-session")
+            } else {
+                json!(ExecutionId::new())
+            };
+            assert_eq!(
+                call(&window, command, foreign).unwrap_err()["code"],
+                "session-invalid"
+            );
+        }
+        let mut unknown = original.clone();
+        unknown["approved"] = json!(true);
+        assert!(call(&window, command, unknown).is_err());
+    }
+    let mut inner = write.clone();
+    inner["decision"]["basis"]["scope"]["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "decide_context_fact", inner).unwrap_err()["reason"],
+        "context-fact-project"
+    );
+    let mut inner = read.clone();
+    inner["scope"]["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "read_context_fact_decisions", inner).unwrap_err()["reason"],
+        "context-fact-project"
+    );
+    let mut missing_positions = read.clone();
+    missing_positions.as_object_mut().unwrap().remove("facts");
+    assert!(call(&window, "read_context_fact_decisions", missing_positions).is_err());
+    let mut nested = write;
+    nested["decision"]["basis"]["approved"] = json!(true);
+    assert!(call(&window, "decide_context_fact", nested).is_err());
+    assert_eq!(call(&window, "execution_status", context).unwrap(), status);
+    assert_eq!(std::fs::read(database).unwrap(), before);
 }
 
 #[cfg(any(windows, target_os = "macos"))]
@@ -272,9 +491,26 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
         assert!(call(&view, "read_source_adoption_action", wrong).is_err());
     }
 
+    let mut missing_action = source_read.clone();
+    missing_action["adoption"]["actionId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&view, "read_source_adoption_action", missing_action).unwrap(),
+        Value::Null
+    );
+    assert!(serde_json::from_value::<AdoptionActionRead>(json!({"action":source_prepared.clone(),"receipt":null})).is_ok());
+    let mut wrong_unit = source_read.clone();
+    wrong_unit["unitId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_source_adoption_action", wrong_unit).is_err());
+    let mut wrong_confirmation = source_read.clone();
+    wrong_confirmation["adoption"]["confirmation"]["sourceLanguage"] = json!("fr-FR");
+    assert!(call(&view, "read_source_adoption_action", wrong_confirmation).is_err());
     let mut adopt = context.clone();
     adopt["actionId"] = json!(action);
     let receipt = call(&view, "adopt_execution", adopt.clone()).unwrap();
+    assert_eq!(
+        call(&view, "read_source_adoption_action", source_read.clone()).unwrap(),
+        json!({"action":source_prepared.clone(),"receipt":receipt.clone()})
+    );
     assert_eq!(
         call(&view, "read_execution_receipt", adopt.clone()).unwrap(),
         receipt
@@ -292,11 +528,24 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     let mut source_history_request = context.clone();
     source_history_request["offset"] = json!(0);
     source_history_request["limit"] = json!(100);
-    let source_history = call(&view, "read_source_history", source_history_request.clone()).unwrap();
+    let source_history =
+        call(&view, "read_source_history", source_history_request.clone()).unwrap();
     assert_eq!(source_history["snapshots"][0]["snapshotId"], snapshot);
-    let expected_revision = (preview["scope"]["revision"].as_str().unwrap().parse::<u64>().unwrap() + 1).to_string();
-    assert_eq!(source_history["snapshots"][0]["revision"], expected_revision);
-    assert_eq!(source_history["snapshots"][0]["revision"], receipt["changes"][0]["revision"]);
+    let expected_revision = (preview["scope"]["revision"]
+        .as_str()
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+        + 1)
+    .to_string();
+    assert_eq!(
+        source_history["snapshots"][0]["revision"],
+        expected_revision
+    );
+    assert_eq!(
+        source_history["snapshots"][0]["revision"],
+        receipt["changes"][0]["revision"]
+    );
     let mut summary_request = context.clone();
     summary_request["locale"] = json!("zh-CN");
     summary_request["query"] = json!("");
@@ -304,7 +553,7 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     summary_request["afterOrdinal"] = json!(0);
     summary_request["limit"] = json!(50);
     let summaries = call(&view, "read_review_summary_page", summary_request.clone()).unwrap();
-    let typed: super::super::review_wire::ReviewSummaryPage = serde_json::from_value(summaries.clone()).unwrap();
+    let typed: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summaries.clone()).unwrap();
     assert_eq!(typed.total, 532);
     assert_eq!(typed.rows.len(), 50);
     assert_eq!(
@@ -416,7 +665,10 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     read["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&view, "read_source_content", read).unwrap(), content);
     source_history_request["sessionToken"] = reopened["sessionToken"].clone();
-    assert_eq!(call(&view, "read_source_history", source_history_request).unwrap(), source_history);
+    assert_eq!(
+        call(&view, "read_source_history", source_history_request).unwrap(),
+        source_history
+    );
     call(
         &view,
         "close_project",
@@ -616,6 +868,10 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     let mut wrong = import_read.clone(); wrong["adoption"]["confirmation"]["decision"] = json!("replace");
     assert!(call(&view, "read_translation_adoption_action", wrong).is_err());
 
+    let mut wrong = import_read.clone(); wrong["unitId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_translation_adoption_action", wrong).is_err());
+    let mut wrong = import_read.clone(); wrong["sessionToken"] = context["sessionToken"].clone();
+    assert!(call(&view, "read_translation_adoption_action", wrong).is_err());
     let first_id = first_request["actionId"].clone();
     let first_receipt = call(&view, "adopt_execution", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"actionId":first_id})).unwrap();
     assert_eq!(first_receipt["changes"].as_array().unwrap().len(), 1);
@@ -753,6 +1009,9 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
                 .total,
         )
     });
+    let sequence_before_action = app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence);
+    assert_eq!(call(&view, "read_translation_adoption_action", import_read.clone()).unwrap(), expected_import_read);
+    assert_eq!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence), sequence_before_action);
     assert_eq!(after_reads, before_reads);
     wait_for_execution_idle(&view, &context);
     call(

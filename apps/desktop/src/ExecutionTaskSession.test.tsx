@@ -85,6 +85,7 @@ function installApplication() {
 
 it("shares the existing translation reservation before identity and excludes same-task cancellation", async () => {
   render(<Probe />, project); installApplication(); await confirmApplication();
+  act(() => { expect(translation.begin({ unitId: fixtureIdentity(270), locale: "zh-CN", sourceRevisionId: fixtureIdentity(271), key: "manual", sourceText: "Source" }, null, null)).toBe(true); });
   let identify!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "create_execution_identity"
@@ -93,8 +94,7 @@ it("shares the existing translation reservation before identity and excludes sam
   act(() => { pending = owner.submit(); void owner.submit(); void owner.cancel(target); });
   expect(calls("create_execution_identity")).toHaveLength(1);
   expect(translation.reserveMutation()).toBeNull();
-  act(() => { translation.begin({ unitId: fixtureIdentity(270), locale: "zh-CN", sourceRevisionId: fixtureIdentity(271), key: "manual", sourceText: "Source" }, null, null);
-    translation.edit("New manual draft"); });
+  act(() => { translation.edit("New manual draft"); });
   await act(async () => { expect((await translation.save()).saved).toBe(false); });
   expect(calls("save_translation_revision")).toHaveLength(0);
   expect(calls("create_execution_identity")).toHaveLength(1);
@@ -925,4 +925,20 @@ it("binds the full-page consumer capture to its latest exact Query and releases 
   await act(async()=>{resolve({...detail,items:items.slice(100),nextOffset:null});await pending;});
   expect(owner.currentActivity()?.phase).toBe("rejected");expect(owner.canSubmit()).toBe(false);
   expect(calls("create_execution_identity")).toHaveLength(0);expect(disposed).toHaveBeenCalledTimes(1);
+});
+
+it.each(["release","resources"] as const)("retains an original %s cancellation across hidden consumers and a later rejected replay",async origin=>{
+  const view=render(<Probe/>,project),captured:CancellationTarget={...target,origin};
+  const original=invoke.getMockImplementation()!;let cancellations=0;
+  invoke.mockImplementation((command:string,args)=>command==="cancel_execution_task"?Promise.reject(++cancellations===1?new Error("Cancellation ACK lost"):
+    {code:"busy",stage:"execution-cancel",outcome:"rejected",recoveryRequired:false}):original(command,args));
+  await act(async()=>owner.cancel(captured));
+  expect(owner.current(target.taskId)?.phase).toBe("unknown");
+  const first=owner.current(target.taskId);if(first?.phase!=="unknown")throw new Error("Expected original cancellation");
+  view.rerender(null,project);await act(async()=>owner.retry(target.taskId));view.rerender(<Probe/>,project);
+  const pending=owner.current(target.taskId);expect(pending?.phase).toBe("unknown");expect(pending?.target).toEqual(captured);
+  if(pending?.phase!=="unknown")throw new Error("Expected retained uncertainty");
+  expect(pending.request).toEqual(first.request);expect(owner.unresolved()).toBe(true);
+  expect(calls("cancel_execution_task").map(([,args])=>args.request)).toEqual([first.request,first.request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
 });

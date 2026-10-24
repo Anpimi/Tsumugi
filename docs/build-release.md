@@ -1,19 +1,64 @@
-# Local SMAPI language-file build and export
+# Local build output inspection and export
 
-Open a project with a flat SMAPI `i18n/default.json` source snapshot, selected translations, current QA checks, and human approvals. In **Review and QA**, resolve the work queue and check build readiness. Source-text fallback and supported QA waivers require their own recorded decisions.
+Build selections retain separate complete execution bindings for the builder
+and artifact checker. Their captured Project/Attempt scopes may differ, while
+package/profile/environment and the complete required artifact-check set remain
+strict. An Attempt artifact checker runs in its own check attempt. Reopening
+retains these original bindings and results without recreating execution consent.
 
-Choose **Build and export**, select the target languages for this release, and enter an explicit SMAPI file name for each one. For example, a project target of `zh-CN` can be mapped to `i18n/zh.json`. The first build supports flat language files only. It does not package or install a Mod or test the result in Stardew Valley. Review the current policy, source snapshot, coverage, blockers, and exceptions before starting. A change to relevant project state after the readiness check requires another check.
+Open a project with an adopted source snapshot, selected translations, current QA checks, and human approvals. In **Review and QA**, resolve the work queue and check build readiness. Source-text fallback and supported QA waivers require their own recorded decisions.
+
+Choose **Build and export**, select an approved installed build capability and matching runtime, then select the target languages for this release and enter every output path explicitly. Paths are relative to the export folder, with one path per line; the selected package checks its own required formats and names. Review the current policy, source snapshot, coverage, blockers, exceptions and exact execution environment before capturing the build. A change to relevant project state after the readiness check requires another check. Capture alone does not authorize execution: review the fixed input and separately approve the builder. The independent artifact checker then needs its own captured input and unchecked consent before its proof can be recorded.
 
 The view opens in the main workspace. Readiness explains blockers in the interface language and offers **Edit this key** for the affected content. After fixing it, return to Build and export and check readiness again. The chosen languages and file mapping remain in the view. Opening Tasks to inspect the build preserves the release form; returning or closing a view does not cancel a task or adopt its results.
 
-The build runs as a persisted task. Open **Tasks** to inspect each saved result, its entry count and SHA-256, and any failure. Applying all verified results is a separate action that saves one immutable release. The first release policy requires every requested language to pass. A failed or cancelled task remains available for inspection and cannot become a successful release. The build uses saved project text; it does not reread the original Mod or generate new translations.
+The build runs as a persisted task. Open **Tasks** to inspect each saved result and any failure. Plugin build output shows every captured artifact's path, role, byte count and SHA-256, plus the number of targets in the original plan. The target count is not a domain-specific output entry count. Applying all verified results is a separate action that saves one immutable release. The first release policy requires every requested language to pass. A failed or cancelled task remains available for inspection and cannot become a successful release. The build uses saved project text; it does not reread the original Mod or generate new translations.
+
+For a completed build in the current session, prepare a batch of its exact
+artifact-check inputs. Review each language's build result, artifact digests,
+checker identity, environment and permissions before approving selected calls.
+Selecting all applies only to this materialized list. Start the confirmed checks
+to run them in the language order captured by the build. The workflow never
+automatically retries a check.
+Unselected inputs receive no permission.
+
+Each successful selected check can record its original semantic proof as part of
+that verification. Completion of the selected batch does not mean that every
+language is verified: recording the release still requires all of its original
+required proofs and remains a separate manual action. The workflow does not
+approve translations or export files.
+
+A failed, cancelled or uncertain step pauses remaining work. Reconcile the exact
+original operation before deciding what to do next; a missing response does not
+establish that it was never enqueued. Stopping continuation prevents remaining
+checks from starting and keeps partial proofs. An already enqueued task can still be
+running; cancelling that task is a separate action. Newer build-form edits remain
+available, and closing a view does not discard the retained operation.
+
+If a plugin operation's confirmation is lost, use **Check this original operation** before starting another operation or leaving. The retained request keeps its exact attempt, grant and expiry; this recovery does not renew approval. A saved task keeps its original fixed inputs even after later project edits. A failed check leaves the operation uncertain.
 
 If the build's confirmation is lost or invalid, the view automatically checks its complete original fixed request once without starting another build. **Check saved build task** repeats that same read if the result remains uncertain. A saved task keeps its original fixed inputs even after later project edits or target-language changes. Only a successful check showing no saved task offers **Retry the same build**, which preserves the original request. A failed check leaves the result uncertain and preserves newer input.
 
+For plugin builds, **View saved build in Build and export** opens a read-only view of the exact selected attempt. It verifies the original saved source references, fixed build plan and SDK artifact result, including all output files. Loading failures can be retried by reading that same record again; missing output and failed results do not become successful files. Saved per-language artifact-check proofs retain their original checker inputs, results and required-check evidence. The view remains available after reopening a current-format project or removing the installed builder. It does not check current build readiness, create a grant, run a builder or checker, or create a release. An unfinished build mapping, captured preparation, consent or uncertain action blocks this route and is retained until it is explicitly resolved or discarded.
+
+Saved records do not restore the earlier execution approval. The generic **Check saved output** action cannot perform a plugin's semantic check and is not offered for that output. A supported new build or check uses the existing Build and export preparation, current eligibility and exact installed capability/runtime selection, followed by its own initially unchecked consent. If the earlier approval has ended or the project has been reopened, prepare a fresh build through that flow; inspecting history does not renew or replace the original attempt's permission.
+
 Return to **Build and export**, refresh releases, and select one. The release detail shows its source snapshot, file mapping and digest. **Release input and checks** expands the fixed input digest, source-file digests, builder and artifact checker versions, review basis, and recorded source fallbacks or QA waivers. Later project edits do not change this release or its stored file bytes.
 
-Choose a local export folder and **Check destination**. The files go into its `i18n` subfolder. Existing matching files are recognized; differing files require an explicit replacement choice. If a file changes after this preview, export stops and asks for a fresh destination check. An interrupted export may leave a pending or uncertain result: select the same folder and use the history's file check before making another attempt. A matching file is confirmed; a missing file can be retried; a differing or unreadable file remains uncertain. Export history records the target, per-file result and observed digest. A failed export does not delete its release. Verify the exported files before placing them in a Mod folder.
+Choose a local export folder and **Check destination**. Files use the relative paths saved with the release. Existing matching files are recognized; differing files require an explicit replacement choice. If a file changes after this preview, export stops and asks for a fresh destination check. An interrupted export may leave a pending or uncertain result: select the same folder and use the history's file check before making another attempt. A matching file is confirmed; a missing file can be retried; a differing or unreadable file remains uncertain. Export history records the target, per-file result and observed digest. A failed export does not delete its release. Verify the exported files before using them in another application.
 
 See the [README](../README.md#development) for the current database schema and development compatibility. Application release versions and changelog maintenance follow the [versioning policy](versioning.md); the releases described above are project translation outputs.
 
 If an export or file-check confirmation is lost, invalid or uncertain, the view automatically reads the original action once and preserves every confirmed file result. **Check this export** repeats that same read if needed; it never exports files or opens the folder picker. A valid pending record is retained without polling. Select the original folder again explicitly if its authorization is no longer available. A new folder selection cannot prove that the original export never started, and an earlier saved receipt cannot be replaced by an absent result. Only confirmed absence under the original folder authorization permits checking the destination again before a new export. A failed or inconsistent lookup keeps the action uncertain and prevents another export or leaving the project. A confirmed pending or uncertain record still needs the file check shown beside its result. A confirmed export remains confirmed when its history cannot refresh; **Refresh export history** reads history without writing the files again.
+
+## Synthetic workflow checks
+
+On macOS arm64, the registered IPC checks use temporary projects and an owned
+synthetic build/check component. Supply `TSUMUGI_TEST_RUNTIME_TOOL`,
+`TSUMUGI_TEST_RUNTIME_HOST` and `TSUMUGI_TEST_RUNTIME_APPROVAL` using the compatible
+artifacts and descriptor described in the [Host conformance guide](../crates/plugin-host/README.md).
+They run local workers without a model request or an application window:
+
+```sh
+cargo test --locked -p tsumugi-desktop --bin tsumugi-desktop --features wire-schema artifact_workflow_ -- --test-threads=1
+```

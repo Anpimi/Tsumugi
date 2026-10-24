@@ -1,0 +1,3843 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "PluginApprovalRemovalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "origin",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginDefaultsInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "id": {
+            "type": "string"
+          },
+          "selectionDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "selectionDigest",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginEnableRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "enabled",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "profile",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginInventoryRequest": {
+        "additionalProperties": false,
+        "type": "object"
+      },
+      "PluginLookupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "PluginNativeHostApprovalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "environmentDigest",
+          "approved",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
+      "PluginPackInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/PluginPackageRequest"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "members",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryInstallKind": {
+        "enum": [
+          "install",
+          "update",
+          "rollback"
+        ],
+        "type": "string"
+      },
+      "PluginRepositoryInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/PluginRepositoryMemberRequest"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "members",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryMemberRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/PluginRepositoryInstallKind"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryRefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryResumeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "environmentDigest",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeLookupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginSourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewRequest": {
+        "additionalProperties": false,
+        "description": "Exact Resource/environment choice, without an execution grant.",
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginTranslationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginUiRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "uiId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "uiId"
+        ],
+        "type": "object"
+      },
+      "PluginUninstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "originalInstallAction": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "origin",
+          "originalInstallAction",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "approvalRemoval": {
+        "$ref": "#/definitions/PluginApprovalRemovalRequest"
+      },
+      "build": {
+        "$ref": "#/definitions/PluginBuildRequest"
+      },
+      "defaultsInstall": {
+        "$ref": "#/definitions/PluginDefaultsInstallRequest"
+      },
+      "enable": {
+        "$ref": "#/definitions/PluginEnableRequest"
+      },
+      "generationComponent": {
+        "$ref": "#/definitions/PluginGenerationComponentRequest"
+      },
+      "install": {
+        "$ref": "#/definitions/PluginInstallRequest"
+      },
+      "inventory": {
+        "$ref": "#/definitions/PluginInventoryRequest"
+      },
+      "lookup": {
+        "$ref": "#/definitions/PluginLookupRequest"
+      },
+      "nativeHostApproval": {
+        "$ref": "#/definitions/PluginNativeHostApprovalRequest"
+      },
+      "packInstall": {
+        "$ref": "#/definitions/PluginPackInstallRequest"
+      },
+      "package": {
+        "$ref": "#/definitions/PluginPackageRequest"
+      },
+      "repositoryInstall": {
+        "$ref": "#/definitions/PluginRepositoryInstallRequest"
+      },
+      "repositoryRefresh": {
+        "$ref": "#/definitions/PluginRepositoryRefreshRequest"
+      },
+      "repositoryResume": {
+        "$ref": "#/definitions/PluginRepositoryResumeRequest"
+      },
+      "runtimeInstall": {
+        "$ref": "#/definitions/PluginRuntimeInstallRequest"
+      },
+      "runtimeLookup": {
+        "$ref": "#/definitions/PluginRuntimeLookupRequest"
+      },
+      "source": {
+        "$ref": "#/definitions/PluginSourceRequest"
+      },
+      "textReview": {
+        "$ref": "#/definitions/PluginTextReviewRequest"
+      },
+      "tool": {
+        "$ref": "#/definitions/PluginToolRequest"
+      },
+      "translation": {
+        "$ref": "#/definitions/PluginTranslationRequest"
+      },
+      "ui": {
+        "$ref": "#/definitions/PluginUiRequest"
+      },
+      "uninstall": {
+        "$ref": "#/definitions/PluginUninstallRequest"
+      }
+    },
+    "required": [
+      "inventory",
+      "install",
+      "packInstall",
+      "repositoryRefresh",
+      "repositoryResume",
+      "repositoryInstall",
+      "enable",
+      "approvalRemoval",
+      "uninstall",
+      "package",
+      "lookup",
+      "runtimeInstall",
+      "nativeHostApproval",
+      "defaultsInstall",
+      "runtimeLookup",
+      "source",
+      "translation",
+      "build",
+      "tool",
+      "ui",
+      "generationComponent",
+      "textReview"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:plugins:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "BuildDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "builder": {
+            "type": "string"
+          },
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "outputLimits": {
+            "$ref": "#/definitions/BuildOutputLimits"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "builder",
+          "checker",
+          "outputLimits",
+          "artifactRules"
+        ],
+        "type": "object"
+      },
+      "BuildOutputLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxArtifacts": {
+            "maximum": 32,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxTotalBytes": {
+            "maximum": 2097152,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxArtifacts",
+          "maxTotalBytes"
+        ],
+        "type": "object"
+      },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityDependency": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "selection": {
+            "$ref": "#/definitions/ProviderSelection"
+          }
+        },
+        "required": [
+          "contract",
+          "required",
+          "selection"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolBinding": {
+        "additionalProperties": false,
+        "description": "A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/CapabilityToolDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/ToolResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "capability",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolDeclaration": {
+        "additionalProperties": false,
+        "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+        "properties": {
+          "capabilityId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ToolQueryDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."
+          },
+          "skill": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "description",
+          "capabilityId",
+          "profile",
+          "supportingResources",
+          "skill"
+        ],
+        "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "diagnosticId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RecoveryGuidance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ComponentDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "dependencies": {
+            "items": {
+              "$ref": "#/definitions/CapabilityDependency"
+            },
+            "type": "array"
+          },
+          "entrypoint": {
+            "description": "Package-relative file. Actual opening and isolation are host responsibilities.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit": {
+            "$ref": "#/definitions/ExitRequirements"
+          },
+          "id": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/definitions/RuntimeKind"
+          },
+          "scope": {
+            "$ref": "#/definitions/ComponentScope"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "runtime",
+          "entrypoint",
+          "dependencies",
+          "exit"
+        ],
+        "type": "object"
+      },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
+      "ConflictEvidence": {
+        "description": "Values compared at the rejecting boundary, without user text or credentials.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "expected": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "translation-selection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "review-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-waiver",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-fallback",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "build-eligibility",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "comparison-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "context-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expected": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "content-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "ContributionDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "componentId": {
+            "description": "Exactly one component owns activation and cleanup of this contribution.",
+            "type": "string"
+          },
+          "contribution": {
+            "$ref": "#/definitions/ContributionKind"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "componentId",
+          "contribution"
+        ],
+        "type": "object"
+      },
+      "ContributionKind": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "declaration": {
+                "$ref": "#/definitions/CapabilityDeclaration"
+              },
+              "kind": {
+                "const": "capability",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "declaration"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "resource",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "schema": {
+                "$ref": "#/definitions/ContractRef"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "skill",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "ui",
+                "type": "string"
+              },
+              "schema": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "slot",
+              "schema"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DefaultsAvailability": {
+        "enum": [
+          "available",
+          "resources-unavailable",
+          "runtime-unavailable"
+        ],
+        "type": "string"
+      },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "ExitRequirements": {
+        "additionalProperties": false,
+        "properties": {
+          "cleanupTimeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "stopTimeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stopTimeoutMs",
+          "cleanupTimeoutMs"
+        ],
+        "type": "object"
+      },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "NativeHostUnavailableReason": {
+        "enum": [
+          "unsupported-platform",
+          "identity-unavailable"
+        ],
+        "type": "string"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginBuildView": {
+        "additionalProperties": false,
+        "properties": {
+          "builder": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/BuildDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "builder",
+          "checker",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginBundledPackageView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "displayName",
+          "plugin",
+          "packageDigest",
+          "fileCount",
+          "byteCount"
+        ],
+        "type": "object"
+      },
+      "PluginCandidateView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "manifestSha256": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "manifest",
+          "packageDigest",
+          "manifestSha256",
+          "fileCount",
+          "byteCount"
+        ],
+        "type": "object"
+      },
+      "PluginDefaultsOfferView": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/DefaultsAvailability"
+          },
+          "id": {
+            "type": "string"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginBundledPackageView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "runtimeEnvironmentDigest": {
+            "type": "string"
+          },
+          "selectionDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "selectionDigest",
+          "packages",
+          "runtimeEnvironmentDigest",
+          "availability"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "componentScope": {
+            "$ref": "#/definitions/ComponentScope"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "binding",
+          "componentScope",
+          "profile",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginInventoryView": {
+        "additionalProperties": false,
+        "description": "Installation and approval remain separate even when only one exists. These\nare metadata observations; Sealed and enabled are not runnable assertions.",
+        "properties": {
+          "defaultsOffer": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginDefaultsOfferView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastSettingsAction": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nativeHostOffer": {
+            "$ref": "#/definitions/PluginNativeHostOfferView"
+          },
+          "packageDecisions": {
+            "items": {
+              "$ref": "#/definitions/PluginPackageDecisionView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginPackageView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "runtimeDecisions": {
+            "items": {
+              "$ref": "#/definitions/PluginRuntimeDecisionView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "runtimeOffers": {
+            "items": {
+              "$ref": "#/definitions/PluginRuntimeOfferView"
+            },
+            "maxItems": 1,
+            "type": "array"
+          },
+          "runtimes": {
+            "items": {
+              "$ref": "#/definitions/PluginRuntimeView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "uninstallations": {
+            "items": {
+              "$ref": "#/definitions/PluginUninstallView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "lastSettingsAction",
+          "packages",
+          "runtimes",
+          "uninstallations",
+          "packageDecisions",
+          "runtimeDecisions",
+          "runtimeOffers",
+          "nativeHostOffer",
+          "defaultsOffer"
+        ],
+        "type": "object"
+      },
+      "PluginManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/definitions/ComponentDeclaration"
+            },
+            "type": "array"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/definitions/ContributionDeclaration"
+            },
+            "type": "array"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          },
+          "protocolVersion": {
+            "const": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "plugin",
+          "permissions",
+          "components",
+          "contributions"
+        ],
+        "type": "object"
+      },
+      "PluginNativeHostOfferView": {
+        "description": "Current application observation, independent of an installation or approval.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "availability": {
+                "const": "available",
+                "type": "string"
+              },
+              "environment": {
+                "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+              },
+              "environmentDigest": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/definitions/PluginOriginView"
+              }
+            },
+            "required": [
+              "availability",
+              "environment",
+              "environmentDigest",
+              "origin"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "availability": {
+                "const": "unavailable",
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/definitions/NativeHostUnavailableReason"
+              }
+            },
+            "required": [
+              "availability",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginObjectState": {
+        "enum": [
+          "sealed",
+          "recovery-required"
+        ],
+        "type": "string"
+      },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
+      "PluginPackCandidateView": {
+        "additionalProperties": false,
+        "properties": {
+          "descriptorDigest": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginPackMemberView"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "id",
+          "displayName",
+          "descriptorDigest",
+          "packages"
+        ],
+        "type": "object"
+      },
+      "PluginPackMemberView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "packageDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "packageDigest",
+          "fileCount",
+          "byteCount"
+        ],
+        "type": "object"
+      },
+      "PluginPackageDecisionView": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest",
+          "origin",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "PluginPackageDetailsView": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "packageDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "packageDigest",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginPackageView": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "originalInstallAction": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          },
+          "state": {
+            "$ref": "#/definitions/PluginObjectState"
+          }
+        },
+        "required": [
+          "originalInstallAction",
+          "plugin",
+          "packageDigest",
+          "origin",
+          "state"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryInstallKind": {
+        "enum": [
+          "install",
+          "update",
+          "rollback"
+        ],
+        "type": "string"
+      },
+      "PluginRepositoryMemberView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/definitions/PluginRepositoryInstallKind"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "packageDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "packageDigest",
+          "fileCount",
+          "byteCount",
+          "origin",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "PluginRepositorySelectionView": {
+        "additionalProperties": false,
+        "properties": {
+          "captureDigest": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "rootFingerprint": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "sourceId",
+          "rootFingerprint",
+          "captureDigest",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "PluginRepositorySourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedRevision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "rootFingerprint": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/definitions/PluginRepositoryState"
+          }
+        },
+        "required": [
+          "sourceId",
+          "displayName",
+          "rootFingerprint",
+          "revision",
+          "actionId",
+          "expectedRevision",
+          "state"
+        ],
+        "type": "object"
+      },
+      "PluginRepositorySourcesView": {
+        "additionalProperties": false,
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/definitions/PluginRepositorySourceView"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "type": "object"
+      },
+      "PluginRepositoryState": {
+        "enum": [
+          "pending",
+          "verified",
+          "rejected"
+        ],
+        "type": "string"
+      },
+      "PluginRepositoryVerifiedView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "captureDigest": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "expiresAtUnixMilliseconds": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              }
+            ],
+            "description": "Decimal UTC epoch milliseconds. Negative dates are never admitted."
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginRepositoryMemberView"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "rootVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "snapshotVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "targetsVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "timestampVersion": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "ticket",
+          "sourceId",
+          "revision",
+          "actionId",
+          "captureDigest",
+          "displayName",
+          "rootVersion",
+          "timestampVersion",
+          "snapshotVersion",
+          "targetsVersion",
+          "expiresAtUnixMilliseconds",
+          "packages"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeDecisionView": {
+        "additionalProperties": false,
+        "properties": {
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          }
+        },
+        "required": [
+          "environment",
+          "environmentDigest",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeOfferView": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/RuntimeAvailability"
+          },
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "environment": {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "minimumSystemVersion": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          }
+        },
+        "required": [
+          "id",
+          "environment",
+          "environmentDigest",
+          "origin",
+          "minimumSystemVersion",
+          "fileCount",
+          "byteCount",
+          "availability"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeView": {
+        "additionalProperties": false,
+        "properties": {
+          "environment": {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "state": {
+            "$ref": "#/definitions/PluginObjectState"
+          }
+        },
+        "required": [
+          "environment",
+          "environmentDigest",
+          "origin",
+          "state"
+        ],
+        "type": "object"
+      },
+      "PluginSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/SourceImportDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "extractor": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "review": {
+            "$ref": "#/definitions/ReviewBinding"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "extractor",
+          "checker",
+          "review",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewAvailability": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "ready",
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/definitions/PluginTextReviewView"
+              }
+            },
+            "required": [
+              "kind",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/CommandError"
+              },
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginTextReviewListEntry": {
+        "additionalProperties": false,
+        "description": "A missing environment is an observed unavailable Resource, never a synthetic\ndigest or a selectable request. An existing selection keeps its exact digest.",
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/PluginTextReviewAvailability"
+          },
+          "environmentDigest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest",
+          "availability"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewListView": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/PluginTextReviewListEntry"
+            },
+            "type": "array"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "resourcePins",
+          "rules",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginToolView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "componentScope": {
+            "$ref": "#/definitions/ComponentScope"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "componentScope",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginTranslationView": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/TranslationImportDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "extractor": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "extractor",
+          "checker",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginUiView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "componentId": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "slot": {
+            "type": "string"
+          },
+          "uiId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "package",
+          "componentId",
+          "uiId",
+          "slot",
+          "resourceId",
+          "binding"
+        ],
+        "type": "object"
+      },
+      "PluginUninstallView": {
+        "additionalProperties": false,
+        "description": "An observation of the original retained removal journal. Sealed metadata is\nnot confirmation of an uncertain command's filesystem durability.",
+        "properties": {
+          "actionId": {
+            "type": "string"
+          },
+          "installation": {
+            "$ref": "#/definitions/PluginPackageView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "state": {
+            "$ref": "#/definitions/PluginObjectState"
+          }
+        },
+        "required": [
+          "actionId",
+          "settingsRevision",
+          "installation",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ProviderSelection": {
+        "description": "Multiple providers retain separate provenance. A later merge is another\nexplicitly selected capability, not registration-order precedence.",
+        "enum": [
+          "single",
+          "collect-independent"
+        ],
+        "type": "string"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "RecoveryGuidance": {
+        "description": "A read or user decision to make before another mutation; never replay authority.",
+        "enum": [
+          "reconcile-original",
+          "review-current",
+          "choose-destination"
+        ],
+        "type": "string"
+      },
+      "ReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
+      "ReviewDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ReviewRuleDeclaration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "ReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+        "properties": {
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeAvailability": {
+        "enum": [
+          "available",
+          "unsupported-platform",
+          "system-too-old",
+          "system-version-unknown",
+          "resources-unavailable"
+        ],
+        "type": "string"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeKind": {
+        "enum": [
+          "data",
+          "native-worker",
+          "javascript"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
+      },
+      "SourceImportDeclaration": {
+        "additionalProperties": false,
+        "description": "All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "extractor": {
+            "type": "string"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/definitions/SourceMaterialDeclaration"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "reviewResource": {
+            "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+            "type": "string"
+          },
+          "revisionPolicy": {
+            "$ref": "#/definitions/SourceRevisionPolicy"
+          },
+          "semanticRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "materials",
+          "extractor",
+          "checker",
+          "reviewResource",
+          "revisionPolicy",
+          "semanticRules"
+        ],
+        "type": "object"
+      },
+      "SourceMaterialDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "logicalPath": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalPath",
+          "role",
+          "maxBytes"
+        ],
+        "type": "object"
+      },
+      "SourceRevisionPolicy": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted policy owner before a proposal is received. Only\nthese exact block schemas contribute opaque bytes to source revisions.",
+        "properties": {
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "revisionBasis": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "revisionBasis"
+        ],
+        "type": "object"
+      },
+      "TextReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/TextReviewDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "TextReviewDeclaration": {
+        "additionalProperties": false,
+        "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/TextReviewDisposition"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/TextReviewRuleDeclaration"
+            },
+            "type": "array"
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "disposition",
+          "supportingResources",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "TextReviewDisposition": {
+        "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+        "enum": [
+          "advisory"
+        ],
+        "type": "string"
+      },
+      "TextReviewResourceBinding": {
+        "additionalProperties": false,
+        "description": "A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourcePin": {
+        "additionalProperties": false,
+        "description": "Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "TextReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation",
+          "title",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ToolQueryColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "path"
+        ],
+        "type": "object"
+      },
+      "ToolQueryDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputTemplate": true,
+          "maxTextBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "output": {
+            "$ref": "#/definitions/ToolQueryOutput"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "selections": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "Explicit senses or categories. Matching text alone does not select them."
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "One explicit target option; no host-side locale or value normalization."
+          },
+          "textPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputSchema",
+          "outputSchema",
+          "inputTemplate",
+          "textPath",
+          "maxTextBytes",
+          "target",
+          "selections",
+          "output"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOption": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryColumn"
+            },
+            "type": "array"
+          },
+          "emptyDescription": {
+            "type": "string"
+          },
+          "entriesPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          },
+          "maxEntries": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entriesPath",
+          "columns",
+          "maxEntries",
+          "emptyDescription"
+        ],
+        "type": "object"
+      },
+      "ToolQueryPathPart": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "maximum": 1999,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ]
+      },
+      "ToolQuerySelection": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "maxSelected": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minSelected": {
+            "maximum": 64,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryOption"
+            },
+            "type": "array"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "description",
+          "path",
+          "options",
+          "minSelected",
+          "maxSelected"
+        ],
+        "type": "object"
+      },
+      "ToolResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "TranslationImportDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "extractor": {
+            "type": "string"
+          },
+          "material": {
+            "$ref": "#/definitions/TranslationMaterialDeclaration"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "semanticRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "material",
+          "extractor",
+          "checker",
+          "semanticRules"
+        ],
+        "type": "object"
+      },
+      "TranslationMaterialDeclaration": {
+        "additionalProperties": false,
+        "description": "Metadata describing one selected file relative to an explicitly granted\ndirectory. No glob, executable discovery or filesystem authority is implied.",
+        "properties": {
+          "extension": {
+            "type": "string"
+          },
+          "logicalDirectory": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalDirectory",
+          "extension",
+          "role",
+          "maxBytes"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      }
+    },
+    "properties": {
+      "binding": {
+        "$ref": "#/definitions/CapabilityBinding"
+      },
+      "build": {
+        "$ref": "#/definitions/PluginBuildView"
+      },
+      "candidate": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginCandidateView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "error": {
+        "$ref": "#/definitions/CommandError"
+      },
+      "generationComponent": {
+        "$ref": "#/definitions/PluginGenerationComponentView"
+      },
+      "inventory": {
+        "$ref": "#/definitions/PluginInventoryView"
+      },
+      "packCandidate": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginPackCandidateView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "package": {
+        "$ref": "#/definitions/PluginPackageDetailsView"
+      },
+      "repositorySelection": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginRepositorySelectionView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "repositorySources": {
+        "$ref": "#/definitions/PluginRepositorySourcesView"
+      },
+      "repositoryVerified": {
+        "$ref": "#/definitions/PluginRepositoryVerifiedView"
+      },
+      "runtime": {
+        "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+      },
+      "source": {
+        "$ref": "#/definitions/PluginSourceView"
+      },
+      "textReview": {
+        "$ref": "#/definitions/PluginTextReviewView"
+      },
+      "textReviews": {
+        "$ref": "#/definitions/PluginTextReviewListView"
+      },
+      "tool": {
+        "$ref": "#/definitions/PluginToolView"
+      },
+      "translation": {
+        "$ref": "#/definitions/PluginTranslationView"
+      },
+      "ui": {
+        "$ref": "#/definitions/PluginUiView"
+      }
+    },
+    "required": [
+      "inventory",
+      "candidate",
+      "packCandidate",
+      "repositorySelection",
+      "repositorySources",
+      "repositoryVerified",
+      "package",
+      "binding",
+      "runtime",
+      "source",
+      "translation",
+      "build",
+      "tool",
+      "ui",
+      "generationComponent",
+      "textReview",
+      "textReviews",
+      "error"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:plugins:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

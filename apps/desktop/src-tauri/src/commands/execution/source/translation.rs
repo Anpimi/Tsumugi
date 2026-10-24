@@ -1,11 +1,12 @@
 use super::*;
 use tsumugi_core::{
+    CandidateDecision, CandidateDecisionWrite,
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
     TranslationSelection,
 };
 
-use super::super::source_wire::{TranslationHistory, TranslationPreview, TranslationSaveReceipt};
-
+use tsumugi_core::{TranslationHistory, TranslationSaveReceipt};
+use tsumugi_core::TranslationPreview;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TranslationFilesRequest {
@@ -40,6 +41,64 @@ impl TranslationStartRequest {
             expected_source_snapshot_id: self.expected_source_snapshot_id }
     }
 }
+#[tauri::command]
+pub async fn preflight_translation(
+    state: State<'_, AppState>,
+    request: TranslationCaptureRequest,
+) -> Result<TranslationPreflight, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let (job, snapshot) = lease
+        .run(
+            "preflight_translation.begin",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                begin_translation(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    initial.selection_id,
+                    &initial.target_locale,
+                    None,
+                )
+            },
+        )
+        .await?;
+    let job_id = job.id;
+    let file_name = request.file_name.clone();
+    let target = request.target_locale.clone();
+    let result = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            let bundle = job
+                .selection
+                .capture_translation(&file_name, &target, snapshot, &job.cancel)
+                .map_err(map_source)?;
+            let count = content::extract_translation(&bundle, &job.cancel)
+                .map_err(map_source)?
+                .len() as u32;
+            Ok(TranslationPreflight {
+                file_name,
+                file_digest: bundle.file.sha256,
+                declared_locale: bundle.declared_locale,
+                target_locale: bundle.target_locale,
+                count,
+                source_snapshot_id: snapshot,
+            })
+        })
+        .await;
+    lease
+        .run(
+            "preflight_translation.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                finish(sessions, &request.session_token, request.project_id, job_id)?;
+                result
+            },
+        )
+        .await
+}
+
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationPreviewRequest {
     attempt_id: ExecutionId,
     after: u32,
@@ -56,6 +115,13 @@ request!(
         confirmation: TranslationAdoptionConfirmation,
     }
 );
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TranslationAdoptionActionRequest {
+    pub adoption: TranslationAdoptRequest,
+    pub unit_id: ExecutionId,
+}
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TranslationHistoryRequest {
@@ -169,13 +235,7 @@ fn begin_translation(
     ))
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct TranslationAdoptionActionRequest {
-    pub adoption: TranslationAdoptRequest,
-    pub unit_id: ExecutionId,
-}
+
 
 #[tauri::command]
 pub async fn list_translation_files(
@@ -240,65 +300,20 @@ pub async fn list_translation_files(
         )
         .await
 }
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CandidateDecisionRequest {
+    decision: CandidateDecisionWrite,
+});
 
 #[tauri::command]
-pub async fn preflight_translation(
-    state: State<'_, AppState>,
-    request: TranslationCaptureRequest,
-) -> Result<TranslationPreflight, CommandError> {
-    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
-    let initial = request.clone();
-    let (job, snapshot) = lease
-        .run(
-            "preflight_translation.begin",
-            CommandStage::ExecutionRead,
-            move |sessions| {
-                begin_translation(
-                    sessions,
-                    &initial.session_token,
-                    initial.project_id,
-                    initial.selection_id,
-                    &initial.target_locale,
-                    None,
-                )
-            },
-        )
-        .await?;
-    let job_id = job.id;
-    let file_name = request.file_name.clone();
-    let target = request.target_locale.clone();
-    let result = state
-        .io
-        .run(CommandStage::ExecutionRead, move || {
-            let bundle = job
-                .selection
-                .capture_translation(&file_name, &target, snapshot, &job.cancel)
-                .map_err(map_source)?;
-            let count = content::extract_translation(&bundle, &job.cancel)
-                .map_err(map_source)?
-                .len() as u32;
-            Ok(TranslationPreflight {
-                file_name,
-                file_digest: bundle.file.sha256,
-                declared_locale: bundle.declared_locale,
-                target_locale: bundle.target_locale,
-                count,
-                source_snapshot_id: snapshot,
-            })
-        })
-        .await;
-    lease
-        .run(
-            "preflight_translation.finish",
-            CommandStage::ExecutionRead,
-            move |sessions| {
-                finish(sessions, &request.session_token, request.project_id, job_id)?;
-                result
-            },
-        )
-        .await
+pub async fn decide_translation_candidate(state: State<'_, AppState>, request: CandidateDecisionRequest) -> Result<CandidateDecision, CommandError> {
+    state.sessions.run("decide_translation_candidate", CommandStage::ExecutionAdopt, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionAdopt)?;
+        if request.decision.project_id != request.project_id { return Err(stale()); }
+        let (host, store) = active.execution_parts()?;
+        host.allow_mutation()?;
+        store.decide_translation_candidate(&request.decision).map_err(map_adopt)
+    }).await
 }
-
 #[tauri::command]
 pub async fn read_translation_import_start(
     state: State<'_, AppState>, request: TranslationStartRequest,
@@ -409,6 +424,14 @@ pub async fn start_translation_import(
 }
 
 #[tauri::command]
+pub async fn read_translation_candidate_action(state: State<'_, AppState>, request: TranslationActionRequest) -> Result<Option<CandidateDecision>, CommandError> {
+    state.sessions.run("read_translation_candidate_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?.store
+            .translation_candidate_action(request.project_id, request.unit_id, &request.locale, request.action_id).map_err(map_source)
+    }).await
+}
+
+#[tauri::command]
 pub async fn read_translation_preview(
     state: State<'_, AppState>,
     request: TranslationPreviewRequest,
@@ -432,8 +455,7 @@ pub async fn read_translation_preview(
                     request.limit,
                     request.basis.as_deref(),
                 )
-                .and_then(TryInto::try_into)
-                .map_err(map_source)
+                                .map_err(map_source)
             },
         )
         .await
@@ -587,7 +609,6 @@ pub async fn read_translation_save_action(
                     expected_selection_id: request.expected_selection_id,
                     text: request.text,
                 })
-                .map(|receipt| receipt.map(Into::into))
                 .map_err(map_source)
             },
         )
@@ -719,6 +740,10 @@ mod contracts {
         round_trip!("start", TranslationStartRequest);
         round_trip!("previewRequest", TranslationPreviewRequest);
         round_trip!("adopt", TranslationAdoptRequest);
+        let original_read = serde_json::json!({"adoption":fixture["adopt"],"unitId":ExecutionId::new()});
+        assert_eq!(serde_json::to_value(serde_json::from_value::<TranslationAdoptionActionRequest>(original_read.clone()).unwrap()).unwrap(), original_read);
+        let mut extra = original_read; extra["projectId"] = fixture["adopt"]["projectId"].clone();
+        assert!(serde_json::from_value::<TranslationAdoptionActionRequest>(extra).is_err());
         round_trip!("history", TranslationHistoryRequest);
         round_trip!("save", TranslationSaveRequest);
         round_trip!("actionRequest", TranslationActionRequest);

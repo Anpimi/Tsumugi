@@ -1,16 +1,22 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::content::{
-    self, ContentScope, SourceBundle,
+    self, ContentPage, ContentScope, SourceChangePage, SourceConfirmation,
 };
-use super::source_wire::{ContentPage, SourceChangePage, SourceConfirmation};
+#[cfg(test)]
+#[path = "source/block_tests.rs"]
+mod block_tests;
 pub(super) mod capture;
+pub mod plugin;
+pub mod plugin_translation;
 #[cfg(test)]
 mod tests;
 pub mod translation;
 
 #[derive(Default)]
 pub(super) struct SourceSession {
+    plugin: plugin::PluginSourceSession,
+    translation: plugin_translation::PluginTranslationSession,
     selection: Option<(ExecutionId, Arc<capture::Selection>)>,
     picker: Option<ExecutionId>,
     pub(super) resource_picker: Option<ExecutionId>,
@@ -20,6 +26,17 @@ pub(super) struct SourceSession {
     translation_last_start: Option<content::TranslationImportStart>,
 }
 impl SourceSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        if self.plugin.stop_package(package) | self.translation.stop_package(package) {
+            self.cancel.request();
+            self.job = None;
+            self.picker = None;
+            self.selection = None;
+        }
+    }
     pub fn is_active(&self) -> bool {
         self.job.is_some()
     }
@@ -29,6 +46,8 @@ impl SourceSession {
         self.picker = None;
         self.resource_picker = None;
         self.selection = None;
+        self.plugin.discard_capture();
+        self.translation.discard_capture();
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -74,6 +93,24 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Cont
     after: u32,
     limit: u32
 });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SourceContextReadRequest {
+        source_snapshot_id: ExecutionId,
+        unit_id: ExecutionId,
+        source_revision_id: ExecutionId,
+        locale: String,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SourceContextBlockReadRequest {
+        basis: tsumugi_core::SourceContextBlockBasis,
+        descriptor: tsumugi_core::SourceContextBlockDescriptor
+    }
+);
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ComparisonRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId,
@@ -82,32 +119,48 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Comp
     after: u32,
     limit: u32
 });
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] HistoryRequest {
-    offset: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] HistoryContentRequest {
-    snapshot_id: ExecutionId,
-    query: String,
-    after: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] LineageRequest {
-    snapshot_id: ExecutionId,
-    ordinal: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ImpactRequest {
-    snapshot_id: ExecutionId,
-    locale: String,
-    after: u32,
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SourceAdoptRequest {
-    attempt_id: ExecutionId,
-    result_id: ExecutionId,
-    action_id: ExecutionId,
-    confirmation: SourceConfirmation
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    HistoryRequest {
+        offset: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    HistoryContentRequest {
+        snapshot_id: ExecutionId,
+        query: String,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    LineageRequest {
+        snapshot_id: ExecutionId,
+        ordinal: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ImpactRequest {
+        snapshot_id: ExecutionId,
+        locale: String,
+        after: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SourceAdoptRequest {
+        attempt_id: ExecutionId,
+        result_id: ExecutionId,
+        action_id: ExecutionId,
+        confirmation: SourceConfirmation
+    }
+);
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -115,7 +168,6 @@ pub struct SourceAdoptionActionRequest {
     pub adoption: SourceAdoptRequest,
     pub unit_id: ExecutionId,
 }
-
 fn map_source(error: ExecutionError) -> CommandError {
     let mapped = map_execution(error, CommandStage::ExecutionRead);
     mapped
@@ -421,7 +473,7 @@ pub async fn start_source_import(
             CommandStage::ExecutionRecover,
             move |sessions| {
                 let active = finish(sessions, &request.session_token, request.project_id, id)?;
-                let bundle: SourceBundle = result?;
+                let bundle: content::SourceBundle = result?;
                 let metadata = active
                     .store
                     .metadata()
@@ -487,10 +539,16 @@ pub async fn read_source_integration(
                         .plugin_id
                         == content::webvtt::PLUGIN
                     {
-                        return Ok(content::webvtt_descriptor(cfg!(any(windows, target_os = "macos"))));
+                        return Ok(content::webvtt_descriptor(cfg!(any(
+                            windows,
+                            target_os = "macos"
+                        ))));
                     }
                 }
-                Ok(content::integration_descriptor(cfg!(any(windows, target_os = "macos"))))
+                Ok(content::integration_descriptor(cfg!(any(
+                    windows,
+                    target_os = "macos"
+                ))))
             },
         )
         .await
@@ -512,7 +570,10 @@ pub async fn read_webvtt_integration(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                Ok(content::webvtt_descriptor(cfg!(any(windows, target_os = "macos"))))
+                Ok(content::webvtt_descriptor(cfg!(any(
+                    windows,
+                    target_os = "macos"
+                ))))
             },
         )
         .await
@@ -566,8 +627,7 @@ pub async fn read_source_preview(
                     request.after,
                     request.limit,
                 )
-                .and_then(TryInto::try_into)
-                .map_err(map_source)
+                                .map_err(map_source)
             },
         )
         .await
@@ -591,8 +651,75 @@ pub async fn read_source_content(
                 )?
                 .store
                 .source_content(request.snapshot_id, request.after, request.limit)
-                .and_then(TryInto::try_into)
+                                .map_err(map_source)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_source_context(
+    state: State<'_, AppState>,
+    request: SourceContextReadRequest,
+) -> Result<tsumugi_core::SourceContextPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_source_context",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_context_page(
+                    &tsumugi_core::SourceContextRequest {
+                        project_id: request.project_id,
+                        source_snapshot_id: request.source_snapshot_id,
+                        unit_id: request.unit_id,
+                        source_revision_id: request.source_revision_id,
+                        locale: request.locale,
+                    },
+                    request.after,
+                    request.limit,
+                )
                 .map_err(map_source)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_source_context_block(
+    state: State<'_, AppState>,
+    request: SourceContextBlockReadRequest,
+) -> Result<tsumugi_core::SourceContextBlockDetail, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_source_context_block",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let session = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                if request.project_id != request.basis.scope.project_id {
+                    return Err(map_source(ExecutionError::new(
+                        ErrorCode::DependencyConflict,
+                        "source-context-scope",
+                    )));
+                }
+                session
+                    .store
+                    .source_context_block(&tsumugi_core::SourceContextBlockRead {
+                        basis: request.basis,
+                        descriptor: request.descriptor,
+                    })
+                    .map_err(map_source)
             },
         )
         .await
@@ -623,8 +750,7 @@ pub async fn read_source_comparison(
                     request.after,
                     request.limit,
                 )
-                .and_then(TryInto::try_into)
-                .map_err(map_source)
+                                .map_err(map_source)
             },
         )
         .await
@@ -677,8 +803,7 @@ pub async fn read_source_history_content(
                     request.after,
                     request.limit,
                 )
-                .and_then(TryInto::try_into)
-                .map_err(map_source)
+                                .map_err(map_source)
             },
         )
         .await
@@ -687,7 +812,7 @@ pub async fn read_source_history_content(
 pub async fn read_source_lineage(
     state: State<'_, AppState>,
     request: LineageRequest,
-) -> Result<Vec<super::source_wire::LineageEvidence>, CommandError> {
+) -> Result<Vec<content::LineageEvidence>, CommandError> {
     state
         .sessions
         .run(
@@ -702,8 +827,7 @@ pub async fn read_source_lineage(
                 )?
                 .store
                 .source_lineage_evidence(request.snapshot_id, request.ordinal)
-                .and_then(|rows| rows.into_iter().map(TryInto::try_into).collect())
-                .map_err(map_source)
+                                .map_err(map_source)
             },
         )
         .await
@@ -744,7 +868,7 @@ pub async fn estimate_source_update(
 pub async fn read_source_impact(
     state: State<'_, AppState>,
     request: ImpactRequest,
-) -> Result<super::source_wire::SourceImpactPage, CommandError> {
+) -> Result<content::SourceImpactPage, CommandError> {
     state
         .sessions
         .run(
@@ -764,12 +888,12 @@ pub async fn read_source_impact(
                     request.after,
                     request.limit,
                 )
-                .and_then(TryInto::try_into)
-                .map_err(map_source)
+                                .map_err(map_source)
             },
         )
         .await
 }
+
 #[tauri::command]
 pub async fn read_source_adoption_action(
     state: State<'_, AppState>,
@@ -795,9 +919,8 @@ pub async fn read_source_adoption_action(
                     adoption.action_id,
                     request.unit_id,
                     adoption.result_id,
-                    &adoption.confirmation.into(),
+                    &adoption.confirmation,
                 )
-                .and_then(|value| value.map(super::source_wire::project_source_action_read).transpose())
                 .map_err(map_source)
             },
         )
@@ -814,6 +937,20 @@ pub async fn prepare_source_adoption(
             "prepare_source_adoption",
             CommandStage::ExecutionAdopt,
             move |sessions| {
+                if request.confirmation.maintenance_hook.is_some() {
+                    authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionAdopt,
+                    )?;
+                    let active = sessions.active.as_ref().expect("authorized session");
+                    sessions.source_hooks.prepare(
+                        &active.store,
+                        request.project_id,
+                        request.action_id,
+                    )?;
+                }
                 let active = authorized(
                     sessions,
                     &request.session_token,
@@ -827,12 +964,12 @@ pub async fn prepare_source_adoption(
                 let input = store
                     .execution_input(request.attempt_id)
                     .map_err(map_source)?;
-                if input.envelope().operation != content::OPERATION || input.envelope().plugin.is_some() {
+                if input.envelope().operation != content::OPERATION {
                     return Err(stale());
                 }
                 let parameters =
-                    serde_json::to_value(tsumugi_core::content::SourceConfirmation::from(request.confirmation)).map_err(|_| stale())?;
-                store
+                    serde_json::to_value(&request.confirmation).map_err(|_| stale())?;
+                let action = store
                     .prepare_adoption_with_id(
                         request.action_id,
                         request.attempt_id,
@@ -840,8 +977,20 @@ pub async fn prepare_source_adoption(
                         vec![request.result_id],
                         parameters,
                     )
-                    .and_then(super::source_wire::project_source_action)
-                    .map_err(map_source)
+                    .map_err(map_source)?;
+                if let Some(activation) = request.confirmation.maintenance_hook {
+                    let read = store
+                        .source_maintenance_hook(request.project_id, request.action_id)
+                        .map_err(map_source)?;
+                    if read.view.is_some_and(|v| !v.admission_closed) {
+                        sessions.source_hooks.prepared(
+                            request.session_token,
+                            request.action_id,
+                            activation,
+                        );
+                    }
+                }
+                Ok(action)
             },
         )
         .await

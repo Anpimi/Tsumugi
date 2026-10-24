@@ -50,7 +50,13 @@ name = "native-application-worker"
 path = "examples/native-application-worker.rs"
 required-features = ["native-application-conformance"]
 
+[[test]]
+name = "member_artifact_build"
+path = "tests/member_artifact_build.rs"
+required-features = ["member-conformance"]
+
 [features]
+member-conformance = ["core-adapter"]
 core-adapter = ["dep:tsumugi-core"]
 native-application-conformance = ["tsumugi-plugin-sdk/native-worker"]
 conformance-worker = []

@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod package_cleanup_process;
+mod package_lifecycle;
 use serde_json::{Value, json};
 use tauri::{
     Manager,
@@ -72,7 +75,10 @@ fn cancellation_error_wire_distinguishes_unknown_projection_from_rejected_write(
     assert_eq!(value["recoveryRequired"], json!(true));
     assert_eq!(value["recoveryGuidance"], json!("reconcile-original"));
     assert_eq!(value["reason"], json!("input-digest"));
-    assert_eq!(serde_json::from_value::<CommandError>(value).unwrap(), unknown);
+    assert_eq!(
+        serde_json::from_value::<CommandError>(value).unwrap(),
+        unknown
+    );
 
     let rejected = map_execution(
         ExecutionError::new(ErrorCode::Busy, "execution-storage"),
@@ -117,6 +123,9 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<TaskViewRequest>(&fixture["taskViewRequest"]);
     round_trip::<ContinuationReceipt>(&fixture["continuationReceipt"]);
     round_trip::<ContinuationPage>(&fixture["continuations"]);
+    let mut zero = fixture["continuation"].clone();
+    zero["action"]["expectedCancellationRevision"] = json!("0");
+    round_trip::<ContinuationRequest>(&zero);
     round_trip::<PrepareRequest>(&fixture["prepare"]);
     round_trip::<AttemptDetail>(&fixture["detail"]);
     round_trip::<RuntimeStatus>(&fixture["status"]);
@@ -124,6 +133,15 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<AdoptionReceipt>(&fixture["receipt"]);
     round_trip::<AdoptionAction>(&fixture["action"]);
     round_trip::<ResultEnvelope>(&fixture["output"]);
+    let result: ResultEnvelope = serde_json::from_value(fixture["output"].clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(ExecutionOutputView {
+            result,
+            source_failure: None
+        })
+        .unwrap(),
+        fixture["output"],
+    );
     round_trip::<TaskView>(&fixture["task"]);
     round_trip::<AttemptSummary>(&fixture["summary"]);
     round_trip::<RecoveryView>(&fixture["recovery"]);
@@ -141,6 +159,98 @@ fn execution_wire_fixture_matches_rust_types() {
     let mut unknown = fixture["detail"].clone();
     unknown["items"][0]["status"]["execution"] = json!("future-state");
     assert!(serde_json::from_value::<AttemptDetail>(unknown).is_err());
+}
+
+#[test]
+fn source_failure_projection_requires_valid_public_payload_and_captured_artifact() {
+    let artifacts = [sdk::CapturedTextArtifact {
+        id: "captured-1".into(),
+        logical_path: "manifest.json".into(),
+        role: "source".into(),
+        sha256: "a".repeat(64),
+        utf8: "{}".into(),
+    }];
+    let encoded =
+        |schema, value: Value| sdk::EncodedPayload::capture(schema, value.to_string()).unwrap();
+    let valid = json!({"code":"unsupported-structure","artifactId":"captured-1","detail":"The Name value must be a string."});
+    let payload = encoded(sdk::source_extraction_error_contract(), valid.clone());
+    let projected = parse_public_source_failure(&payload, &artifacts).unwrap();
+    assert_eq!(projected.detail, "The Name value must be a string.");
+    assert_eq!(projected.artifact_id.as_deref(), Some("captured-1"));
+    assert!(
+        parse_public_source_failure(
+            &encoded(sdk::source_extraction_input_contract(), valid.clone()),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"future","artifactId":"captured-1","detail":"x"})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"invalid-source","artifactId":"not-captured","detail":"x"})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+    assert!(
+        parse_public_source_failure(
+            &encoded(
+                sdk::source_extraction_error_contract(),
+                json!({"code":"invalid-source","artifactId":null,"detail":""})
+            ),
+            &artifacts
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn source_failure_output_keeps_generic_shape_and_rejects_cross_project_read() {
+    let (_directory, _app, webview, context) = setup();
+    let attempt = call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"partial","delayMs":1,"grouped":true}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    let record = detail(&webview, &context, &attempt);
+    let failed = record["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["status"]["execution"] == "failed" && item["resultId"].is_string())
+        .expect("saved failed result");
+    let selected = request(
+        &context,
+        json!({"attemptId":attempt,"resultId":failed["resultId"]}),
+    );
+    let output = call(&webview, "read_execution_output", selected.clone()).unwrap();
+    assert_eq!(output["projectId"], context["projectId"]);
+    assert_eq!(output["resultId"], failed["resultId"]);
+    assert_eq!(output["itemId"], failed["status"]["itemId"]);
+    assert!(output.get("sourceFailure").is_none());
+    let mut foreign = selected;
+    foreign["projectId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&webview, "read_execution_output", foreign).unwrap_err()["code"],
+        "session-invalid"
+    );
 }
 
 #[test]
@@ -266,6 +376,243 @@ fn setup() -> (
     let context =
         json!({"sessionToken":view["sessionToken"],"projectId":view["metadata"]["projectId"]});
     (temp, app, webview, context)
+}
+
+#[test]
+fn projection_start_read_ipc_requires_the_original_request_without_initializing_runtime() {
+    let (temp, app, webview, context) = setup();
+    let mut original = request(&context, json!({"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64)}));
+    assert_eq!(call(&webview, "read_translation_projection_start", original.clone()).unwrap(), Value::Null);
+    for (field, value) in [("projectId",json!(ExecutionId::new())), ("sessionToken",json!(ExecutionId::new())),
+        ("attemptId",json!("invalid")), ("inputDigest",json!("invalid")), ("grantId",json!(ExecutionId::new())), ("operation",json!("translation-import"))] {
+        let mut wrong = original.clone(); wrong[field] = value;
+        assert!(call(&webview, "read_translation_projection_start", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none()); assert_eq!(active.store.execution_sequence().unwrap().get(),0);
+    });
+    call(&webview,"close_project",json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview,"open_project",json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview,"read_translation_projection_start",original.clone()).is_err());
+    original["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview,"read_translation_projection_start",original).unwrap(),Value::Null);
+    app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+}
+
+#[test]
+fn ordinary_plugin_start_ipc_reads_all_fixed_operations_without_runtime_or_grant() {
+    let (temp, app, webview, context) = setup();
+    let mut original = request(&context, json!({"attemptId":ExecutionId::new(),"inputDigest":"a".repeat(64),"operation":"source-import"}));
+    for operation in ["source-import", "source-semantic-check", "translation-extract", "translation-semantic-check", "locale-build", "artifact-semantic-check", "plugin-tool-query"] {
+        original["operation"] = json!(operation);
+        assert_eq!(call(&webview, "read_plugin_execution_start", original.clone()).unwrap(), Value::Null);
+    }
+    for (field, value) in [("projectId", json!(ExecutionId::new())), ("sessionToken", json!(ExecutionId::new())),
+        ("attemptId", json!("bad")), ("inputDigest", json!("bad")), ("operation", json!("translation-import")), ("grantId", json!(ExecutionId::new()))] {
+        let mut wrong = original.clone(); wrong[field] = value;
+        assert!(call(&webview, "read_plugin_execution_start", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none());
+        assert_eq!(active.store.execution_sequence().unwrap().get(), 0);
+    });
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview, "read_plugin_execution_start", original.clone()).is_err());
+    original["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_plugin_execution_start", original).unwrap(), Value::Null);
+    app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+}
+
+#[test]
+fn cancellation_action_ipc_reads_exact_requests_without_initializing_or_replaying_runtime() {
+    let (temp, app, webview, context) = setup();
+    let missing = request(&context, json!({"taskId":ExecutionId::new(),"requestId":ExecutionId::new()}));
+    assert_eq!(call(&webview, "read_execution_cancellation_action", missing).unwrap(), Value::Null);
+    app.state::<AppState>().sessions.with(|sessions| { assert!(sessions.active.as_ref().unwrap().execution.is_none()); });
+    let attempt = call(&webview, "seed_execution_fixture", request(&context, json!({"mode":"success","delayMs":1,"grouped":false}))).unwrap();
+    settled(&webview, &context);
+    let detail = detail(&webview, &context, &attempt);
+    let mut original = request(&context, json!({"taskId":detail["taskId"],"requestId":ExecutionId::new()}));
+    assert_eq!(call(&webview, "read_execution_cancellation_action", original.clone()).unwrap(), Value::Null);
+    let revision = call(&webview, "cancel_execution_task", original.clone()).unwrap();
+    let expected = json!({"projectId":context["projectId"],"taskId":original["taskId"],"requestId":original["requestId"],"revision":revision});
+    let later = request(&context, json!({"taskId":detail["taskId"],"requestId":ExecutionId::new()}));
+    call(&webview, "cancel_execution_task", later).unwrap();
+    assert_eq!(call(&webview, "read_execution_cancellation_action", original.clone()).unwrap(), expected);
+    for field in ["projectId", "taskId", "sessionToken"] {
+        let mut wrong = original.clone(); wrong[field] = json!(ExecutionId::new());
+        assert!(call(&webview, "read_execution_cancellation_action", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing = true; });
+    let sequence = app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence);
+    assert_eq!(call(&webview, "read_execution_cancellation_action", original.clone()).unwrap(), expected);
+    assert_eq!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence), sequence);
+    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing = false; });
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview, "read_execution_cancellation_action", original.clone()).is_err());
+    original["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_execution_cancellation_action", original).unwrap(), expected);
+}
+
+#[test]
+fn task_activity_read_is_authorized_bounded_and_does_not_initialize_execution() {
+    let (_directory, app, webview, context) = setup();
+    let request = |limit: u32| {
+        let mut request = context.clone(); request["limit"] = json!(limit); request
+    };
+    let page = call(&webview, "read_execution_task_activity", request(12)).unwrap();
+    assert_eq!(page, json!({"total":"0","active":"0","attention":"0","saved":"0","rows":[]}));
+    let missing = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":ExecutionId::new(),"unitId":ExecutionId::new(),"actionId":ExecutionId::new(),"resultIds":[ExecutionId::new()]});
+    assert_eq!(call(&webview, "read_execution_adoption_action", missing).unwrap(), Value::Null);
+    app.state::<AppState>().sessions.with(|sessions| {
+        assert!(sessions.active.as_ref().unwrap().execution.is_none());
+    });
+    assert!(call(&webview, "read_execution_task_activity", request(0)).is_err());
+    assert!(call(&webview, "read_execution_task_activity", request(21)).is_err());
+    let mut alien = request(12); alien["projectId"] = json!(ExecutionId::new());
+    assert!(call(&webview, "read_execution_task_activity", alien).is_err());
+    let mut stale = request(12); stale["sessionToken"] = json!("stale-session");
+    assert!(call(&webview, "read_execution_task_activity", stale).is_err());
+}
+
+#[test]
+fn retired_query_blocks_session_close_and_generation_rotation_until_thread_exit() {
+    let (_directory, app, webview, context) = setup();
+    let (release, generation, attempt, before) =
+        app.state::<AppState>().sessions.with(|sessions| {
+            let active = sessions.active.as_mut().unwrap();
+            let (host, store) = active.execution_parts().unwrap();
+            let input =
+                test_support::input(store, test_support::FixtureMode::Unknown, 0, false).unwrap();
+            host.runtime.submit(store, &input).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while host.runtime.has_active_work(store).unwrap() {
+                host.runtime.tick(store).unwrap();
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            let attempt = input.envelope().attempt_id;
+            let query = Arc::new(
+                host.runtime
+                    .outcome_query(store, attempt, input.envelope().items[0].item_id)
+                    .unwrap()
+                    .unwrap(),
+            );
+            let (release, wait) = mpsc::sync_channel(1);
+            let (sender, receiver) = mpsc::channel();
+            let held = query.clone();
+            let thread = std::thread::spawn(move || {
+                if wait.recv().is_ok() {
+                    // The real query owns its original runner, never the project store.
+                    let _ = sender.send(held.run());
+                }
+            });
+            host.queries.push(QueryJob {
+                query,
+                receiver,
+                thread,
+                started: Instant::now() - Duration::from_secs(61),
+                pending_outcome: None,
+            });
+            assert_eq!(
+                host.poll_queries(store).unwrap_err().code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            assert!(host.queries.is_empty());
+            assert_eq!(host.retired_queries.len(), 1);
+            (
+                release,
+                host.runtime.generation(),
+                attempt,
+                store.execution_attempt(attempt, false).unwrap(),
+            )
+        });
+    assert_eq!(
+        call(&webview, "execution_status", context.clone()).unwrap()["active"],
+        true
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "close_project",
+            json!({"sessionToken":context["sessionToken"]})
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    assert_eq!(call(&webview, "rename_project", json!({"sessionToken":context["sessionToken"],"expectedRevision":"1","displayName":"Moved","directoryName":"moved"})).unwrap_err()["code"], "busy");
+    let status = call(&webview, "quiesce_execution", context.clone()).unwrap();
+    assert_eq!(status["active"], true);
+    assert_eq!(status["quiescing"], true);
+    assert_eq!(
+        call(
+            &webview,
+            "seed_execution_fixture",
+            request(
+                &context,
+                json!({"mode":"unknown","delayMs":0,"grouped":false})
+            )
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        assert_eq!(
+            active.execution.as_ref().unwrap().runtime.generation(),
+            generation
+        );
+        assert_eq!(
+            serde_json::to_value(active.store.execution_attempt(attempt, false).unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+    });
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while call(&webview, "execution_status", context.clone()).unwrap()["active"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "original query thread did not drain"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let host = active.execution.as_ref().unwrap();
+        assert_ne!(host.runtime.generation(), generation);
+        assert!(host.retired_queries.is_empty());
+        assert!(!host.quiescing);
+        assert_eq!(
+            active
+                .store
+                .execution_attempt(attempt, false)
+                .unwrap()
+                .progress
+                .succeeded,
+            0
+        );
+    });
+    // New explicit work is admitted only after real cleanup; it gains no old result.
+    call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"unknown","delayMs":0,"grouped":false}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
 }
 
 fn call_when_ready(
@@ -699,7 +1046,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let action_id = ExecutionId::new();
     let state = app.state::<AppState>();
     let guard = state.sessions.pause();
-    let mut check = Box::pin(review::run_review_checks(
+    let mut check = Box::pin(review::run_fixture_review_checks(
         app.state::<AppState>(),
         review::ReviewCheckRequest {
             session_token: session_token.clone(),
@@ -708,6 +1055,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
             locale: "zh-CN".into(),
             expected_basis: "stale-fixture".into(),
             action_id,
+            advisory_checks: Vec::new(),
         },
     ));
     let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -847,9 +1195,9 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     let save_action = ExecutionId::new();
     let held = state.sessions.pause();
     let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
-    let mut check = Box::pin(review::run_review_checks(app.state::<AppState>(),
+    let mut check = Box::pin(review::run_fixture_review_checks(app.state::<AppState>(),
         serde_json::from_value(request(&context, json!({
-            "actionId":action_id, "unitId":unit.unit_id, "locale":"zh-CN", "expectedBasis":target["basis"]
+            "actionId":action_id, "unitId":unit.unit_id, "locale":"zh-CN", "expectedBasis":target["basis"], "advisoryChecks":[]
         }))).unwrap()));
     assert!(matches!(
         std::future::Future::poll(check.as_mut(), &mut poll_context),
@@ -916,7 +1264,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     let cancelled = tauri::async_runtime::block_on(check).unwrap();
     assert_eq!(
         cancelled.outcome,
-        super::review_wire::ReviewCheckOutcome::Cancelled
+        tsumugi_core::ReviewCheckOutcome::Cancelled
     );
     assert!(
         cancelled
@@ -1065,16 +1413,58 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
     assert_eq!(before["progress"]["succeeded"], 2);
     assert_eq!(before["progress"]["failed"], 1);
     let unit = &before["recovery"]["units"][0];
-    let anonymous = request(&context,json!({"attemptId":attempt,"unitId":unit["unitId"],"action":"retry-safe-failure","itemIds":unit["remainingItemIds"]}));
-    assert_eq!(call(&webview, "recover_execution", anonymous).unwrap_err()["code"], "invalid-input");
-    let task_view = call(&webview, "read_execution_task_view", request(&context, json!({"taskId":before["taskId"]}))).unwrap();
-    let stale_action = json!({"actionId":ExecutionId::new(),"projectId":context["projectId"],"sourceAttemptId":attempt,"unitId":unit["unitId"],"kind":"retry-safe-failure","itemIds":unit["remainingItemIds"],"expectedCancellationRevision":task_view["cancellationRevision"]});
-    call(&webview, "cancel_execution_task", request(&context, json!({"taskId":before["taskId"],"requestId":ExecutionId::new()}))).unwrap();
-    for _ in 0..2 {
-        assert_eq!(call(&webview, "continue_execution", request(&context, json!({"action":stale_action}))).unwrap_err()["code"], "cancelled");
-        assert!(call(&webview, "read_execution_continuation", request(&context, json!({"actionId":stale_action["actionId"]}))).unwrap().is_null());
+    for action in ["resume-undispatched", "retry-safe-failure"] {
+        let anonymous = request(
+            &context,
+            json!({"attemptId":attempt,"unitId":unit["unitId"],"action":action,"itemIds":unit["remainingItemIds"]}),
+        );
+        let error = call(&webview, "recover_execution", anonymous).unwrap_err();
+        assert_eq!(error["code"], "invalid-input");
+        assert_eq!(error["stage"], "execution-recover");
+        assert_eq!(error["reason"], "continuation-identity-required");
     }
-    let task_view = call(&webview, "read_execution_task_view", request(&context, json!({"taskId":before["taskId"]}))).unwrap();
+    let task_view = call(
+        &webview,
+        "read_execution_task_view",
+        request(&context, json!({"taskId":before["taskId"]})),
+    )
+    .unwrap();
+    let stale_action = json!({"actionId":ExecutionId::new(),"projectId":context["projectId"],"sourceAttemptId":attempt,"unitId":unit["unitId"],"kind":"retry-safe-failure","itemIds":unit["remainingItemIds"],"expectedCancellationRevision":task_view["cancellationRevision"]});
+    call(
+        &webview,
+        "cancel_execution_task",
+        request(
+            &context,
+            json!({"taskId":before["taskId"],"requestId":ExecutionId::new()}),
+        ),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            call(
+                &webview,
+                "continue_execution",
+                request(&context, json!({"action":stale_action}))
+            )
+            .unwrap_err()["code"],
+            "cancelled"
+        );
+        assert!(
+            call(
+                &webview,
+                "read_execution_continuation",
+                request(&context, json!({"actionId":stale_action["actionId"]}))
+            )
+            .unwrap()
+            .is_null()
+        );
+    }
+    let task_view = call(
+        &webview,
+        "read_execution_task_view",
+        request(&context, json!({"taskId":before["taskId"]})),
+    )
+    .unwrap();
     let original_action = json!({"actionId":ExecutionId::new(),"projectId":context["projectId"],"sourceAttemptId":attempt,"unitId":unit["unitId"],"kind":"retry-safe-failure","itemIds":unit["remainingItemIds"],"expectedCancellationRevision":task_view["cancellationRevision"]});
     let continuation = request(&context, json!({"action":original_action}));
     let mut malformed = continuation.clone();
@@ -1082,23 +1472,54 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
     assert!(call(&webview, "continue_execution", malformed).is_err());
     let mut cross_project = continuation.clone();
     cross_project["action"]["projectId"] = json!(ExecutionId::new());
-    assert_eq!(call(&webview, "continue_execution", cross_project).unwrap_err()["code"], "permission-denied");
+    assert_eq!(
+        call(&webview, "continue_execution", cross_project).unwrap_err()["code"],
+        "permission-denied"
+    );
     let mut wrong_session = continuation.clone();
     wrong_session["sessionToken"] = json!("stale-session");
-    assert_eq!(call(&webview, "continue_execution", wrong_session).unwrap_err()["code"], "session-invalid");
+    assert_eq!(
+        call(&webview, "continue_execution", wrong_session).unwrap_err()["code"],
+        "session-invalid"
+    );
     let resumed = call(&webview, "continue_execution", continuation.clone()).unwrap();
-    assert_eq!(call(&webview, "continue_execution", continuation.clone()).unwrap(), resumed);
+    assert_eq!(
+        call(&webview, "continue_execution", continuation.clone()).unwrap(),
+        resumed
+    );
     assert_eq!(resumed["action"], original_action);
     let lookup = request(&context, json!({"actionId":original_action["actionId"]}));
-    assert_eq!(call(&webview, "read_execution_continuation", lookup).unwrap(), resumed);
-    let page = call(&webview, "read_execution_continuations", request(&context, json!({"sourceAttemptId":attempt,"after":"0","limit":1}))).unwrap();
+    assert_eq!(
+        call(&webview, "read_execution_continuation", lookup).unwrap(),
+        resumed
+    );
+    let page = call(
+        &webview,
+        "read_execution_continuations",
+        request(
+            &context,
+            json!({"sourceAttemptId":attempt,"after":"0","limit":1}),
+        ),
+    )
+    .unwrap();
     assert_eq!(page["receipts"], json!([resumed]));
     assert_eq!(page["next"], resumed["sequence"]);
-    let end = call(&webview, "read_execution_continuations", request(&context, json!({"sourceAttemptId":attempt,"after":page["next"],"limit":1}))).unwrap();
+    let end = call(
+        &webview,
+        "read_execution_continuations",
+        request(
+            &context,
+            json!({"sourceAttemptId":attempt,"after":page["next"],"limit":1}),
+        ),
+    )
+    .unwrap();
     assert_eq!(end, json!({"receipts":[],"next":null}));
     let mut different = continuation.clone();
     different["action"]["kind"] = json!("resume-undispatched");
-    assert_eq!(call(&webview, "continue_execution", different).unwrap_err()["code"], "result-mismatch");
+    assert_eq!(
+        call(&webview, "continue_execution", different).unwrap_err()["code"],
+        "result-mismatch"
+    );
     settled(&webview, &context);
     let after = detail(&webview, &context, &resumed["attemptId"]);
     assert_eq!(after["progress"]["succeeded"], 3);
@@ -1120,7 +1541,10 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
         ),
     )
     .unwrap();
-    assert_eq!(call(&webview, "continue_execution", continuation.clone()).unwrap(), resumed);
+    assert_eq!(
+        call(&webview, "continue_execution", continuation.clone()).unwrap(),
+        resumed
+    );
     assert_eq!(
         call(&webview, "prepare_execution_adoption", prepare.clone()).unwrap(),
         first
@@ -1130,6 +1554,7 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
         call(&webview, "adopt_execution", apply).unwrap_err()["code"],
         "cancelled"
     );
+    assert_eq!(call(&webview, "read_execution_adoption_action", prepare.clone()).unwrap(), json!({"action":first,"receipt":null}));
     let mut renewed = prepare;
     renewed["actionId"] = json!(ExecutionId::new());
     let action = call_when_ready(&webview, "prepare_execution_adoption", renewed.clone()).unwrap();
@@ -1137,10 +1562,13 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
     let receipt = call_when_ready(&webview, "adopt_execution", apply.clone()).unwrap();
     assert_eq!(receipt["changes"].as_array().unwrap().len(), 3);
     let expected_read = json!({"action":action,"receipt":receipt});
+    assert_eq!(call(&webview, "read_execution_adoption_action", renewed.clone()).unwrap(), expected_read);
     for field in ["projectId", "attemptId", "unitId", "sessionToken"] {
         let mut wrong = renewed.clone(); wrong[field] = json!(ExecutionId::new());
         assert!(call(&webview, "read_execution_adoption_action", wrong).is_err());
     }
+    let mut wrong = renewed.clone(); wrong["resultIds"] = json!([ExecutionId::new()]);
+    assert!(call(&webview, "read_execution_adoption_action", wrong).is_err());
     let sequence = app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(Revision::new(0).unwrap()).sequence);
     app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing = true; });
     assert_eq!(call(&webview, "read_execution_adoption_action", renewed.clone()).unwrap(), expected_read);
@@ -1206,6 +1634,198 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
             .unwrap(),
         4
     );
+}
+
+#[test]
+fn invoke_continuation_history_reads_and_exact_replay_preserve_reopened_execution_inactivity() {
+    let (temp, app, webview, context) = setup();
+    let attempt = call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"partial","delayMs":1,"grouped":true}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    let before = detail(&webview, &context, &attempt);
+    let task_id = before["taskId"].clone();
+    let unit = &before["recovery"]["units"][0];
+    let task = call(
+        &webview,
+        "read_execution_task_view",
+        request(&context, json!({"taskId":task_id})),
+    )
+    .unwrap();
+    assert_eq!(task["cancellationRevision"], "0");
+    let action = json!({"actionId":ExecutionId::new(),"projectId":context["projectId"],"sourceAttemptId":attempt,
+        "unitId":unit["unitId"],"kind":"retry-safe-failure","itemIds":unit["remainingItemIds"],"expectedCancellationRevision":"0"});
+    let saved = call(
+        &webview,
+        "continue_execution",
+        request(&context, json!({"action":action})),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
+    let opened = call(
+        &webview,
+        "open_project",
+        json!({"locator":temp.path().join("project")}),
+    )
+    .unwrap();
+    let reopened =
+        json!({"sessionToken":opened["sessionToken"],"projectId":opened["metadata"]["projectId"]});
+    let attempts_request = request(&reopened, json!({"taskId":task_id,"after":"0","limit":100}));
+    let attempts = call(&webview, "read_execution_task", attempts_request.clone()).unwrap();
+    app.state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+    let exact = request(&reopened, json!({"actionId":action["actionId"]}));
+    let history = request(
+        &reopened,
+        json!({"sourceAttemptId":attempt,"after":"0","limit":1}),
+    );
+    assert_eq!(
+        call(&webview, "read_execution_continuation", exact.clone()).unwrap(),
+        saved
+    );
+    assert_eq!(
+        call(&webview, "read_execution_continuations", history.clone()).unwrap(),
+        json!({"receipts":[saved],"next":saved["sequence"]})
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "continue_execution",
+            request(&reopened, json!({"action":action}))
+        )
+        .unwrap(),
+        saved
+    );
+    assert!(
+        call(
+            &webview,
+            "read_execution_continuation",
+            request(&reopened, json!({"actionId":ExecutionId::new()}))
+        )
+        .unwrap()
+        .is_null()
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "read_execution_task_view",
+            request(&reopened, json!({"taskId":task_id}))
+        )
+        .unwrap(),
+        task
+    );
+    for (command, valid) in [
+        ("read_execution_continuation", exact),
+        ("read_execution_continuations", history),
+        (
+            "read_execution_task_view",
+            request(&reopened, json!({"taskId":task_id})),
+        ),
+    ] {
+        let mut wrong_session = valid.clone();
+        wrong_session["sessionToken"] = context["sessionToken"].clone();
+        assert_eq!(
+            call(&webview, command, wrong_session).unwrap_err()["code"],
+            "session-invalid"
+        );
+        let mut wrong_project = valid;
+        wrong_project["projectId"] = json!(ExecutionId::new());
+        assert_eq!(
+            call(&webview, command, wrong_project).unwrap_err()["code"],
+            "session-invalid"
+        );
+    }
+    assert_eq!(
+        call(&webview, "read_execution_task", attempts_request).unwrap(),
+        attempts
+    );
+    app.state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+}
+
+#[test]
+fn continuation_replay_uses_read_authority_before_the_host_mutation_gate() {
+    let (_temp, app, webview, context) = setup();
+    let attempt = call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"partial","delayMs":1,"grouped":true}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    let before = detail(&webview, &context, &attempt);
+    let unit = &before["recovery"]["units"][0];
+    let task = call(
+        &webview,
+        "read_execution_task_view",
+        request(&context, json!({"taskId":before["taskId"]})),
+    )
+    .unwrap();
+    let action = json!({"actionId":ExecutionId::new(),"projectId":context["projectId"],"sourceAttemptId":attempt,
+        "unitId":unit["unitId"],"kind":"retry-safe-failure","itemIds":unit["remainingItemIds"],"expectedCancellationRevision":task["cancellationRevision"]});
+    let original = request(&context, json!({"action":action}));
+    let saved = call(&webview, "continue_execution", original.clone()).unwrap();
+    settled(&webview, &context);
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.quiescing = true;
+    });
+    assert_eq!(
+        call(&webview, "continue_execution", original.clone()).unwrap(),
+        saved
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "read_execution_continuation",
+            request(&context, json!({"actionId":action["actionId"]}))
+        )
+        .unwrap(),
+        saved
+    );
+    let mut changed = original.clone();
+    changed["action"]["expectedCancellationRevision"] = json!("9223372036854775807");
+    assert_eq!(
+        call(&webview, "continue_execution", changed).unwrap_err()["code"],
+        "result-mismatch"
+    );
+    let fresh_id = ExecutionId::new();
+    let mut fresh = original;
+    fresh["action"]["actionId"] = json!(fresh_id);
+    assert_eq!(
+        call(&webview, "continue_execution", fresh).unwrap_err()["code"],
+        "busy"
+    );
+    assert!(
+        call(
+            &webview,
+            "read_execution_continuation",
+            request(&context, json!({"actionId":fresh_id}))
+        )
+        .unwrap()
+        .is_null()
+    );
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.quiescing = false;
+    });
 }
 
 #[test]
@@ -1358,12 +1978,12 @@ fn review_computation_allows_save_close_and_completion_after_waiter_loss() {
             reached,
             release: resume,
         });
-        let mut pending = Box::pin(review::run_review_checks(
+        let mut pending = Box::pin(review::run_fixture_review_checks(
             app.state::<AppState>(),
             serde_json::from_value(request(
                 &context,
                 json!({"unitId":unit.unit_id,"locale":"zh-CN",
-                "expectedBasis":target["basis"],"actionId":action_id}),
+                "expectedBasis":target["basis"],"actionId":action_id,"advisoryChecks":[]}),
             ))
             .unwrap(),
         ));
@@ -1438,37 +2058,6 @@ fn review_computation_allows_save_close_and_completion_after_waiter_loss() {
     }
 }
 
-#[test]
-fn cancellation_action_ipc_reads_exact_requests_without_initializing_or_replaying_runtime() {
-    let (temp, app, webview, context) = setup();
-    let missing = request(&context, json!({"taskId":ExecutionId::new(),"requestId":ExecutionId::new()}));
-    assert_eq!(call(&webview, "read_execution_cancellation_action", missing).unwrap(), Value::Null);
-    app.state::<AppState>().sessions.with(|sessions| { assert!(sessions.active.as_ref().unwrap().execution.is_none()); });
-    let attempt = call(&webview, "seed_execution_fixture", request(&context, json!({"mode":"success","delayMs":1,"grouped":false}))).unwrap();
-    settled(&webview, &context);
-    let detail = detail(&webview, &context, &attempt);
-    let mut original = request(&context, json!({"taskId":detail["taskId"],"requestId":ExecutionId::new()}));
-    assert_eq!(call(&webview, "read_execution_cancellation_action", original.clone()).unwrap(), Value::Null);
-    let revision = call(&webview, "cancel_execution_task", original.clone()).unwrap();
-    let expected = json!({"projectId":context["projectId"],"taskId":original["taskId"],"requestId":original["requestId"],"revision":revision});
-    let later = request(&context, json!({"taskId":detail["taskId"],"requestId":ExecutionId::new()}));
-    call(&webview, "cancel_execution_task", later).unwrap();
-    assert_eq!(call(&webview, "read_execution_cancellation_action", original.clone()).unwrap(), expected);
-    for field in ["projectId", "taskId", "sessionToken"] {
-        let mut wrong = original.clone(); wrong[field] = json!(ExecutionId::new());
-        assert!(call(&webview, "read_execution_cancellation_action", wrong).is_err());
-    }
-    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing = true; });
-    let sequence = app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence);
-    assert_eq!(call(&webview, "read_execution_cancellation_action", original.clone()).unwrap(), expected);
-    assert_eq!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence), sequence);
-    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing = false; });
-    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
-    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
-    assert!(call(&webview, "read_execution_cancellation_action", original.clone()).is_err());
-    original["sessionToken"] = reopened["sessionToken"].clone();
-    assert_eq!(call(&webview, "read_execution_cancellation_action", original).unwrap(), expected);
-}
 
 
 fn arena_receipt_source(

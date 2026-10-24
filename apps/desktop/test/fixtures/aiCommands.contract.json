@@ -31,8 +31,27 @@
         "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
         "maxOutputTokens": 2000,
         "credentialEnv": "",
-        "maxRetries": 0
+        "maxRetries": 0,
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        },
+        "contextStrategy": null
       }
+    },
+    "effectRetry": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "sessionToken": "isolated-ai-arena-session",
+      "itemId": "60000000-0000-4000-8000-000000000008"
+    },
+    "automaticRead": {
+      "sessionToken": "isolated-ai-arena-session",
+      "projectId": "214b8b70-4b8a-4806-a388-3dc9ef7ebdc9",
+      "attemptId": "74e32f43-5b49-4fd8-baa7-f2d51f3161be"
     }
   },
   "responses": {
@@ -66,7 +85,22 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
+            }
           }
         ],
         "config": {
@@ -81,7 +115,15 @@
           "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
           "maxOutputTokens": 2000,
           "credentialEnv": "",
-          "maxRetries": 0
+          "maxRetries": 0,
+          "sourceContext": {
+            "extracted": false,
+            "inferred": false,
+            "neighbors": false,
+            "maxBytes": 16384,
+            "maxItems": 128
+          },
+          "contextStrategy": null
         },
         "recipe": "direct-translation-1"
       }
@@ -115,7 +157,22 @@
               }
             ],
             "sourceText": "Barrel {name}",
-            "sourceLocale": "en"
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
+            }
           },
           "output": {
             "text": "木桶 👩🏽‍💻 é {name}",
@@ -125,10 +182,15 @@
             "targetLocale": "zh-CN",
             "usage": {
               "promptTokens": "9007199254740993",
-              "completionTokens": "18446744073709551615"
+              "completionTokens": "18446744073709551615",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
             }
           },
-          "resultId": "60000000-0000-4000-8000-000000000009"
+          "resultId": "60000000-0000-4000-8000-000000000009",
+          "savedRevisionId": null,
+          "automation": null
         }
       ],
       "detail": {
@@ -207,11 +269,597 @@
         "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
         "maxOutputTokens": 2000,
         "credentialEnv": "",
-        "maxRetries": 0
+        "maxRetries": 0,
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        },
+        "contextStrategy": null
       },
       "recipe": "direct-translation-1",
-      "budget": null
+      "budget": null,
+      "planId": null,
+      "planGeneration": null
     },
-    "identity": "60000000-0000-4000-8000-000000000002"
+    "identity": "60000000-0000-4000-8000-000000000002",
+    "effectRetry": true,
+    "automaticView": {
+      "budget": {
+        "completionTokens": "1",
+        "dispatched": 1,
+        "legacyHeld": 0,
+        "limit": 1,
+        "promptTokens": "1",
+        "unresolved": 0,
+        "usageUnknown": 0,
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
+      },
+      "config": {
+        "concurrency": 1,
+        "credentialEnv": "",
+        "endpoint": "http://127.0.0.1:54654/v1/chat/completions",
+        "maxItems": 20,
+        "maxOutputTokens": 2000,
+        "maxRequests": 1,
+        "maxRetries": 0,
+        "model": "synthetic-work-effects",
+        "shareContext": false,
+        "shareTerms": false,
+        "timeoutSeconds": 2,
+        "tokenField": "max_tokens",
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        },
+        "contextStrategy": null
+      },
+      "detail": {
+        "attemptId": "74e32f43-5b49-4fd8-baa7-f2d51f3161be",
+        "items": [
+          {
+            "resultId": "34737f66-4547-445e-9e5d-8db8648db55a",
+            "scope": {
+              "id": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3",
+              "kind": "translation-unit",
+              "locale": "zh-CN"
+            },
+            "status": {
+              "adoption": "committed",
+              "cancellationRequested": false,
+              "diagnostic": null,
+              "execution": "succeeded",
+              "itemId": "b42faef4-a565-4b4f-aa41-5a8b7cbc437e",
+              "retrySafe": false,
+              "validation": "valid"
+            }
+          }
+        ],
+        "nextOffset": null,
+        "operation": "ai-translation",
+        "progress": {
+          "adopted": 1,
+          "cancelled": 0,
+          "failed": 0,
+          "queued": 0,
+          "running": 0,
+          "succeeded": 1,
+          "total": 1,
+          "unknown": 0
+        },
+        "recovery": {
+          "attemptId": "74e32f43-5b49-4fd8-baa7-f2d51f3161be",
+          "units": [
+            {
+              "actions": [
+                "view-receipt"
+              ],
+              "blockedReason": null,
+              "itemIds": [
+                "b42faef4-a565-4b4f-aa41-5a8b7cbc437e"
+              ],
+              "receiptId": "5db3dcb4-48f8-41f0-a58b-16b38ac7cd36",
+              "remainingItemIds": [],
+              "resultIds": [
+                "34737f66-4547-445e-9e5d-8db8648db55a"
+              ],
+              "scopes": [
+                {
+                  "id": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3",
+                  "kind": "translation-unit",
+                  "locale": "zh-CN"
+                }
+              ],
+              "unitId": "806578ab-9a64-4b9a-8e23-baca24aab2f2"
+            }
+          ]
+        },
+        "taskId": "8af76f91-62b4-438c-9eab-8001a18ea0ed"
+      },
+      "planGeneration": "1",
+      "planId": "7b57d642-733c-4c52-b4dc-b4e06c41eb0e",
+      "recipe": "direct-translation-1",
+      "rows": [
+        {
+          "automation": {
+            "actionId": "4928bc6d-7f24-423b-840c-8259888b08c4",
+            "error": null,
+            "phase": "selected",
+            "receipt": {
+              "blocked": null,
+              "candidateBasis": {
+                "contextRevisionId": null,
+                "revisionId": "4203da61-71cc-4d88-a74f-32a18fc5ca14",
+                "selectionId": "d7bf4ae8-dbf4-4b06-a57a-bf2576160c40",
+                "sourceRevisionId": "524ad16e-9daf-475d-a2de-66b43c852dc5",
+                "sourceSnapshotId": "d6861ee2-0a7c-4260-866f-027bd7bf959b",
+                "termRevisionIds": []
+              },
+              "checkRunId": "234f6f72-5bb2-4487-aaac-548147298769",
+              "policy": "missing-only",
+              "policyVersion": "checked-selection-2",
+              "protectionRevision": "0",
+              "request": {
+                "actionId": "4928bc6d-7f24-423b-840c-8259888b08c4",
+                "lease": {
+                  "generation": "1",
+                  "planId": "7b57d642-733c-4c52-b4dc-b4e06c41eb0e"
+                },
+                "locale": "zh-CN",
+                "projectId": "214b8b70-4b8a-4806-a388-3dc9ef7ebdc9",
+                "revisionId": "4203da61-71cc-4d88-a74f-32a18fc5ca14",
+                "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3"
+              },
+              "rules": [
+                {
+                  "rule": "required-translation",
+                  "status": "passed",
+                  "reason": null,
+                  "findings": [],
+                  "key": {
+                    "rule": {
+                      "id": "required-translation",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    },
+                    "implementation": {
+                      "kind": "core",
+                      "validator": {
+                        "id": "tsumugi.core-review",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      }
+                    }
+                  },
+                  "mandatory": true
+                },
+                {
+                  "rule": "terminology",
+                  "status": "passed",
+                  "reason": null,
+                  "findings": [],
+                  "key": {
+                    "rule": {
+                      "id": "terminology",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    },
+                    "implementation": {
+                      "kind": "core",
+                      "validator": {
+                        "id": "tsumugi.core-review",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      }
+                    }
+                  },
+                  "mandatory": true
+                },
+                {
+                  "rule": "plugin:synthetic-domain-rule",
+                  "status": "passed",
+                  "reason": null,
+                  "findings": [],
+                  "key": {
+                    "rule": {
+                      "id": "synthetic-domain-rule",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    },
+                    "implementation": {
+                      "kind": "plugin",
+                      "provider": {
+                        "plugin": {
+                          "id": "example.review",
+                          "publisher": "example",
+                          "version": "0.1.0-alpha.1"
+                        },
+                        "componentId": "review",
+                        "contributionId": "checker",
+                        "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      }
+                    }
+                  },
+                  "mandatory": true
+                }
+              ],
+              "selection": {
+                "actionId": "4928bc6d-7f24-423b-840c-8259888b08c4",
+                "eventId": "d7bf4ae8-dbf4-4b06-a57a-bf2576160c40",
+                "locale": "zh-CN",
+                "previousEventId": null,
+                "revisionId": "4203da61-71cc-4d88-a74f-32a18fc5ca14",
+                "sequence": "1",
+                "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3"
+              },
+              "validatorVersion": "tsumugi.core-review:1:1",
+              "evidence": {
+                "qaBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "requiredChecks": {
+                  "policy": {
+                    "id": "tsumugi.policy.balanced",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "requirements": [
+                    {
+                      "key": {
+                        "rule": {
+                          "id": "required-translation",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "implementation": {
+                          "kind": "core",
+                          "validator": {
+                            "id": "tsumugi.core-review",
+                            "schemaVersion": 1,
+                            "behaviorVersion": 1
+                          }
+                        }
+                      },
+                      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "targets": [
+                        "synthetic-unit"
+                      ],
+                      "mandatory": true,
+                      "waivable": false,
+                      "notApplicable": null
+                    },
+                    {
+                      "key": {
+                        "rule": {
+                          "id": "terminology",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "implementation": {
+                          "kind": "core",
+                          "validator": {
+                            "id": "tsumugi.core-review",
+                            "schemaVersion": 1,
+                            "behaviorVersion": 1
+                          }
+                        }
+                      },
+                      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "targets": [
+                        "synthetic-unit"
+                      ],
+                      "mandatory": true,
+                      "waivable": true,
+                      "notApplicable": null
+                    },
+                    {
+                      "key": {
+                        "rule": {
+                          "id": "synthetic-domain-rule",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "implementation": {
+                          "kind": "plugin",
+                          "provider": {
+                            "plugin": {
+                              "id": "example.review",
+                              "publisher": "example",
+                              "version": "0.1.0-alpha.1"
+                            },
+                            "componentId": "review",
+                            "contributionId": "checker",
+                            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                          }
+                        }
+                      },
+                      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "targets": [
+                        "synthetic-unit"
+                      ],
+                      "mandatory": true,
+                      "waivable": false,
+                      "notApplicable": null
+                    }
+                  ]
+                },
+                "results": [
+                  {
+                    "key": {
+                      "rule": {
+                        "id": "required-translation",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      },
+                      "implementation": {
+                        "kind": "core",
+                        "validator": {
+                          "id": "tsumugi.core-review",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        }
+                      }
+                    },
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "coveredTargets": [
+                      "synthetic-unit"
+                    ],
+                    "outcome": {
+                      "kind": "completed",
+                      "findings": []
+                    }
+                  },
+                  {
+                    "key": {
+                      "rule": {
+                        "id": "terminology",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      },
+                      "implementation": {
+                        "kind": "core",
+                        "validator": {
+                          "id": "tsumugi.core-review",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        }
+                      }
+                    },
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "coveredTargets": [
+                      "synthetic-unit"
+                    ],
+                    "outcome": {
+                      "kind": "completed",
+                      "findings": []
+                    }
+                  },
+                  {
+                    "key": {
+                      "rule": {
+                        "id": "synthetic-domain-rule",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      },
+                      "implementation": {
+                        "kind": "plugin",
+                        "provider": {
+                          "plugin": {
+                            "id": "example.review",
+                            "publisher": "example",
+                            "version": "0.1.0-alpha.1"
+                          },
+                          "componentId": "review",
+                          "contributionId": "checker",
+                          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        }
+                      }
+                    },
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "coveredTargets": [
+                      "synthetic-unit"
+                    ],
+                    "outcome": {
+                      "kind": "completed",
+                      "findings": []
+                    }
+                  }
+                ],
+                "sourceBinding": {
+                  "declaration": {
+                    "profile": {
+                      "id": "example.plain-text",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    },
+                    "checker": "checker",
+                    "rules": [
+                      {
+                        "rule": {
+                          "id": "synthetic-domain-rule",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "requiresTranslation": true
+                      }
+                    ]
+                  },
+                  "checker": {
+                    "capability": {
+                      "provider": {
+                        "plugin": {
+                          "id": "example.review",
+                          "publisher": "example",
+                          "version": "0.1.0-alpha.1"
+                        },
+                        "componentId": "review",
+                        "contributionId": "checker",
+                        "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      },
+                      "declaration": {
+                        "contract": {
+                          "id": "example.review-check",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "inputSchema": {
+                          "id": "tsumugi.review-check-input",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "outputSchema": {
+                          "id": "tsumugi.check-results",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "errorSchema": {
+                          "id": "tsumugi.review-check-error",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "profiles": [
+                          {
+                            "id": "example.plain-text",
+                            "schemaVersion": 1,
+                            "behaviorVersion": 1
+                          }
+                        ],
+                        "effect": "read-only",
+                        "permissions": [
+                          {
+                            "kind": "captured-input"
+                          }
+                        ],
+                        "limits": {
+                          "maxInputBytes": 4194304,
+                          "maxOutputBytes": 2097152,
+                          "concurrency": 1,
+                          "timeoutMs": 30000
+                        }
+                      }
+                    },
+                    "environment": {
+                      "protocolVersion": 1,
+                      "platform": {
+                        "operatingSystem": "macos",
+                        "architecture": "aarch64"
+                      },
+                      "sdkVersion": "0.1.0-alpha.1",
+                      "processProtocol": 3,
+                      "profile": "node-system-libraries-v1",
+                      "toolVersion": "26.10.0",
+                      "tool": {
+                        "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+                        "entrypoint": "bin/node"
+                      },
+                      "host": {
+                        "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+                        "entrypoint": "dist/main.js"
+                      }
+                    },
+                    "profile": {
+                      "id": "example.plain-text",
+                      "schemaVersion": 1,
+                      "behaviorVersion": 1
+                    },
+                    "componentScope": "project",
+                    "applicationScope": null
+                  }
+                },
+                "advisoryChecks": [],
+                "origins": [
+                  {
+                    "checker": {
+                      "provider": {
+                        "plugin": {
+                          "id": "example.review",
+                          "publisher": "example",
+                          "version": "0.1.0-alpha.1"
+                        },
+                        "componentId": "review",
+                        "contributionId": "checker",
+                        "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      },
+                      "profile": {
+                        "id": "example.plain-text",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      }
+                    },
+                    "attemptId": "00000000-0000-4000-8000-000000000051",
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "resultId": "00000000-0000-4000-8000-000000000052",
+                    "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "outcome": "succeeded"
+                  }
+                ],
+                "diagnostics": []
+              },
+              "capturedSelectionId": null
+            },
+            "retryable": false
+          },
+          "item": {
+            "context": null,
+            "nativeKey": "first",
+            "omissions": [
+              "terms-not-shared",
+              "context-not-shared"
+            ],
+            "resourceBaseline": "0",
+            "sourceLocale": "en-US",
+            "sourceRevisionId": "524ad16e-9daf-475d-a2de-66b43c852dc5",
+            "sourceSnapshotId": "d6861ee2-0a7c-4260-866f-027bd7bf959b",
+            "sourceText": "Hello",
+            "targetLocale": "zh-CN",
+            "terms": [],
+            "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "not-selected"
+            }
+          },
+          "itemId": "b42faef4-a565-4b4f-aa41-5a8b7cbc437e",
+          "output": {
+            "requests": 1,
+            "targetLocale": "zh-CN",
+            "text": "你好 {unexpected}",
+            "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3",
+            "usage": {
+              "completionTokens": "1",
+              "promptTokens": "1",
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null
+            },
+            "usageIncomplete": false
+          },
+          "resultId": "34737f66-4547-445e-9e5d-8db8648db55a",
+          "savedRevisionId": "4203da61-71cc-4d88-a74f-32a18fc5ca14"
+        }
+      ]
+    }
   }
 }

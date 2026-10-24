@@ -1,9 +1,18 @@
+import directAiFixture from "../test/fixtures/aiCommands.contract.json";
+import toolWorkflow from "../test/fixtures/pluginToolWorkflow.contract.json";
+import generationWorkflow from "../test/fixtures/workPlanGenerationComponent.contract.json";
+import { toolQueryView } from "./testSupport/pluginToolFixture";
+import workPlanWire from "../test/fixtures/workPlanCommands.contract.json";
+import sourceWorkflow from "../test/fixtures/pluginSourceWorkflow.contract.json";
+import buildWorkflow from "../test/fixtures/pluginBuildWorkflow.contract.json";
+import translationWorkflow from "../test/fixtures/pluginTranslationExecution.contract.json";
+import translationCapture from "../test/fixtures/pluginTranslationCapture.contract.json";
 import { describe, expect, it, vi } from "vitest";
-import sourceFixture from "../test/fixtures/sourceCommands.contract.json";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import translationFixture from "../test/fixtures/translation-commands.json";
 import { validateResponseDelivery } from "./generated/release.validators";
-import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
+import { validateRequestWorkPlanAuthorize } from "./generated/ai.validators";
+import { WorkbenchCommands, type AiStartCommandPayload, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
 
@@ -42,7 +51,7 @@ describe("Translation business command payloads",()=>{
     scope:translationScope,binding:null,risk:"writes-translation" as const,confirmation:"none" as const};
   const setup={kind:"translation-import-setup" as const,editSeq:1,locale:"zh-CN",selectionId:translationFixture.start.selectionId,fileName:"zh.json"};
   const consent={...setup,kind:"translation-import-consent" as const,sourceSnapshotId:translationFixture.start.expectedSourceSnapshotId,
-    fileDigest:translationFixture.start.expectedFileDigest,declaredLocale:"zh",confirmed:true};
+    fileDigest:translationCapture.preflight.file.sha256,inputDigest:translationCapture.preflight.inputDigest,producerConsent:true,confirmed:true};
   const target={editSeq:1,attemptId:translationFixture.start.attemptId,bundleId:"bundle",basis:"basis",locale:"zh-CN",
     fixedSourceSnapshotId:translationFixture.start.expectedSourceSnapshotId,currentSourceSnapshotId:translationFixture.start.expectedSourceSnapshotId,
     fileDigest:"file",previewResultDigest:"results"};
@@ -51,13 +60,35 @@ describe("Translation business command payloads",()=>{
   const selection=translationFixture.select;
   const revision={kind:"translation-revision" as const,unitId:"unit",locale:"zh-CN",sourceRevisionId:"current-revision",expectedSelectionId:null,
     editSeq:1,revisionId:"revision",revisionActionId:"action",revisionOrdinal:"1",revisionSourceRevisionId:"source",revisionSourceSnapshotId:"snapshot"};
+  const plugin = { kind: "translation-plugin" as const, editSeq: 1, extractionAttemptId: translationWorkflow.start.attemptId,
+    extractionResultId: translationWorkflow.checkPrepare.translationResultId, checkAttemptId: translationWorkflow.checkPrepare.attemptId,
+    checkInputDigest: translationWorkflow.checkReview.inputDigest, checkResultId: translationWorkflow.checkFinish.resultId,
+    projectionAttemptId: translationWorkflow.projectionStart.attemptId, projectionInputDigest: translationWorkflow.projectionStart.inputDigest, checkerConsent: true };
   it.each([
+    ["translation.propose-term", { kind: "translation-correction", target: { unitId: "unit", sourceRevisionId: "source", key: "entry", sourceText: "Original" }, locale: "zh-CN", sourceSnapshotId: "snapshot", selectionId: "selection", revisionId: "revision", readVersion: "view", editSeq: 1 }, [{ selectionId: "" }, { revisionId: "" }, { editSeq: -1 }, { target: null }]],
+    ["translation.edit-context",{kind:"translation-context",target:{unitId:"unit",sourceRevisionId:"source",key:"entry",sourceText:"Original"},locale:"zh-CN",sourceSnapshotId:"snapshot",contextRevisionId:null,readVersion:"view",editSeq:1},
+      [{target:null},{target:{unitId:"unit"}},{contextRevisionId:undefined},{readVersion:""},{editSeq:-1}]],
+    ["translation.protect-work", { kind: "translation-protection", protected: true, basis: { request: { projectId: workPlanWire.requests.protectionSet.projectId, sessionToken: workPlanWire.requests.protectionSet.sessionToken, unitId: workPlanWire.requests.protectionSet.unitId, locale: workPlanWire.requests.protectionSet.locale, sourceRevisionId: workPlanWire.requests.protectionSet.sourceRevisionId, selectionId: workPlanWire.requests.protectionSet.selectionId, expectedRevision: workPlanWire.requests.protectionSet.expectedRevision }, key: "entry", sourceText: "Source", selectionText: null } }, [{ basis: null }, { protected: false }]],
+    ["translation.release-work", { kind: "translation-protection", protected: false, basis: { request: { projectId: workPlanWire.requests.protectionSet.projectId, sessionToken: workPlanWire.requests.protectionSet.sessionToken, unitId: workPlanWire.requests.protectionSet.unitId, locale: workPlanWire.requests.protectionSet.locale, sourceRevisionId: workPlanWire.requests.protectionSet.sourceRevisionId, selectionId: workPlanWire.requests.protectionSet.selectionId, expectedRevision: workPlanWire.requests.protectionSet.expectedRevision }, key: "entry", sourceText: "Source", selectionText: null } }, [{ basis: null }, { protected: true }]],
+    ["translation.retry-protection", { kind: "translation-protection-pending", request: workPlanWire.requests.protectionSet, key: "entry" }, [{ request: {} }, { key: null }]],
+    ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "capture", request: translationCapture.capture }, [{ request: {} }, { pendingKind: "other" }]],
+    ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "prepare-check", request: translationWorkflow.checkPrepare }, [{ request: {} }]],
+    ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "prepare-projection", request: translationWorkflow.projectionPrepare }, [{ request: {} }]],
+    ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "start-check", request: { ...translationWorkflow.start, attemptId: translationWorkflow.checkReview.attemptId, inputDigest: translationWorkflow.checkReview.inputDigest } }, [{ request: {} }]],
+    ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "finish-check", request: translationWorkflow.checkFinish }, [{ request: {} }]],
+    ["translation.retry-import-plugin", { kind: "translation-plugin-pending", pendingKind: "start-projection", request: translationWorkflow.projectionStart }, [{ request: {} }]],
+    ["translation.check-import-projection-start", { kind: "translation-plugin-pending", pendingKind: "start-projection", request: translationWorkflow.projectionStart }, [{ request: {} }, { request: { ...translationWorkflow.projectionStart, grantId: "extra" } }]],
+    ["translation.prepare-import-check", plugin, [{ extractionAttemptId: null }, { checkInputDigest: null }]],
+    ["translation.start-import-check", plugin, [{ checkAttemptId: null }, { checkerConsent: "yes" }]],
+    ["translation.finish-import-check", plugin, [{ checkResultId: false }]],
+    ["translation.prepare-import-projection", plugin, [{ projectionInputDigest: null }]],
+    ["translation.start-import-projection", plugin, [{ projectionAttemptId: "" }]],
+
     ["translation.choose-import-folder",setup,[{editSeq:-1},{selectionId:undefined}]],
     ["translation.inspect-import",setup,[{locale:""},{fileName:null}]],
     ["translation.confirm-import-language",consent,[{confirmed:"yes"},{fileDigest:""}]],
     ["translation.start-import",consent,[{sourceSnapshotId:null},{selectionId:null}]],
-    ["translation.check-import-start",{kind:"translation-import-start-pending",request:translationFixture.start},[{request:{}}]],
-    ["translation.retry-import-start",{kind:"translation-import-start-pending",request:translationFixture.start},[{request:{}}]],
+    ["translation.retry-import-start",{kind:"translation-import-start-pending",request:translationWorkflow.start},[{request:{}}]],
     ["translation.choose-import-row",{...target,...row,kind:"translation-import-row",decision:"candidate-only"},[{expectedSelectionId:undefined},{decision:"other"}]],
     ["translation.apply-import-row",{...target,...row,kind:"translation-import-row",decision:"select-if-empty"},[{ordinal:-1},{itemId:null}]],
     ["translation.capture-import-batch",{...target,kind:"translation-import-preview",selectIfEmpty:true},[{selectIfEmpty:"yes"},{basis:""}]],
@@ -82,6 +113,22 @@ describe("Translation business command payloads",()=>{
 });
 
 describe("WorkbenchCommands", () => {
+  it("validates the current Review navigation row and scope before dispatching its typed AI command", () => {
+    const commands = new WorkbenchCommands(), handler = vi.fn(), availability = vi.fn(() => ({ enabled: true }));
+    const context = { projectId: "project", sessionToken: "session", area: "ai" as const };
+    const id = "00000000-0000-0000-0000-000000000001";
+    const payload = { kind: "ai-translation-target" as const, attemptId: id, taskId: id, itemId: id, translationUnitId: id,
+      sourceRevisionId: id, sourceSnapshotId: id, locale: "zh-CN" };
+    const remove = commands.register({ id: "ai.open-review", nameKey: "ai.reviewHandoff.open", category: "ai", scope: context,
+      binding: null, risk: "opens-review", confirmation: "none", payloadKind: "ai-translation-target", availability, handler });
+    expect(commands.dispatch("ai.open-review", context, { ...payload, sourceRevisionId: "" })).toBe(false);
+    expect(commands.dispatch("ai.open-review", { ...context, sessionToken: "old" }, payload)).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+    expect(commands.describe("ai.open-review", context, payload)?.availability.enabled).toBe(true);
+    expect(commands.dispatch("ai.open-review", context, payload)).toBe(true);
+    expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+    remove(); expect(commands.dispatch("ai.open-review", context, payload)).toBe(false);
+  });
   it("dispatches only the live committed project, session, and area", () => {
     const commands = new WorkbenchCommands();
     const save = vi.fn();
@@ -178,14 +225,28 @@ describe("resource command payloads", () => {
   const metadata = { nameKey: "resource.save" as const, category: "resources" as const, scope: resourceScope,
     binding: null, risk: "writes-resources" as const, confirmation: "none" as const };
   it.each([
+    ["resource.prepare-tool", { kind: "resource-tool-preparation", editSeq: 1, tool: toolWorkflow.request, view: toolQueryView }, [{ tool: {} }, { view: {} }, { editSeq: -1 }]],
+    ["resource.start-tool", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.start.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ inputDigest: null }, { editSeq: NaN }]],
+    ["resource.stop-tool-instance", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.start.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ inputDigest: null }, { attemptId: "" }]],
+    ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "stop-instance", request: { actionId: toolWorkflow.start.grantId, basis: { instanceId: toolWorkflow.start.attemptId, activationGeneration: 1 } } } }, [{ intent: { kind: "stop-instance", request: { actionId: toolWorkflow.start.grantId, basis: {} } } }]],
+    ["resource.discard-tool", { kind: "resource-tool-capture", editSeq: 1, attemptId: toolWorkflow.discard.attemptId, inputDigest: toolWorkflow.start.inputDigest }, [{ attemptId: "" }]],
+    ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "prepare", request: toolWorkflow.prepare, view: toolQueryView, sequence: 1 } }, [{ intent: {} }, { intent: { kind: "prepare", request: {}, view: toolQueryView, sequence: 1 } }]],
+    ["resource.retry-tool", { kind: "resource-tool-pending", intent: { kind: "start", request: toolWorkflow.start, review: toolWorkflow.preflight, sequence: 1 } }, [{ intent: { kind: "start", request: {}, review: toolWorkflow.preflight, sequence: 1 } }]],
+    ["resource.check-tool-start", { kind: "resource-tool-pending", intent: { kind: "start", request: toolWorkflow.start, review: toolWorkflow.preflight, sequence: 1 } }, [{ intent: { kind: "start", request: {}, review: toolWorkflow.preflight, sequence: 1 } }]],
+    ["resource.cancel-tool", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "resources" }, [{ origin: "other" }]],
+    ["resource.retry-tool-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "resources", requestId: "original" }, [{ requestId: null }]],
+    ["resource.check-tool-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "resources", requestId: "original" }, [{ requestId: null },{origin:"other"}]],
+
     ["resource.save-term", { kind: "resource-term", locale: "zh-CN", termId: null, expectedRevisionId: null, editSeq: 0 }, [{ editSeq: -1 }, { editSeq: 1.5 }, { termId: undefined }, { expectedRevisionId: "" }]],
     ["resource.save-context", { kind: "resource-context", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, editSeq: 1 }, [{ sourceRevisionId: 7 }, { unitId: "" }, { expectedRevisionId: undefined }]],
     ["resource.capture-context", { kind: "resource-context", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, editSeq: 1 }, [{ editSeq: NaN }, { locale: "" }]],
+    ["resource.adopt-context-basis", { kind: "resource-context-basis", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, currentRevisionId: "current", editSeq: 1 }, [{ currentRevisionId: undefined }, { editSeq: -1 }, { expectedRevisionId: "" }]],
     ["resource.choose-file", { kind: "resource-locale", locale: "zh-CN" }, [{ locale: [] }]],
     ["resource.open-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ captureId: "" }, { digest: null }]],
     ["resource.refresh-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ locale: false }]],
     ["resource.decide-entry", { kind: "resource-decision", captureId: "capture", digest: "digest", locale: "zh-CN", entryId: "entry", expectedRevisionId: null, decision: "keep", rowKind: "added", scopeUnitId: null }, [{ decision: "delete" }, { rowKind: "missing" }, { expectedRevisionId: undefined }, { scopeUnitId: undefined }]],
-    ["resource.check-pending", { kind: "resource-pending", pendingKind: "term", actionId: "action" }, [{ pendingKind: "picker" }, { actionId: "" }]],
+    ["resource.capture-correction", { kind: "resource-correction", locale: "zh-CN", afterSelectionId: "selection", editSeq: 1 }, [{ locale: "" }, { afterSelectionId: "" }, { editSeq: -1 }]],
+    ["resource.check-pending", { kind: "resource-pending", pendingKind: "correction", actionId: "action" }, [{ pendingKind: "picker" }, { actionId: "" }]],
     ["resource.retry-pending", { kind: "resource-pending", pendingKind: "term", actionId: "action" }, [{ pendingKind: "picker" }, { actionId: "" }]],
     ["resource.open-translation", { kind: "resource-translation", locale: "zh-CN", target: { unitId: "unit", sourceRevisionId: "source", key: "key", sourceText: "" }, evidenceKind: "tm", evidenceId: "revision", selectionId: null }, [{ target: null }, { target: { unitId: "unit" } }, { evidenceKind: "impact", selectionId: null }, { evidenceKind: "tm", selectionId: "selection" }]],
   ] as const)("validates %s before invoking its live handler", (id, payload, malformed) => {
@@ -210,16 +271,25 @@ describe("source command payloads", () => {
   const metadata = { nameKey: "source.search" as const, category: "source" as const, scope: sourceScope,
     binding: null, risk: "reads-source" as const, confirmation: "none" as const };
   it.each([
-    ["source.select", { kind: "source-selection", domain: "webvtt", integrationId: "webvtt", version: "0.1.0" }, [{ domain: null }, { version: "" }]],
-    ["source.preflight", { kind: "source-capture", selectionId: "selection", sourceLanguage: "en" }, [{ selectionId: undefined }, { sourceLanguage: false }]],
-    ["source.start", { kind: "source-capture", selectionId: "selection", sourceLanguage: "en" }, [{ sourceLanguage: [] }]],
+    ["source.prepare-check", { kind: "source-check", source: sourceWorkflow.prepareCheck.source, sourceAttemptId: sourceWorkflow.prepareCheck.sourceAttemptId, sourceResultId: sourceWorkflow.prepareCheck.sourceResultId,
+      checkAttemptId: null, inputDigest: null, checkResultId: null, checkerConsent: false }, [{ source: {} }, { sourceResultId: "" }]],
+    ["source.start-check", { kind: "source-check", source: sourceWorkflow.prepareCheck.source, sourceAttemptId: sourceWorkflow.prepareCheck.sourceAttemptId, sourceResultId: sourceWorkflow.prepareCheck.sourceResultId,
+      checkAttemptId: sourceWorkflow.checkReview.attemptId, inputDigest: sourceWorkflow.checkReview.inputDigest, checkResultId: null, checkerConsent: true }, [{ checkerConsent: "yes" }, { inputDigest: null }]],
+    ["source.finish-check", { kind: "source-check", source: sourceWorkflow.prepareCheck.source, sourceAttemptId: sourceWorkflow.prepareCheck.sourceAttemptId, sourceResultId: sourceWorkflow.prepareCheck.sourceResultId,
+      checkAttemptId: sourceWorkflow.checkReview.attemptId, inputDigest: sourceWorkflow.checkReview.inputDigest, checkResultId: sourceWorkflow.finishCheck.resultId, checkerConsent: false }, [{ checkResultId: "" }]],
+    ["source.check-plugin-start", { kind: "source-plugin-pending", pendingKind: "start-check", request: sourceWorkflow.start }, [{ request: {} }]],
+    ["source.retry-plugin-request", { kind: "source-plugin-pending", pendingKind: "capture", request: sourceWorkflow.capture }, [{ request: {} }, { pendingKind: "other" }]],
+
+    ["source.select", { kind: "source-selection", request: sourceWorkflow.select }, [{ request: null }, { request: { ...sourceWorkflow.select, source: {} } }]],
+    ["source.preflight", { kind: "source-capture", selectionId: "selection", sourceLanguage: "en", attemptId: null, inputDigest: null, producerConsent: false }, [{ selectionId: undefined }, { sourceLanguage: false }]],
+    ["source.start", { kind: "source-capture", selectionId: "selection", sourceLanguage: "en", attemptId: sourceWorkflow.start.attemptId, inputDigest: sourceWorkflow.start.inputDigest, producerConsent: true }, [{ sourceLanguage: [] }, { inputDigest: null }]],
     ["source.apply", { kind: "source-basis", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: null, base: null, editSeq: 0 }, [{ revision: 1 }, { currentSnapshot: undefined }, { editSeq: 1.5 }]],
     ["source.estimate", { kind: "source-basis", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", base: "base", editSeq: 1 }, [{ base: "" }, { editSeq: -1 }]],
     ["source.search-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: "base", filter: "A", after: 1, editSeq: 1 }, [{ filter: [] }, { after: -1 }, { originalBase: null }]],
     ["source.refresh-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: null, filter: "", after: 0, editSeq: 1 }, [{ base: undefined }]],
-    ["source.check-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceFixture.start.attemptId, actionId: null, request: sourceFixture.start }, [{ request: null }, { request: {} }]],
-    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceFixture.start.attemptId, actionId: null, request: sourceFixture.start }, [{ actionId: "action" }, { pendingKind: "other" }, { request: null }]],
-    ["source.check-receipt", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action", request: null }, [{ actionId: null }]],
+    ["source.check-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceWorkflow.start.attemptId, actionId: null, request: sourceWorkflow.start }, [{ request: undefined }, { request: { ...sourceWorkflow.start, attemptId: "other" } }]],
+    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceWorkflow.start.attemptId, actionId: null, request: sourceWorkflow.start }, [{ actionId: "action" }, { pendingKind: "other" }]],
+    ["source.check-receipt", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action", request: null }, [{ actionId: null }, { request: undefined }, { request: sourceWorkflow.start }]],
     ["source.retry-apply", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action", request: null }, [{ actionId: undefined }]],
     ["source.cancel-task", { kind: "source-task", attemptId: "attempt", taskId: "task" }, [{ taskId: "" }]],
     ["source.read-page", { kind: "source-page", snapshotId: null, attemptId: "attempt", resultId: "result", after: 50 }, [{ snapshotId: undefined }, { after: NaN }]],
@@ -255,14 +325,61 @@ describe("AI command payloads", () => {
     binding: null, risk: "captures-ai" as const, confirmation: "none" as const };
   const item = { attemptId: "attempt", taskId: "task", itemId: "item", translationUnitId: "unit", locale: "zh-CN",
     sourceRevisionId: "revision", sourceSnapshotId: "snapshot" };
+  const teamStart: AiStartCommandPayload = { kind: "ai-start", attemptId: "attempt", editSeq: 2,
+    planId: workPlanWire.responses.plan.planId, digest: workPlanWire.responses.plan.digest, minutes: 60, confirmed: true,
+    checkerExecutions: [], toolExecution: false, applicationToolExecutions: [],
+    effects: ["save-candidate", "run-checks", "publish-discussion", "dispatch-team-work", "send-team-message"] };
+  describe("AI start effect validation", () => {
+    it("dispatches the generated contract's team automation effects to the live owner", () => {
+      expect(validateRequestWorkPlanAuthorize({ ...workPlanWire.requests.authorize, effects: teamStart.effects })).toBe(true);
+      const commands = new WorkbenchCommands(), handler = vi.fn();
+      commands.register({ ...metadata, id: "ai.start", payloadKind: "ai-start", availability: () => ({ enabled: true }), handler });
+      expect(commands.dispatch("ai.start", aiScope, teamStart)).toBe(true);
+      expect(handler).toHaveBeenCalledExactlyOnceWith(teamStart);
+      expect(commands.describe("ai.start", aiScope, teamStart)?.availability.enabled).toBe(true);
+    });
+    it.each([
+      ["unknown", [...teamStart.effects, "unknown-effect"]],
+      ["duplicate", [...teamStart.effects, "send-team-message"]],
+    ])("rejects %s effects before invoking the live owner", (_kind, effects) => {
+      const commands = new WorkbenchCommands(), handler = vi.fn(), availability = vi.fn(() => ({ enabled: true }));
+      commands.register({ ...metadata, id: "ai.start", payloadKind: "ai-start", availability, handler });
+      const payload = { ...teamStart, effects };
+      expect(Reflect.apply(commands.dispatch, commands, ["ai.start", aiScope, payload])).toBe(false);
+      expect(Reflect.apply(commands.describe, commands, ["ai.start", aiScope, payload])?.availability.enabled).toBe(false);
+      expect(availability).not.toHaveBeenCalled();
+      expect(handler).not.toHaveBeenCalled();
+    });
+  });
   it.each([
+    ["ai.plan.pause", { kind: "ai-plan-control", command: "pause", planId: workPlanWire.requests.control.planId, expectedGeneration: workPlanWire.requests.control.expectedGeneration, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] }, [{ command: "other" }, { expectedGeneration: "01" }, { minutes: NaN }]],
+    ["ai.plan.stop", { kind: "ai-plan-control", command: "stop", planId: workPlanWire.requests.control.planId, expectedGeneration: workPlanWire.requests.control.expectedGeneration, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] }, [{ command: "other" }, { expectedGeneration: "01" }, { minutes: NaN }]],
+    ["ai.plan.take-over", { kind: "ai-plan-control", command: "take-over", planId: workPlanWire.requests.control.planId, expectedGeneration: workPlanWire.requests.control.expectedGeneration, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] }, [{ command: "other" }, { expectedGeneration: "01" }, { minutes: NaN }]],
+    ["ai.plan.continue", { kind: "ai-plan-control", command: "continue", planId: workPlanWire.requests.control.planId, expectedGeneration: workPlanWire.requests.control.expectedGeneration, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] }, [{ command: "other" }, { expectedGeneration: "01" }, { minutes: NaN }]],
+    ["ai.plan.start-authorized", { kind: "ai-plan-start", request: workPlanWire.requests.start, attemptId: "attempt" }, [{ request: {} }, { attemptId: "" }]],
+    ["ai.plan.reconcile-action", { kind: "ai-plan-pending", action: { kind: "authorize", request: workPlanWire.requests.authorize } }, [{ action: null }]],
+    ["ai.plan.retry-action", { kind: "ai-plan-pending", action: { kind: "control", request: workPlanWire.requests.control } }, [{ action: { kind: "control", request: {} } }]],
+    ["ai.plan.open-translation", { kind: "ai-plan-translation", planId: "plan", digest: "digest", expectedGeneration: "1", unitId: "unit", locale: "zh-CN", sourceRevisionId: "revision", sourceSnapshotId: "snapshot" }, [{ digest: null }, { expectedGeneration: "01" }]],
+    ["ai.effect.retry", { kind: "ai-effect", planId: "plan", expectedGeneration: "1", attemptId: "attempt", itemId: "item", actionId: null }, [{ actionId: undefined }]],
+    ["ai.agent.generate", { kind: "ai-agent", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], toolHandle: null }, [{ unitIds: ["same", "same"] }]],
+    ["ai.agent.query-tool", { kind: "ai-agent", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], toolHandle: "tool" }, [{ toolHandle: false }]],
+    ["ai.agent.reconcile", { kind: "ai-agent-pending", operation: "generation", scopeId: "scope", taskId: "task", attemptId: "attempt", inputDigest: "digest", unitIds: ["second", "first"], toolHandle: null }, [{ operation: "other" }, { toolHandle: "wrong-tool" }]],
+    ["ai.component.prepare", { kind: "ai-component-prepare", planId: "plan", expectedGeneration: "1", unitIds: ["second", "first"], component: generationWorkflow.prepare.component, toolQuery: { toolHandle: "reference", unitId: "second" } },
+      [{ component: {} }, { toolQuery: undefined }, { toolQuery: { toolHandle: "reference", unitId: "outside" } }, { toolQuery: { toolHandle: "", unitId: "second" } }]],
+    ["ai.component.start", { kind: "ai-component", scopeId: "scope", attemptId: "attempt", inputDigest: "digest" }, [{ inputDigest: "" }]],
+    ["ai.component.discard", { kind: "ai-component", scopeId: "scope", attemptId: "attempt", inputDigest: "digest" }, [{ scopeId: null }]],
+
     ["ai.preview", { kind: "ai-preparation", editSeq: 1, locale: "zh-CN", unitIds: ["later-page", "first-page"] },
       [{ editSeq: -1 }, { editSeq: 1.5 }, { locale: "" }, { unitIds: [] }, { unitIds: ["same", "same"] }, { unitIds: ["valid", null] }]],
-    ["ai.start", { kind: "ai-start", attemptId: "attempt", editSeq: 2 }, [{ attemptId: "" }, { editSeq: NaN }]],
+    ["ai.start", { kind: "ai-start", attemptId: "attempt", editSeq: 2, planId: workPlanWire.responses.plan.planId, digest: workPlanWire.responses.plan.digest, minutes: 10, confirmed: true, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], effects: ["save-candidate"] }, [{ attemptId: "" }, { editSeq: NaN }]],
     ["ai.adopt-result", { kind: "ai-candidate", ...item, resultId: "result", recoveryUnitId: "recovery" },
       [{ resultId: null }, { recoveryUnitId: "" }, { itemId: "" }, { translationUnitId: null }, { sourceSnapshotId: undefined }]],
-    ["ai.reconcile-start", { kind: "ai-start-pending", attemptId: "attempt", editSeq: 3 }, [{ attemptId: null }, { editSeq: undefined }]],
-    ["ai.retry-start", { kind: "ai-start-pending", attemptId: "attempt", editSeq: 3 }, [{ editSeq: -1 }]],
+    ["ai.check-original-start", { kind: "ai-original-start-pending", attemptId: directAiFixture.requests.start.attemptId, editSeq: 3, request: directAiFixture.requests.start },
+      [{ request: undefined }, { request: { ...directAiFixture.requests.start, digest: null } }, { attemptId: "another-attempt" }]],
+    ["ai.retry-original-start", { kind: "ai-original-start-pending", attemptId: directAiFixture.requests.start.attemptId, editSeq: 3, request: directAiFixture.requests.start },
+      [{ request: null }, { editSeq: -1 }, { request: { ...directAiFixture.requests.start, confirmed: null } }]],
+    ["ai.reconcile-start", { kind: "ai-start-pending", attemptId: "attempt", editSeq: 3, request: workPlanWire.requests.start }, [{ attemptId: null }, { editSeq: undefined }]],
+    ["ai.retry-start", { kind: "ai-start-pending", attemptId: "attempt", editSeq: 3, request: workPlanWire.requests.start }, [{ editSeq: -1 }]],
     ["ai.reconcile-adoption", { kind: "ai-adoption-pending", attemptId: "attempt", actionId: "action", recoveryUnitId: "recovery", resultId: "result" },
       [{ actionId: null }, { recoveryUnitId: "" }]],
     ["ai.retry-adoption", { kind: "ai-adoption-pending", attemptId: "attempt", actionId: "action", recoveryUnitId: "recovery", resultId: "result" },
@@ -352,6 +469,8 @@ describe("Tasks command payloads", () => {
     expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
   });
   it.each([
+    ["tasks.open-saved-build", { kind: "task-saved-build", taskId: "task", attemptId: "attempt", operation: "locale-build", itemId: null, resultId: null }, [{ operation: "source-import" }, { itemId: "item" }, { resultId: "result" }]],
+
     ["tasks.adopt-result", { kind: "task-action", ...action, action: "adopt-result", offset: 0 }, [{ itemIds: [] }, { resultIds: ["same", "same"] }]],
     ["tasks.resume-undispatched", { kind: "task-action", ...action, action: "resume-undispatched", offset: 100 }, [{ offset: -1 }, { remainingItemIds: ["foreign"] }]],
     ["tasks.retry-safe-failure", { kind: "task-action", ...action, action: "retry-safe-failure", offset: 0 }, [{ action: "other" }]],
@@ -395,17 +514,31 @@ describe("Release command payloads",()=>{
   const releaseScope={...scope,area:"release" as const},metadata={nameKey:"release.build" as const,category:"release" as const,scope:releaseScope,
     binding:null,risk:"captures-release" as const,confirmation:"none" as const};
   const target={releaseId:"release",releaseActionId:"release-action",attemptId:"attempt",manifestSha256:"manifest"};
-  const preparation={kind:"release-preparation" as const,editSeq:1,locales:["zh-CN"],fileNames:["zh.json"],sourceLocale:"en",targetLocales:["zh-CN"],integrationId:"format",integrationVersion:"1",eligibilityBasis:"basis"};
-  const build={kind:"release-build-pending" as const,attemptId:"attempt",choices:[{locale:"zh-CN",fileName:"i18n/zh.json"}],expectedEligibilityBasis:"basis"};
+  const preparation={kind:"release-preparation" as const,editSeq:1,build:buildWorkflow.prepare.build,choices:buildWorkflow.prepare.choices,sourceLocale:"en",targetLocales:["zh-CN"],eligibilityBasis:"basis"};
+  const build={kind:"release-build-pending" as const,intent:{kind:"prepare-build" as const,request:buildWorkflow.prepare},editSeq:1};
+  const start={kind:"release-plugin-start" as const,phase:"build" as const,attemptId:buildWorkflow.start.attemptId,inputDigest:buildWorkflow.start.inputDigest,approved:true};
   const preview={kind:"release-preview" as const,...target,selectionId:"selection",previewId:"preview",overwrite:true};
   const pending={kind:"release-delivery-pending" as const,pendingKind:"export" as const,actionId:"action",releaseId:"release",selectionId:"selection",
     previewId:"preview",overwriteConflicts:true,recoverySelectionId:null,delivery:null};
   const checked:unknown=structuredClone(releaseFixture.responses.delivery);if(!validateResponseDelivery(checked))throw new Error("Invalid original delivery fixture");
   it.each([
-    ["release.assess-build",preparation,[{locales:[]},{fileNames:[]},{editSeq:-1}]],
-    ["release.start-build",preparation,[{integrationVersion:""},{eligibilityBasis:undefined}]],
-    ["release.check-build",build,[{choices:[]},{attemptId:null}]],
-    ["release.retry-build",build,[{choices:[{locale:"zh-CN",fileName:""}]}]],
+    ["release.confirm-builder", start, [{ phase: "check" }]],
+    ["release.confirm-checker", { ...start, phase: "check" }, [{ phase: "build" }]],
+    ["release.start-artifact-check", { ...start, phase: "check" }, [{ approved: false }, { phase: "build" }]],
+    ["release.prepare-artifact-check", { kind: "release-artifact", buildAttemptId: buildWorkflow.start.attemptId, buildResultId: buildWorkflow.prepareCheck.buildResultId, build: buildWorkflow.prepare.build }, [{ build: {} }]],
+    ["release.finish-artifact-check", { kind: "release-check-finish", attemptId: buildWorkflow.finishCheck.attemptId, resultId: buildWorkflow.finishCheck.resultId, buildAttemptId: buildWorkflow.start.attemptId, buildResultId: buildWorkflow.prepareCheck.buildResultId, inputDigest: buildWorkflow.checkReview.inputDigest }, [{ resultId: null }]],
+    ["release.record-build", { kind: "release-build-record", taskId: "task", attemptId: "attempt", operation: "locale-build", unitId: "unit", itemIds: ["item"], resultIds: ["result"] }, [{ itemIds: [] }]],
+    ["release.discard-build", { kind: "release-build-discard", editSeq: 1, preparedAttemptId: "attempt", buildAttemptId: null, checkAttemptId: null }, [{ editSeq: -1 }, { checkAttemptId: undefined }]],
+    ["release.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "release" }, [{ origin: "other" }]],
+    ["release.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "release", requestId: "original" }, [{ requestId: null }]],
+    ["release.check-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "release", requestId: "original" }, [{requestId:null},{taskId:""}]],
+    ["release.check-workflow-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "release", requestId: "original" }, [{requestId:null},{attemptId:""}]],
+
+    ["release.assess-build",preparation,[{choices:[]},{build:{}},{editSeq:-1}]],
+    ["release.prepare-build",preparation,[{build:null},{eligibilityBasis:undefined}]],
+    ["release.start-build",start,[{approved:false},{phase:"check"},{inputDigest:null}]],
+    ["release.check-build",build,[{intent:null},{intent:{kind:"prepare-build",request:{}}}]],
+    ["release.retry-build",build,[{intent:{kind:"other",request:buildWorkflow.prepare}}]],
     ["release.choose-release",{kind:"release-record",...target},[{manifestSha256:null}]],
     ["release.choose-destination",{kind:"release-destination",...target,selectionId:null},[{selectionId:undefined}]],
     ["release.preview-destination",{kind:"release-destination",...target,selectionId:"selection"},[{releaseActionId:""}]],
@@ -426,5 +559,19 @@ describe("Release command payloads",()=>{
     expect(Reflect.apply(commands.describe,commands,[id,releaseScope,payload])?.availability.enabled).toBe(true);expect(handler).not.toHaveBeenCalled();
     expect(dispatch(payload)).toBe(true);expect(handler).toHaveBeenCalledExactlyOnceWith(payload);enabled=false;expect(dispatch(payload)).toBe(false);
     remove();expect(dispatch(payload)).toBe(false);
+  });
+});
+
+describe("Human candidate decision commands",()=>{
+  it("validates the fixed revision, human input and exact pending request before dispatch",()=>{
+    const candidateScope={...scope,area:"translation" as const},commands=new WorkbenchCommands(),handler=vi.fn();
+    const input={kind:"translation-candidate" as const,unitId:"unit",locale:"zh-CN",sourceRevisionId:"source",expectedSelectionId:null,editSeq:0,
+      revisionId:"revision",revisionActionId:"original",revisionOrdinal:"1",revisionSourceRevisionId:"source",revisionSourceSnapshotId:"snapshot",
+      disposition:"rejected" as const,expectedDecisionId:null,actor:"Reviewer",reason:"Wrong meaning",decisionEditSeq:2};
+    const remove=commands.register({id:"translation.decide-candidate",scope:candidateScope,nameKey:"candidateDecisions.title",category:"translation",binding:null,risk:"writes-translation",confirmation:"none",
+      payloadKind:"translation-candidate",availability:()=>({enabled:true}),handler});
+    const dispatch=(value:unknown)=>Reflect.apply(commands.dispatch,commands,["translation.decide-candidate",candidateScope,value]);
+    for(const change of [{disposition:"approve"},{expectedDecisionId:undefined},{decisionEditSeq:-1},{reason:" "},{actor:null},{revisionId:""}])expect(dispatch({...input,...change})).toBe(false);
+    expect(dispatch(input)).toBe(true);expect(handler).toHaveBeenCalledExactlyOnceWith(input);remove();expect(dispatch(input)).toBe(false);
   });
 });

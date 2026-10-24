@@ -61,10 +61,12 @@ Cargo package verification does not publish to crates.io or update any release.
 
 The experimental `tsumugi-plugin-host` package inherits the workspace application
 version. Its independent source profile provides package/runtime inspection, local
-Store and offline trust management, and headless SDK process channels. It does
+Store and offline trust management, and headless SDK process channels. Its default source profile does
 not add application member execution, project schemas or desktop plugin loading.
 The opt-in `core-adapter` source profile uses the existing Core execution and
 application authority without adding a separate Store or changing its schema.
+Desktop consumers and the opt-in member adapter connect to that same authority;
+the internal Pi member channel is separate from the SDK Process protocol.
 The default Host build remains Core-free. The private JavaScript Host workspace
 is an internal component runtime with a pinned production dependency, not another
 public SDK version source.
@@ -87,21 +89,23 @@ original associations in one consistent snapshot. Persisted facts do not restore
 live execution permissions.
 
 Default Core requires captured SDK plugin evidence for domain execution. The
-current desktop dependency explicitly enables `legacy-desktop-domain` while its
-existing built-in source/translation imports, QA and build consumers await the
-SDK adapter integration. This profile uses the same Store, execution runtime,
+current desktop dependency explicitly enables `legacy-desktop-domain` for its
+retained built-in source/translation import, QA and build command consumers and
+current-project receipt recovery. The production UI uses captured SDK adapters;
+a plugin selection failure cannot route to a built-in command. This profile uses the same Store, execution runtime,
 ledger and immutable receipts. It accepts only the existing known built-in
 capabilities and policies when no plugin is bound; plugin-bound inputs cannot
 fall back to built-in validation. It does not enable `execution-test-host`, crash
 hooks or synthetic task menus.
 
-Remove the production profile when those actual desktop domain consumers use
-the captured SDK adapters and their full workflows pass. Historical receipt and
+Remove the production profile only after its remaining built-in command and
+current-project recovery consumers have an explicit accepted transition. Historical receipt and
 result decoding must remain valid for supported current projects, or be covered
 by an explicit current-only format transition; UI migration alone is not grounds
 to remove it. Core's required-nullable strategy provenance and its admission and
-reopen checks apply to both profiles. The desktop projects its existing IPC shape
-at its boundary without weakening the Core contracts.
+reopen checks apply to both profiles. Desktop IPC exports the complete current Core data required by its consumers,
+including strategy provenance, resource origins and unknown outcomes. Original
+request and receipt correlations remain checked at the command boundary.
 
 This changes source storage/API compatibility within the unreleased development
 batch. It does not replace the frozen application alpha.1 distribution, SDK,

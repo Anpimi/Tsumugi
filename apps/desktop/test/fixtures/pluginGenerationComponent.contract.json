@@ -1,0 +1,118 @@
+{
+  "request": {
+    "provider": {
+      "plugin": {
+        "publisher": "example",
+        "id": "generation",
+        "version": "0.1.0"
+      },
+      "componentId": "generator",
+      "contributionId": "generation.call",
+      "packageDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "profile": {
+      "id": "example.generation-profile",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    },
+    "environmentDigest": "4542bf2738d1477f5f12450f1b91e9802097e55b494801f9042b2fb1196635a4"
+  },
+  "view": {
+    "settingsRevision": "1",
+    "binding": {
+      "provider": {
+        "plugin": {
+          "publisher": "example",
+          "id": "generation",
+          "version": "0.1.0"
+        },
+        "componentId": "generator",
+        "contributionId": "generation.call",
+        "packageDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "declaration": {
+        "contract": {
+          "id": "example.generation",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "inputSchema": {
+          "id": "tsumugi.work-plan-generation-input",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "outputSchema": {
+          "id": "tsumugi.work-plan-generation-receipt",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "errorSchema": {
+          "id": "tsumugi.work-plan-generation-error",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "profiles": [
+          {
+            "id": "example.generation-profile",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ],
+        "effect": "external",
+        "permissions": [
+          {
+            "kind": "captured-input"
+          },
+          {
+            "kind": "project-service",
+            "contract": {
+              "id": "tsumugi.work-plan-generation",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          }
+        ],
+        "limits": {
+          "maxInputBytes": 16384,
+          "maxOutputBytes": 1024,
+          "concurrency": 1,
+          "timeoutMs": 1000
+        }
+      }
+    },
+    "profile": {
+      "id": "example.generation-profile",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    },
+    "packageOrigin": {
+      "sourceId": "manual-local",
+      "publisherId": "user-approved"
+    },
+    "environment": {
+      "protocolVersion": 1,
+      "platform": {
+        "operatingSystem": "macos",
+        "architecture": "aarch64"
+      },
+      "sdkVersion": "0.1.0-alpha.1",
+      "processProtocol": 3,
+      "profile": "node-system-libraries-v1",
+      "toolVersion": "26.10.0",
+      "tool": {
+        "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+        "entrypoint": "bin/node"
+      },
+      "host": {
+        "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+        "entrypoint": "dist/main.js"
+      }
+    },
+    "environmentDigest": "4542bf2738d1477f5f12450f1b91e9802097e55b494801f9042b2fb1196635a4",
+    "runtimeOrigin": {
+      "sourceId": "application-bundle",
+      "publisherId": "application-build"
+    },
+    "componentScope": "project"
+  }
+}

@@ -1,11 +1,15 @@
 import type { SessionRequest } from "./executionCommands";
 import type { ChangeScope } from "./sessionReads";
-import { sourceCommands, sameSourceConfirmation, type ContentPage, type ContentScope, type SourceChangePage } from "./sourceCommands";
+import type { PluginSourceRequest } from "./pluginCommands";
+import { pluginCommands, readEnabledPluginPackages } from "./pluginCommands";
+import { approvedPluginEnvironments } from "./pluginEnvironments";
+import { sourceCommands, sameSourceEnvironment, sameSourceConfirmation, type ContentPage, type ContentScope, type SourceChangePage } from "./sourceCommands";
 
 const source: ChangeScope[] = ["source"];
 export const sourceKeys = {
+  inventory: (refresh: number) => ["source-plugin-inventory", refresh],
   scope: ["source-scope"],
-  integration: (domain: string) => ["source-integration", domain],
+  integration: (source: PluginSourceRequest | null) => ["source-integration", source],
   content: (snapshotId: string, after: number, scope?: ContentScope) => ["source-content", snapshotId, scope?.revision ?? "", scope?.currentSnapshot ?? null, after, 50],
   history: (offset: number) => ["source-history", offset, 50],
   historyContent: (snapshotId: string, query: string, after: number) => ["source-history-content", snapshotId, query, after, 20],
@@ -24,8 +28,22 @@ export function sameSourcePageBasis(left: ContentPage | SourceChangePage, right:
 }
 /** Options for the existing project cache. Fixed preparation is never recaptured by a query. */
 export const sourceReads = {
+  inventory: (refresh: number) => ({ key: sourceKeys.inventory(refresh), scopes: [] as ChangeScope[], read: async () => {
+    const value = await pluginCommands.inventory();
+    const packages = await readEnabledPluginPackages(value);
+    return { choices: packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
+      && contribution.contribution.schema.id === "tsumugi.source-import-declaration" && contribution.contribution.schema.schemaVersion === 2 && contribution.contribution.schema.behaviorVersion === 2
+      ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
+        package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : [])),
+      environments: approvedPluginEnvironments(value) };
+  } }),
   scope: (session: SessionRequest) => ({ key: sourceKeys.scope, scopes: source, read: () => sourceCommands.scope(session) }),
-  integration: (session: SessionRequest, domain: string) => ({ key: sourceKeys.integration(domain), scopes: ["source"] as ChangeScope[], read: () => sourceCommands.integration(session, domain) }),
+  integration: (session: SessionRequest, source: PluginSourceRequest | null) => ({ key: sourceKeys.integration(source), scopes: ["source"] as ChangeScope[], read: async () => {
+    if (!source) throw new Error("Source preparation requires an explicit plugin environment");
+    const view = await sourceCommands.integration(session, source);
+    if (!sameSourceEnvironment(view, source)) throw new Error("Source environment identity changed");
+    return view;
+  } }),
   content: (session: SessionRequest, snapshotId: string, after: number, scope?: ContentScope) => ({ key: sourceKeys.content(snapshotId, after, scope), scopes: source,
     read: async () => {
       const page = await sourceCommands.content({ ...session, snapshotId, after, limit: 50 });
@@ -49,3 +67,4 @@ export const sourceReads = {
       const page = await sourceCommands.preview({ ...session, attemptId: basis.attemptId, resultId: basis.resultId, after, limit: 50 });
       if (!sameSourcePageBasis(basis, page)) throw { reason: "stale-preview" }; return page; } }),
 };
+export type SourceInventory = Awaited<ReturnType<ReturnType<typeof sourceReads.inventory>["read"]>>;

@@ -1,19 +1,31 @@
-import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
-import { checkedInvoke } from "./ipc";
 import { sourceCommands } from "./sourceCommands";
-import type { TranslationFilesRequest, TranslationCaptureRequest, TranslationStartRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
+import type { SessionRequest } from "./executionCommands";
+import type { TranslationCaptureRequest, TranslationStartRequest } from "./generated/translation.requests";
+import { validateResponsePreflight, validateResponseStartAction } from "./generated/translation.validators";
+import type { AdoptionAction, Receipt } from "./executionCommands";
+import { checkedInvoke } from "./ipc";
+import type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationFilesRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
+import type { TranslationSaveReceipt, Responses } from "./generated/translation.responses";
 import type { Requests } from "./generated/translation.requests";
-import type { Responses, TranslationSaveReceipt } from "./generated/translation.responses";
-import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseStartAction, validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected, validateResponseSaveAction, validateResponseSelectionAction } from "./generated/translation.validators";
+import { validateResponseAdoptionAction } from "./generated/translation.validators";
+import type { PluginTranslationRequest, PluginTranslationView } from "./pluginCommands";
+import { validateRequestAdopt, validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaveAction, validateResponseSelectionAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
+import { validateResponseProjectionStartAction, validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
+import type { CandidateDecisionRequest } from "./generated/translation.requests";
+import type { CandidateDecision } from "./generated/translation.responses";
+export type { CandidateDecisionRequest } from "./generated/translation.requests";
+export type { CandidateDecision, CandidateDecisionWrite, CandidateDisposition } from "./generated/translation.responses";
 
-export type { TranslationStartRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
-export type { TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationPreflight, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
+export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
+export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
 
 export function translationHistoryAfter(ordinal: string, pageSize: number): string {
   const after = BigInt(ordinal) - BigInt(pageSize);
   return (after > 0n ? after : 0n).toString();
 }
+
+export type { TranslationCaptureRequest, TranslationStartRequest } from "./generated/translation.requests";
 
 export const translationCommands = {
   selectFolder: (request: SessionRequest) => sourceCommands.select(request),
@@ -21,6 +33,25 @@ export const translationCommands = {
   preflight: (request: TranslationCaptureRequest) => checkedInvoke("preflight_translation", request, validateResponsePreflight),
   start: (request: TranslationStartRequest) => checkedInvoke("start_translation_import", request, validateResponseAttempt),
   startAction: async (request: TranslationStartRequest) => confirmTranslationStart(request, await checkedInvoke("read_translation_import_start", request, validateResponseStartAction)),
+  decideCandidate: async (request: CandidateDecisionRequest) => confirmCandidateDecision(request, await checkedInvoke("decide_translation_candidate", request, validateResponseCandidateDecision)),
+  candidateAction: (request: TranslationActionRequest) => checkedInvoke("read_translation_candidate_action", request, validateResponseCandidateAction),
+  pluginSource: (request: TranslationSourceRequest) => checkedInvoke("read_plugin_translation_source", request, validateResponseSource),
+  selectPlugin: (request: PluginTranslationSelectRequest) => checkedInvoke("select_plugin_translation", request, validateResponsePluginSelection),
+  pluginFiles: (request: TranslationFilesRequest) => checkedInvoke("list_plugin_translation_files", request, validateResponseFiles),
+  preflightPlugin: (request: PluginTranslationCaptureRequest) => checkedInvoke("preflight_plugin_translation", request, validateResponsePluginPreflight),
+  startPlugin: (request: PluginStartRequest) => checkedInvoke("start_plugin_translation", request, validateResponseAttempt),
+  prepareCheck: (request: TranslationCheckPrepareRequest) => checkedInvoke("prepare_translation_check", request, validateResponseCheckReview),
+  startCheck: (request: PluginStartRequest) => checkedInvoke("start_translation_check", request, validateResponseAttempt),
+  finishCheck: (request: TranslationCheckFinishRequest) => checkedInvoke("finish_translation_check", request, validateResponseChecked),
+  prepareProjection: (request: TranslationProjectionPrepareRequest) => checkedInvoke("prepare_translation_projection", request, validateResponseProjectionReview),
+  startProjection: (request: TranslationProjectionStartRequest) => checkedInvoke("start_translation_projection", request, validateResponseAttempt),
+  projectionStartAction: async (request: TranslationProjectionStartRequest): Promise<Responses["projectionStartAction"]> => {
+    const result = await checkedInvoke("read_translation_projection_start", request, validateResponseProjectionStartAction);
+    if (result !== null && (result.projectId !== request.projectId || result.attemptId !== request.attemptId || result.inputDigest !== request.inputDigest)) {
+      throw new Error("Invalid original translation projection start proof");
+    }
+    return result;
+  },
   preview: (request: TranslationPreviewRequest) => checkedInvoke("read_translation_preview", request, validateResponsePreview),
   prepare: (request: TranslationAdoptRequest) => checkedInvoke("prepare_translation_adoption", request, validateResponsePrepared),
   adoptionAction: (request: Requests["adoptionAction"]): Promise<Responses["adoptionAction"]> => checkedInvoke("read_translation_adoption_action", request, validateResponseAdoptionAction),
@@ -37,6 +68,26 @@ export const translationCommands = {
   save: async (request: TranslationSaveRequest) => validateSaveReceipt(await checkedInvoke("save_translation_revision", request, validateResponseSaved), request),
   select: async (request: TranslationSelectRequest) => confirmTranslationSelection(request, await checkedInvoke("select_translation_revision", request, validateResponseSelected)),
 };
+
+export function confirmCandidateDecision(request: CandidateDecisionRequest, value: CandidateDecision) {
+  const expected = request.decision, actual = value.request;
+  if (actual.projectId !== request.projectId || Object.keys(expected).length !== Object.keys(actual).length
+    || Object.entries(expected).some(([key, field]) => actual[key as keyof typeof actual] !== field)) {
+    throw Object.assign(new Error("Invalid candidate decision acknowledgement"), { outcome: "unknown", reason: "invalid-candidate-decision-receipt" });
+  }
+  return value;
+}
+
+export function matchesTranslationEnvironment(view: PluginTranslationView, request: PluginTranslationRequest) {
+  return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest
+    && [view.extractor.provider, view.checker.provider].every(provider => provider.packageDigest === request.package.packageDigest
+      && provider.plugin.id === request.package.plugin.id && provider.plugin.version === request.package.plugin.version
+      && provider.plugin.publisher === request.package.plugin.publisher);
+}
+export function translationRequest(view: PluginTranslationView): PluginTranslationRequest {
+  return { package: { plugin: view.extractor.provider.plugin, packageDigest: view.extractor.provider.packageDigest },
+    resourceId: view.resourceId, environmentDigest: view.environmentDigest };
+}
 
 function invalidImportReceipt() {
   return Object.assign(new Error("Invalid translation import acknowledgement"), { outcome: "unknown", reason: "invalid-import-receipt" });

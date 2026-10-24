@@ -3,19 +3,43 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type LineageDecision = "continue" | "reject";
+export type UnsignedDecimal = string;
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
 
 export interface Requests {
   adopt: SourceAdoptRequest;
   adoptionAction: SourceAdoptionActionRequest;
   capture: CaptureRequest;
+  checkFinish: SourceCheckFinishRequest;
+  checkPrepare: SourceCheckPrepareRequest;
   comparison: ComparisonRequest;
   content: ContentRequest;
   history: HistoryRequest;
   historyContent: HistoryContentRequest;
   impact: ImpactRequest;
   lineage: LineageRequest;
+  maintenanceHook: SourceMaintenanceHookReadRequest;
+  maintenanceHookSession: SessionRequest;
+  maintenanceHookStop: SourceMaintenanceHookStopRequest;
+  pluginCapture: PluginCaptureRequest;
+  pluginSelect: PluginSourceSelectRequest;
+  pluginStart: PluginStartRequest;
   preview: PreviewRequest;
   session: SessionRequest;
+  sourceContext: SourceContextReadRequest;
+  sourceContextBlock: SourceContextBlockReadRequest;
   start: StartRequest;
   startAction: StartRequest;
 }
@@ -34,6 +58,7 @@ export interface SourceConfirmation {
   identityPolicy: string;
   lineage?: LineageChoice[];
   lineageBaseSnapshot?: ExecutionId | null;
+  maintenanceHook: SourceMaintenanceHookActivation | null;
   resultDigest: string;
   sourceLanguage: string;
 }
@@ -42,6 +67,14 @@ export interface LineageChoice {
   newOrdinal: number;
   oldOccurrenceId: ExecutionId;
   reason: string;
+}
+export interface SourceMaintenanceHookActivation {
+  after: number;
+  expiresAtMs: number;
+  limit: number;
+  locale: string;
+  policyVersion: string;
+  sessionEpoch: string;
 }
 export interface SourceAdoptionActionRequest {
   adoption: SourceAdoptRequest;
@@ -52,6 +85,37 @@ export interface CaptureRequest {
   selectionId: ExecutionId;
   sessionToken: string;
   sourceLanguage: string;
+}
+export interface SourceCheckFinishRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  sessionToken: string;
+}
+export interface SourceCheckPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  source: PluginSourceRequest;
+  sourceAttemptId: ExecutionId;
+  sourceResultId: ExecutionId;
+}
+export interface PluginSourceRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
 }
 export interface ComparisonRequest {
   after: number;
@@ -98,6 +162,47 @@ export interface LineageRequest {
   sessionToken: string;
   snapshotId: ExecutionId;
 }
+export interface SourceMaintenanceHookReadRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  sourceActionId: ExecutionId;
+}
+export interface SessionRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface SourceMaintenanceHookStopRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  stop: StopSourceMaintenanceHook;
+}
+export interface StopSourceMaintenanceHook {
+  actionId: ExecutionId;
+  activation: SourceMaintenanceHookActivation;
+  projectId: ExecutionId;
+  sourceActionId: ExecutionId;
+}
+export interface PluginCaptureRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sessionToken: string;
+  sourceLanguage: string;
+}
+export interface PluginSourceSelectRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  source: PluginSourceRequest;
+}
+export interface PluginStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
+}
 export interface PreviewRequest {
   after: number;
   attemptId: ExecutionId;
@@ -106,9 +211,54 @@ export interface PreviewRequest {
   resultId: ExecutionId;
   sessionToken: string;
 }
-export interface SessionRequest {
+export interface SourceContextReadRequest {
+  after: number;
+  limit: number;
+  locale: string;
   projectId: ExecutionId;
   sessionToken: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SourceContextBlockReadRequest {
+  basis: SourceContextBlockBasis;
+  descriptor: SourceContextBlockDescriptor;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface SourceContextBlockBasis {
+  contentRevision: Revision;
+  localUnitId: string;
+  scope: SourceContextRequest;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SourceContextBlockDescriptor {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  payloadBytes: number;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }
 export interface StartRequest {
   attemptId: ExecutionId;

@@ -4,22 +4,6 @@
       "sessionToken": "synthetic-release-session",
       "projectId": "50000000-0000-4000-8000-000000000700"
     },
-    "build": {
-      "sessionToken": "synthetic-release-session",
-      "projectId": "50000000-0000-4000-8000-000000000700",
-      "attemptId": "50000000-0000-4000-8000-000000000701",
-      "choices": [
-        {
-          "locale": "zh-CN",
-          "fileName": "i18n/zh.json"
-        },
-        {
-          "locale": "fr-FR",
-          "fileName": "i18n/fr.json"
-        }
-      ],
-      "expectedEligibilityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-    },
     "release": {
       "sessionToken": "synthetic-release-session",
       "projectId": "50000000-0000-4000-8000-000000000700",
@@ -45,6 +29,22 @@
       "projectId": "50000000-0000-4000-8000-000000000700",
       "actionId": "50000000-0000-4000-8000-000000000703",
       "selectionId": "50000000-0000-4000-8000-000000000704"
+    },
+    "build": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700",
+      "attemptId": "50000000-0000-4000-8000-000000000701",
+      "choices": [
+        {
+          "locale": "zh-CN",
+          "fileName": "i18n/zh.json"
+        },
+        {
+          "locale": "fr-FR",
+          "fileName": "i18n/fr.json"
+        }
+      ],
+      "expectedEligibilityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     }
   },
   "responses": {

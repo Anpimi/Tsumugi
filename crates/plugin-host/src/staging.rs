@@ -72,6 +72,34 @@ pub(crate) fn materialize(
     }
 }
 
+/// The application member uses only the separately approved Node tool. Its
+/// captured entry is not the plugin Host and does not run the Host's loader.
+#[cfg(feature = "core-adapter")]
+pub(crate) fn materialize_member(
+    staging_parent: &Path,
+    manifest: &[u8],
+    files: &BTreeMap<String, RuntimeArtifactFile>,
+    runtime: &CapturedRuntime,
+    authorized: impl Fn() -> bool,
+) -> HostResult<StagedDirectory> {
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    {
+        platform::materialize_runtime(
+            staging_parent,
+            manifest,
+            files,
+            Some(runtime),
+            true,
+            authorized,
+        )
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        let _ = (staging_parent, manifest, files, runtime, authorized);
+        Err(HostError::UnsupportedPlatform)
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod platform {
     use super::*;

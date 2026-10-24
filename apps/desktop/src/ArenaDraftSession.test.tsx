@@ -5,6 +5,7 @@ import arenaFixture from "../test/fixtures/arenaCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { confirmArenaView, useArenaDraftSession } from "./ArenaDraftSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { unreportedTokenTotalsFixture } from "./testSupport/usageFixture";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { ArenaConfig, ArenaPrepared, ArenaView, ComparisonView, CompareRequest, MergeRequest } from "./arenaCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
@@ -15,16 +16,19 @@ import { arenaViewFixture, aiAttempt } from "./testSupport/aiFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { i18n } from "./i18n";
+import { connectionReadKey, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionFixture } from "./testSupport/connectionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "arena-owner", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(500), displayName: "Arena owner", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let owner: ReturnType<typeof useArenaDraftSession>, translations: ReturnType<typeof useTranslationDraftSession>, reads: ReturnType<typeof useSessionReads>;
+let application: ReturnType<typeof useApplicationQueryClient>;
 let prepared: ArenaPrepared, comparison: ComparisonView, action: AdoptionAction;
 function Probe() {
-  const value = useArenaDraftSession(), drafts = useTranslationDraftSession(), sessionReads = useSessionReads();
-  useLayoutEffect(() => { owner = value; translations = drafts; reads = sessionReads; });
+  const value = useArenaDraftSession(), drafts = useTranslationDraftSession(), sessionReads = useSessionReads(), appReads = useApplicationQueryClient();
+  useLayoutEffect(() => { owner = value; translations = drafts; reads = sessionReads; application = appReads; });
   return null;
 }
 function Harness({mounted = true, read = false}:{mounted?:boolean;read?:boolean}) {
@@ -89,7 +93,7 @@ function viewFor(value = prepared, displayOrder = value.preview.config.variants.
   });
   view.rows.sort((left,right)=>left.sourceOrder-right.sourceOrder||left.label-right.label);
   view.detail.progress.total=value.preview.items.length;view.detail.progress.succeeded=value.preview.items.length;
-  view.budget={...view.budget!,limit:value.preview.config.maxRequests,dispatched:value.preview.items.length,usageUnknown:value.preview.items.length};
+  view.budget={...view.budget!,limit:value.preview.config.maxRequests,dispatched:value.preview.items.length,usageUnknown:value.preview.items.length,...unreportedTokenTotalsFixture(value.preview.items.length)};
   expect(view.rows.length % count).toBe(0);
   return view;
 }
@@ -264,6 +268,22 @@ function acknowledgement(kind:Operation):unknown{
   if(kind==="adopt")return receiptFor(action);
   return selectionFor(request);
 }
+
+it.each(["storeId", "profileId", "revision", "digest"] as const)("refuses an Arena profile with mismatched %s despite matching defaults", async field => {
+  render(<Harness/>, project);
+  const reference = { storeId: fixtureIdentity(700), profileId: fixtureIdentity(701), revision: "1", digest: "a".repeat(64) };
+  act(() => { const variants = prepared.preview.config.variants.map((config, index) => index === 1 ? { ...config, connectionProfile: reference } : config); application.setQueryData(connectionReadKey, connectionFixture(variants)); owner.setConfig({ ...prepared.preview.config, variants }); owner.setSelected([prepared.preview.items[0].item.unitId]); });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, payload: unknown) => {
+    const result = await original(command, payload); if (command !== "preview_arena_translation") return result;
+    const wrong = structuredClone(result);
+    wrong.preview.config.variants[1].connectionProfile[field] = field === "revision" ? "2" : field === "digest" ? "b".repeat(64) : fixtureIdentity(702);
+    return wrong;
+  });
+  await act(async () => { await owner.preview(); });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false); expect(owner.canStart()).toBe(false);
+  expect(owner.current().config.variants[1].connectionProfile).toEqual(reference); expect(owner.failure).not.toBeNull(); expect(calls("start_arena_translation")).toHaveLength(0);
+});
 
 it.each(operations)("keeps the checked %s acknowledgement across a real consumer unmount",async kind=>{
   const rendered=render(<Harness/>,project);await setupOperation(kind);
@@ -708,4 +728,65 @@ it.each(["partial","nextOffset","duplicateItem","duplicateResult","matrix","name
   if(field==="sourceProof")view.rows[0].item={...view.rows[0].item,sourceText:"Different captured source"};
   if(field==="privacy")view.variants=prepared.preview.config.variants;
   expect(()=>confirmArenaView(view,aiAttempt,prepared)).toThrow();
+});
+
+function savedArenaConnection() {
+  return {...prepared.preview.config.variants[0],endpoint:"https://saved.example.test/v1",model:"Saved Arena model",credentialEnv:"SYNTHETIC_REFERENCE",tokenField:"max_completion_tokens",
+    connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}};
+}
+it("selects one scheme's saved defaults without changing other schemes or the shared budget",()=>{
+  render(<Harness/>,project);act(()=>owner.setConfig(prepared.preview.config));const before=owner.config,config=savedArenaConnection(),view=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,view);expect(owner.selectConnection(1,view,config.connectionProfile.profileId,owner.editSeq)).toBe(true);});
+  expect(owner.config.variants[0]).toEqual(before.variants[0]);expect(owner.config.variants[1]).toMatchObject({...view.snapshot.profiles[0].connection,connectionProfile:view.references[0]});
+  expect([owner.config.maxItems,owner.config.maxRequests,owner.config.concurrency,owner.config.blind]).toEqual([before.maxItems,before.maxRequests,before.concurrency,before.blind]);
+  expect(owner.config.variants[1].maxOutputTokens).toBe(before.variants[1].maxOutputTokens);expect(calls("preview_arena_translation")).toHaveLength(0);
+  act(()=>owner.setConfig({...owner.config,variants:owner.config.variants.map((value,index)=>index===1?{...value,model:"Manual B"}:value)}));expect(owner.config.variants[1].connectionProfile).toBeNull();expect(application.getQueryData(connectionReadKey)).toEqual(view);
+});
+it("invalidates a new round's consent for a changed selected profile without making an offline merge stale",async()=>{
+  render(<Harness/>,project);await merge();const draft=owner.draft,config=savedArenaConnection(),view=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,view);expect(owner.selectConnection(1,view,config.connectionProfile.profileId,owner.editSeq)).toBe(true);owner.setSelected([prepared.preview.items[0].item.unitId]);});
+  await act(async()=>owner.preview());act(()=>owner.setConsent(true));expect(owner.canStart()).toBe(true);
+  const changed=structuredClone(view);changed.snapshot.revision="2";changed.basis.revision="2";changed.snapshot.profiles[0].revision="2";changed.references[0].revision="2";changed.references[0].digest="b".repeat(64);
+  act(()=>application.setQueryData(connectionReadKey,changed));expect(owner.prepared).toBeNull();expect(owner.consent).toBe(false);expect(owner.draft).toEqual(draft);expect(owner.draft?.stale).toBe(false);
+});
+
+it.each([["extracted",true],["inferred",true],["neighbors",true],["maxBytes",2048],["maxItems",4]] as const)("revokes Arena consent for source context %s without changing another variant", async (key,value) => {
+  render(<Harness />, project); await prepare();
+  const before = owner.current();
+  expect(before.prepared).not.toBeNull(); expect(before.consent).toBe(true);
+  act(() => { owner.setConfig({...before.config,variants:before.config.variants.map((variant,index) => index === 0
+    ? {...variant,sourceContext:{...variant.sourceContext,[key]:value}} : variant)}); });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false); expect(owner.canStart()).toBe(false);
+  expect(owner.config.variants[0].sourceContext[key]).toBe(value);
+  expect(owner.config.variants[1]).toEqual(before.config.variants[1]);
+  expect(owner.config.maxRequests).toBe(before.config.maxRequests);
+  expect(calls("start_arena_translation")).toHaveLength(0);
+});
+
+it("receives a checked offline target without replacing manual B or model settings, and refuses newer choices", () => {
+  render(<Probe/>, project);
+  act(() => { translations.begin({unitId:fixtureIdentity(1901),locale:"zh-CN",sourceRevisionId:fixtureIdentity(1902),key:"manual",sourceText:"Original"},null,null,"Manual B");
+    owner.setConfig(value=>({...value,variants:value.variants.map(variant=>({...variant,model:"Kept model"}))})); });
+  const before=owner.current();
+  act(()=>expect(owner.receiveComparisonTarget(comparison.unitId,"zh-CN",comparison.rows[0].revisionId,before)).toBe(true));
+  expect(owner.current().unit).toBe(comparison.unitId);expect(owner.current().references).toEqual([comparison.rows[0].revisionId]);
+  expect(owner.current().config.variants[0].model).toBe("Kept model");expect(translations.current()?.text).toBe("Manual B");
+  const captured=owner.current();act(()=>owner.setReferences(comparison.rows.map(row=>row.revisionId)));
+  act(()=>expect(owner.receiveComparisonTarget(fixtureIdentity(1903),"zh-CN",fixtureIdentity(1904),captured)).toBe(false));
+  expect(owner.current().references).toEqual(comparison.rows.map(row=>row.revisionId));
+  expect(calls("create_execution_identity")).toHaveLength(0);expect(calls("create_arena_comparison")).toHaveLength(0);
+});
+
+it("keeps rejected comparison rows readable but refuses direct selection until a fresh restored projection", () => {
+  render(<Probe/>, project);act(()=>owner.openComparison(comparison.comparisonId!));
+  comparison={...comparison,rows:comparison.rows.map((row,index)=>({...row,candidateDisposition:index===0?"rejected" as const:null}))};
+  act(()=>reads.client.setQueryData(reads.key(["arena-comparison",comparison.comparisonId]),comparison));
+  expect(owner.canSelect(comparison,comparison.rows[0].revisionId)).toBe(false);
+  expect(owner.canSelect(comparison,comparison.rows[1].revisionId)).toBe(true);
+  expect(comparison.rows[0].text).toBeTruthy();expect(comparison.rows[0].model).toBeNull();
+  const old=comparison;
+  comparison={...comparison,rows:comparison.rows.map((row,index)=>({...row,candidateDisposition:index===0?"restored" as const:null}))};
+  act(()=>reads.client.setQueryData(reads.key(["arena-comparison",comparison.comparisonId]),comparison));
+  expect(owner.canSelect(old,old.rows[0].revisionId)).toBe(false);
+  expect(owner.canSelect(comparison,comparison.rows[0].revisionId)).toBe(true);
 });

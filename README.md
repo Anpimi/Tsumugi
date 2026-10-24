@@ -65,8 +65,13 @@ bindings. Its version and immutable source packages are separate from the deskto
 release. The [standalone plugin Host](crates/plugin-host/README.md) adds captured
 package inspection, local trust/Store management and headless component channels.
 The optional Core adapter connects these channels to original execution grants
-and separately authorized application lifetimes. Application members and desktop
-plugin loading remain separate integration work.
+and separately authorized application lifetimes. Desktop source integrates
+[plugin management and domain selection](docs/plugin-distribution.md), independent
+package/runtime approval, captured execution and explicit result adoption.
+[Work plans](docs/work-plans.md) use one pinned Pi core and pi-ai member runtime,
+with dynamic team discussions, original request budgets and human stop/takeover
+controls. The Core retains project and execution authority. These source changes
+do not replace the frozen application or extension archives.
 
 ## AI
 
@@ -126,7 +131,8 @@ Long-running or domain-specific operations can run outside the Core through boun
 
 The desktop supports Windows x64 and macOS (Apple Silicon and Intel build targets), and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode Command Line Tools and uses the system WKWebView. Install the platform prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/). macOS application bundles target macOS 11 or later; each architecture must be built with its corresponding Rust target.
 
-Project lifecycle, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` or `--domain=arena` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.
+Project lifecycle, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` `--domain=arena`, `--domain=connections`, `--domain=plugins`, `--domain=strategy`,
+`--domain=mcp` or `--domain=mcpRetrieval` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.
 
 Command failures retain their original structured evidence. When a saved basis has changed, expandable diagnostics show the submitted and rejecting values; recovery guidance explains the next read or decision without automatically retrying a write. Diagnostic references correlate command-boundary logs containing only operation labels, error classifications and the reference, without request bodies or project paths. Unknown results keep the original action for reconciliation.
 

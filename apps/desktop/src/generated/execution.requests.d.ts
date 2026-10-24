@@ -7,12 +7,25 @@ export type Revision = string;
  * action reads its original receipt; it never refreshes this cancellation basis.
  */
 export type ContinuationKind = "resume-undispatched" | "retry-safe-failure";
+export type PluginStartOperation =
+  | "source-import"
+  | "source-semantic-check"
+  | "translation-extract"
+  | "translation-semantic-check"
+  | "locale-build"
+  | "artifact-semantic-check"
+  | "plugin-tool-query";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+export type UnsignedDecimal = string;
 
 export interface Requests {
+  activity: TaskActivityRequest;
   adopt: AdoptRequest;
   adoptionAction: PrepareRequest;
+  applicationInstance: ApplicationInstanceRequest;
+  applicationInstanceStop: StopApplicationInstanceRequest;
+  applicationShutdown: ApplicationShutdownRequest;
   attempt: AttemptRequest;
   cancel: CancelRequest;
   cancellationAction: CancelRequest;
@@ -21,11 +34,20 @@ export interface Requests {
   continuationRead: ContinuationReadRequest;
   list: ListRequest;
   output: OutputRequest;
+  pluginStartAction: PluginStartReadRequest;
   prepare: PrepareRequest;
   recovery: RecoveryRequest;
   session: SessionRequest;
   task: TaskRequest;
   taskView: TaskViewRequest;
+  toolDiscard: PluginToolDiscardRequest;
+  toolPrepare: PluginToolPrepareRequest;
+  toolStart: PluginToolStartRequest;
+}
+export interface TaskActivityRequest {
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
 }
 export interface AdoptRequest {
   actionId: ExecutionId;
@@ -39,6 +61,24 @@ export interface PrepareRequest {
   resultIds: ExecutionId[];
   sessionToken: string;
   unitId: ExecutionId;
+}
+export interface ApplicationInstanceRequest {
+  basis: ApplicationScopeBasis;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+export interface StopApplicationInstanceRequest {
+  actionId: ExecutionId;
+  basis: ApplicationScopeBasis;
+}
+export interface ApplicationShutdownRequest {
+  actionId: ExecutionId;
 }
 export interface AttemptRequest {
   attemptId: ExecutionId;
@@ -91,6 +131,13 @@ export interface OutputRequest {
   resultId: ExecutionId;
   sessionToken: string;
 }
+export interface PluginStartReadRequest {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  operation: PluginStartOperation;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
 export interface RecoveryRequest {
   action: RecoveryAction;
   attemptId: ExecutionId;
@@ -114,4 +161,43 @@ export interface TaskViewRequest {
   projectId: ExecutionId;
   sessionToken: string;
   taskId: ExecutionId;
+}
+export interface PluginToolDiscardRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface PluginToolPrepareRequest {
+  attemptId: ExecutionId;
+  payloads: unknown[];
+  projectId: ExecutionId;
+  sessionToken: string;
+  tool: PluginToolRequest;
+}
+export interface PluginToolRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+export interface PluginToolStartRequest {
+  applicationExecution: boolean;
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
 }

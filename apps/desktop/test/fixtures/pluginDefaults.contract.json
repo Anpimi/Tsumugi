@@ -1,0 +1,19 @@
+{
+  "id": "bundled-extensions",
+  "selectionDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "packages": [
+    {
+      "displayName": "WebVTT captions",
+      "plugin": {
+        "publisher": "org.tsumugi",
+        "id": "webvtt",
+        "version": "0.1.0-alpha.1"
+      },
+      "packageDigest": "4425e040784d3ada1ec3ee17e3f9404ae94f11a4453bd1da263a870db4cabb57",
+      "fileCount": 20,
+      "byteCount": "452099"
+    }
+  ],
+  "runtimeEnvironmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+  "availability": "available"
+}

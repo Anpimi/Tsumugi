@@ -2,6 +2,9 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+export type TaskActivityPhase = "active" | "attention" | "saved";
+export type ApplicationInstanceState = "reserved" | "active" | "stopping" | "stopped";
+export type ApplicationShutdownState = "stopping" | "stopped" | "resumed";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
@@ -25,6 +28,11 @@ export type InvocationOutcome =
       error: EncodedPayload;
       kind: "unknown";
     };
+/**
+ * Finite public failure classifications; details never determine permissions.
+ */
+export type SourceExtractionErrorCode =
+  "invalid-input" | "unsupported-profile" | "invalid-source" | "unsupported-structure" | "limit-exceeded" | "cancelled";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -125,16 +133,82 @@ export type CommandStage =
   | "add-target-locale"
   | "set-target-locales"
   | "close"
+  | "plugin-install"
+  | "plugin-settings"
+  | "model-connections"
   | "execution-read"
   | "execution-cancel"
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+export type ToolQueryPathPart = string | number;
+export type ComponentScope = "application" | "project" | "attempt";
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux" | "windows";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
+export type UnsignedDecimal = string;
 
 export interface Responses {
   action: AdoptionAction;
+  activity: TaskActivity;
   adoption: AdoptionReceipt;
   adoptionAction: AdoptionActionRead | null;
+  applicationInstance: ApplicationInstanceView;
+  applicationShutdown: ApplicationShutdownView;
   attempt: AttemptDetail;
   attempts: AttemptSummary[];
   cancellation: Revision;
@@ -143,12 +217,15 @@ export interface Responses {
   continuationReceipt: ContinuationReceipt | null;
   continuations: ContinuationPage;
   identity: ExecutionId;
-  output: ResultEnvelope;
+  output: ExecutionOutputView;
+  pluginStartAction: PluginStartActionRead | null;
   receipt: AdoptionReceipt | null;
   recovery: RecoveryView;
   status: RuntimeStatus;
   taskView: TaskView;
   tasks: TaskView[];
+  toolDiscarded: boolean;
+  toolPreflight: PluginToolPreflight;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -159,6 +236,31 @@ export interface AdoptionAction {
   projectId: ExecutionId;
   resultIds: ExecutionId[];
   unitId: ExecutionId;
+}
+export interface TaskActivity {
+  active: Revision;
+  attention: Revision;
+  rows: TaskActivityRow[];
+  saved: Revision;
+  total: Revision;
+}
+export interface TaskActivityRow {
+  attemptId: ExecutionId;
+  operation: string;
+  phase: TaskActivityPhase;
+  progress: Progress;
+  sequence: Revision;
+  taskId: ExecutionId;
+}
+export interface Progress {
+  adopted: number;
+  cancelled: number;
+  failed: number;
+  queued: number;
+  running: number;
+  succeeded: number;
+  total: number;
+  unknown: number;
 }
 export interface AdoptionReceipt {
   actionId: ExecutionId;
@@ -177,6 +279,22 @@ export interface AdoptionActionRead {
   action: AdoptionAction;
   receipt: AdoptionReceipt | null;
 }
+export interface ApplicationInstanceView {
+  basis: ApplicationScopeBasis;
+  state: ApplicationInstanceState;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+export interface ApplicationShutdownView {
+  actionId: ExecutionId;
+  state: ApplicationShutdownState;
+}
 export interface AttemptDetail {
   attemptId: ExecutionId;
   items: ItemView[];
@@ -186,6 +304,9 @@ export interface AttemptDetail {
   recovery: RecoveryPlan;
   taskId: ExecutionId;
 }
+/**
+ * Read-only execution projection shared by human and bounded consumers.
+ */
 export interface ItemView {
   resultId: ExecutionId | null;
   scope: Scope;
@@ -204,16 +325,6 @@ export interface ItemStatus {
   itemId: ExecutionId;
   retrySafe: boolean;
   validation: ValidationState;
-}
-export interface Progress {
-  adopted: number;
-  cancelled: number;
-  failed: number;
-  queued: number;
-  running: number;
-  succeeded: number;
-  total: number;
-  unknown: number;
 }
 export interface RecoveryPlan {
   attemptId: ExecutionId;
@@ -268,7 +379,10 @@ export interface ContinuationPage {
   next: Revision | null;
   receipts: ContinuationReceipt[];
 }
-export interface ResultEnvelope {
+/**
+ * Read-only display projection. The stored ResultEnvelope remains unchanged.
+ */
+export interface ExecutionOutputView {
   attemptId: ExecutionId;
   capabilityId: string;
   capabilityVersion: string;
@@ -280,6 +394,7 @@ export interface ResultEnvelope {
   plugin?: PluginResultEvidence | null;
   projectId: ExecutionId;
   resultId: ExecutionId;
+  sourceFailure?: SourceExtractionError | null;
   supersedes: ExecutionId | null;
 }
 export interface Diagnostic {
@@ -353,6 +468,27 @@ export interface EncodedPayload {
   sha256: string;
   utf8: string;
 }
+/**
+ * A bounded public diagnostic. Producers must use public descriptions and
+ * captured artifact IDs, never local paths, raw source text or secrets. Data
+ * validation cannot establish that arbitrary diagnostic text is safe to share.
+ */
+export interface SourceExtractionError {
+  artifactId: string | null;
+  code: SourceExtractionErrorCode;
+  detail: string;
+}
+/**
+ * Evidence of one exact ordinary plugin input in the durable execution ledger.
+ * This proves enqueueing, never current scope, worker completion or live consent.
+ */
+export interface PluginStartActionRead {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  operation: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
+}
 export interface RecoveryView {
   attemptId: ExecutionId;
   queryStarted: boolean;
@@ -383,4 +519,189 @@ export interface TaskView {
   projectId: ExecutionId;
   sequence: Revision;
   taskId: ExecutionId;
+}
+export interface PluginToolPreflight {
+  applicationCapabilities: ProcessCapability[];
+  applicationScope: ApplicationScopeBasis | null;
+  attemptId: ExecutionId;
+  inputDigest: string;
+  items: PluginToolItem[];
+  tool: PluginToolView;
+}
+/**
+ * One callable declaration in the Host-captured component roster.
+ */
+export interface ProcessCapability {
+  capability: CapabilityDeclaration;
+  contributionId: string;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+export interface PluginToolItem {
+  itemId: ExecutionId;
+  payload: unknown;
+}
+export interface PluginToolView {
+  binding: CapabilityToolBinding;
+  componentScope: ComponentScope;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * A fixed selection, not an execution grant or a trusted model instruction.
+ * Deserialized claims must be rebound against the actual captured package.
+ */
+export interface CapabilityToolBinding {
+  capability: CapabilityBinding;
+  declaration: CapabilityToolDeclaration;
+  resources: ToolResourceBinding[];
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * A package-local adapter to one declared, read-only capability. Input/output
+ * contracts, limits and permissions are taken from that capability, rather
+ * than repeated in a model-specific descriptor. A profile is an exact choice.
+ */
+export interface CapabilityToolDeclaration {
+  capabilityId: string;
+  description: string;
+  name: string;
+  profile: ContractRef | null;
+  /**
+   * Optional bounded semantic text-query presentation. It grants no access
+   * beyond the original capability and remains untrusted package data.
+   */
+  query?: ToolQueryDeclaration | null;
+  skill: string | null;
+  supportingResources: string[];
+  title: string;
+}
+export interface ToolQueryDeclaration {
+  inputSchema: ContractRef;
+  inputTemplate: unknown;
+  maxTextBytes: number;
+  output: ToolQueryOutput;
+  outputSchema: ContractRef;
+  /**
+   * Explicit senses or categories. Matching text alone does not select them.
+   */
+  selections: ToolQuerySelection;
+  /**
+   * One explicit target option; no host-side locale or value normalization.
+   */
+  target: ToolQuerySelection;
+  textPath: ToolQueryPathPart[];
+}
+export interface ToolQueryOutput {
+  columns: ToolQueryColumn[];
+  emptyDescription: string;
+  entriesPath: ToolQueryPathPart[];
+  maxEntries: number;
+}
+export interface ToolQueryColumn {
+  label: string;
+  path: ToolQueryPathPart[];
+}
+export interface ToolQuerySelection {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
+}
+export interface ToolQueryOption {
+  description: string;
+  label: string;
+  value: string;
+}
+export interface ToolResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
 }

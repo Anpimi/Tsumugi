@@ -10,7 +10,7 @@ import type { ReviewTarget, ReviewWrite } from "./reviewCommands";
 import type { ChangeScope } from "./sessionReads";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture } from "./testSupport/reviewFixture";
+import { reviewFindingViewFixture, reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture } from "./testSupport/reviewFixture";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -54,11 +54,13 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)], { scopeId });
     if (command === "read_review_target") return args.request.unitId === target.unitId ? target : second;
+    if (command === "read_review_findings") return reviewFindingViewFixture(args.request.unitId === target.unitId ? target : second);
+    if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "create_execution_identity") return fixtureIdentity(620);
     if (command === "write_review_decision") return reviewDecisionFixture(args.request.decision as ReviewWrite, target);
+    if (command === "read_review_decision_action") return null;
     if (command === "read_review_work") return { items: [], total: 0, nextOffset: null, coverage: "current" };
-    if (["read_review_decision_action", "read_review_waiver_action", "read_review_fallback_action", "read_review_check_action"].includes(command)) return null;
     throw new Error(command);
   });
 });
@@ -289,10 +291,6 @@ it("keeps the original unknown request retryable while the current target query 
   await refreshWorkbenchReads(["translation"]);
   await screen.findByRole("alert");
   expect(retry).toBeEnabled();
-  const checkSaved = screen.getByRole("button", { name: "Check saved action" });
-  expect(checkSaved).toBeEnabled(); await user.click(checkSaved);
-  expect(calls("read_review_decision_action")).toHaveLength(2);
-  expect(calls("read_review_decision_action")[1][1].request).toEqual(request);
   expect(owner.current().pending?.request.actionId).toBe(request.decision.actionId);
   await user.click(retry);
   await waitFor(() => expect(owner.current().pending).toBeNull());

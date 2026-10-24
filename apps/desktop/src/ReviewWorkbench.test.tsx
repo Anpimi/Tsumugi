@@ -3,13 +3,16 @@ import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import reviewWire from "../test/fixtures/reviewCommands.contract.json";
+import errorWire from "../test/fixtures/commandErrors.contract.json";
+import { coreRuleKeyFixture, pluginRuleKeyFixture, textReviewSlotFixture, textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import type { ProjectView } from "./projectCommands";
 import type { ReviewTarget } from "./reviewCommands";
 import type { ReviewWrite, WaiverWrite, Waiver, FallbackWrite, FallbackDecision } from "./reviewCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
+import { reviewFindingViewFixture, reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
 import { useWorkbenchCommands, type WorkbenchCommands, type ReviewWaiverCommandPayload, type ReviewFallbackCommandPayload } from "./workbenchCommands";
 import { useReviewDraftSession } from "./ReviewDraftSession";
 import type { ChangeScope } from "./sessionReads";
@@ -36,9 +39,9 @@ function fallbackReceipt(request: FallbackWrite): FallbackDecision {
     policyVersion: "balanced-1", actor: request.actor, reason: request.reason, createdAt: "2026-10-03T00:00:00Z" };
 }
 function waiverFindings(target: ReviewTarget) {
-  return reviewCheckFixture(target, fixtureIdentity(621), "completed", { rules: [{ rule: "terminology", status: "findings", reason: null,
+  return reviewCheckFixture(target, fixtureIdentity(621), "completed", { rules: [{ rule: "terminology", key: coreRuleKeyFixture("terminology"), mandatory: true, status: "findings", reason: null,
     findings: ["first-term", "second-term"].map(issueId => ({ issueId, rule: "terminology", code: "missing", detail: issueId, severity: "warning", waivable: true })) },
-    { rule: "placeholders", status: "findings", reason: null, findings: [{ issueId: "blocked-issue", rule: "placeholders", code: "missing", detail: "blocked", severity: "error", waivable: false }] }] });
+    { rule: "plugin:markers", key: pluginRuleKeyFixture("markers"), mandatory: true, status: "findings", reason: null, findings: [{ issueId: "blocked-issue", rule: "plugin:markers", code: "missing", detail: "blocked", severity: "error", waivable: false }] }] });
 }
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -71,6 +74,14 @@ function eligibilityResult(locales: string[], marker: string, ready = false): El
       exceptions: [] })) };
 }
 
+async function prepareAndConfirmChecks(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  const consent = await screen.findByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." });
+  expect(screen.getByRole("button", { name: "Run current checks" })).toBeDisabled();
+  await user.click(consent);
+  expect(screen.getByRole("button", { name: "Run current checks" })).toBeEnabled();
+}
+
 let targets: Record<string, ReviewTarget>;
 let nextIdentity: number;
 beforeEach(async () => {
@@ -80,13 +91,19 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(targets.first)]);
+    if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
+    if (command === "prepare_review_checks") return { kind: "plugin", view: { ...reviewWire.responses.prepareCheck.view,
+      actionId: args.request.actionId, unitId: args.request.unitId, locale: args.request.locale, basis: args.request.expectedBasis } };
     if (command === "read_review_target") return Object.values(targets).find(target => target.unitId === args.request.unitId);
+    if (command === "read_review_findings") return reviewFindingViewFixture(Object.values(targets).find(target => target.unitId === args.request.unitId)!);
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "create_execution_identity") return fixtureIdentity(++nextIdentity);
     if (command === "write_review_decision") {
       const decision = args.request.decision as ReviewWrite;
       return reviewDecisionFixture(decision, Object.values(targets).find(target => target.unitId === decision.unitId)!);
     }
+    // Recovery scenarios install a saved action explicitly when it is present.
+    if (["read_review_decision_action", "read_review_waiver_action", "read_review_fallback_action"].includes(command)) return null;
     if (command === "read_review_work") return { items: [], total: 0, nextOffset: null, coverage: "current" };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: "eligibility",
       ready: false, locales: [{ locale: "zh-CN", ready: false, blockers: [{ unitId: targets.first.unitId, nativeKey: "first", code: "qa-missing-or-stale", reference: null }],
@@ -109,6 +126,7 @@ it("registers scoped Review commands for the committed view and removes them on 
   expect(command("review.run-checks")).toMatchObject({ nameKey: "review.check", category: "review", binding: null, risk: "runs-review-checks" });
   expect(command("review.cancel-checks")).toMatchObject({ nameKey: "review.cancelCheck", category: "review", binding: null, risk: "cancels-review-checks" });
   expect(command("review.retry-pending")).toMatchObject({ nameKey: "review.retry", category: "review", binding: null, risk: "retries-review-action" });
+  expect(command("review.check-pending")).toMatchObject({ nameKey: "review.checkSaved", category: "review", binding: null, risk: "reads-review" });
 
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
@@ -116,7 +134,8 @@ it("registers scoped Review commands for the committed view and removes them on 
   await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
   expect(command("review.approve")?.availability.enabled).toBe(true);
   expect(command("review.request-changes")?.availability.enabled).toBe(true);
-  expect(command("review.run-checks")?.availability.enabled).toBe(true);
+  expect(command("review.prepare-checks")?.availability.enabled).toBe(true);
+  expect(command("review.run-checks")?.availability.enabled).toBe(false);
   expect(command("review.cancel-checks")?.availability.enabled).toBe(false);
   expect(command("review.retry-pending")?.availability.enabled).toBe(false);
   expect(registry.dispatch("review.approve", { ...scope, area: "translation" })).toBe(false);
@@ -212,6 +231,7 @@ it("cancels only the active check ID through the command while the Review owner 
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
+  await prepareAndConfirmChecks(user);
   await act(async () => { expect(registry.dispatch("review.run-checks", scope)).toBe(true); });
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "run_review_checks")).toBe(true));
   const checkRequest = invoke.mock.calls.find(([name]) => name === "run_review_checks")![1].request;
@@ -224,8 +244,8 @@ it("cancels only the active check ID through the command while the Review owner 
   await act(async () => { expect(registry.dispatch("review.cancel-checks", scope)).toBe(true); });
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "cancel_review_checks")).toBe(true));
   expect(invoke.mock.calls.find(([name]) => name === "cancel_review_checks")![1].request)
-    .toMatchObject({ actionId: checkRequest.actionId, projectId: project.metadata.projectId, sessionToken: project.sessionToken });
-  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.actionId, "cancelled")));
+    .toMatchObject({ actionId: checkRequest.check.actionId, projectId: project.metadata.projectId, sessionToken: project.sessionToken });
+  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.check.actionId, "cancelled")));
   expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeVisible();
 });
 
@@ -689,7 +709,9 @@ it("keeps an uncertain action reserved after its language is restored until the 
   await waitFor(() => expect(screen.queryByText(/zh-CN is no longer a project target/)).not.toBeInTheDocument());
   await waitFor(() => expect(retry).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
-  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  const prepare = screen.getByRole("button", { name: "Review check permissions" });
+  expect(prepare).toBeDisabled(); await user.click(prepare);
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_review_checks" || command === "run_review_checks")).toBe(false);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision" || command === "run_review_checks")).toHaveLength(1);
   expect(retry).toBeVisible();
@@ -830,6 +852,7 @@ it("cancels an in-flight check after its consumer remounts", async () => {
   const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
+  await prepareAndConfirmChecks(user);
   await user.click(screen.getByRole("button", { name: "Run current checks" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(true));
   view.rerender(null, project);
@@ -838,8 +861,8 @@ it("cancels an in-flight check after its consumer remounts", async () => {
   await user.click(screen.getByRole("button", { name: "Cancel current check" }));
   const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request;
   const cancelRequest = invoke.mock.calls.find(([command]) => command === "cancel_review_checks")![1].request;
-  expect(cancelRequest.actionId).toBe(checkRequest.actionId);
-  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.actionId, "cancelled")));
+  expect(cancelRequest.actionId).toBe(checkRequest.check.actionId);
+  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.check.actionId, "cancelled")));
   expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeVisible();
 });
 
@@ -858,15 +881,19 @@ it("releases a pending work read when a check receipt starts a newer view query"
   render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
+  await prepareAndConfirmChecks(user);
   await user.click(screen.getByRole("button", { name: "Run current checks" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(true));
   await user.click(screen.getByRole("tab", { name: "Work queue" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_review_work")).toBe(true));
-  const actionId = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request.actionId;
+  const actionId = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request.check.actionId;
   await act(async () => finishCheck(reviewCheckFixture(targets.first, actionId)));
   await act(async () => finishWork({ items: [], total: 0, nextOffset: null, coverage: "current" }));
   await user.click(screen.getByRole("tab", { name: "Review" }));
   expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
+  const prepare = screen.getByRole("button", { name: "Review check permissions" });
+  expect(prepare).toBeEnabled();
+  await prepareAndConfirmChecks(user);
   expect(screen.getByRole("button", { name: "Run current checks" })).toBeEnabled();
 });
 
@@ -1567,8 +1594,8 @@ it("shows historical check findings and exception reasons", async () => {
     if (command === "read_review_history") return {
       decisions: [], nextOffset: null,
       checks: [reviewCheckFixture(targets.first, fixtureIdentity(622), "completed", {
-        runId: fixtureIdentity(623), validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "placeholders", status: "findings", reason: null,
-          findings: [{ issueId: "old-issue", rule: "placeholders", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }],
+        runId: fixtureIdentity(623), validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "plugin:markers", key: pluginRuleKeyFixture("markers"), mandatory: true, status: "findings", reason: null,
+          findings: [{ issueId: "old-issue", rule: "plugin:markers", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }],
       })],
       waivers: [{ waiverId: fixtureIdentity(624), actionId: fixtureIdentity(625), unitId: targets.first.unitId, locale: "zh-CN", basis: "basis-first",
         issueId: "old-issue", grant: true, previousWaiverId: null, policyVersion: "balanced-1", actor: "Reviewer A",
@@ -1582,7 +1609,7 @@ it("shows historical check findings and exception reasons", async () => {
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
   await user.click(screen.getByText("Decision and check history"));
-  expect(await screen.findByText("Named placeholders differ or are malformed")).toBeVisible();
+  expect(await screen.findByText("Plugin check reported: marker-mismatch")).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
   expect(screen.getByText(/Deterministic check run · smapi-prebuild-1 · Earlier evidence/)).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toHaveTextContent("Earlier evidence");
@@ -1755,7 +1782,7 @@ it("returns to current history after a check completes even if that history read
         args.request.offset === 20 ? null : 20);
     }
     if (command === "run_review_checks") {
-      const check = reviewCheckFixture(targets.first, args.request.actionId as string);
+      const check = reviewCheckFixture(targets.first, (args.request.check as { actionId: string }).actionId);
       targets.first = { ...targets.first, currentCheck: check };
       return check;
     }
@@ -1773,6 +1800,7 @@ it("returns to current history after a check completes even if that history read
   expect(await screen.findByText(/older-check-history/)).toBeVisible();
   const beforeCheck = invoke.mock.calls.length;
   failAfterCheck = true;
+  await prepareAndConfirmChecks(user);
   await user.click(screen.getByRole("button", { name: "Run current checks" }));
   await waitFor(() => expect(invoke.mock.calls.slice(beforeCheck).some(([name, args]) => name === "read_review_history"
     && args.request.offset === 0)).toBe(true));
@@ -1825,13 +1853,14 @@ it("requests cancellation for the active check and reports its persisted outcome
   render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
+  await prepareAndConfirmChecks(user);
   await user.click(screen.getByRole("button", { name: "Run current checks" }));
   await user.click(await screen.findByRole("button", { name: "Cancel current check" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "cancel_review_checks")).toBe(true));
   const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")?.[1].request;
   const cancelRequest = invoke.mock.calls.find(([command]) => command === "cancel_review_checks")?.[1].request;
-  expect(cancelRequest).toMatchObject({ actionId: checkRequest.actionId, projectId: project.metadata.projectId, sessionToken: "session" });
-  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.actionId, "cancelled")));
+  expect(cancelRequest).toMatchObject({ actionId: checkRequest.check.actionId, projectId: project.metadata.projectId, sessionToken: "session" });
+  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.check.actionId, "cancelled")));
   expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeInTheDocument();
 });
 
@@ -1844,12 +1873,17 @@ it("does not present a late check reply as current after the selected revision c
   render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
-  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  const run = await screen.findByRole("button", { name: "Run current checks" });
+  expect(run).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." }));
+  await user.click(run);
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(true));
   const checkedTarget = targets.first;
   const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request;
   targets.first = reviewTargetFixture({ ...targets.first, basisEvidence: undefined, basis: "new-basis", revisionId: fixtureIdentity(626), translationText: "新译文", currentCheck: null });
-  await act(async () => finish(reviewCheckFixture(checkedTarget, checkRequest.actionId)));
+  await act(async () => finish(reviewCheckFixture(checkedTarget, checkRequest.check.actionId)));
   expect(await screen.findByText("新译文")).toBeVisible();
   expect(screen.getByText("Current checks have not run or are stale.")).toBeVisible();
 });
@@ -1865,11 +1899,12 @@ it("keeps a newer reason while late QA for an older basis stays out of current c
   await user.click(await screen.findByRole("button", { name: "first" }));
   const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
   await user.type(reason, "A");
+  await prepareAndConfirmChecks(user);
   await user.click(screen.getByRole("button", { name: "Run current checks" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(true));
   await user.type(reason, "B");
   const checked = targets.first;
-  const actionId = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request.actionId;
+  const actionId = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request.check.actionId;
   targets.first = reviewTargetFixture({ ...targets.first, basisEvidence: undefined, basis: "new-basis",
     revisionId: fixtureIdentity(626), translationText: "新译文", currentCheck: null });
   await act(async () => finish(reviewCheckFixture(checked, actionId)));
@@ -2016,4 +2051,260 @@ it("releases a cancelled view read after back navigation so the retained draft c
   await act(async () => finish(targets.first));
   expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep for later");
   expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
+});
+
+
+it("requests cancellation for the actual check without inventing a QA receipt", async () => {
+  let reject!: (value: unknown) => void;
+  const pending = new Promise((_resolve, failed) => { reject = failed; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "run_review_checks") return pending;
+    if (command === "cancel_review_checks") return Promise.resolve(true);
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  const run = await screen.findByRole("button", { name: "Run current checks" });
+  expect(run).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." }));
+  await user.click(run);
+  await user.click(await screen.findByRole("button", { name: "Cancel current check" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "cancel_review_checks")).toBe(true));
+  const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")?.[1].request;
+  const cancelRequest = invoke.mock.calls.find(([command]) => command === "cancel_review_checks")?.[1].request;
+  expect(cancelRequest).toMatchObject({ actionId: checkRequest.check.actionId, projectId: project.metadata.projectId, sessionToken: "session" });
+  await act(async () => reject({ code: "cancelled", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "review-check-cancelled" }));
+  expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeInTheDocument();
+});
+
+it("keeps the original checker grant and complete request when a reply is uncertain", async () => {
+  const original = invoke.getMockImplementation()!;
+  let checks = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_check_action") return null;
+    if (command === "run_review_checks") {
+      if (++checks === 1) throw { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown" };
+      const check = args.request.check as { actionId: string };
+      return reviewCheckFixture(targets.first, check.actionId);
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  expect(await screen.findByRole("button", { name: "Cancel current check" })).toBeVisible();
+  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(checks).toBe(2));
+  const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
+  const reads = invoke.mock.calls.filter(([command]) => command === "read_review_check_action");
+  expect(reads).toHaveLength(1); expect(reads[0][1].request).toEqual(requests[0].check);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0].executions[0].unsandboxedExecution).toBe(true);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+});
+
+it("captures explicit text rules and requires each checker consent while replaying all original grants", async () => {
+  const text = textReviewViewFixture();
+  targets.first.currentCheck = reviewCheckFixture(targets.first, fixtureIdentity(901));
+  const original = invoke.getMockImplementation()!;
+  let runs = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [{
+      package: { plugin: text.binding.checker.provider.plugin, packageDigest: text.binding.checker.provider.packageDigest },
+      resourceId: text.resourceId, environmentDigest: text.environmentDigest, availability: { kind: "ready", view: text },
+    }] };
+    if (command === "prepare_review_checks") {
+      const response = await original(command, args);
+      const choices = args.request.advisoryChecks as { rules: typeof text.rules }[];
+      return { ...response, view: { ...response.view, checkers: [...response.view.checkers,
+        textReviewSlotFixture({ ...text, rules: choices[0].rules })] } };
+    }
+    if (command === "read_review_check_action") return null;
+    if (command === "run_review_checks") {
+      if (++runs === 1) throw { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown" };
+      const check = args.request.check as { actionId: string };
+      return reviewCheckFixture(targets.first, check.actionId);
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Preferred form" }));
+  expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  let consents = await screen.findAllByRole("checkbox", { name: i18n.t("review.checkConsent") });
+  expect(consents).toHaveLength(2);
+  await user.click(consents[0]);
+  expect(screen.getByRole("button", { name: "Run current checks" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "Source note" }));
+  expect(screen.queryByRole("button", { name: "Run current checks" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  consents = await screen.findAllByRole("checkbox", { name: i18n.t("review.checkConsent") });
+  for (const consent of consents) { expect(consent).not.toBeChecked(); await user.click(consent); }
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(runs).toBe(2));
+  const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
+  const reads = invoke.mock.calls.filter(([command]) => command === "read_review_check_action");
+  expect(reads).toHaveLength(1); expect(reads[0][1].request).toEqual(requests[0].check);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0].check.advisoryChecks[0].rules).toHaveLength(2);
+  expect(requests[0].executions).toHaveLength(2);
+  expect(new Set(requests[0].executions.map((execution: { grantId: string }) => execution.grantId)).size).toBe(2);
+  expect(requests[0].executions.map((execution: { attemptId: string }) => execution.attemptId))
+    .toEqual([reviewWire.responses.prepareCheck.view.checkers[0].attemptId, fixtureIdentity(930)]);
+});
+
+it("runs a prepared check without starting competing text metadata discovery", async () => {
+  const original = invoke.getMockImplementation()!;
+  let discoveries = 0;
+  let metadataBusy = false;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_text_reviews" && ++discoveries > 1) {
+      metadataBusy = true;
+      return new Promise(() => {});
+    }
+    if (command === "run_review_checks") {
+      if (metadataBusy) throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+      const check = reviewCheckFixture(targets.first, (args.request.check as { actionId: string }).actionId);
+      targets.first.currentCheck = check;
+      return check;
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await screen.findByText(/No text suggestion checkers are installed/);
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  await user.click(await screen.findByRole("checkbox", { name: i18n.t("review.checkConsent") }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await waitFor(() => expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([command]) => command === "run_review_checks")).toHaveLength(1);
+  expect(discoveries).toBe(1);
+});
+
+
+it("keeps the complete original batch action after an unknown response and a later rejected retry", async () => {
+  const native = invoke.getMockImplementation()!;
+  let writes = 0, owner!: ReturnType<typeof useReviewDraftSession>;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "write_review_decision") {
+      writes++;
+      if (writes === 1) { await native(command, args); throw new Error("Lost batch response"); }
+      if (writes === 2) throw errorWire.errors[1];
+    }
+    return native(command, args);
+  });
+  const ui = () => <><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <ReviewOwnerProbe capture={value => { owner = value; }} /></>;
+  const view = render(ui(), project), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.click(screen.getByRole("button", { name: "Approve selected entries (1)" }));
+  await user.click(screen.getByRole("button", { name: "Confirm approvals" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
+  const original = owner.current().pending;
+  expect(owner.current().pendingUncertain).toBe(true);
+  view.rerender(null, project); view.rerender(ui(), project);
+  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(writes).toBe(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check saved result" })).toBeEnabled());
+  expect(owner.current().pending).toBe(original);
+  expect(owner.current().pendingUncertain).toBe(true);
+  expect(screen.getByRole("button", { name: "Approve selected entries (1)" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
+  await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(owner.current().pending).toBeNull());
+  const requests = invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request);
+  expect(requests).toHaveLength(3); requests.forEach(request => expect(request).toEqual(requests[0]));
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+});
+
+it("offers safe project exit for a checker review without a reason draft and keeps it when exit is cancelled", async () => {
+  const handle = createRef<ReviewHandle>();
+  let owner!: ReturnType<typeof useReviewDraftSession>;
+  render(<><ReviewWorkbench ref={handle} project={project} disabled={false} onOpenTranslation={() => true} />
+    <ReviewOwnerProbe capture={value => { owner = value; }} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await prepareAndConfirmChecks(user);
+  const captured = owner.current().checkReview, consent = owner.current().checkConsent;
+  let leaving!: Promise<boolean>;
+  await act(async () => { leaving = handle.current!.allowLeave(); });
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Stay and keep work" }));
+  expect(await leaving).toBe(false);
+  expect(owner.current().checkReview).toBe(captured); expect(owner.current().checkConsent).toBe(consent);
+  await act(async () => { leaving = handle.current!.allowLeave(); });
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Discard and leave" }));
+  expect(await leaving).toBe(true);
+  expect(owner.current().checkReview).toBeNull(); expect(owner.current().checkConsent).toEqual([]);
+  expect(invoke.mock.calls.some(([command]) => command === "run_review_checks" || command === "cancel_review_checks")).toBe(false);
+});
+
+it("separates the bilingual automatic and manual read phases from approval and explicit retry", async () => {
+  const original = invoke.getMockImplementation()!;
+  let rejectWrite!: (error: unknown) => void, finishRead!: (value: unknown) => void, failCurrent = false;
+  const writing = new Promise((_, reject) => { rejectWrite = reject; });
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "write_review_decision") return writing;
+    if (command === "read_review_decision_action") return new Promise(resolve => { finishRead = resolve; });
+    if (command === "read_review_target" && failCurrent) return Promise.reject(new Error("Current projection unavailable"));
+    return original(command, args);
+  });
+  let registry!: WorkbenchCommands, owner!: ReturnType<typeof useReviewDraftSession>;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  render(<><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={value => { registry = value; }} /><ReviewOwnerProbe capture={value => { owner = value; }} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason A");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1));
+  expect(screen.queryByText("Checking the saved review result…")).not.toBeInTheDocument();
+  const request = invoke.mock.calls.find(([name]) => name === "write_review_decision")![1].request;
+  await act(async () => { rejectWrite(new Error("Lost approval response")); });
+  await screen.findByText("Checking the saved review result…");
+  expect(registry.list(scope).find(value => value.id === "review.check-pending")).toMatchObject({ risk: "reads-review", availability: { enabled: false, reason: "busy" } });
+  expect(registry.dispatch("review.retry-pending", scope)).toBe(false);
+  await act(async () => { await i18n.changeLanguage("zh-CN"); });
+  expect(screen.getByText("正在核对审阅结果…")).toBeVisible();
+  expect(screen.getByRole("button", { name: "核对已保存结果" })).toBeDisabled();
+  await act(async () => { await i18n.changeLanguage("en-US"); finishRead(null); });
+  await screen.findByRole("button", { name: "Retry the same action" });
+  expect(owner.current().pendingUncertain).toBe(true); expect(owner.current().retryAllowed).toBe(true);
+  await user.clear(screen.getByRole("textbox", { name: "Reason or evidence" }));
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason B");
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
+  await screen.findByText("Checking the saved review result…");
+  expect(registry.dispatch("review.check-pending", scope)).toBe(false); expect(registry.dispatch("review.retry-pending", scope)).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_decision_action").map(([, args]) => args.request)).toEqual([request, request]);
+  failCurrent = true;
+  await act(async () => { finishRead({ request: request.decision, receipt: reviewDecisionFixture(request.decision, targets.first) }); });
+  await waitFor(() => expect(owner.current().pending).toBeNull());
+  expect(owner.current().reasonValue).toBe(""); expect(owner.current().checkingAction).toBe(false);
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Reason B");
+  expect(screen.queryByRole("button", { name: "Check saved result" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
 });

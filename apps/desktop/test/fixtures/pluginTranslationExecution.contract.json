@@ -1,0 +1,274 @@
+{
+  "start": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "attemptId": "00000000-0000-4000-8000-000000000003",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "grantId": "10000000-0000-4000-8000-000000000009",
+    "expiresAtMs": "9007199254740993",
+    "unsandboxedExecution": true
+  },
+  "checkPrepare": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "translationAttemptId": "00000000-0000-4000-8000-000000000003",
+    "translationResultId": "10000000-0000-4000-8000-000000000007",
+    "attemptId": "10000000-0000-4000-8000-000000000006",
+    "translation": {
+      "package": {
+        "plugin": {
+          "publisher": "example",
+          "id": "plain-text",
+          "version": "0.1.0"
+        },
+        "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "resourceId": "translation-profile",
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0"
+    }
+  },
+  "checkReview": {
+    "translationAttemptId": "00000000-0000-4000-8000-000000000003",
+    "translationResultId": "10000000-0000-4000-8000-000000000007",
+    "attemptId": "10000000-0000-4000-8000-000000000006",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source": {
+      "sourceSnapshotId": "5b62a3cb-1bc2-49ad-99af-f3a9ca1e64c7",
+      "sourceSetId": "b4e36411-859e-4a6d-bb4f-51b5be347b4e",
+      "contentRevision": "9223372036854775807",
+      "profile": {
+        "id": "sample-translations",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "nativeScopes": [
+        {
+          "namespace": "Example.Mod",
+          "policy": {
+            "id": "example-native-key",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        }
+      ]
+    },
+    "translation": {
+      "settingsRevision": "1",
+      "resourceId": "translation-profile",
+      "declaration": {
+        "displayName": "Existing translations",
+        "profile": {
+          "id": "sample-translations",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "material": {
+          "logicalDirectory": "i18n",
+          "extension": "json",
+          "role": "translation",
+          "maxBytes": 131072
+        },
+        "extractor": "extract",
+        "checker": "source-check",
+        "semanticRules": [
+          {
+            "id": "sample.translation-semantics",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ]
+      },
+      "extractor": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "extract"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.extract",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.translation-extraction-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.translation-exchange",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "sample-translations",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 2097152,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "checker": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "source-check"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.source-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.translation-extraction-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "sample-translations",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 3,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      }
+    },
+    "rules": [
+      {
+        "id": "sample.translation-semantics",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      }
+    ]
+  },
+  "checkFinish": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "translationAttemptId": "00000000-0000-4000-8000-000000000003",
+    "translationResultId": "10000000-0000-4000-8000-000000000007",
+    "attemptId": "10000000-0000-4000-8000-000000000006",
+    "resultId": "10000000-0000-4000-8000-000000000010"
+  },
+  "projectionPrepare": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "translationAttemptId": "00000000-0000-4000-8000-000000000003",
+    "translationResultId": "10000000-0000-4000-8000-000000000007",
+    "attemptId": "10000000-0000-4000-8000-000000000008"
+  },
+  "projectionReview": {
+    "translationAttemptId": "00000000-0000-4000-8000-000000000003",
+    "translationResultId": "10000000-0000-4000-8000-000000000007",
+    "attemptId": "10000000-0000-4000-8000-000000000008",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source": {
+      "sourceSnapshotId": "5b62a3cb-1bc2-49ad-99af-f3a9ca1e64c7",
+      "sourceSetId": "b4e36411-859e-4a6d-bb4f-51b5be347b4e",
+      "contentRevision": "9223372036854775807",
+      "profile": {
+        "id": "sample-translations",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "nativeScopes": [
+        {
+          "namespace": "Example.Mod",
+          "policy": {
+            "id": "example-native-key",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        }
+      ]
+    },
+    "targetLocale": "zh-CN",
+    "itemCount": 3
+  },
+  "projectionStart": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "attemptId": "10000000-0000-4000-8000-000000000008",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "checked": null
+}

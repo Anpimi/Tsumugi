@@ -6,10 +6,13 @@ import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, u
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ProjectView } from "./projectCommands";
-import { executionCommands as commands, executionContext, matchesContinuation, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ResultEnvelope, type ContinuationPage, type ContinuationReceipt } from "./executionCommands";
+import { releaseCommands } from "./releaseCommands";
+import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
+import { executionCommands as commands, executionContext, matchesContinuation, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ExecutionOutputView, type ContinuationPage, type ContinuationReceipt } from "./executionCommands";
+import { ExecutionDiagnosticDetails } from "./ExecutionDiagnosticDetails";
 import { useWorkbenchCommands, type CommandAvailability, type TaskActionCommandPayload, type TaskConfirmedCommandPayload, type TaskPendingCommandPayload,
   type TaskHistoryCommandPayload, type TaskReceiptCommandPayload, type TaskOutputCommandPayload, type TaskPreviewCommandPayload,
-  type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload } from "./workbenchCommands";
+  type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload, type TaskSavedBuildCommandPayload } from "./workbenchCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string; cancellation?: CancellationTarget };
 type HistorySelection = { id: number; record: ContinuationReceipt };
@@ -21,11 +24,20 @@ function sameContinuationRecord(record: ContinuationReceipt, found: Continuation
     && found.requestDigest === record.requestDigest && found.inputDigest === record.inputDigest && found.sourceInputDigest === record.sourceInputDigest;
 }
 export interface TasksHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
-export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
+export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, onSavedBuild, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; onSavedBuild?: (id: string) => Promise<boolean>; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
   const [open, setOpen] = useWorkbenchView("tasks");
   const { memory } = useWorkspaceView();
-  const cancellations = useExecutionTaskSession();
+  const cancellations = useExecutionTaskSession(), sessionReads = useSessionReads();
+  const routeLife = useRef(0), routeMounted = useRef(false);
+  useLayoutEffect(()=>{routeMounted.current=true;routeLife.current++;return()=>{routeMounted.current=false;routeLife.current++;};},[project.sessionToken,project.metadata.projectId]);
+  const [acceptedRoute, setAcceptedRoute] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (acceptedRoute === null) return;
+    setAcceptedRoute(null);
+    // The destination must commit before a redundant close can consult the current view.
+    if (routeMounted.current && routeLife.current === acceptedRoute && !sessionReads.retired && open) setOpen(false);
+  }, [acceptedRoute, open, sessionReads, setOpen]);
   const [dismissBlocked, setDismissBlocked] = useState(false);
   const [visited, setVisited] = useWorkbenchState("tasks", "visited", false);
   useEffect(() => { if (open) setVisited(true); }, [open]);
@@ -35,17 +47,21 @@ export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslati
   } }));
   return <WorkbenchPanel open={open} title={t("execution.title")} description={project.metadata.displayName}
     onBack={() => setOpen(false)} backDisabled={disabled}>
-    {visited ? <TaskContent active={open} disabled={disabled} onArenaPreview={onArenaPreview} onAiPreview={onAiPreview} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={onSourcePreview} onTranslationPreview={onTranslationPreview} /> : null}
+    {visited ? <TaskContent active={open} disabled={disabled} onArenaPreview={onArenaPreview} onAiPreview={onAiPreview} onSavedBuild={onSavedBuild ? async id => { const ticket = routeLife.current; const accepted = await onSavedBuild(id); if (accepted && routeMounted.current && routeLife.current === ticket && !sessionReads.retired) setAcceptedRoute(ticket); return accepted; } : undefined} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={onSourcePreview} onTranslationPreview={onTranslationPreview} /> : null}
   </WorkbenchPanel>;
 }
 
-export function TaskContent({ project, active = true, disabled = false, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; active?: boolean; disabled?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
+export function TaskContent({ project, active = true, disabled = false, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, onSavedBuild }: { project: ProjectView; active?: boolean; disabled?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; onSavedBuild?: (id: string) => Promise<boolean> }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const cancellations = useExecutionTaskSession();
   const registry = useWorkbenchCommands();
-  const mounted = useRef(true);
+  const mounted = useRef(true), sessionInvalid = useRef(false);
+  const dispatchDisabled = useRef(disabled);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { dispatchDisabled.current = disabled; }, [disabled]);
+  // A mounted caller can lose permission; hiding its view does not revoke the owner's fixed decision.
+  const continueCaptured = () => !mounted.current || !dispatchDisabled.current;
   const [taskId, setTaskId] = useWorkbenchState<string | null>("tasks", "taskId", null);
   const [attemptId, setAttemptId] = useWorkbenchState<string | null>("tasks", "attemptId", null);
   const [cursor, setCursor] = useWorkbenchState("tasks", "cursor", "0");
@@ -59,12 +75,15 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const pendingAction = activity?.phase === "unknown" || cancellations.busy ? activity : null;
   const [showOwnerDialog, setShowOwnerDialog] = useWorkbenchState("tasks", "showOwnerDialog", true);
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
-  const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | null>(null);
+  const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | "savedBuildBlocked" | null>(null);
   const [localConfirmation, setConfirmation] = useWorkbenchState<Confirmation | null>("tasks", "confirmation", null);
   const ownerConfirmation = activity && showOwnerDialog && activity.phase !== "recorded" && activity.phase !== "rejected"
     ? { action: activity.intent.action, unit: activity.intent.unit, itemId: activity.intent.itemId } : null;
   const confirmation: Confirmation | null = localConfirmation ?? ownerConfirmation;
   const [outputSelection, setOutput] = useWorkbenchState<{ attemptId: string; itemId: string; resultId: string } | null>("tasks", "outputSelection", null);
+  const [savedOutput, setSavedOutput] = useWorkbenchState<{ attemptId: string; itemId: string; resultId: string } | null>("tasks", "savedOutput", null);
+  const savedRoute = useRef(false);
+  const [routing, setRouting] = useState(false);
   const [receiptSelection, setReceipt] = useWorkbenchState<{ attemptId: string; unitId: string; actionId: string } | null>("tasks", "receiptSelection", null);
 
   const actionTrigger = useRef<HTMLElement | null>(null);
@@ -79,21 +98,24 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     setConfirmation(null); setShowOwnerDialog(false); cancellations.dismiss();
   }
   function showError(error: unknown) {
-    setFailure(commandFailure(error,"storage-failed"));
+    const value = commandFailure(error,"storage-failed");
+    if (value === "session-invalid" || typeof value !== "string" && value.code === "session-invalid") sessionInvalid.current = true;
+    setFailure(value);
   }
   const reads = useSessionReads();
-  const projection = useSessionQuery<{ runtime: RuntimeStatus; tasks: Task[]; attempts: AttemptSummary[]; detail: AttemptDetail | null }>({
+  const projection = useSessionQuery<{ runtime: RuntimeStatus; tasks: Task[]; attempts: AttemptSummary[]; detail: AttemptDetail | null; task: Task | null }>({
     key: ["tasks", taskId, attemptId, cursor, attemptCursor, offset], scopes: ["execution", "source", "translation", "release"], enabled: active && !busy,
     read: async () => {
       const status = () => reads.client.getQueryData<RuntimeStatus>(reads.key(["runtime"])) ?? commands.status(context);
       if (!taskId) {
         const [runtime, tasks] = await Promise.all([status(), commands.list({ ...context, after: cursor, limit: 50 })]);
-        return { runtime, tasks, attempts: [], detail: null };
+        return { runtime, tasks, attempts: [], detail: null, task: null };
       }
-      const [runtime, attempts] = await Promise.all([status(), commands.task({ ...context, taskId, after: attemptCursor, limit: 100 })]);
+      const [runtime, attempts, task] = await Promise.all([status(), commands.task({ ...context, taskId, after: attemptCursor, limit: 100 }), commands.taskView({ ...context, taskId })]);
       const selected = attemptId ?? attempts.at(-1)?.attemptId;
       const detail = selected ? await commands.attempt({ ...context, attemptId: selected, offset, limit: 100 }) : null;
-      return { runtime, tasks: [], attempts, detail };
+      if (detail && (detail.taskId !== taskId || detail.attemptId !== selected || detail.recovery.attemptId !== selected || detail.operation !== task.operation)) throw new Error("Invalid task attempt scope");
+      return { runtime, tasks: [], attempts, detail, task };
     },
   });
   const tasks = projection.data?.tasks ?? [], attempts = projection.data?.attempts ?? [], detail = projection.data?.detail ?? null;
@@ -124,7 +146,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       || found.id !== historySelection.id || !sameContinuationRecord(historySelection.record, found.record)
       || !detail || detail.attemptId !== historySelection.record.action.sourceAttemptId || detail.taskId !== historySelection.record.taskId
       || detail.operation !== historySelection.record.operation) return;
-    setAttemptId(found.record.attemptId); setContinuationCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setHistorySelection(null);
+    setAttemptId(found.record.attemptId); setContinuationCursor("0"); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null); setHistorySelection(null);
   }, [selectedContinuation.data, selectedContinuation.status, selectedContinuation.fetchStatus, selectedContinuation.isFetching,
     selectedContinuation.error, historySelection, active, busy, pendingAction, detail?.attemptId, detail?.taskId, detail?.operation]);
   const cancelTarget: CancellationTarget | null = detail ? { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } : null;
@@ -132,10 +154,24 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const cancelling = cancellation?.phase === "preparing" || cancellation?.phase === "pending" || cancellation?.phase === "checking";
   useEffect(() => { if (cancellation?.phase === "recorded" || cancellation?.phase === "rejected") setConfirmation(null); }, [cancellation]);
   const loading = projection.isPending && active && !busy;
+  const savedOutputRead = useSessionQuery({ key: ["saved-plugin-build-output", savedOutput?.attemptId ?? null, savedOutput?.itemId ?? null, savedOutput?.resultId ?? null],
+    scopes: ["execution", "release"], enabled: active && detail?.operation === "locale-build" && !!savedOutput,
+    read: async () => {
+      if (!detail || !savedOutput) throw new Error("No saved build result selected");
+      const selected = detail, expected = savedOutput;
+      const saved = await releaseCommands.savedBuild({ ...context, attemptId: selected.attemptId });
+      const locale = saved.locales.find(locale => locale.itemId === expected.itemId);
+      const item = selected.items.find(item => item.status.itemId === expected.itemId);
+      if (saved.taskId !== selected.taskId || expected.attemptId !== selected.attemptId
+        || !locale || !item || locale.choice.locale !== item.scope.locale || locale.result?.resultId !== expected.resultId
+        || item.resultId !== expected.resultId || locale.result.outcome !== item.status.execution) throw new Error("Saved build result identity changed");
+      return saved;
+    } });
   useEffect(() => { const error = projection.error ?? projection.data?.runtime.error; if (error) showError(error); }, [projection.error, projection.data?.runtime.error]);
 
   function selectTask(id: string | null) {
-    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null); setFailure(null);
+    if (!gate().enabled) return;
+    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null); setFailure(null);
   }
   const recovered = activity?.phase === "recorded" ? activity.recovery : null;
   const continued = activity?.phase === "recorded" ? activity.continuation : null;
@@ -145,11 +181,11 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       if (handledRecovery.current === marker) return;
       handledRecovery.current = marker;
       setTaskId(activity.intent.taskId);
-      setAttemptId(continued?.attemptId ?? recovered!.attemptId); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null);
+      setAttemptId(continued?.attemptId ?? recovered!.attemptId); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null);
       setMessage(recovered?.queryStarted ? "queryStarted" : "done");
     }
   }, [recovered, continued]);
-  const outputQuery = useSessionQuery<ResultEnvelope>({ key: ["task-output", outputSelection], scopes: ["execution"], enabled: active && outputSelection !== null,
+  const outputQuery = useSessionQuery<ExecutionOutputView>({ key: ["task-output", outputSelection], scopes: ["execution"], enabled: active && outputSelection !== null,
     read: async () => {
       if (!outputSelection) throw new Error("No task output selected");
       const result = await commands.output({ ...context, attemptId: outputSelection.attemptId, resultId: outputSelection.resultId });
@@ -165,7 +201,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
         || result.unitId !== receiptSelection.unitId || result.actionId !== receiptSelection.actionId)) throw new Error("Invalid task receipt association");
       return result;
     } });
-  const output = outputQuery.data ?? null;
+  const output = outputQuery.error ? null : outputQuery.data ?? null;
   const shownReceipt = receiptSelection ? receiptQuery.data : activity?.phase === "recorded" ? activity.receipt : null;
   useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
   useEffect(() => { const error = outputQuery.error ?? receiptQuery.error ?? selectedContinuation.error; if (error) showError(error); }, [outputQuery.error, receiptQuery.error, selectedContinuation.error]);
@@ -182,8 +218,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     if (!active || !mounted.current || reads.retired || reads.context.projectId !== commandScope.projectId || reads.context.sessionToken !== commandScope.sessionToken) return { enabled: false, reason: "hidden" };
     const current = cancellations.currentActivity();
     if (current && ["capturing","identifying","preparing","adopting","recovering","checking"].includes(current.phase)) return { enabled: false, reason: "busy" };
-    if (disabled) return unavailable;
-    if (!allowOriginal && current && ["confirming","unknown"].includes(current.phase)) return { enabled: false, reason: "pending-action" };
+    if (disabled || savedRoute.current || sessionInvalid.current) return unavailable;
+    if (!allowOriginal && (cancellations.unresolved() || current && ["confirming","unknown"].includes(current.phase))) return { enabled: false, reason: "pending-action" };
     return { enabled: true };
   }
   function currentRead<T>(key: readonly unknown[]): T | undefined {
@@ -196,7 +232,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     const value = retained && query && query.dataUpdateCount > 0 ? reads.client.getQueryData<NonNullable<typeof projection.data>>(key) : currentRead<NonNullable<typeof projection.data>>(projectionKey);
     const selected = value?.detail;
     return value && selected && selected.taskId === taskId && selected.recovery.attemptId === selected.attemptId
-      && selected.attemptId === (attemptId ?? value.attempts.at(-1)?.attemptId) ? selected : undefined;
+      && selected.attemptId === (attemptId ?? value.attempts.at(-1)?.attemptId)
+      && value.task?.taskId === selected.taskId && value.task.operation === selected.operation ? selected : undefined;
   }
   function idsEqual(left: readonly string[], right: readonly string[]) { return left.length === right.length && left.every((id,index) => id === right[index]); }
   function actionPayload(value: Pick<AttemptDetail,"taskId"|"attemptId"|"operation">, unit: RecoveryUnit, action: TaskActionCommandPayload["action"], itemId?: string): TaskActionCommandPayload {
@@ -307,6 +344,26 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     return callback && (payload.unitId ? value.recovery.units.some(unit => unit.unitId === payload.unitId && unit.actions.includes("adopt-result"))
       : payload.area === "ai" || payload.area === "arena" || value.items.some(item => item.status.validation === "valid")) ? {enabled:true} : unavailable;
   }
+  function savedBuildPayload(value: AttemptDetail, item?: AttemptDetail["items"][number]): TaskSavedBuildCommandPayload {
+    return { kind: "task-saved-build", taskId: value.taskId, attemptId: value.attemptId, operation: "locale-build",
+      itemId: item?.status.itemId ?? null, resultId: item?.resultId ?? null };
+  }
+  function savedBuildAvailability(payload?: TaskSavedBuildCommandPayload): CommandAvailability {
+    const allowed = gate(); if (!allowed.enabled) return allowed;
+    const value = currentDetail();
+    return payload && onSavedBuild && value?.operation === "locale-build" && payload.taskId === value.taskId && payload.attemptId === value.attemptId
+      && (payload.itemId === null ? payload.resultId === null : value.items.some(item => item.status.itemId === payload.itemId && item.resultId === payload.resultId && item.resultId !== null))
+      ? { enabled: true } : unavailable;
+  }
+  async function openSavedBuild(payload: TaskSavedBuildCommandPayload) {
+    if (!savedBuildAvailability(payload).enabled || savedRoute.current) return;
+    savedRoute.current = true; setRouting(true);
+    try {
+      const accepted = await onSavedBuild?.(payload.attemptId);
+      if (mounted.current && !reads.retired && !accepted) setMessage("savedBuildBlocked");
+    } catch (error) { if (mounted.current && !reads.retired) showError(error); }
+    finally { savedRoute.current = false; if (mounted.current && !reads.retired) setRouting(false); }
+  }
   useLayoutEffect(() => {
     const metadata = {category:"tasks" as const,scope:commandScope,binding:null,confirmation:"none" as const};
     const remove = [
@@ -315,7 +372,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       registry.register({...metadata,id:"tasks.retry-safe-failure",nameKey:"execution.actions.retry-safe-failure",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"retry-safe-failure"),handler:beginAction}),
       registry.register({...metadata,id:"tasks.validate-output",nameKey:"execution.actions.validate-output",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"validate-output"),handler:beginAction}),
       registry.register({...metadata,id:"tasks.query-outcome",nameKey:"execution.actions.query-outcome",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"query-outcome"),handler:beginAction}),
-      registry.register({...metadata,id:"tasks.submit-action",nameKey:"execution.confirm",risk:"writes-execution",confirmation:"required",payloadKind:"task-confirmed",availability:submitAvailability,handler:()=>{void cancellations.submit();}}),
+      registry.register({...metadata,id:"tasks.submit-action",nameKey:"execution.confirm",risk:"writes-execution",confirmation:"required",payloadKind:"task-confirmed",availability:submitAvailability,handler:()=>{void cancellations.submit(continueCaptured);}}),
       registry.register({...metadata,id:"tasks.confirm-cancellation",nameKey:"execution.cancel",risk:"cancels-execution-task",payloadKind:"execution-cancellation",availability:payload=>cancellationAvailability(payload),handler:payload=>{rememberTrigger();setConfirmation({action:"cancel",cancellation:{taskId:payload.taskId,attemptId:payload.attemptId,origin:payload.origin}});}}),
       registry.register({...metadata,id:"tasks.cancel-task",nameKey:"execution.cancel",risk:"cancels-execution-task",confirmation:"required",payloadKind:"execution-cancellation",availability:payload=>cancellationAvailability(payload,true),handler:({taskId,attemptId,origin})=>{void cancellations.cancel({taskId,attemptId,origin});}}),
       registry.register({...metadata,id:"tasks.retry-cancellation",nameKey:"execution.retryCancellation",risk:"retries-execution-action",payloadKind:"execution-cancellation-retry",availability:cancellationRetryAvailability,handler:payload=>{void cancellations.retry(payload.taskId);}}),
@@ -326,7 +383,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       registry.register({...metadata,id:"tasks.retry-continuation",nameKey:"execution.retryContinuation",risk:"retries-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"continuation",true),handler:()=>{void cancellations.retryContinuation();}}),
       registry.register({...metadata,id:"tasks.view-continuation",nameKey:"execution.viewContinuation",risk:"reads-execution",payloadKind:"task-history",availability:historyAvailability,handler:payload=>{const record=historyRecord(payload);if(record){setFailure(null);setHistorySelection({id:++historyIntent.current,record:structuredClone(record)});}}}),
       registry.register({...metadata,id:"tasks.view-receipt",nameKey:"execution.actions.view-receipt",risk:"reads-execution",payloadKind:"task-receipt",availability:receiptAvailability,handler:payload=>{setReceipt({attemptId:payload.attemptId,unitId:payload.unitId,actionId:payload.actionId});}}),
-      registry.register({...metadata,id:"tasks.view-output",nameKey:"execution.output",risk:"reads-execution",payloadKind:"task-output",availability:outputAvailability,handler:payload=>{setOutput({attemptId:payload.attemptId,itemId:payload.itemId,resultId:payload.resultId});}}),
+      registry.register({...metadata,id:"tasks.open-saved-build",nameKey:"releasePlugin.savedOpen",risk:"reads-execution",payloadKind:"task-saved-build",availability:savedBuildAvailability,handler:payload=>{void openSavedBuild(payload);}}),
+      registry.register({...metadata,id:"tasks.view-output",nameKey:"execution.output",risk:"reads-execution",payloadKind:"task-output",availability:outputAvailability,handler:payload=>{if(payload.operation === "locale-build")setSavedOutput({attemptId:payload.attemptId,itemId:payload.itemId,resultId:payload.resultId});else setOutput({attemptId:payload.attemptId,itemId:payload.itemId,resultId:payload.resultId});}}),
       registry.register({...metadata,id:"tasks.open-preview",nameKey:"execution.actions.adopt-result",risk:"opens-execution-preview",payloadKind:"task-preview",availability:previewAvailability,handler:payload=>{
         if(payload.area==="source")onSourcePreview?.(payload.attemptId);else if(payload.area==="translation")onTranslationPreview?.(payload.attemptId);
         else if(payload.area==="ai")onAiPreview?.(payload.attemptId);else onArenaPreview?.(payload.attemptId);
@@ -337,13 +395,19 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
     dispatch:intent=>{registry.dispatch("tasks.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
   }} checkCommand={{available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
-      dispatch:intent=>{registry.dispatch("tasks.check-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
+    dispatch:intent=>{registry.dispatch("tasks.check-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
+    {Object.values(cancellations.state).some(value=>value.phase === "unknown") ? <>
+      <p role="status">{t("execution.cancellationUnconfirmed")}</p>
+      {confirmation?.action === "cancel" ? <button className="text-button" onClick={closeConfirmation}>{t("execution.deferContinuation")}</button> : null}
+    </> : null}
     {displayedFailure ? <div role="alert" tabIndex={-1} ref={errorRegion}><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={displayedFailure} /></div> : null}
     {activity?.phase === "capturing" ? <p role="status">{t("execution.capturing")}</p> : null}
     {activity?.phase === "checking" && activity.prepare ? <p role="status">{t("execution.checkingAdoption")}</p> : null}
     {activity?.phase === "checking" && activity.continuationRequest ? <p role="status">{t("execution.checkingContinuation")}</p> : null}
     {activity?.phase === "unknown" ? <section aria-label={t("execution.originalAction")}>
-      <p role="status">{t(activity.continuationRequest ? "execution.continuationUnconfirmed" : activity.intent.action === "adopt-result" ? "execution.adoptionUnknown" : "execution.recoveryUnknown")}</p>
+      <p role="status">{t(activity.continuationRequest ? "execution.continuationUnconfirmed" : activity.intent.action === "adopt-result"
+        ? activity.uncertain && typeof activity.failure === "object" && activity.failure?.outcome === "rejected" ? "execution.adoptionUnconfirmed" : "execution.adoptionUnknown"
+        : "execution.recoveryUnknown")}</p>
       <ul>{activity.intent.unit.scopes.map((scope, index) => <li key={activity.intent.unit.itemIds[index]}>{scope.id}{scope.locale ? ` · ${scope.locale}` : ""}</li>)}</ul>
       <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify({ taskId: activity.intent.taskId, operation: activity.intent.operation,
         unit: activity.intent.unit, request: activity.continuationRequest ?? activity.prepare ?? activity.recoveryRequest }, null, 2)}</pre></details>
@@ -358,13 +422,15 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       <button className="text-button" disabled={busy} onClick={() => { setConfirmation(null); setShowOwnerDialog(false); }}>{t(activity.continuationRequest ? "execution.deferContinuation" : "execution.keepOutput")}</button>
     </section> : null}
     {activity?.phase === "recorded" && activity.receipt ? <p role="status">{t("execution.adoptionRecorded")}</p> : message ? <p role="status">{t(`execution.${message}`)}</p> : null}</>;
-  const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel") : t(`execution.actions.${action}`);
+  const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel")
+    : action === "adopt-result" && activity?.intent.operation === "ai-semantic-review" ? t("semanticReview.confirmRecord") : t(`execution.actions.${action}`);
   const confirmationCount = confirmation?.itemId ? 1 : confirmation?.unit?.itemIds.length ?? 0;
   const blockedKey = (reason: string) => reason === "external-new-consent" ? "externalConsent" : reason === "outcome-unknown" ? "unknown" : reason === "scope-removed" ? "scopeRemoved" : reason === "output-invalid" ? "invalid" : reason === "retry-not-safe" ? "retryUnsafe" : "blocked";
-  return <div className="execution-content" aria-busy={busy || cancelling || loading}>
+  const navigationBlocked = !gate().enabled;
+  return <div className="execution-content" aria-busy={busy || cancelling || loading || routing}>
     {!confirmation ? feedback : null}
     <div className="execution-actions">
-      {taskId ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => selectTask(null)}>{t("execution.allTasks")}</button> : null}
+      {taskId ? <button className="secondary-button" disabled={navigationBlocked} onClick={() => selectTask(null)}>{t("execution.allTasks")}</button> : null}
       <button className="secondary-button" disabled={busy} onClick={() => reads.invalidate(["execution"], false)}>{t("execution.refresh")}</button>
     </div>
     {loading ? <p role="status">{t("execution.loading")}</p> : null}
@@ -372,26 +438,26 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       {!loading && tasks.length === 0 ? <p>{t("execution.empty")}</p> : null}
       {tasks.length > 0 ? <p>{t("execution.listHelp")}</p> : null}
       <ul className="execution-list">{tasks.map(task => <li key={task.taskId}>
-        <button className="secondary-button" onClick={() => selectTask(task.taskId)} disabled={busy}>
-          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "ai-translation" ? "ai.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
+        <button className="secondary-button" onClick={() => selectTask(task.taskId)} disabled={navigationBlocked}>
+          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "ai-translation" ? "ai.title" : task.operation === "ai-semantic-review" ? "semanticReview.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
         </button>
       </li>)}</ul>
       {cursor !== "0" || tasks.length === 50 ? <div className="execution-actions">
-        <button className="text-button" disabled={cursor === "0" || busy} onClick={() => setCursor("0")}>{t("execution.firstPage")}</button>
-        <button className="text-button" disabled={tasks.length < 50 || busy} onClick={() => setCursor(tasks.at(-1)!.sequence)}>{t("execution.nextPage")}</button>
+        <button className="text-button" disabled={cursor === "0" || navigationBlocked} onClick={() => { if (gate().enabled) setCursor("0"); }}>{t("execution.firstPage")}</button>
+        <button className="text-button" disabled={tasks.length < 50 || navigationBlocked} onClick={() => { if (gate().enabled) setCursor(tasks.at(-1)!.sequence); }}>{t("execution.nextPage")}</button>
       </div> : null}
     </> : <>
       <label className="field execution-attempt">{t("execution.attempt")}
-        <select disabled={busy || pendingAction !== null} value={attemptId ?? detail?.attemptId ?? ""} onChange={event => {
-          setAttemptId(event.target.value); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null);
+        <select disabled={navigationBlocked} value={attemptId ?? detail?.attemptId ?? ""} onChange={event => {
+          setAttemptId(event.target.value); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null);
         }}>
           {attempts.map(attempt => <option key={attempt.attemptId} value={attempt.attemptId}>{t("execution.attemptNumber", { number: attempt.sequence })}</option>)}
           {detail && !attempts.some(attempt => attempt.attemptId === detail.attemptId) ? <option value={detail.attemptId}>{t("execution.currentAttempt")}</option> : null}
         </select>
       </label>
       {attemptCursor !== "0" || attempts.length === 100 ? <div className="execution-actions">
-        <button className="text-button" disabled={attemptCursor === "0" || busy || pendingAction !== null} onClick={() => { setAttemptCursor("0"); setAttemptId(null); setContinuationCursor("0"); setHistorySelection(null); }}>{t("execution.firstPage")}</button>
-        <button className="text-button" disabled={attempts.length < 100 || busy || pendingAction !== null} onClick={() => { setAttemptCursor(attempts.at(-1)!.sequence); setAttemptId(null); setContinuationCursor("0"); setHistorySelection(null); }}>{t("execution.nextPage")}</button>
+        <button className="text-button" disabled={attemptCursor === "0" || navigationBlocked} onClick={() => { setAttemptCursor("0"); setAttemptId(null); setContinuationCursor("0"); setHistorySelection(null); }}>{t("execution.firstPage")}</button>
+        <button className="text-button" disabled={attempts.length < 100 || navigationBlocked} onClick={() => { setAttemptCursor(attempts.at(-1)!.sequence); setAttemptId(null); setContinuationCursor("0"); setHistorySelection(null); }}>{t("execution.nextPage")}</button>
       </div> : null}
       {detail ? <>
         <section className="execution-summary" aria-label={t("execution.summary")}>
@@ -416,7 +482,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
               if(action === "view-receipt"){const payload=receiptPayload(detail,unit);if(payload)registry.dispatch("tasks.view-receipt",commandScope,payload);}
               else if(action === "adopt-result" && previewPayload(detail,unit.unitId)){const payload=previewPayload(detail,unit.unitId);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload);}
               else registry.dispatch(actionCommands[action],commandScope,actionPayload(detail,unit,action));
-            }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : `execution.actions.${action}`)}</button>)}</div>
+            }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : action === "adopt-result" && detail.operation === "ai-semantic-review" ? "semanticReview.record" : `execution.actions.${action}`)}</button>)}</div>
           </section>)}
         </section>
         <section aria-label={t("execution.continuationHistory")}>
@@ -436,6 +502,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
             </div> : null}
           </> : null}
         </section>
+        {detail.operation === "locale-build" && onSavedBuild ? <button className="secondary-button" disabled={!savedBuildAvailability(savedBuildPayload(detail)).enabled} onClick={() => registry.dispatch("tasks.open-saved-build",commandScope,savedBuildPayload(detail))}>{t("releasePlugin.savedOpen")}</button> : null}
         <h3>{t("execution.itemResults")}</h3>{detail.operation === "arena-translation" ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("arena.open")}</button> : null}{detail.operation === "ai-translation" ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("ai.results")}</button> : null}
         {detail.operation === "source-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("source.preview")}</button> : null}
         {detail.operation === "translation-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("translation.preview")}</button> : null}
@@ -446,20 +513,20 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
           <p>{t(`execution.states.${item.status.execution}`)} · {t(`execution.adoption.${item.status.adoption}`)}</p>
           {item.status.validation === "invalid" ? <p>{t("execution.errors.invalid")}</p> : null}
           {item.status.cancellationRequested ? <small>{t("execution.cancellationRequested")}</small> : null}
-          {output?.itemId === item.status.itemId && output.resultId === item.resultId ? <div className="execution-result" ref={outputRegion} tabIndex={-1} role="region" aria-label={t("execution.resultFor", { name: item.scope.id })}>
+          {(detail.operation === "locale-build" ? savedOutput?.attemptId === detail.attemptId && savedOutput.itemId === item.status.itemId && savedOutput.resultId === item.resultId : output?.itemId === item.status.itemId && output.resultId === item.resultId) ? <div className="execution-result" ref={outputRegion} tabIndex={-1} role="region" aria-label={t("execution.resultFor", { name: item.scope.id })}>
             <h4>{t("execution.resultFor", { name: item.scope.id })}</h4>
-            {output.output !== null ? detail.operation === "locale-build" ? <p>{t("release.outputSummary", {
-              file: (output.output as { fileName: string }).fileName,
-              count: (output.output as { entryCount: number }).entryCount,
-              digest: (output.output as { sha256: string }).sha256,
-            })}</p> : <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
-            {output.diagnostic ? <><p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p>
-              <details><summary>{t("execution.diagnostic")}</summary><code>{output.diagnostic.code}</code></details></> : null}
+            {detail.operation === "locale-build" ? <>
+              {savedOutputRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
+              {savedOutputRead.error ? <div role="alert"><p>{t("releasePlugin.savedReadFailed")}</p><CommandFailureDetails failure={commandFailure(savedOutputRead.error)} /><button disabled={savedOutputRead.isFetching} onClick={() => void savedOutputRead.refetch()}>{t("releasePlugin.savedRefresh")}</button></div> : null}
+              {!savedOutputRead.error && savedOutputRead.data ? <SavedPluginBuildSummary build={savedOutputRead.data} itemId={item.status.itemId} /> : null}
+            </> : output && output.output !== null ? <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
+            {detail.operation !== "locale-build" && (output?.diagnostic || output?.sourceFailure) ? <>{output?.diagnostic && output.outcome !== "succeeded" ? <p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p> : null}
+              <ExecutionDiagnosticDetails code={output?.diagnostic?.code} sourceFailure={output?.sourceFailure} /></> : null}
           </div> : null}
         </li>)}</ul>
         {offset > 0 || detail.nextOffset !== null ? <div className="execution-actions">
-          <button className="text-button" disabled={offset === 0 || busy} onClick={() => { setOffset(Math.max(0, offset - 100)); setOutput(null); }}>{t("execution.previousPage")}</button>
-          <button className="text-button" disabled={detail.nextOffset === null || busy} onClick={() => { setOffset(detail.nextOffset!); setOutput(null); }}>{t("execution.nextPage")}</button>
+          <button className="text-button" disabled={offset === 0 || navigationBlocked} onClick={() => { if (gate().enabled) { setOffset(Math.max(0, offset - 100)); setOutput(null); setSavedOutput(null); } }}>{t("execution.previousPage")}</button>
+          <button className="text-button" disabled={detail.nextOffset === null || navigationBlocked} onClick={() => { if (gate().enabled) { setOffset(detail.nextOffset!); setOutput(null); setSavedOutput(null); } }}>{t("execution.nextPage")}</button>
         </div> : null}
       </> : null}
     </>}
@@ -468,7 +535,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" />
         <Dialog.Content className="confirm-dialog execution-confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); actionTrigger.current?.focus(); }} onEscapeKeyDown={event => { if (busy || cancelling) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <Dialog.Title>{confirmation ? titleFor(confirmation.action) : t("execution.nextSteps")}</Dialog.Title>
-          <Dialog.Description>{confirmation?.action === "cancel" ? t("execution.cancelHelp") : confirmation ? t(`execution.actionHelp.${confirmation.action}`, {
+          <Dialog.Description>{confirmation?.action === "cancel" ? t("execution.cancelHelp")
+            : confirmation?.action === "adopt-result" && activity?.intent.operation === "ai-semantic-review" ? t("semanticReview.recordHelp") : confirmation ? t(`execution.actionHelp.${confirmation.action}`, {
             count: confirmationCount, remaining: confirmation.unit?.remainingItemIds.length ?? 0,
             reused: (confirmation.unit?.itemIds.length ?? 0) - (confirmation.unit?.remainingItemIds.length ?? 0),
           }) : null}</Dialog.Description>

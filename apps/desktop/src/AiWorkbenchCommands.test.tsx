@@ -5,31 +5,43 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import ai from "../test/fixtures/aiCommands.contract.json";
 import execution from "../test/fixtures/executionCommands.contract.json";
 import { AiWorkbench } from "./AiWorkbench";
-import { AiPreparationSession, useAiPreparation } from "./AiPreparationSession";
+import { AiPreparationSession, defaultPlanOptions, useAiPreparation } from "./AiPreparationSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { useSessionReads } from "./SessionReadProvider";
-import { useWorkbenchCommands, type AiCandidateCommandPayload, type AiTranslationCommandPayload } from "./workbenchCommands";
+import { useWorkbenchCommands, type AiCandidateCommandPayload, type AiTranslationCommandPayload, type AiStartCommandPayload } from "./workbenchCommands";
 import { defaultAiConfig, type AiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
+import { validateRequestPrepare } from "./generated/execution.validators";
+import { validateRequestWorkPlanPrepare, validateRequestWorkPlanAuthorize, validateRequestWorkPlanControl, validateRequestWorkPlanStart, validateResponseWorkPlan } from "./generated/ai.validators";
+import type { WorkPlanView, WorkPlanStatusView, WorkPlanReceiptView, MaintenanceAssessment } from "./workPlanCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
-import type { ProjectView } from "./projectCommands";
+import { isCommandError, type CommandError, type ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { aiAttempt, aiTask, aiViewFixture } from "./testSupport/aiFixture";
+import { aiAttempt, aiTask, aiViewFixture, aiWorkPlanFixture } from "./testSupport/aiFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import { connectionReadKey, currentConnections, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionFixture } from "./testSupport/connectionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "ai-command-session", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(500), displayName: "AI commands", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "ai" as const };
+// This command/witness suite authorizes candidate saving without running checks.
+const saveOnlyOptions: typeof defaultPlanOptions = { ...defaultPlanOptions,
+  stages: defaultPlanOptions.stages.map(stage => ({ ...stage, mode: stage.stage === "checks" ? "manual" : stage.mode })) };
 const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureIdentity(302), sourceSnapshotId: fixtureIdentity(300),
-  nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null,
+  nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"}, projectContext: {kind:"not-selected" as const},
   omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
 let owner: ReturnType<typeof useAiPreparation>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let tasks: ReturnType<typeof useExecutionTaskSession>, prepared: AiPrepared, view: AiView, action: AdoptionAction;
+let plan: WorkPlanView, status: WorkPlanStatusView | null, planReceipts: Map<string,WorkPlanReceiptView>;
+let recordedPlanRequests:Map<string,Record<string,unknown>>;
+let application: ReturnType<typeof useApplicationQueryClient>;
 const navigate = vi.fn(async () => true);
 function Probe() {
+  application = useApplicationQueryClient();
   const preparation = useAiPreparation(), sessionReads = useSessionReads(), commands = useWorkbenchCommands(), taskOwner = useExecutionTaskSession();
   useLayoutEffect(() => { owner = preparation; reads = sessionReads; registry = commands; tasks = taskOwner; });
   return null;
@@ -48,11 +60,12 @@ function deferred<T>() {
 }
 function observeQuerySubscriptions() {
   const cache = reads.client.getQueryCache(), subscribe = cache.subscribe;
-  const counts = { subscribed: 0, disposed: 0, events: 0 };
+  const counts = { subscribed: 0, disposed: 0, events: 0, eventsAfterDispose: 0 };
   vi.spyOn(cache, "subscribe").mockImplementation(listener => {
     counts.subscribed++;
-    const unsubscribe = subscribe(event => { counts.events++; listener(event); });
-    return () => { counts.disposed++; unsubscribe(); };
+    let disposed = false;
+    const unsubscribe = subscribe(event => { counts.events++; if (disposed) counts.eventsAfterDispose++; listener(event); });
+    return () => { disposed = true; counts.disposed++; unsubscribe(); };
   });
   return counts;
 }
@@ -78,8 +91,13 @@ function previewPayload() {
   const current = owner.current();
   return { kind: "ai-preparation" as const, editSeq: current.editSeq, locale: current.locale, unitIds: [...current.selected] };
 }
-function startPayload() { const current = owner.current(); return { kind: "ai-start" as const, attemptId: current.prepared!.attemptId, editSeq: current.editSeq }; }
-function startPendingPayload() { const entry = owner.current().pendingStart!; return { kind: "ai-start-pending" as const, attemptId: entry.request.attemptId, editSeq: entry.editSeq }; }
+function startPayload(): AiStartCommandPayload { const current = owner.current(), plan = current.preparedPlan!;
+  if (!plan.attemptId) throw new Error("Expected assisted plan");
+  return { kind: "ai-start", attemptId: plan.attemptId, planId: plan.planId, digest: plan.digest, editSeq: current.editSeq,
+    minutes:owner.planControl.current().minutes,confirmed:current.consent,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[],effects:["save-candidate"] }; }
+function startPendingPayload() { const entry = owner.planControl.current().pending;
+  if (entry?.kind !== "start") throw new Error("Expected original plan start");
+  return { kind: "ai-start-pending" as const, request:entry.request, attemptId:entry.attemptId, editSeq:entry.editSeq }; }
 function adoptionPendingPayload() {
   const entry = owner.current().pendingAdopt!;
   return { kind: "ai-adoption-pending" as const, attemptId: entry.request.attemptId, actionId: entry.request.actionId,
@@ -89,35 +107,78 @@ beforeEach(async () => {
   await i18n.changeLanguage("en-US"); navigate.mockClear();
   prepared = { attemptId: aiAttempt, preview: { config: { ...defaultAiConfig, endpoint: "http://127.0.0.1:4000/v1/chat/completions", model: "test-model", credentialEnv: "" },
     recipe: "direct-translation-1", digest: ai.responses.prepared.preview.digest, items: [item] } };
-  view = aiViewFixture(item, prepared.preview.config);
+  plan=aiWorkPlanFixture(prepared,saveOnlyOptions);status=null;planReceipts=new Map();recordedPlanRequests=new Map();
+  view = aiViewFixture(item, prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
   let nextIdentity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if(command==="read_work_plan_team_history")return{planId:payload.request.planId,members:[],authorRoles:[],posts:[],nextAfter:null};
+    if (command === "read_context_strategy_default") return null;
+    if (command === "read_model_connections") return connectionFixture([]);
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: item.sourceSnapshotId };
     if (command === "read_source_content") return sourcePageFixture({ snapshotId: item.sourceSnapshotId, scope: { revision: "2", currentSnapshot: item.sourceSnapshotId },
       rows: [sourceRowFixture({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId }, { key: item.nativeKey, text: item.sourceText })] });
-    if (command === "preview_ai_translation") { prepared = { ...prepared, preview: { ...prepared.preview, config: payload.request.config as AiConfig } }; view = aiViewFixture(item, prepared.preview.config); return prepared; }
-    if (command === "start_ai_translation") return aiAttempt;
+    if (command === "read_plugin_text_reviews") return {settingsRevision:"1",entries:[]};
+    if (command === "prepare_work_plan") {
+      if (!validateRequestWorkPlanPrepare(payload.request) || !payload.request.config) throw new Error("Invalid assisted plan request");
+      prepared = { ...prepared, preview: { ...prepared.preview, config: payload.request.config } };
+      const response: unknown = {...aiWorkPlanFixture(prepared,payload.request.options),maintenance:structuredClone(payload.request.maintenance)};
+      if (!validateResponseWorkPlan(response)) throw new Error("Invalid captured maintenance plan response");
+      plan = response;
+      view = aiViewFixture(item,prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
+      return plan;
+    }
+    if (command === "authorize_work_plan") {
+      if (!validateRequestWorkPlanAuthorize(payload.request)) throw new Error("Invalid authorization request");
+      const receipt:WorkPlanReceiptView={actionId:payload.request.actionId,attemptId:plan.attemptId,parentTask:null,lease:{planId:plan.planId,generation:"1"},state:"active"};
+      planReceipts.set(receipt.actionId,receipt);
+      recordedPlanRequests.set(receipt.actionId,{kind:"authorize",planId:payload.request.planId,actionId:payload.request.actionId,digest:payload.request.digest,confirmed:payload.request.confirmed,effects:structuredClone(payload.request.effects),expiresAt:payload.request.expiresAt});
+      status={plan,lease:receipt.lease,state:"active",effects:payload.request.effects,expiresAt:payload.request.expiresAt,toolInvocations:null};
+      return receipt;
+    }
+    if(command==="control_work_plan") {
+      if(!status||!validateRequestWorkPlanControl(payload.request))throw new Error("Invalid plan control fixture");
+      const request=payload.request,state=({pause:"paused",stop:"stopped","take-over":"taken-over",continue:"active"} as const)[request.command];
+      const receipt:WorkPlanReceiptView={actionId:request.actionId,lease:{planId:request.planId,generation:(BigInt(request.expectedGeneration)+1n).toString()},state,
+        attemptId:request.command==="continue"?fixtureIdentity(930):null,parentTask:request.command==="continue"?aiTask:null};
+      planReceipts.set(receipt.actionId,receipt);recordedPlanRequests.set(receipt.actionId,{kind:"control",planId:request.planId,actionId:request.actionId,
+        expectedGeneration:request.expectedGeneration,command:request.command,confirmed:request.confirmed,expiresAt:request.expiresAt??null});
+      status={...status,lease:receipt.lease,state,expiresAt:request.expiresAt??status.expiresAt};return receipt;
+    }
+    if (command === "read_work_plan_status") return status;
+    if (command === "read_work_plan_action") return planReceipts.get(String(payload.request.actionId))??null;
+    if(command==="read_work_plan_authorization_action"||command==="read_work_plan_control_action") {
+      const receipt=planReceipts.get(String(payload.request.actionId));return receipt?{projectId:payload.request.projectId,request:recordedPlanRequests.get(receipt.actionId),receipt}:null;
+    }
+    if (command === "start_work_plan") {
+      if (!validateRequestWorkPlanStart(payload.request)) throw new Error("Invalid plan start request");
+      return planReceipts.get(payload.request.actionId)?.attemptId;
+    }
+    if (command === "read_work_plan_start_action") return {projectId:payload.request.projectId,planId:payload.request.planId,
+      actionId:payload.request.actionId,expectedGeneration:payload.request.expectedGeneration,attemptId:aiAttempt,taskId:aiTask};
     if (command === "read_ai_translation") return structuredClone(view);
     if (command === "create_execution_identity") return fixtureIdentity(nextIdentity++);
-    if (command === "prepare_execution_adoption") { action = actionFor(payload.request as unknown as PrepareRequest); return action; }
+    if (command === "prepare_execution_adoption") { if (!validateRequestPrepare(payload.request)) throw new Error("Invalid adoption request"); action = actionFor(payload.request); return action; }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receiptFor();
     if (command === "cancel_execution_task") return "5";
     if (command === "read_execution_cancellation_action") return null;
     throw new Error(command);
   });
 });
+const rejected:CommandError={code:"busy",stage:"execution-read",outcome:"rejected",reason:"execution-storage",recoveryRequired:false};
+function definiteRejection(){expect(isCommandError(rejected)).toBe(true);return structuredClone(rejected);}
 afterEach(cleanup);
 async function open() {
   const user = userEvent.setup(), rendered = render(<Harness />, project);
-  await user.click(screen.getByRole("button", { name: "AI translation" }));
+  await user.click(screen.getByRole("button", { name: "AI work" }));
   await screen.findByRole("checkbox", { name: "first: Hello" });
-  act(() => { owner.setConfig(prepared.preview.config); owner.setSelected([item.unitId]); });
+  act(() => { owner.setOptions(saveOnlyOptions); owner.setConfig(prepared.preview.config); owner.setSelected([item.unitId]); });
   await waitFor(() => expect(registry.describe("ai.preview", scope, previewPayload())?.availability.enabled).toBe(true));
   return { user, rendered };
 }
 async function prepareThroughRegistry() {
   await act(async () => { expect(registry.dispatch("ai.preview", scope, previewPayload())).toBe(true); });
-  await waitFor(() => expect(owner.current().prepared).not.toBeNull());
+  await waitFor(() => expect(owner.current().preparedPlan).not.toBeNull());
+  expect(owner.current().preparedPlan?.options).toEqual(saveOnlyOptions);
   act(() => owner.setConsent(true));
 }
 async function startThroughRegistry() {
@@ -126,15 +187,20 @@ async function startThroughRegistry() {
   await waitFor(() => expect(registry.describe("ai.adopt-result", scope, candidatePayload())?.availability.enabled).toBe(true));
 }
 
-it("registers the scoped AI commands and routes preview, confirmed start, and exact editor navigation through them", async () => {
+it("registers the complete scoped AI command families and routes preview, confirmed start, and exact editor navigation through them", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
-  expect(registry.list(scope).filter(command => command.category === "ai").map(command => command.id).sort()).toEqual([
-    "ai.adopt-result", "ai.cancel-task", "ai.check-cancellation", "ai.open-translation", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
-    "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start",
-  ]);
+  const initialCommands = [
+    "ai.check-original-start", "ai.retry-original-start", "ai.adopt-result", "ai.cancel-task", "ai.check-cancellation", "ai.open-translation", "ai.open-review", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
+    "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start", "ai.effect.retry",
+    "ai.plan.pause", "ai.plan.stop", "ai.plan.take-over", "ai.plan.continue", "ai.plan.start-authorized",
+    "ai.plan.reconcile-action", "ai.plan.retry-action", "ai.plan.open-translation", "ai.rewrite-translation",
+    "ai.inspect-candidate", "ai.open-comparison", "ai.decide-candidate", "ai.check-candidate-decision", "ai.retry-candidate-decision",
+  ];
+  expect(registry.list(scope).filter(command => command.category === "ai").map(command => command.id).sort()).toEqual([...initialCommands].sort());
   expect(registry.list(scope).filter(command => command.category === "ai").every(command => command.binding === null)).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
-  await waitFor(() => expect(owner.current().prepared).not.toBeNull());
+  await waitFor(() => expect(owner.current().preparedPlan).not.toBeNull());
+  expect(owner.current().preparedPlan?.options).toEqual(saveOnlyOptions);
   expect(registry.describe("ai.start", scope, startPayload())).toMatchObject({ confirmation: "required", availability: { enabled: false } });
   act(() => owner.setConsent(true));
   await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
@@ -144,8 +210,16 @@ it("registers the scoped AI commands and routes preview, confirmed start, and ex
   await user.click(screen.getByRole("button", { name: "Compare and select in editor" }));
   await waitFor(() => expect(navigate).toHaveBeenCalledWith({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, key: item.nativeKey, sourceText: item.sourceText }, item.targetLocale));
   expect(dispatch.mock.calls.map(([id]) => id)).toEqual(expect.arrayContaining(["ai.preview", "ai.start", "ai.open-translation"]));
-  expect(payloads("preview_ai_translation")[0].unitIds).toEqual([item.unitId]);
-  expect(payloads("start_ai_translation")).toEqual([{ ...reads.context, attemptId: aiAttempt, digest: prepared.preview.digest, confirmed: true }]);
+  expect(payloads("prepare_work_plan")[0].unitIds).toEqual([item.unitId]);
+  const authorized=payloads("authorize_work_plan")[0];
+  expect(authorized).toMatchObject({...reads.context,planId:plan.planId,digest:plan.digest,confirmed:true,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[],effects:["save-candidate"]});
+  expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:authorized.actionId,expectedGeneration:"1"}]);
+  expect(registry.list(scope).filter(command=>command.category==="ai").map(command=>command.id).sort()).toEqual([
+    ...initialCommands,
+    "ai.agent.generate", "ai.agent.query-tool", "ai.agent.reconcile", "ai.agent.retry", "ai.agent.end-unqueued",
+    "ai.component.prepare", "ai.component.start", "ai.component.check-start", "ai.component.retry-start", "ai.component.discard",
+    "ai.team.publish", "ai.team.check", "ai.team.retry", "ai.team.end-retry",
+  ].sort());
 });
 
 it("rejects stale preparation and start captures without hiding the owner's configuration validation feedback", async () => {
@@ -154,12 +228,12 @@ it("rejects stale preparation and start captures without hiding the owner's conf
   expect(registry.dispatch("ai.preview", scope, originalPreview)).toBe(false);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
   await waitFor(() => expect(owner.failure).toBe("ai-limits"));
-  expect(calls("preview_ai_translation")).toHaveLength(0);
+  expect(calls("prepare_work_plan")).toHaveLength(0);
   act(() => owner.setConfig(prepared.preview.config)); await prepareThroughRegistry();
   const captured = startPayload();
   act(() => owner.setConfig(config => ({ ...config, model: "newer-model" })));
-  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false);
-  expect(registry.dispatch("ai.start", scope, captured)).toBe(false); expect(calls("start_ai_translation")).toHaveLength(0);
+  expect(owner.preparedPlan).toBeNull(); expect(owner.consent).toBe(false);
+  expect(registry.dispatch("ai.start", scope, captured)).toBe(false); expect(calls("start_work_plan")).toHaveLength(0);
 });
 
 it("keeps the complete ordered selection rather than shrinking preparation to the current content page", async () => {
@@ -167,13 +241,64 @@ it("keeps the complete ordered selection rather than shrinking preparation to th
   const second = { ...item, unitId: fixtureIdentity(303), sourceRevisionId: fixtureIdentity(304), nativeKey: "second", sourceText: "Second source" };
   act(() => owner.setSelected([second.unitId, item.unitId]));
   const payload = previewPayload(), original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => command === "preview_ai_translation"
-    ? Promise.resolve({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [second, item] } }) : original(command, request));
+  invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => command === "prepare_work_plan"
+    ? Promise.resolve(aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [second, item] } },saveOnlyOptions)) : original(command, request));
   expect(registry.dispatch("ai.preview", scope, { ...payload, unitIds: [...payload.unitIds].reverse() })).toBe(false);
   await act(async () => { expect(registry.dispatch("ai.preview", scope, payload)).toBe(true); });
-  await waitFor(() => expect(owner.prepared?.preview.items.map(row => row.unitId)).toEqual(payload.unitIds));
-  expect(payloads("preview_ai_translation")[0].unitIds).toEqual([second.unitId, item.unitId]);
+  await waitFor(() => expect(owner.preparedPlan?.preview?.items.map(row => row.unitId)).toEqual(payload.unitIds));
+  expect(payloads("prepare_work_plan")[0].unitIds).toEqual([second.unitId, item.unitId]);
   expect(owner.selected).toEqual(payload.unitIds);
+});
+
+it("accepts canonical input order for work-plan previews without reordering either capture", async () => {
+  await open();
+  const second = { ...item, unitId: fixtureIdentity(303), sourceRevisionId: fixtureIdentity(304), nativeKey: "second", sourceText: "Second source" };
+  act(() => {
+    owner.setSelected([second.unitId, item.unitId]);
+  });
+  const original = invoke.getMockImplementation()!;
+  let response!: WorkPlanView;
+  invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => {
+    if (command !== "prepare_work_plan") return original(command, request);
+    response = aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [item, second] } }, saveOnlyOptions);
+    expect(validateResponseWorkPlan(response)).toBe(true);
+    return Promise.resolve(response);
+  });
+  const selected = [...owner.selected];
+  await act(async () => { expect(registry.dispatch("ai.preview", scope, previewPayload())).toBe(true); });
+  await waitFor(() => expect(owner.busy).toBe(false));
+  expect(owner.failure).toBeNull();
+  expect(owner.preparedPlan).toEqual(response);
+  expect(owner.preparedPlan?.preview?.items.map(row => row.unitId)).toEqual([item.unitId, second.unitId]);
+  expect(owner.selected).toEqual(selected);
+  expect(payloads("prepare_work_plan")[0].unitIds).toEqual(selected);
+  expect(calls("authorize_work_plan")).toHaveLength(0);
+  expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+it.each(["duplicate", "missing", "foreign", "revision"] as const)("rejects invalid work-plan preview coverage: %s", async mismatch => {
+  await open();
+  const second = { ...item, unitId: fixtureIdentity(303), sourceRevisionId: fixtureIdentity(304), nativeKey: "second", sourceText: "Second source" };
+  act(() => owner.setSelected([item.unitId, second.unitId]));
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, request: { request: { config: AiConfig } }) => {
+    if (command !== "prepare_work_plan") return original(command, request);
+    const response = aiWorkPlanFixture({ ...prepared, preview: { ...prepared.preview, config: request.request.config, items: [item, second] } }, saveOnlyOptions);
+    const rows = response.preview!.items;
+    if (mismatch === "duplicate") rows[1] = structuredClone(rows[0]);
+    else if (mismatch === "missing") rows.pop();
+    else if (mismatch === "foreign") rows[1].unitId = fixtureIdentity(306);
+    else rows[1].sourceRevisionId = fixtureIdentity(307);
+    expect(validateResponseWorkPlan(response)).toBe(true);
+    return Promise.resolve(response);
+  });
+  await act(async () => { expect(registry.dispatch("ai.preview", scope, previewPayload())).toBe(true); });
+  await waitFor(() => expect(owner.busy).toBe(false));
+  expect(owner.preparedPlan).toBeNull();
+  expect(owner.failure).not.toBeNull();
+  expect(owner.selected).toEqual([item.unitId, second.unitId]);
+  expect(calls("authorize_work_plan")).toHaveLength(0);
+  expect(calls("start_work_plan")).toHaveLength(0);
 });
 
 it("restores preview presentation from the current locale props without requiring an unrelated Query refresh", async () => {
@@ -188,7 +313,7 @@ it("restores preview presentation from the current locale props without requirin
   expect(registry.describe("ai.preview", scope, original)?.availability.enabled).toBe(true);
   expect(owner.config.model).toBe("test-model"); expect(owner.selected).toEqual(original.unitIds);
   expect(calls("read_source_content")).toHaveLength(contentReads);
-  expect(calls("preview_ai_translation")).toHaveLength(0); expect(calls("start_ai_translation")).toHaveLength(0);
+  expect(calls("prepare_work_plan")).toHaveLength(0); expect(calls("start_work_plan")).toHaveLength(0);
 });
 
 it.each(["loading", "error", "invalidated"] as const)("does not authorize a cached candidate or navigation while its exact Query is %s", async phase => {
@@ -205,7 +330,7 @@ it.each(["loading", "error", "invalidated"] as const)("does not authorize a cach
   expect(registry.describe("ai.adopt-result", scope, payload)?.availability.enabled).toBe(false);
   expect(registry.dispatch("ai.adopt-result", scope, payload)).toBe(false);
   expect(registry.dispatch("ai.open-translation", scope, translationPayload())).toBe(false);
-  expect(calls("create_execution_identity")).toHaveLength(0); expect(navigate).not.toHaveBeenCalled();
+  expect(calls("create_execution_identity")).toHaveLength(1); expect(navigate).not.toHaveBeenCalled();
   if (phase === "loading") await act(async () => { response.resolve(view); });
 });
 
@@ -219,7 +344,7 @@ it.each(["hidden", "unmounted"] as const)("reserves adoption before identity and
     expect(registry.dispatch("ai.adopt-result", scope, payload)).toBe(true);
     expect(registry.dispatch("ai.adopt-result", scope, payload)).toBe(false);
   });
-  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("create_execution_identity")).toHaveLength(2);
   if (phase === "hidden") {
     await user.click(screen.getByRole("button", { name: "Project overview" }));
     expect(reads.client.getQueryState(reads.key(["aiCommands", aiAttempt]))?.isInvalidated).toBe(true);
@@ -228,7 +353,7 @@ it.each(["hidden", "unmounted"] as const)("reserves adoption before identity and
   await act(async () => { response.resolve(fixtureIdentity(930)); });
   await waitFor(() => expect(owner.current().saved[payload.resultId]).toEqual(receiptFor()));
   rendered.rerender(<Harness />, project);
-  expect(owner.pendingAdopt).toBeNull(); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(owner.pendingAdopt).toBeNull(); expect(calls("create_execution_identity")).toHaveLength(2);
   expect(payloads("prepare_execution_adoption")).toEqual([{ ...reads.context, attemptId: payload.attemptId,
     actionId: fixtureIdentity(930), unitId: payload.recoveryUnitId, resultIds: [payload.resultId] }]);
   expect(calls("adopt_execution")).toHaveLength(1);
@@ -290,7 +415,7 @@ it.each([
   });
   act(() => { expect(registry.dispatch("ai.adopt-result", scope, payload)).toBe(true); });
   if (phase === "prepare") await waitFor(() => expect(calls("prepare_execution_adoption")).toHaveLength(1));
-  expect(counts.subscribed).toBe(1); expect(counts.disposed).toBe(0);
+  expect(counts.subscribed).toBe(2); expect(counts.disposed).toBe(0);
   rendered.rerender(<Harness mounted={false} />, project);
   act(() => reads.client.removeQueries({ queryKey, exact: true }));
   expect(cache.find({ queryKey, exact: true })).toBeUndefined();
@@ -316,7 +441,7 @@ it.each([
   expect(calls("prepare_execution_adoption")).toHaveLength(phase === "identity" ? 0 : 1);
   if (phase === "prepare") expect(owner.pendingAdopt).toMatchObject({ uncertain: true, action, retryAllowed: false });
   else expect(owner.pendingAdopt).toBeNull();
-  expect(counts.disposed).toBe(1);
+  expect(counts.disposed).toBe(2);
   const delivered = counts.events;
   act(() => reads.client.setQueryData(queryKey, view));
   expect(counts.events).toBe(delivered);
@@ -328,7 +453,7 @@ it("continues a checked capture through ordinary eviction, ignores a different e
   const response = deferred<string>(), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, request: unknown) => command === "create_execution_identity" ? response.promise : original(command, request));
   act(() => { expect(registry.dispatch("ai.adopt-result", scope, payload)).toBe(true); });
-  expect(counts.subscribed).toBe(1);
+  expect(counts.subscribed).toBe(2);
   rendered.rerender(<Harness mounted={false} />, project);
   act(() => {
     reads.client.removeQueries({ queryKey, exact: true });
@@ -338,7 +463,7 @@ it("continues a checked capture through ordinary eviction, ignores a different e
   await act(async () => { response.resolve(fixtureIdentity(935)); });
   await waitFor(() => expect(owner.saved[payload.resultId]).toEqual(receiptFor()));
   expect(calls("prepare_execution_adoption")).toHaveLength(1); expect(calls("adopt_execution")).toHaveLength(1);
-  expect(counts.disposed).toBe(1);
+  expect(counts.disposed).toBe(2);
   const delivered = counts.events;
   act(() => reads.client.setQueryData(queryKey, view));
   expect(counts.events).toBe(delivered);
@@ -350,36 +475,157 @@ it("releases the flight witness immediately when its owner is destroyed, before 
   const response = deferred<string>(), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, request: unknown) => command === "create_execution_identity" ? response.promise : original(command, request));
   act(() => { expect(registry.dispatch("ai.adopt-result", scope, payload)).toBe(true); });
-  expect(counts.subscribed).toBe(1);
+  expect(counts.subscribed).toBe(2);
   rendered.unmount();
-  expect(counts.disposed).toBe(1);
+  expect(counts.disposed).toBe(2);
   const delivered = counts.events;
   act(() => originalReads.client.setQueryData(queryKey, view));
   expect(counts.events).toBe(delivered);
   await act(async () => { response.resolve(fixtureIdentity(936)); });
   expect(calls("prepare_execution_adoption")).toHaveLength(0); expect(calls("adopt_execution")).toHaveLength(0);
-  expect(counts.disposed).toBe(1);
+  expect(counts.disposed).toBe(2);
 });
 
 it("retains an unknown start and uses the exact Registry recovery request after rejected replay and locale removal", async () => {
   const { rendered } = await open(); await prepareThroughRegistry();
-  const original = invoke.getMockImplementation()!; let starts = 0, lookups = 0;
-  invoke.mockImplementation((command: string, request: unknown) => command === "read_ai_start_action"
-    ? Promise.resolve(++lookups <= 2 ? null : {projectId:project.metadata.projectId,attemptId:prepared.attemptId,taskId:view.detail.taskId,digest:prepared.preview.digest})
-    : command === "start_ai_translation"
-    ? Promise.reject(++starts === 1 ? new Error("Lost start acknowledgement") : { code: "busy", outcome: "rejected", stage: "execution-read", reason: "execution-storage", recoveryRequired: false }) : original(command, request));
+  const original = invoke.getMockImplementation()!; let starts = 0;
+  let checks=0;
+  invoke.mockImplementation((command: string, request: unknown) => command === "start_work_plan"
+    ? Promise.reject(++starts === 1 ? new Error("Lost start acknowledgement") : definiteRejection())
+    : command === "read_work_plan_start_action" && ++checks===1 ? Promise.resolve(null) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.start", scope, startPayload())).toBe(true); });
-  await waitFor(() => expect(owner.pendingStart?.uncertain).toBe(true));
-  const request = owner.pendingStart!.request, payload = startPendingPayload(), removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } };
+  await waitFor(() => expect(owner.planControl.current().pending?.uncertain).toBe(true));
+  const payload = startPendingPayload(), request = payload.request, removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } };
   rendered.rerender(<Harness project={removed} />, removed);
   expect(registry.dispatch("ai.retry-start", scope, { ...payload, attemptId: fixtureIdentity(999) })).toBe(false);
   await act(async () => { expect(registry.dispatch("ai.retry-start", scope, payload)).toBe(true); });
-  await waitFor(() => expect(owner.pendingStart?.uncertain).toBe(true));
-  expect(owner.pendingStart!.request).toBe(request);
+  await waitFor(() => expect(owner.planControl.current().pending?.uncertain).toBe(true));
+  expect(owner.planControl.current().pending?.request).toBe(request);
   await act(async () => { expect(registry.dispatch("ai.reconcile-start", scope, payload)).toBe(true); });
-  await waitFor(() => expect(owner.pendingStart).toBeNull());
-  expect(owner.attempt).toBe(request.attemptId); expect(payloads("start_ai_translation")).toEqual([request, request]);
-  expect(calls("create_execution_identity")).toHaveLength(0);
+  await waitFor(() => expect(owner.planControl.current().pending).toBeNull());
+  expect(owner.attempt).toBe(payload.attemptId); expect(payloads("start_work_plan")).toEqual([request, request]);
+  expect(payloads("read_work_plan_start_action")).toEqual([request,request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+const unknownPlanStart:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-recover",reason:"start-ack-lost",recoveryRequired:true};
+function planStartReceipt(request:{projectId:string;planId:string;actionId:string;expectedGeneration:string}) {
+  return {projectId:request.projectId,planId:request.planId,actionId:request.actionId,
+    expectedGeneration:request.expectedGeneration,attemptId:aiAttempt,taskId:aiTask};
+}
+it.each(["lost","invalid"] as const)("automatically checks one default AI start after a %s ACK without depending on its result View",async kind=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"
+    ?kind==="lost"?Promise.reject(unknownPlanStart):Promise.resolve(fixtureIdentity(999))
+    :command==="read_ai_translation"?Promise.reject(new Error("Result projection unavailable")):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.attempt).toBe(aiAttempt));
+  expect(owner.planControl.current().pending).toBeNull();expect(owner.current().failure).toBeNull();
+  expect(owner.current().startedPlan?.taskId).toBe(aiTask);
+  expect(payloads("read_work_plan_start_action")).toEqual(payloads("start_work_plan"));
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+  expect(calls("authorize_work_plan")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("pins the default AI task from its start receipt and rejects a later unrelated result View",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().attempt).toBe(aiAttempt));
+  expect(owner.current().startedPlan?.taskId).toBe(aiTask);
+  view={...view,detail:{...view.detail,taskId:fixtureIdentity(998)}};
+  await expect(owner.readView(aiAttempt)).rejects.toThrow();
+  expect(owner.current().startedPlan?.taskId).toBe(aiTask);expect(calls("start_work_plan")).toHaveLength(1);
+});
+
+it("does not interpret malformed or unrelated start receipts as missing, and manually checks the same request",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;let proof:unknown=undefined;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart)
+    :command==="read_work_plan_start_action"?Promise.resolve(proof):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  const payload=startPendingPayload(),receipt=planStartReceipt(payload.request);
+  for(const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(991)}, {...receipt,planId:fixtureIdentity(992)},
+    {...receipt,actionId:fixtureIdentity(993)}, {...receipt,expectedGeneration:"2"}, {...receipt,attemptId:fixtureIdentity(994)}, {...receipt,taskId:null}]){
+    proof=wrong;await act(async()=>{expect(registry.dispatch("ai.reconcile-start",scope,payload)).toBe(true);});
+    await waitFor(()=>expect(owner.current().busy).toBe(false));
+    expect(owner.planControl.current().pending?.request).toBe(payload.request);
+    expect(registry.describe("ai.retry-start",scope,payload)?.availability.enabled).toBe(false);
+    expect(registry.dispatch("ai.retry-start",scope,payload)).toBe(false);
+  }
+  proof=receipt;await act(async()=>{expect(registry.dispatch("ai.reconcile-start",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(owner.attempt).toBe(aiAttempt);expect(owner.current().failure).toBeNull();expect(calls("start_work_plan")).toHaveLength(1);
+  expect(payloads("read_work_plan_start_action").every(request=>JSON.stringify(request)===JSON.stringify(payload.request))).toBe(true);
+});
+
+it.each(["en-US","zh-CN"] as const)("shows only the actual default AI read phase in %s and keeps the synchronous flight reserved",async language=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,write=deferred<string>(),lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?write.promise
+    :command==="read_work_plan_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("start_work_plan")).toHaveLength(1));
+  const payload=startPendingPayload();await act(async()=>{await i18n.changeLanguage(language);});
+  const message=language==="en-US"?"Checking whether this task was started…":"正在核对此次任务是否已启动…";
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve(fixtureIdentity(999));});
+  await screen.findByText(message);
+  expect(owner.planControl.current().pending).toMatchObject({kind:"start",checking:true,retryAllowed:false});
+  expect(owner.current().failure).toBeNull();
+  act(()=>{expect(registry.dispatch("ai.reconcile-start",scope,payload)).toBe(false);expect(registry.dispatch("ai.retry-start",scope,payload)).toBe(false);});
+  await act(async()=>{lookup.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  expect(registry.describe("ai.retry-start",scope,payload)?.availability.enabled).toBe(true);
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+});
+
+it("preserves typed original start details after a missing receipt",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart)
+    :command==="read_work_plan_start_action"?Promise.resolve(null):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.current().failure).toEqual(unknownPlanStart);expect(owner.planControl.current().pending).toMatchObject({retryAllowed:true,checking:false});
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+});
+
+it("does not automatically read a fresh formally rejected default AI start",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(definiteRejection()):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.planControl.current().pending).toBeNull();expect(calls("read_work_plan_start_action")).toHaveLength(0);
+});
+
+it.each(["hidden","unmounted"] as const)("completes a default AI automatic read after its consumer is %s and preserves newer B",async phase=>{
+  const {user,rendered}=await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?Promise.reject(unknownPlanStart)
+    :command==="read_work_plan_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("read_work_plan_start_action")).toHaveLength(1));const payload=startPendingPayload();
+  act(()=>owner.setConfig({...owner.current().config,model:"Newer B"}));
+  if(phase==="hidden")await user.click(screen.getByRole("button",{name:"Project overview"}));
+  else rendered.rerender(<Harness mounted={false}/>,project);
+  await act(async()=>{lookup.resolve(planStartReceipt(payload.request));});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.current().attempt).toBe(aiAttempt);expect(owner.planControl.current().pending).toBeNull();
+  expect(owner.current().config.model).toBe("Newer B");expect(owner.current().dirty).toBe(true);
+  expect(calls("start_work_plan")).toHaveLength(1);expect(calls("read_work_plan_start_action")).toHaveLength(1);
+});
+
+it.each(["before-read","during-read"] as const)("does not send or accept a default AI start read after owner retirement %s",async phase=>{
+  const {rendered}=await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,write=deferred<string>(),lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_work_plan"?write.promise
+    :command==="read_work_plan_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("start_work_plan")).toHaveLength(1));const payload=startPendingPayload();
+  if(phase==="during-read"){
+    await act(async()=>{write.resolve(fixtureIdentity(999));});await waitFor(()=>expect(calls("read_work_plan_start_action")).toHaveLength(1));
+  }
+  const before=owner.current(),control=owner.planControl.current();rendered.unmount();
+  await act(async()=>{if(phase==="before-read")write.resolve(fixtureIdentity(999));else lookup.resolve(planStartReceipt(payload.request));});
+  expect(owner.current()).toBe(before);expect(owner.planControl.current()).toBe(control);
+  expect(calls("read_work_plan_start_action")).toHaveLength(phase==="before-read"?0:1);
 });
 
 it("settles a Registry adoption A without replacing newer B even when the subsequent result read fails", async () => {
@@ -415,7 +661,7 @@ it("requires an exact absent receipt before Registry adoption retry", async () =
   await waitFor(() => expect(owner.pendingAdopt?.retryAllowed).toBe(true));
   await act(async () => { expect(registry.dispatch("ai.retry-adoption", scope, payload)).toBe(true); });
   await waitFor(() => expect(owner.pendingAdopt).toBeNull());
-  expect(payloads("prepare_execution_adoption")).toEqual([request, request]); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(payloads("prepare_execution_adoption")).toEqual([request, request]); expect(calls("create_execution_identity")).toHaveLength(2);
   expect(calls("adopt_execution")).toHaveLength(2);
 });
 
@@ -437,7 +683,7 @@ it.each(["button", "registry"] as const)("keeps exact original Task cancellation
   const queryKey = reads.key(["aiCommands", aiAttempt]);
   await act(async () => { await reads.client.refetchQueries({ queryKey, exact: true }); });
   const button = await screen.findByRole("button", { name: "Cancel remaining work" });
-  expect(button).toBeEnabled(); expect(owner.started?.taskId).toBe(aiTask);
+  expect(button).toBeEnabled(); expect(owner.checkedTask?.taskId).toBe(aiTask);
   const response = deferred<AiView>(), original = invoke.getMockImplementation()!, dispatch = vi.spyOn(registry, "dispatch");
   invoke.mockImplementation((command: string, request: unknown) => command === "read_ai_translation" ? response.promise : original(command, request));
   act(() => { void reads.client.refetchQueries({ queryKey, exact: true }); });
@@ -454,13 +700,13 @@ it.each(["button", "registry"] as const)("keeps exact original Task cancellation
   expect(registry.dispatch("ai.cancel-task", { ...scope, sessionToken: "other-session" }, payload)).toBe(false);
   expect(registry.dispatch("ai.adopt-result", scope, candidatePayload())).toBe(false);
   expect(registry.dispatch("ai.open-translation", scope, translationPayload())).toBe(false);
-  expect(calls("create_execution_identity")).toHaveLength(0);
+  expect(calls("create_execution_identity")).toHaveLength(1);
   if (route === "button") await user.click(button);
   else await act(async () => { expect(registry.dispatch("ai.cancel-task", scope, payload)).toBe(true); });
   await waitFor(() => expect(tasks.current(aiTask)?.phase).toBe("recorded"));
   expect(dispatch.mock.calls).toContainEqual(["ai.cancel-task", scope, payload]);
-  expect(calls("create_execution_identity")).toHaveLength(1);
-  expect(payloads("cancel_execution_task")).toEqual([{ ...reads.context, taskId: aiTask, requestId: fixtureIdentity(910) }]);
+  expect(calls("create_execution_identity")).toHaveLength(2);
+  expect(payloads("cancel_execution_task")).toEqual([{ ...reads.context, taskId: aiTask, requestId: fixtureIdentity(911) }]);
   expect(reads.client.getQueryState(queryKey)?.fetchStatus).toBe("fetching");
   await act(async () => { response.resolve(view); });
   expect(calls("cancel_execution_task")).toHaveLength(1);
@@ -501,13 +747,363 @@ it("routes fresh cancellation and original feedback retry through Registry while
   expect(payloads("cancel_execution_task")[3]).toEqual(payloads("cancel_execution_task")[2]);
 });
 
-beforeEach(() => {
-  const original = invoke.getMockImplementation()!; let checked = -1;
-  invoke.mockImplementation((command: string, payload: unknown) => {
-    if (command !== "read_ai_start_action") return original(command,payload);
-    const writes = invoke.mock.calls.filter(([name]) => name === "start_ai_translation").length;
-    if (checked !== writes) { checked = writes; return Promise.reject(new Error("Automatic start lookup unavailable")); }
-    return Promise.resolve({projectId:project.metadata.projectId,attemptId:prepared.attemptId,
-      taskId:view.detail.taskId,digest:prepared.preview.digest});
+
+it.each(["eviction","replacement-error","replacement-basis","retired"] as const)("keeps a fixed WorkPlan authorization witness through %s during identity",async phase=>{
+  const {rendered}=await open();await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!,identity=deferred<string>(),queryKey=reads.key(["source-scope"]),originalReads=reads;
+  const counts=observeQuerySubscriptions();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="create_execution_identity"?identity.promise:original(command,args));
+  act(()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);expect(registry.dispatch("ai.start",scope,startPayload())).toBe(false);});
+  expect(counts.subscribed).toBe(2);
+  rendered.rerender(<Harness mounted={false}/>,project);
+  act(()=>reads.client.removeQueries({queryKey,exact:true}));
+  if(phase==="replacement-error")await act(async()=>{await expect(reads.client.fetchQuery({queryKey,retry:false,queryFn:async()=>{throw new Error("Replacement source unavailable");}})).rejects.toThrow("Replacement source unavailable");});
+  if(phase==="replacement-basis")await act(async()=>{await reads.client.fetchQuery({queryKey,retry:false,queryFn:async()=>({revision:"3",currentSnapshot:item.sourceSnapshotId})});});
+  if(phase!=="eviction")act(()=>{reads.client.removeQueries({queryKey,exact:true});if(phase==="retired")reads.retire();});
+  await act(async()=>identity.resolve(fixtureIdentity(980)));
+  if(phase!=="retired")await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(calls("authorize_work_plan")).toHaveLength(phase==="eviction"?1:0);
+  expect(calls("start_work_plan")).toHaveLength(phase==="eviction"?1:0);
+  expect(counts.disposed).toBe(phase==="eviction"?3:2);
+  // The new attempt availability reader legitimately remains subscribed.
+  // None of the three disposed action witnesses may receive another event.
+  expect(counts.eventsAfterDispose).toBe(0);
+  act(()=>originalReads.client.setQueryData(queryKey,{revision:"2",currentSnapshot:item.sourceSnapshotId}));
+  expect(counts.eventsAfterDispose).toBe(0);
+});
+
+it("retains an unknown authorization across valid rejected replay and permits only explicit original receipt recovery",async()=>{
+  await open();await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!;let attempts=0,checks=0;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="authorize_work_plan"&&++attempts<=2
+    ?Promise.reject(attempts===1?new Error("Authorization acknowledgement lost"):definiteRejection())
+    :command==="read_work_plan_authorization_action"&&++checks===1?Promise.reject(new Error("Automatic read unavailable")):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending?.uncertain).toBe(true));
+  const entry=owner.planControl.current().pending;
+  if(entry?.kind!=="authorize")throw new Error("Expected fixed authorization");
+  const payload={kind:"ai-plan-pending" as const,action:{kind:"authorize" as const,request:entry.request}};
+  expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  expect(registry.dispatch("ai.plan.reconcile-action",scope,{...payload,action:{...payload.action,request:{...entry.request,actionId:fixtureIdentity(999)}}})).toBe(false);
+  await act(async()=>{expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().missing).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.planControl.current().pending).toMatchObject({kind:"authorize",uncertain:true,request:entry.request});
+  expect(owner.planControl.current().missing).toBe(false);
+  expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  await act(async()=>{expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().missing).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().ready?.receipt.actionId).toBe(entry.request.actionId));
+  expect(payloads("authorize_work_plan")).toEqual([entry.request,entry.request,entry.request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);expect(calls("start_work_plan")).toHaveLength(0);
+  const ready=owner.planControl.current().ready!.receipt;
+  const start={kind:"ai-plan-start" as const,request:{...reads.context,planId:ready.lease.planId,actionId:ready.actionId,expectedGeneration:ready.lease.generation},attemptId:ready.attemptId!};
+  await waitFor(()=>expect(registry.describe("ai.plan.start-authorized",scope,start)?.availability.enabled).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.start-authorized",scope,start)).toBe(true);});
+  await waitFor(()=>expect(owner.attempt).toBe(aiAttempt));
+  expect(payloads("start_work_plan")).toEqual([start.request]);
+  expect(payloads("read_work_plan_authorization_action")).toEqual([entry.request,entry.request,entry.request]);
+  expect(calls("read_work_plan_action")).toHaveLength(0);
+});
+
+it("does not treat a missing lookup after a checked authorization receipt and failed status read as permission to replay",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_work_plan_status"?Promise.reject(new Error("Status unavailable"))
+    :command==="read_work_plan_authorization_action"?Promise.resolve(null):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  const entry=owner.planControl.current().pending;
+  if(entry?.kind!=="authorize"||!entry.receipt)throw new Error("Expected checked historical authorization receipt");
+  const payload={kind:"ai-plan-pending" as const,action:{kind:"authorize" as const,request:entry.request}};
+  await act(async()=>{expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(owner.planControl.current().pending?.receipt).toEqual(entry.receipt);
+  expect(owner.planControl.current().missing).toBe(false);
+  expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  expect(calls("authorize_work_plan")).toHaveLength(1);expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+it.each(["error","contradiction"] as const)("retains the latest exact WorkPlan %s witness after its replacement is removed during candidate identity",async evidence=>{
+  const {rendered}=await open();await startThroughRegistry();
+  const original=invoke.getMockImplementation()!,identity=deferred<string>(),payload=candidatePayload(),queryKey=reads.key(["workPlan",plan.planId]);
+  invoke.mockImplementation((command:string,args:unknown)=>command==="create_execution_identity"?identity.promise:original(command,args));
+  act(()=>{expect(registry.dispatch("ai.adopt-result",scope,payload)).toBe(true);});
+  rendered.rerender(<Harness mounted={false}/>,project);
+  act(()=>reads.client.removeQueries({queryKey,exact:true}));
+  if(evidence==="error")await act(async()=>{await expect(reads.client.fetchQuery({queryKey,retry:false,queryFn:async()=>{throw new Error("Plan read failed");}})).rejects.toThrow("Plan read failed");});
+  else await act(async()=>{await reads.client.fetchQuery({queryKey,retry:false,queryFn:async()=>({...status!,state:"stopped" as const,lease:{planId:plan.planId,generation:"2"}})});});
+  act(()=>reads.client.removeQueries({queryKey,exact:true}));
+  await act(async()=>identity.resolve(fixtureIdentity(981)));
+  await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(calls("prepare_execution_adoption")).toHaveLength(0);expect(calls("adopt_execution")).toHaveLength(0);
+  expect(owner.saved).toEqual({});
+});
+
+it("keeps a model-free canonical plan's complete captured scope and its independent Core bound",async()=>{
+  await open();
+  const unitIds=Array.from({length:101},(_,index)=>fixtureIdentity(1100+index)).reverse();
+  act(()=>{owner.setOptions(previous=>({...previous,stages:previous.stages.map(stage=>stage.stage==="generation"?{...stage,mode:"manual"}:stage)}));owner.setSelected(unitIds);});
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:unknown)=>{
+    if(command!=="prepare_work_plan")return original(command,args);
+    const request=payloads("prepare_work_plan").at(-1);
+    if(!validateRequestWorkPlanPrepare(request)||request.config!==null)throw new Error("Expected valid manual plan request");
+    return Promise.resolve({...plan,options:request.options,preview:null,attemptId:null,
+      scope:[...request.unitIds].sort().map((unitId,index)=>({unitId,sourceRevisionId:fixtureIdentity(1300+index),sourceSnapshotId:item.sourceSnapshotId,nativeKey:`manual ${index}`,selectionId:null}))});
   });
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Prepare manual plan"})).toBeEnabled());
+  const payload=previewPayload();
+  await act(async()=>{expect(registry.dispatch("ai.preview",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.preparedPlan?.scope).toHaveLength(101));
+  expect(owner.selected).toEqual(unitIds);expect(payloads("prepare_work_plan")[0].unitIds).toEqual(unitIds);
+  expect(owner.preparedPlan?.scope.map(unit=>unit.unitId)).toEqual([...unitIds].sort());
+  expect(calls("create_execution_identity")).toHaveLength(0);expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("start_work_plan")).toHaveLength(0);
+  act(()=>owner.setSelected(Array.from({length:1001},(_,index)=>fixtureIdentity(2000+index))));
+  await act(async()=>{expect(registry.dispatch("ai.preview",scope,previewPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.failure).toBe("ai-scope"));
+  expect(calls("prepare_work_plan")).toHaveLength(1);
+});
+
+it("keeps newer draft B dirty when an authorized original plan A is explicitly started after its late acknowledgement",async()=>{
+  await open();await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!,ack=deferred<WorkPlanReceiptView>(),captured=owner.preparedPlan!,capturedSeq=owner.editSeq;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const response=await original(command,args);return command==="authorize_work_plan"?ack.promise:response;});
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("authorize_work_plan")).toHaveLength(1));
+  const request=payloads("authorize_work_plan")[0],receipt=planReceipts.get(request.actionId)!;
+  act(()=>{owner.setConfig(config=>({...config,model:"newer-model-B"}));owner.setSelected([fixtureIdentity(982)]);owner.setPresetName("local");});
+  await act(async()=>ack.resolve(receipt));
+  await waitFor(()=>expect(owner.planControl.current().ready?.editSeq).toBe(capturedSeq));
+  expect(owner.planControl.current().ready?.prepared).toEqual(captured);
+  expect(calls("start_work_plan")).toHaveLength(0);expect(owner.dirty).toBe(true);
+  const start={kind:"ai-plan-start" as const,attemptId:receipt.attemptId!,request:{...reads.context,planId:receipt.lease.planId,actionId:receipt.actionId,expectedGeneration:receipt.lease.generation}};
+  await waitFor(()=>expect(registry.describe("ai.plan.start-authorized",scope,start)?.availability.enabled).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.start-authorized",scope,start)).toBe(true);});
+  await waitFor(()=>expect(owner.attempt).toBe(receipt.attemptId));
+  expect(owner.config.model).toBe("newer-model-B");expect(owner.selected).toEqual([fixtureIdentity(982)]);expect(owner.presetName).toBe("local");
+  expect(owner.dirty).toBe(true);expect(owner.notice).toBe("newer");
+  expect(owner.startedPlan?.prepared).toEqual(captured);expect(payloads("start_work_plan")).toEqual([start.request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("retains the action's actual status read while its pure view is hidden and releases that observer after exact start",async()=>{
+  const {user}=await open();await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!,statusRead=deferred<WorkPlanStatusView>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_work_plan_status"?statusRead.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("read_work_plan_status")).toHaveLength(1));
+  const query=reads.client.getQueryCache().find({queryKey:reads.key(["workPlan",plan.planId]),exact:true});
+  expect(query).toBeDefined();
+  await user.click(screen.getByRole("button",{name:"Project overview"}));
+  expect(query?.isActive()).toBe(true);
+  const originalRequest=payloads("authorize_work_plan")[0];
+  await act(async()=>statusRead.resolve(status!));
+  await waitFor(()=>expect(owner.attempt).toBe(aiAttempt));
+  expect(owner.planControl.current().pending).toBeNull();expect(owner.planControl.current().ready).toBeNull();
+  expect(payloads("start_work_plan")).toEqual([{...reads.context,planId:plan.planId,actionId:originalRequest.actionId,expectedGeneration:"1"}]);
+  expect(query?.isActive()).toBe(false);expect(calls("read_work_plan_status")).toHaveLength(1);
+});
+
+it.each(["success","error","retired"] as const)("routes a checked original automatic-effect retry through Registry after an actual %s read",async outcome=>{
+  await open();await startThroughRegistry();
+  view.rows[0].automation={phase:"failed",actionId:fixtureIdentity(985),receipt:null,error:definiteRejection(),retryable:true};
+  const queryKey=reads.key(["aiCommands",aiAttempt]);
+  await act(async()=>{await reads.client.refetchQueries({queryKey,exact:true});});
+  const payload={kind:"ai-effect" as const,planId:plan.planId,expectedGeneration:"1",attemptId:aiAttempt,itemId:view.rows[0].itemId,actionId:fixtureIdentity(985)};
+  await waitFor(()=>expect(registry.describe("ai.effect.retry",scope,payload)?.availability.enabled).toBe(true));
+  expect(registry.dispatch("ai.effect.retry",scope,{...payload,actionId:fixtureIdentity(999)})).toBe(false);
+  const original=invoke.getMockImplementation()!,read=deferred<AiView>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_ai_translation"?read.promise:command==="retry_work_plan_effect"?Promise.resolve(true):original(command,args));
+  if(outcome==="error")invoke.mockImplementation((command:string,args:unknown)=>command==="read_ai_translation"?Promise.reject(new Error("Effect read unavailable")):original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.effect.retry",scope,payload)).toBe(true);});
+  if(outcome==="retired")act(()=>reads.retire());
+  if(outcome!=="error")await act(async()=>read.resolve(view));
+  if(outcome!=="retired")await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(payloads("retry_work_plan_effect")).toEqual(outcome==="success"?[{...reads.context,attemptId:aiAttempt,itemId:payload.itemId}]:[]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["retired","destroyed"] as const)("releases the actual action-read observer on %s before its original Core read returns",async phase=>{
+  const {rendered}=await open();await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!,read=deferred<WorkPlanStatusView>(),originalOwner=owner;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_work_plan_status"?read.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("read_work_plan_status")).toHaveLength(1));
+  const query=reads.client.getQueryCache().find({queryKey:reads.key(["workPlan",plan.planId]),exact:true});
+  if(!query)throw new Error("Expected original action read");
+  const observers=query.getObserversCount(),pending=originalOwner.planControl.current().pending;
+  if(pending?.kind!=="authorize" || !pending.receipt)throw new Error("Expected checked original authorization receipt");
+  expect(observers).toBeGreaterThan(0);
+  if(phase==="retired")act(()=>reads.retire());else rendered.unmount();
+  await waitFor(()=>expect(query.getObserversCount()).toBeLessThan(observers));
+  expect(calls("start_work_plan")).toHaveLength(0);
+  expect(originalOwner.planControl.current().pending?.request).toEqual(pending?.request);
+  await act(async()=>read.resolve(status!));
+  expect(calls("start_work_plan")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("keeps one immutable capture snapshot while repeated current reads and retired handlers cannot replace it",async()=>{
+  await open();await prepareThroughRegistry();
+  const snapshot=owner.current();
+  expect(owner.current()).toBe(snapshot);
+  if(snapshot.capture?.kind!=="plan")throw new Error("Expected original plan capture");
+  expect(snapshot.preparedPlan).toBe(snapshot.capture.value);expect(snapshot.prepared).toBeNull();
+  act(()=>reads.retire());
+  act(()=>{owner.setConfig(config=>({...config,model:"retired-edit"}));owner.setSelected([]);});
+  expect(owner.reset()).toBe(false);expect(owner.showAttempt(fixtureIdentity(999))).toBe(false);
+  expect(registry.dispatch("ai.start",scope,startPayload())).toBe(false);
+  expect(owner.current()).toBe(snapshot);expect(owner.current().preparedPlan).toBe(snapshot.capture.value);
+  expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+it("keeps a checked original authorization and deadline through profile archival and newer scope input",async()=>{
+  await open();
+  const config={...owner.config,connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}},connections=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,connections);expect(owner.selectConnection(currentConnections(application)!,config.connectionProfile.profileId,owner.editSeq)).toBe(true);});
+  await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!,ack=deferred<WorkPlanReceiptView>(),captured=owner.preparedPlan!,capturedSeq=owner.editSeq;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const response=await original(command,args);return command==="authorize_work_plan"?ack.promise:response;});
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("authorize_work_plan")).toHaveLength(1));
+  const request=structuredClone(payloads("authorize_work_plan")[0]),receipt=planReceipts.get(request.actionId)!;
+  const archived=structuredClone(connections);archived.snapshot.revision="2";archived.basis.revision="2";archived.snapshot.profiles[0].revision="2";archived.snapshot.profiles[0].archived=true;archived.references=[];
+  act(()=>{owner.setSelected([fixtureIdentity(982)]);application.setQueryData(connectionReadKey,archived);});
+  expect(owner.connectionCurrent()).toBe(false);expect(owner.planControl.current().pending?.request).toEqual(request);
+  await act(async()=>ack.resolve(receipt));
+  await waitFor(()=>expect(owner.planControl.current().ready?.editSeq).toBe(capturedSeq));
+  expect(owner.planControl.current().ready?.prepared).toEqual(captured);expect(calls("start_work_plan")).toHaveLength(0);
+  const start={kind:"ai-plan-start" as const,attemptId:receipt.attemptId!,request:{...reads.context,planId:receipt.lease.planId,actionId:receipt.actionId,expectedGeneration:receipt.lease.generation}};
+  await waitFor(()=>expect(registry.describe("ai.plan.start-authorized",scope,start)?.availability.enabled).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.start-authorized",scope,start)).toBe(true);});
+  await waitFor(()=>expect(owner.attempt).toBe(receipt.attemptId));
+  expect(owner.startedPlan?.prepared).toEqual(captured);expect(owner.config.connectionProfile).toEqual(config.connectionProfile);expect(owner.selected).toEqual([fixtureIdentity(982)]);
+  expect(owner.dirty).toBe(true);expect(status?.expiresAt).toBe(request.expiresAt);expect(payloads("authorize_work_plan")).toEqual([request]);expect(payloads("start_work_plan")).toEqual([start.request]);expect(calls("prepare_work_plan")).toHaveLength(1);
+});
+it("prepares a manual plan without resolving its unused saved model reference",async()=>{
+  await open();
+  act(()=>{owner.setConfig({...owner.config,connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}});owner.setOptions({...owner.options,stages:owner.options.stages.map(stage=>stage.stage==="generation"?{...stage,mode:"manual" as const}:stage)});});
+  expect(owner.connectionCurrent()).toBe(false);
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
+    if(command!=="prepare_work_plan")return original(command,args);
+    if(!validateRequestWorkPlanPrepare(args.request)||args.request.config!==null)throw new Error("Expected a model-free plan");
+    return {...plan,options:args.request.options,attemptId:null,preview:null,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null}]};
+  });
+  await act(async()=>{expect(registry.dispatch("ai.preview",scope,previewPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.busy).toBe(false));expect(owner.failure).toBeNull();
+  expect(owner.preparedPlan).not.toBeNull();expect(owner.preparedPlan?.preview).toBeNull();expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("prepares an explicitly adjusted maintenance subset through the original typed preview without granting execution",async()=>{
+  const {user}=await open();
+  const assessment:MaintenanceAssessment={projectId:project.metadata.projectId,sourceSnapshotId:item.sourceSnapshotId,locale:item.targetLocale,after:0,limit:100,nextOrdinal:null,
+    coverage:"finite-current-source-window; historical-and-external-query-coverage-unknown",digest:"a".repeat(64),rows:[{
+      unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,sourceText:item.sourceText,translationText:null,selectionId:null,translationRevisionId:null,
+      reviewBasis:"b".repeat(64),protection:{unitId:item.unitId,locale:item.targetLocale,revision:"0",protected:false},mappingUnresolved:false,reasons:["translation-missing"],suggested:"repair"}]};
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command,args)=>command==="read_maintenance_assessment"?Promise.resolve(structuredClone(assessment)):original(command,args));
+  await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.title")}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("ai.maintenance.capture")})).toBeEnabled());
+  await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.capture")}));
+  await waitFor(()=>expect(owner.maintenance).not.toBeNull());
+  await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("ai.maintenance.actionFor",{name:item.nativeKey})}),"recheck");
+  expect(owner.selected).toEqual([]);expect(registry.describe("ai.preview",scope,previewPayload())?.availability.enabled).toBe(false);
+  await user.selectOptions(screen.getByRole("combobox",{name:i18n.t("ai.maintenance.actionFor",{name:item.nativeKey})}),"repair");
+  const captured=structuredClone(owner.maintenance);
+  await prepareThroughRegistry();
+  expect(payloads("prepare_work_plan")[0]).toMatchObject({unitIds:[item.unitId],maintenance:captured});
+  expect(owner.preparedPlan?.maintenance).toEqual(captured);
+  expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+
+function planActionPayload() {
+  const entry=owner.planControl.current().pending;if(!entry||entry.kind==="start")throw new Error("Expected original plan action");
+  return entry.kind==="authorize"?{kind:"ai-plan-pending" as const,action:{kind:"authorize" as const,request:entry.request}}
+    :{kind:"ai-plan-pending" as const,action:{kind:"control" as const,request:entry.request}};
+}
+it.each(["lost","invalid"] as const)("checks one original authorization after a %s ACK and never automatically starts from that read",async ack=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const result=await original(command,args);
+    if(command==="authorize_work_plan"){if(ack==="lost")throw new Error("Lost authorization ACK");return {...result,actionId:fixtureIdentity(999)};}return result;});
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().ready).not.toBeNull());
+  expect(owner.planControl.current().pending).toBeNull();expect(calls("authorize_work_plan")).toHaveLength(1);
+  expect(payloads("read_work_plan_authorization_action")).toEqual(payloads("authorize_work_plan"));
+  expect(calls("start_work_plan")).toHaveLength(0);expect(calls("read_work_plan_action")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+it.each(["lost","invalid"] as const)("checks the original pause after a %s ACK without another control or a new start",async ack=>{
+  await open();await startThroughRegistry();const original=invoke.getMockImplementation()!,starts=calls("start_work_plan").length;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const result=await original(command,args);
+    if(command==="control_work_plan"){if(ack==="lost")throw new Error("Lost pause ACK");return {...result,state:"stopped"};}return result;});
+  const payload={kind:"ai-plan-control" as const,command:"pause" as const,planId:status!.lease.planId,expectedGeneration:status!.lease.generation,
+    minutes:null,confirmed:false,checkerExecutions:[],toolExecution:false,applicationToolExecutions:[]};
+  await waitFor(()=>expect(registry.describe("ai.plan.pause",scope,payload)?.availability.enabled).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.pause",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(payloads("read_work_plan_control_action")).toEqual(payloads("control_work_plan"));expect(calls("control_work_plan")).toHaveLength(1);
+  expect(calls("start_work_plan")).toHaveLength(starts);expect(calls("read_work_plan_action")).toHaveLength(0);await screen.findByText("Automation paused");
+});
+it("keeps authorization lookup failure unknown, then permits only an explicit original retry after a true missing read",async()=>{
+  await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!;let writes=0,lookups=0;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{
+    if(command==="authorize_work_plan"&&++writes===1)throw new Error("Disconnected before result");
+    if(command==="read_work_plan_authorization_action"&&++lookups===1)throw new Error("Automatic read unavailable");
+    return original(command,args);
+  });
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.busy).toBe(false));const pending=owner.planControl.current().pending!,payload=planActionPayload();
+  expect(owner.planControl.current().missing).toBe(false);expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  await act(async()=>{expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().missing).toBe(true));
+  act(()=>{owner.setConfig(config=>({...config,model:"newer-B"}));owner.setSelected([fixtureIdentity(998)]);});
+  await act(async()=>{expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(payloads("authorize_work_plan")).toEqual([pending.request,pending.request]);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_work_plan_authorization_action")).toHaveLength(2);expect(calls("start_work_plan")).toHaveLength(0);
+  expect(owner.config.model).toBe("newer-B");expect(owner.selected).toEqual([fixtureIdentity(998)]);expect(owner.dirty).toBe(true);
+});
+it("shows bilingual checking, keeps B and a hidden owner, and reads no replacement permissions or starts",async()=>{
+  const {user,rendered}=await open();await prepareThroughRegistry();const original=invoke.getMockImplementation()!,read=deferred<unknown>();
+  invoke.mockImplementation(async(command:string,args:unknown)=>{
+    if(command==="read_work_plan_authorization_action")return read.promise;
+    const result=await original(command,args);if(command==="authorize_work_plan")throw new Error("Lost ACK");return result;
+  });
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.planControl.current().pending?.checking).toBe(true));const payload=planActionPayload(),request=payload.action.request;
+  await screen.findByText("Checking the original plan action…");
+  expect(registry.describe("ai.plan.reconcile-action",scope,payload)?.risk).toBe("reads-execution");
+  expect(registry.dispatch("ai.plan.reconcile-action",scope,payload)).toBe(false);expect(registry.dispatch("ai.plan.retry-action",scope,payload)).toBe(false);
+  await act(async()=>{await i18n.changeLanguage("zh-CN");});await screen.findByText("正在核对原计划操作…");
+  await act(async()=>{await i18n.changeLanguage("en-US");});
+  act(()=>{owner.setConfig(config=>({...config,model:"B"}));owner.setSelected([fixtureIdentity(998)]);});
+  await user.click(screen.getByRole("button",{name:"Project overview"}));
+  const removed={...project,metadata:{...project.metadata,targetLocales:[]}};
+  rendered.rerender(<Harness project={removed} mounted={false}/>,removed);
+  await act(async()=>{read.resolve({projectId:request.projectId,request:recordedPlanRequests.get(request.actionId),receipt:planReceipts.get(request.actionId)});});
+  await waitFor(()=>expect(owner.planControl.current().pending).toBeNull());
+  expect(owner.config.model).toBe("B");expect(owner.selected).toEqual([fixtureIdentity(998)]);expect(owner.dirty).toBe(true);
+  expect(calls("read_work_plan_authorization_action")).toHaveLength(1);expect(calls("authorize_work_plan")).toHaveLength(1);expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+
+it("recovers a retained direct AI start separately from plan starts and permits retry only after exact absence",async()=>{
+  const {user}=await open(),original=invoke.getMockImplementation()!;let writes=0,lookups=0;
+  invoke.mockImplementation((name,args)=>name==="preview_ai_translation"?Promise.resolve(prepared)
+    :name==="start_ai_translation"?++writes===1?Promise.reject(new Error("Lost ACK")):Promise.resolve(args.request.attemptId)
+    :name==="read_ai_start_action"?++lookups===1?Promise.reject(new Error("Read unavailable")):Promise.resolve(null):original(name,args));
+  await act(async()=>{await owner.preview();owner.setConsent(true);await owner.start();});
+  const pending=owner.current().pendingStart!;expect(pending).not.toBeNull();
+  const payload={kind:"ai-original-start-pending" as const,request:structuredClone(pending.request),attemptId:pending.request.attemptId,editSeq:pending.editSeq};
+  expect(registry.describe("ai.check-original-start",scope,payload)?.risk).toBe("reads-execution");
+  expect(registry.dispatch("ai.retry-original-start",scope,payload)).toBe(false);
+  expect(registry.dispatch("ai.check-original-start",scope,{...payload,request:{...payload.request,digest:"b".repeat(64)}})).toBe(false);
+  await user.click(await screen.findByRole("button",{name:i18n.t("ai.reconcile")}));
+  await user.click(await screen.findByRole("button",{name:i18n.t("ai.retrySame")}));
+  await waitFor(()=>expect(owner.current().pendingStart).toBeNull());
+  expect(calls("start_ai_translation").map(([,args])=>args.request)).toEqual([pending.request,pending.request]);
+  expect(calls("read_ai_start_action").map(([,args])=>args.request)).toEqual([pending.request,pending.request]);
+  expect(calls("start_work_plan")).toHaveLength(0);
 });

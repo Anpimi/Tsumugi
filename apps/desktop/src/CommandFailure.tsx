@@ -20,11 +20,13 @@ export function CommandFailureDetails({ failure }: { failure: CommandFailure | n
   const { t } = useTranslation();
   if (!failure || typeof failure === "string") return null;
   const conflict = failure.conflict;
+  const diagnostic = failure.reason ?? failure.field;
   return <>
     {failure.recoveryGuidance ? <p>{t(`commandError.recovery.${failure.recoveryGuidance}`)}</p> : null}
     <details><summary>{t("execution.diagnostic")}</summary>
       {failure.diagnosticId ? <p>{t("commandError.diagnosticId")} <code>{failure.diagnosticId}</code></p> : null}
       <p>{t("commandError.classification", { code: failure.code, stage: failure.stage, outcome: failure.outcome })}</p>
+      {diagnostic ? <p><code>{diagnostic}</code></p> : null}
       {failure.currentRevision ? <p>{t("commandError.currentRevision", { revision: failure.currentRevision })}</p> : null}
       {conflict ? <div><p>{t(`commandError.conflict.${conflict.kind}`)}</p>
         <p>{t("commandError.expected")} <code>{conflict.expected ?? t("commandError.none")}</code></p>

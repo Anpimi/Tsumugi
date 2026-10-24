@@ -37,6 +37,38 @@
         ],
         "type": "object"
       },
+      "CaptureCorrectionTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "source",
+          "target",
+          "protected",
+          "reason"
+        ],
+        "type": "object"
+      },
       "CaptureListRequest": {
         "additionalProperties": false,
         "properties": {
@@ -80,6 +112,57 @@
         ],
         "type": "object"
       },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ContextCaptureRequest": {
         "additionalProperties": false,
         "properties": {
@@ -100,6 +183,218 @@
         ],
         "type": "object"
       },
+      "ContextFactActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ContextFactDisposition": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "replace",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "reject-inference",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "restore",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextFactHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ContextFactPosition": {
+        "additionalProperties": false,
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "factIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "factIndex"
+        ],
+        "type": "object"
+      },
+      "ContextFactRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/ContextFactWrite"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "ContextFactWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/SourceFactBasis"
+          },
+          "disposition": {
+            "$ref": "#/definitions/ContextFactDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ContextFactsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "facts": {
+            "items": {
+              "$ref": "#/definitions/ContextFactPosition"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scope",
+          "facts"
+        ],
+        "type": "object"
+      },
       "ContextWriteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -117,6 +412,115 @@
           "sessionToken",
           "projectId",
           "context"
+        ],
+        "type": "object"
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "CorrectionBasisRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterSelectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "afterSelectionId"
+        ],
+        "type": "object"
+      },
+      "CorrectionCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/CaptureCorrectionTerm"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
         ],
         "type": "object"
       },
@@ -142,6 +546,25 @@
       },
       "ExecutionId": {
         "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
       },
       "ImpactRequest": {
         "additionalProperties": false,
@@ -174,6 +597,26 @@
           "locale",
           "offset",
           "limit"
+        ],
+        "type": "object"
+      },
+      "ResourceActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
         ],
         "type": "object"
       },
@@ -223,6 +666,22 @@
           "override"
         ],
         "type": "string"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
+        ],
+        "type": "object"
       },
       "SaveContext": {
         "additionalProperties": false,
@@ -339,6 +798,49 @@
         ],
         "type": "object"
       },
+      "SelectedSourceFact": {
+        "additionalProperties": false,
+        "description": "One whole fact, with the original block target and source references.",
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fact": {
+            "$ref": "#/definitions/SourceContextFact"
+          },
+          "factIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "factIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "fact"
+        ],
+        "type": "object"
+      },
       "SessionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -352,6 +854,167 @@
         "required": [
           "sessionToken",
           "projectId"
+        ],
+        "type": "object"
+      },
+      "SourceContextFact": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Unique only inside this block; it is not a project revision or entity ID.",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/SourceContextFactKind"
+          },
+          "origin": {
+            "$ref": "#/definitions/SourceContextFactOrigin"
+          },
+          "text": {
+            "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "SourceContextFactKind": {
+        "description": "Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.",
+        "enum": [
+          "speaker",
+          "role",
+          "scene",
+          "time",
+          "location",
+          "note"
+        ],
+        "type": "string"
+      },
+      "SourceContextFactOrigin": {
+        "description": "References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "extracted",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "sources"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "inferred",
+                "type": "string"
+              },
+              "rationale": {
+                "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "rationale",
+              "sources"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "SourceFactBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "fact": {
+            "$ref": "#/definitions/SelectedSourceFact"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "sourceResultId",
+          "sourceResultDigest",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
         ],
         "type": "object"
       },
@@ -390,6 +1053,26 @@
           "locale",
           "offset",
           "limit"
+        ],
+        "type": "object"
+      },
+      "TbxPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale"
         ],
         "type": "object"
       },
@@ -480,6 +1163,59 @@
         ],
         "type": "object"
       },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "TmxPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale"
+        ],
+        "type": "object"
+      },
       "UnitLocaleRequest": {
         "additionalProperties": false,
         "properties": {
@@ -509,20 +1245,53 @@
       "capture": {
         "$ref": "#/definitions/CaptureRequest"
       },
+      "captureAction": {
+        "$ref": "#/definitions/ContextCaptureRequest"
+      },
       "captures": {
         "$ref": "#/definitions/CaptureListRequest"
       },
       "context": {
         "$ref": "#/definitions/ContextWriteRequest"
       },
+      "contextAction": {
+        "$ref": "#/definitions/ContextWriteRequest"
+      },
       "contextCapture": {
         "$ref": "#/definitions/ContextCaptureRequest"
+      },
+      "contextCaptureAction": {
+        "$ref": "#/definitions/ContextCaptureRequest"
+      },
+      "contextFact": {
+        "$ref": "#/definitions/ContextFactRequest"
+      },
+      "contextFactAction": {
+        "$ref": "#/definitions/ContextFactActionRequest"
+      },
+      "contextFactHistory": {
+        "$ref": "#/definitions/ContextFactHistoryRequest"
+      },
+      "contextFacts": {
+        "$ref": "#/definitions/ContextFactsRequest"
+      },
+      "correctionBasis": {
+        "$ref": "#/definitions/CorrectionBasisRequest"
+      },
+      "correctionCapture": {
+        "$ref": "#/definitions/CorrectionCaptureRequest"
       },
       "decision": {
         "$ref": "#/definitions/DecisionRequest"
       },
+      "decisionAction": {
+        "$ref": "#/definitions/DecisionRequest"
+      },
       "impacts": {
         "$ref": "#/definitions/ImpactRequest"
+      },
+      "resourceAction": {
+        "$ref": "#/definitions/ResourceActionRequest"
       },
       "session": {
         "$ref": "#/definitions/SessionRequest"
@@ -530,7 +1299,13 @@
       "suggestions": {
         "$ref": "#/definitions/SuggestionRequest"
       },
+      "tbxPreview": {
+        "$ref": "#/definitions/TbxPreviewRequest"
+      },
       "term": {
+        "$ref": "#/definitions/TermRequest"
+      },
+      "termAction": {
         "$ref": "#/definitions/TermRequest"
       },
       "termHistory": {
@@ -539,21 +1314,38 @@
       "terms": {
         "$ref": "#/definitions/TermListRequest"
       },
+      "tmxPreview": {
+        "$ref": "#/definitions/TmxPreviewRequest"
+      },
       "unitLocale": {
         "$ref": "#/definitions/UnitLocaleRequest"
       }
     },
     "required": [
       "session",
+      "tmxPreview",
+      "tbxPreview",
       "captures",
       "capture",
       "term",
+      "termAction",
       "decision",
+      "decisionAction",
+      "correctionBasis",
+      "correctionCapture",
+      "resourceAction",
       "terms",
       "termHistory",
       "unitLocale",
       "context",
+      "contextAction",
+      "contextFact",
+      "contextFacts",
+      "contextFactAction",
+      "contextFactHistory",
       "contextCapture",
+      "captureAction",
+      "contextCaptureAction",
       "suggestions",
       "impacts"
     ],
@@ -599,6 +1391,89 @@
           "budgetBytes"
         ],
         "type": "object"
+      },
+      "CaptureCorrectionTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "source",
+          "target",
+          "protected",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ContentTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "ContextCapture": {
         "additionalProperties": false,
@@ -658,6 +1533,129 @@
         "required": [
           "request",
           "receipt"
+        ],
+        "type": "object"
+      },
+      "ContextFactDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/ContextFactWrite"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "ContextFactDisposition": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "replace",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "reject-inference",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "restore",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextFactHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ContextFactDecision"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "ContextFactWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/SourceFactBasis"
+          },
+          "disposition": {
+            "$ref": "#/definitions/ContextFactDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "expectedDecisionId",
+          "disposition",
+          "actor",
+          "reason"
         ],
         "type": "object"
       },
@@ -760,9 +1758,164 @@
         ],
         "type": "object"
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "before": {
+            "$ref": "#/definitions/RevisionSelectionRef"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "afterText": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/CorrectionTermBasis"
+          },
+          "beforeSourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "beforeSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "beforeText": {
+            "type": "string"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "sourceText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "sourceText",
+          "beforeText",
+          "afterText",
+          "beforeSourceSnapshotId",
+          "beforeSourceRevisionId",
+          "current"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ResourceDecisionResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence": {
+            "$ref": "#/definitions/CorrectionTermEvidence"
+          }
+        },
+        "required": [
+          "evidence",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "CorrectionTermReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/GlossaryCapture"
+          },
+          "request": {
+            "$ref": "#/definitions/CaptureCorrectionTerm"
+          }
+        },
+        "required": [
+          "request",
+          "capture"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExtensionHandling": {
+        "oneOf": [
+          {
+            "const": "required",
+            "description": "An operation that needs this block must have the exact interpreter.",
+            "type": "string"
+          },
+          {
+            "const": "preserve",
+            "description": "Preserve the payload exactly, including when its schema is understood.",
+            "type": "string"
+          },
+          {
+            "const": "optional",
+            "description": "Interpretation is optional; an unknown payload is still preserved.",
+            "type": "string"
+          }
+        ]
       },
       "GlossaryCapture": {
         "additionalProperties": false,
@@ -779,14 +1932,8 @@
           "digest": {
             "type": "string"
           },
-          "license": {
-            "type": "string"
-          },
-          "resourceId": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "string"
+          "origin": {
+            "$ref": "#/definitions/GlossaryCaptureOrigin"
           },
           "sourceLocale": {
             "type": "string"
@@ -797,15 +1944,76 @@
         },
         "required": [
           "captureId",
-          "resourceId",
-          "revision",
-          "license",
+          "origin",
           "sourceLocale",
           "targetLocale",
           "digest",
           "count"
         ],
         "type": "object"
+      },
+      "GlossaryCaptureOrigin": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file",
+                "type": "string"
+              },
+              "license": {
+                "type": "string"
+              },
+              "resourceId": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "resourceId",
+              "revision",
+              "license"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/CorrectionTermBasis"
+              },
+              "kind": {
+                "const": "correction",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mcp",
+                "type": "string"
+              },
+              "provenance": {
+                "$ref": "#/definitions/McpTermProvenance"
+              }
+            },
+            "required": [
+              "kind",
+              "provenance"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "GlossaryEntry": {
         "additionalProperties": false,
@@ -982,6 +2190,166 @@
         ],
         "type": "object"
       },
+      "McpTermCapturePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current"
+        ],
+        "type": "object"
+      },
+      "McpTermProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/McpTermQueryBasis"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "type": "string"
+          },
+          "queryActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "toolDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "query",
+          "tool",
+          "toolDigest",
+          "queryActionId",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "itemId",
+          "resultId",
+          "resultDigest"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceLocale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "McpTermTool": {
+        "additionalProperties": false,
+        "properties": {
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discoveryExpiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveryGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "discoveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "outputSchema": true,
+          "profileVersion": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discoveryId",
+          "discoveryGeneration",
+          "discoveryExpiresAtMs",
+          "endpoint",
+          "credentialEnv",
+          "serverName",
+          "serverVersion",
+          "protocolVersion",
+          "toolName",
+          "description",
+          "profileVersion",
+          "inputSchema",
+          "outputSchema"
+        ],
+        "type": "object"
+      },
       "ResourceChangeKind": {
         "enum": [
           "added",
@@ -1065,6 +2433,9 @@
           "decision": {
             "$ref": "#/definitions/ResourceDecisionKind"
           },
+          "request": {
+            "$ref": "#/definitions/ResourceDecision"
+          },
           "revision": {
             "anyOf": [
               {
@@ -1077,6 +2448,7 @@
           }
         },
         "required": [
+          "request",
           "actionId",
           "decision",
           "revision"
@@ -1093,7 +2465,8 @@
       "ResourceImpactKind": {
         "enum": [
           "term",
-          "context"
+          "context",
+          "context-fact"
         ],
         "type": "string"
       },
@@ -1109,6 +2482,26 @@
         "properties": {
           "capture": {
             "$ref": "#/definitions/GlossaryCapture"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CorrectionTermPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mcp": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermCapturePreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "removed": {
             "items": {
@@ -1126,7 +2519,9 @@
         "required": [
           "capture",
           "rows",
-          "removed"
+          "removed",
+          "correction",
+          "mcp"
         ],
         "type": "object"
       },
@@ -1165,6 +2560,22 @@
           "kind",
           "current",
           "scopeUnitId"
+        ],
+        "type": "object"
+      },
+      "RevisionSelectionRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "selectionId"
         ],
         "type": "object"
       },
@@ -1286,6 +2697,525 @@
           "reason"
         ],
         "type": "object"
+      },
+      "SelectedSourceFact": {
+        "additionalProperties": false,
+        "description": "One whole fact, with the original block target and source references.",
+        "properties": {
+          "blockIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fact": {
+            "$ref": "#/definitions/SourceContextFact"
+          },
+          "factIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handling": {
+            "$ref": "#/definitions/ExtensionHandling"
+          },
+          "inRevisionBasis": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "target": {
+            "$ref": "#/definitions/ContentTarget"
+          }
+        },
+        "required": [
+          "blockIndex",
+          "factIndex",
+          "target",
+          "schema",
+          "handling",
+          "inRevisionBasis",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SourceContextFact": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Unique only inside this block; it is not a project revision or entity ID.",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}(?![\\s\\S])",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/SourceContextFactKind"
+          },
+          "origin": {
+            "$ref": "#/definitions/SourceContextFactOrigin"
+          },
+          "text": {
+            "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "SourceContextFactKind": {
+        "description": "Classification for presentation, without interpreting a format's syntax or\nnormalizing its literal text. Other source-associated information uses Note.",
+        "enum": [
+          "speaker",
+          "role",
+          "scene",
+          "time",
+          "location",
+          "note"
+        ],
+        "type": "string"
+      },
+      "SourceContextFactOrigin": {
+        "description": "References are observations in captured source, not proof of an inference.\nHuman project decisions remain in the project's independent revision owner.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "extracted",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "sources"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "inferred",
+                "type": "string"
+              },
+              "rationale": {
+                "pattern": "^[\\s\\S]{1,4096}(?![\\s\\S])",
+                "type": "string"
+              },
+              "sources": {
+                "items": {
+                  "$ref": "#/definitions/SourceReference"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "rationale",
+              "sources"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceContextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceSnapshotId",
+          "unitId",
+          "sourceRevisionId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "SourceFactBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "fact": {
+            "$ref": "#/definitions/SelectedSourceFact"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "sourceResultId",
+          "sourceResultDigest",
+          "fact"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
+        ],
+        "type": "object"
+      },
+      "TbxExchangePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLen": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "documentLocale": {
+            "type": "string"
+          },
+          "license": {
+            "$ref": "#/definitions/TbxLicenseStatus"
+          },
+          "losses": {
+            "items": {
+              "$ref": "#/definitions/TbxLossEntry"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TbxExchangeRow"
+            },
+            "type": "array"
+          },
+          "sourceDescriptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          },
+          "titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "digest",
+          "byteLen",
+          "sourceLocale",
+          "targetLocale",
+          "documentLocale",
+          "titles",
+          "sourceDescriptions",
+          "license",
+          "rows",
+          "losses"
+        ],
+        "type": "object"
+      },
+      "TbxExchangeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "conceptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/definitions/TbxRowReason"
+            },
+            "type": "array"
+          },
+          "sourceTerms": {
+            "items": {
+              "$ref": "#/definitions/TbxTermPreview"
+            },
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/definitions/TbxRowStatus"
+          },
+          "targetTerms": {
+            "items": {
+              "$ref": "#/definitions/TbxTermPreview"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "ordinal",
+          "conceptId",
+          "sourceTerms",
+          "targetTerms",
+          "status",
+          "reasons"
+        ],
+        "type": "object"
+      },
+      "TbxFilePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/definitions/TbxExchangePreview"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "fileName",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "TbxLicenseStatus": {
+        "enum": [
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "TbxLossEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TbxLossKind"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/definitions/TbxLossSample"
+            },
+            "type": "array"
+          },
+          "unlisted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "count",
+          "samples",
+          "unlisted"
+        ],
+        "type": "object"
+      },
+      "TbxLossKind": {
+        "enum": [
+          "unmapped-metadata",
+          "unknown-attribute",
+          "unknown-element",
+          "unknown-data-category",
+          "extra-language",
+          "duplicate-concept-id",
+          "duplicate-term-id",
+          "duplicate-language",
+          "duplicate-term-text",
+          "invalid-language",
+          "missing-term",
+          "empty-term",
+          "inline-markup",
+          "unknown-structure",
+          "unknown-usage-status",
+          "duplicate-usage-status",
+          "schema-hint"
+        ],
+        "type": "string"
+      },
+      "TbxLossSample": {
+        "additionalProperties": false,
+        "properties": {
+          "byteOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "byteOffset",
+          "ordinal",
+          "path"
+        ],
+        "type": "object"
+      },
+      "TbxRowReason": {
+        "enum": [
+          "missing-source",
+          "missing-target",
+          "ambiguous-source",
+          "ambiguous-target",
+          "invalid-language",
+          "unknown-structure",
+          "invalid-source-term",
+          "invalid-target-term"
+        ],
+        "type": "string"
+      },
+      "TbxRowStatus": {
+        "enum": [
+          "possible-mapping",
+          "excluded"
+        ],
+        "type": "string"
+      },
+      "TbxTermPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "languageOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/definitions/TbxTermReason"
+            },
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "termSecId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usageStatuses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "languageOrdinal",
+          "ordinal",
+          "termSecId",
+          "text",
+          "usageStatuses",
+          "sources",
+          "reasons"
+        ],
+        "type": "object"
+      },
+      "TbxTermReason": {
+        "enum": [
+          "missing-term",
+          "ambiguous-term",
+          "empty-term",
+          "inline-markup",
+          "unknown-structure"
+        ],
+        "type": "string"
       },
       "TermOrigin": {
         "enum": [
@@ -1458,6 +3388,39 @@
         ],
         "type": "object"
       },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
       "TmMatchKind": {
         "enum": [
           "exact",
@@ -1520,12 +3483,339 @@
         ],
         "type": "object"
       },
+      "TmxExchangePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLen": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "header": {
+            "$ref": "#/definitions/TmxProvenance"
+          },
+          "license": {
+            "$ref": "#/definitions/TmxLicenseStatus"
+          },
+          "losses": {
+            "items": {
+              "$ref": "#/definitions/TmxLossEntry"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TmxExchangeRow"
+            },
+            "type": "array"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "digest",
+          "byteLen",
+          "sourceLocale",
+          "targetLocale",
+          "license",
+          "header",
+          "rows",
+          "losses"
+        ],
+        "type": "object"
+      },
+      "TmxExchangeRow": {
+        "additionalProperties": false,
+        "properties": {
+          "effectiveSourceLocale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/definitions/TmxRowReason"
+            },
+            "type": "array"
+          },
+          "sourceProvenance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TmxProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/TmxRowStatus"
+          },
+          "targetProvenance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TmxProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targetText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tuProvenance": {
+            "$ref": "#/definitions/TmxProvenance"
+          },
+          "tuid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ordinal",
+          "tuid",
+          "sourceText",
+          "targetText",
+          "status",
+          "reasons",
+          "effectiveSourceLocale",
+          "tuProvenance",
+          "sourceProvenance",
+          "targetProvenance"
+        ],
+        "type": "object"
+      },
+      "TmxFilePreview": {
+        "additionalProperties": false,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "preview": {
+            "$ref": "#/definitions/TmxExchangePreview"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "fileName",
+          "preview"
+        ],
+        "type": "object"
+      },
+      "TmxLicenseStatus": {
+        "enum": [
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "TmxLossEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "field": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TmxLossKind"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/definitions/TmxLossSample"
+            },
+            "type": "array"
+          },
+          "unlisted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "field",
+          "count",
+          "samples",
+          "unlisted"
+        ],
+        "type": "object"
+      },
+      "TmxLossKind": {
+        "enum": [
+          "unmapped-metadata",
+          "unknown-attribute",
+          "unknown-element",
+          "extra-language",
+          "duplicate-tuid",
+          "duplicate-language",
+          "direction-mismatch",
+          "wildcard-direction",
+          "invalid-language",
+          "missing-segment",
+          "empty-segment",
+          "inline-markup",
+          "unknown-structure"
+        ],
+        "type": "string"
+      },
+      "TmxLossSample": {
+        "additionalProperties": false,
+        "properties": {
+          "byteOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "byteOffset",
+          "ordinal",
+          "path"
+        ],
+        "type": "object"
+      },
+      "TmxProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "changeDate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationDate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationTool": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "creationToolVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "originalTmFormat": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "creationTool",
+          "creationToolVersion",
+          "originalTmFormat",
+          "creationId",
+          "creationDate",
+          "changeId",
+          "changeDate"
+        ],
+        "type": "object"
+      },
+      "TmxRowReason": {
+        "enum": [
+          "source-direction-mismatch",
+          "wildcard-source-direction",
+          "missing-source",
+          "missing-target",
+          "ambiguous-source",
+          "ambiguous-target",
+          "invalid-language",
+          "empty-source",
+          "empty-target",
+          "inline-markup",
+          "unknown-structure"
+        ],
+        "type": "string"
+      },
+      "TmxRowStatus": {
+        "enum": [
+          "eligible",
+          "excluded"
+        ],
+        "type": "string"
+      },
       "TranslationOrigin": {
         "enum": [
           "import",
           "manual",
           "ai"
         ],
+        "type": "string"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
       }
     },
@@ -1579,6 +3869,54 @@
       "contextCapture": {
         "$ref": "#/definitions/ContextCapture"
       },
+      "contextCaptureAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextCaptureActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "contextFact": {
+        "$ref": "#/definitions/ContextFactDecision"
+      },
+      "contextFactAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextFactDecision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "contextFactHistory": {
+        "$ref": "#/definitions/ContextFactHistory"
+      },
+      "contextFacts": {
+        "items": {
+          "$ref": "#/definitions/ContextFactDecision"
+        },
+        "type": "array"
+      },
+      "correctionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/CorrectionTermReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "correctionBasis": {
+        "$ref": "#/definitions/CorrectionTermEvidence"
+      },
+      "correctionCapture": {
+        "$ref": "#/definitions/CorrectionTermReceipt"
+      },
       "decision": {
         "$ref": "#/definitions/ResourceDecisionResult"
       },
@@ -1610,6 +3948,16 @@
         },
         "type": "array"
       },
+      "tbxPreview": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TbxFilePreview"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "term": {
         "$ref": "#/definitions/TermRevision"
       },
@@ -1628,23 +3976,43 @@
           "$ref": "#/definitions/TermRevision"
         },
         "type": "array"
+      },
+      "tmxPreview": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TmxFilePreview"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
       "termAction",
       "contextAction",
       "captureAction",
-      "decisionAction",
+      "tmxPreview",
+      "tbxPreview",
       "captures",
       "capture",
       "preview",
       "decision",
+      "correctionBasis",
+      "correctionCapture",
+      "correctionAction",
+      "decisionAction",
       "term",
       "terms",
       "resolution",
       "context",
       "savedContext",
+      "contextFact",
+      "contextFacts",
+      "contextFactAction",
+      "contextFactHistory",
       "contextCapture",
+      "contextCaptureAction",
       "suggestions",
       "impacts"
     ],

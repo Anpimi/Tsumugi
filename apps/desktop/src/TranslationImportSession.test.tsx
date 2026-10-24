@@ -4,12 +4,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useSessionReads } from "./SessionReadProvider";
 import { useTranslationImportSession } from "./TranslationImportSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
-import { translationCommands, type TranslationStartRequest, type TranslationAdoptRequest, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
+import { translationCommands, type PluginStartRequest, type TranslationAdoptRequest, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
 import type { AdoptionAction, Receipt } from "./executionCommands";
 import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { translationActionFixture, translationAttemptFixture, translationPreviewFixture, translationReceiptFixture, translationRecoveryUnit, translationRowFixture } from "./testSupport/translationFixture";
+import { translationActionFixture, translationAttemptFixture, translationPreviewFixture, translationReceiptFixture, translationRecoveryUnit, translationRowFixture, translationImportChoice, translationSelectionFixture, translationCaptureFixture, translationCheckerFixture, translationProjectionFixture } from "./testSupport/translationFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -38,14 +38,16 @@ beforeEach(() => {
   const checkedWrites = new Map<string,number>();
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
     const request = payload.request;
+    if (command === "read_plugin_execution_start" || command === "read_translation_projection_start") return null;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: preview.currentSourceSnapshotId };
     if (command === "create_execution_identity") return fixtureIdentity(nextIdentity++);
-    if (command === "select_source") return { selectionId: fixtureIdentity(901), folderName: "Fixture folder" };
-    if (command === "list_translation_files") return ["zh.json", "zh-CN.json"];
-    if (command === "preflight_translation") return { fileName: request.fileName, fileDigest: preview.fileDigest,
-      sourceSnapshotId: preview.fixedSourceSnapshotId, targetLocale: request.targetLocale, declaredLocale: preview.declaredLocale, count: preview.total };
-    if (command === "start_translation_import") return request.attemptId;
-    if (command === "read_translation_import_start") return null;
+    if (command === "select_plugin_translation") return translationSelectionFixture(preview.fixedSourceSnapshotId);
+    if (command === "list_plugin_translation_files") return ["zh.json", "zh-CN.json"];
+    if (command === "preflight_plugin_translation") return translationCaptureFixture(String(request.attemptId), preview.fixedSourceSnapshotId, "zh-CN", String(request.fileName));
+    if (command === "start_plugin_translation" || command === "start_translation_check" || command === "start_translation_projection") return request.attemptId;
+    if (command === "prepare_translation_check") return translationCheckerFixture(String(request.attemptId), String(request.translationAttemptId), String(request.translationResultId), preview.fixedSourceSnapshotId);
+    if (command === "finish_translation_check") return null;
+    if (command === "prepare_translation_projection") return translationProjectionFixture(String(request.attemptId), String(request.translationAttemptId), String(request.translationResultId), preview.fixedSourceSnapshotId);
     if (command === "read_translation_preview") {
       const after = Number(request.after), rows = preview.rows.filter(row => row.entry.ordinal >= after).slice(0, Math.min(pageSize, Number(request.limit)));
       const next = rows.at(-1)?.entry.ordinal;
@@ -72,14 +74,14 @@ afterEach(cleanup);
 
 it("retains the first unknown start after a definite rejection of the identical explicit retry", async () => {
   render(<Probe/>,project);
-  await act(async()=>{await owner.chooseFolder();owner.setFile("zh.json");await owner.preflight();});
+  await act(async()=>{await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId));owner.setFile("zh.json");owner.confirmLanguage(true);await owner.preflight();owner.consentProducer(true);});
   act(()=>owner.confirmLanguage(true));const original=invoke.getMockImplementation()!,rejected=mutationRejection();let sent=0;
-  invoke.mockImplementation((command:string,payload)=>command==="start_translation_import" ? Promise.reject(++sent===1 ? new Error("Lost ACK")
+  invoke.mockImplementation((command:string,payload)=>command==="start_plugin_translation" ? Promise.reject(++sent===1 ? new Error("Lost ACK")
     : rejected) : original(command,payload));
   await act(async()=>{await owner.start();});const request=structuredClone(owner.current().pendingStart);
   await act(async()=>{await owner.retryStart();});
   expect(owner.current().pendingStart).toEqual(request);expect(owner.current().attempt).toBeNull();
-  expect(calls("start_translation_import").map(([,args])=>args.request)).toEqual([request,request]);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("start_plugin_translation").map(([,args])=>args.request)).toEqual([request,request]);expect(calls("create_execution_identity")).toHaveLength(2);
 });
 
 it.each(["prepare_translation_adoption","adopt_execution"])("preserves an unknown import and its reservation after a checked-missing retry is rejected by %s",async boundary=>{
@@ -104,12 +106,12 @@ it("releases fresh definite rejection while preserving no invented unknown reque
 
 it("disposes its captured read listener on owner destruction before a deferred identity returns",async()=>{
   const view=render(<Probe/>,project);
-  await act(async()=>{await owner.chooseFolder();owner.setFile("zh.json");await owner.preflight();});act(()=>owner.confirmLanguage(true));
+  await act(async()=>{await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId));owner.setFile("zh.json");owner.confirmLanguage(true);await owner.preflight();owner.consentProducer(true);});act(()=>owner.confirmLanguage(true));
   const original=invoke.getMockImplementation()!,dispose=vi.fn();let resolve!: (value:string)=>void;
   invoke.mockImplementation((command:string,payload)=>command==="create_execution_identity" ? new Promise<string>(done=>{resolve=done;}) : original(command,payload));
   let work!:Promise<void>;act(()=>{work=owner.start(()=>true,dispose);});await waitFor(()=>expect(resolve).toBeDefined());
   view.unmount();expect(dispose).toHaveBeenCalledTimes(1);await act(async()=>{resolve(fixtureIdentity(999));await work;});
-  expect(dispose).toHaveBeenCalledTimes(1);expect(calls("start_translation_import")).toHaveLength(0);
+  expect(dispose).toHaveBeenCalledTimes(1);expect(calls("start_plugin_translation")).toHaveLength(0);
 });
 async function ready() {
   act(() => owner.showAttempt(preview.attemptId));
@@ -125,7 +127,7 @@ function calls(command: string) { return invoke.mock.calls.filter(([name]) => na
 
 it("retains folder, language consent and fixed ready evidence across complete consumer removal", async () => {
   const view = render(<Probe/>, project);
-  await act(async () => { await owner.chooseFolder(); owner.setFile("zh.json"); await owner.preflight(); });
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); await owner.preflight(); owner.consentProducer(true); });
   act(() => { owner.confirmLanguage(true); owner.setStrategy(true); });
   const captured = structuredClone(owner.current());
   view.rerender(null);
@@ -144,35 +146,37 @@ it("retains folder, language consent and fixed ready evidence across complete co
 
 it("retains an unknown start and resumes only its exact request after consumer and locale changes", async () => {
   const view = render(<Probe/>, project);
-  await act(async () => { await owner.chooseFolder(); owner.setFile("zh.json"); await owner.preflight(); });
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); await owner.preflight(); owner.consentProducer(true); });
   act(() => owner.confirmLanguage(true));
   const original = invoke.getMockImplementation()!; let lost = true;
   invoke.mockImplementation(async (command: string, payload: unknown) => {
     const value = await original(command, payload);
-    if (command === "start_translation_import" && lost) { lost = false; throw new Error("Lost start ACK"); }
+    if (command === "start_plugin_translation" && lost) { lost = false; throw new Error("Lost start ACK"); }
     return value;
   });
   await act(async () => { await owner.start(); });
   const request = structuredClone(owner.current().pendingStart!);
-  expect(request).toMatchObject({ expectedFileDigest: preview.fileDigest, expectedSourceSnapshotId: preview.fixedSourceSnapshotId, languageConfirmed: true });
+  expect(request).toMatchObject({ attemptId: owner.current().preflight!.attemptId, inputDigest: owner.current().preflight!.inputDigest, unsandboxedExecution: true });
   view.rerender(null, { ...project, metadata: { ...project.metadata, targetLocales: [], sourceLocale: "fr" } });
   await act(async () => { await owner.retryStart(); });
   view.rerender(<Probe/>);
-  expect(calls("start_translation_import").map(([, args]) => args.request)).toEqual([request, request]);
-  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().attempt).toBe(request.attemptId);
+  expect(calls("start_plugin_translation").map(([, args]) => args.request)).toEqual([request, request]);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().extractionAttempt).toBe(request.attemptId);
 });
 
 it("requires a new preflight and exact language consent after explicitly reselecting the file", async () => {
   render(<Probe/>, project);
-  await act(async () => { await owner.chooseFolder(); owner.setFile("zh.json"); await owner.preflight(); });
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); await owner.preflight(); owner.consentProducer(true); });
   act(() => { owner.confirmLanguage(true); owner.setFile("zh-CN.json"); });
   await act(async () => { await owner.start(); });
   expect(owner.current().preflight).toBeNull(); expect(owner.current().confirmed).toBe(false);
-  expect(calls("create_execution_identity")).toHaveLength(0);
-  await act(async () => { await owner.preflight(); });
+  expect(calls("create_execution_identity")).toHaveLength(1);
   act(() => owner.confirmLanguage(true));
+  await act(async () => { await owner.preflight(); });
+  act(() => owner.consentProducer(true));
   await act(async () => { await owner.start(); });
-  expect(calls("start_translation_import")[0][1].request.fileName).toBe("zh-CN.json");
+  expect(calls("preflight_plugin_translation")[1][1].request.fileName).toBe("zh-CN.json");
+  expect(calls("start_plugin_translation")[0][1].request.inputDigest).toBe(owner.current().preflight?.inputDigest);
 });
 
 it("settles a late original import ACK after consumer unmount while preserving manual input B", async () => {
@@ -447,59 +451,230 @@ it("stops the next authorized batch item when the project session owner is destr
   expect(calls("prepare_translation_adoption")).toHaveLength(1); expect(calls("adopt_execution")).toHaveLength(1);
 });
 
-function importStartProof(request: TranslationStartRequest) {
-  const { sessionToken: _session, ...original } = request;
-  return { request: original, taskId: fixtureIdentity(980), inputDigest: "b".repeat(64) };
+function importStartProof(request: PluginStartRequest) {
+  return { projectId: request.projectId, attemptId: request.attemptId, taskId: fixtureIdentity(980), inputDigest: request.inputDigest, operation: "translation-extract" };
 }
 async function prepareImportStart() {
-  await act(async () => { await owner.chooseFolder(); owner.setFile("zh.json"); await owner.preflight(); });
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); await owner.preflight(); owner.consentProducer(true); });
   act(() => owner.confirmLanguage(true));
 }
 it.each(["lost", "bad", "unknown"] as const)("checks one original translation start after %s ACK inside its reservation", async mode => {
   const view = render(<Probe/>, project); await prepareImportStart();
   const native = invoke.getMockImplementation()!; let finish!: (value: unknown) => void;
   const lookup = new Promise(resolve => { finish = resolve; });
-  invoke.mockImplementation((command: string,payload) => command === "start_translation_import"
+  invoke.mockImplementation((command: string,payload) => command === "start_plugin_translation"
     ? mode === "bad" ? Promise.resolve(fixtureIdentity(777)) : Promise.reject(mode === "lost" ? new Error("Lost ACK")
       : {code:"outcome-unknown",stage:"execution-recover",outcome:"unknown",recoveryRequired:true})
-    : command === "read_translation_import_start" ? lookup : native(command,payload));
+    : command === "read_plugin_execution_start" ? lookup : native(command,payload));
   let work!: Promise<void>; act(() => { work = owner.start(); });
-  await waitFor(() => expect(calls("read_translation_import_start")).toHaveLength(1));
+  await waitFor(() => expect(calls("read_plugin_execution_start")).toHaveLength(1));
   const request = owner.current().pendingStart!; expect(owner.current().busy).toBe(true); expect(owner.current().checkingStart).toBe(true);
   await act(async () => { await owner.start(); await owner.retryStart(); await owner.checkStart(); });
-  expect(calls("start_translation_import")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("start_plugin_translation")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(2);
   view.rerender(null, { ...project, metadata: { ...project.metadata, targetLocales: [], sourceLocale: "fr" } });
   await act(async () => { finish(importStartProof(request)); await work; }); view.rerender(<Probe/>);
-  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().attempt).toBe(request.attemptId);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().extractionAttempt).toBe(request.attemptId);
   expect(owner.current().confirmed).toBe(false); expect(owner.current().stale).toBe(true);
-  expect(calls("read_translation_import_start").map(([,args]) => args.request)).toEqual([request]);
+  expect(calls("read_plugin_execution_start").map(([,args]) => args.request)).toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: request.attemptId, inputDigest: request.inputDigest, operation: "translation-extract" }]);
 });
 it.each(["missing", "read-error", "wrong-proof"] as const)("keeps translation start %s until an exact manual read confirms it", async mode => {
   render(<Probe/>, project); await prepareImportStart(); const native = invoke.getMockImplementation()!; let checked = false;
-  invoke.mockImplementation((command: string,payload) => command === "start_translation_import" ? Promise.reject(new Error("Lost ACK"))
-    : command === "read_translation_import_start" ? checked ? Promise.resolve(importStartProof(payload.request))
+  invoke.mockImplementation((command: string,payload) => command === "start_plugin_translation" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_plugin_execution_start" ? checked ? Promise.resolve(importStartProof(payload.request))
       : mode === "missing" ? Promise.resolve(null) : mode === "read-error" ? Promise.reject(new Error("Read unavailable"))
-      : Promise.resolve({ ...importStartProof(payload.request), request: { ...importStartProof(payload.request).request, selectionId: fixtureIdentity(777) } }) : native(command,payload));
+      : Promise.resolve({ ...importStartProof(payload.request), inputDigest: "f".repeat(64) }) : native(command,payload));
   await act(async () => { await owner.start(); }); const request = owner.current().pendingStart!;
   expect(owner.current().startRetryAllowed).toBe(mode === "missing");
   if (mode !== "missing") await act(async () => { await owner.retryStart(); });
-  expect(calls("start_translation_import")).toHaveLength(1); checked = true;
+  expect(calls("start_plugin_translation")).toHaveLength(1); checked = true;
   await act(async () => { await owner.checkStart(); }); expect(owner.current().pendingStart).toBeNull();
-  expect(calls("read_translation_import_start").map(([,args]) => args.request)).toEqual([request,request]);
+  expect(calls("read_plugin_execution_start").map(([,args]) => args.request)).toEqual([0,1].map(() => ({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: request.attemptId, inputDigest: request.inputDigest, operation: "translation-extract" })));
 });
 it("does not read after a definite translation start rejection", async () => {
   render(<Probe/>, project); await prepareImportStart(); const native = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string,payload) => command === "start_translation_import" ? Promise.reject(mutationRejection()) : native(command,payload));
+  invoke.mockImplementation((command: string,payload) => command === "start_plugin_translation" ? Promise.reject(mutationRejection()) : native(command,payload));
   await act(async () => { await owner.start(); }); expect(owner.current().pendingStart).toBeNull();
-  expect(calls("read_translation_import_start")).toHaveLength(0);
+  expect(calls("read_plugin_execution_start")).toHaveLength(0);
 });
 it("does not settle translation start after the session retires during its pure lookup", async () => {
   render(<Probe/>, project); await prepareImportStart(); const native = invoke.getMockImplementation()!;
   let finish!: (value: unknown) => void; const lookup = new Promise(resolve => { finish = resolve; });
-  invoke.mockImplementation((command: string,payload) => command === "start_translation_import" ? Promise.reject(new Error("Lost ACK"))
-    : command === "read_translation_import_start" ? lookup : native(command,payload));
+  invoke.mockImplementation((command: string,payload) => command === "start_plugin_translation" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_plugin_execution_start" ? lookup : native(command,payload));
   let work!: Promise<void>; act(() => { work = owner.start(); }); await waitFor(() => expect(owner.current().checkingStart).toBe(true));
   const request = owner.current().pendingStart!; act(() => importReads.retire());
   await act(async () => { finish(importStartProof(request)); await work; });
-  expect(owner.current().pendingStart).toBe(request); expect(owner.current().attempt).toBeNull();
+  expect(owner.current().pendingStart).toBe(request); expect(owner.current().extractionAttempt).toBeNull();
+});
+
+const pluginPhases = [
+  ["capture", "preflight_plugin_translation"], ["prepare-check", "prepare_translation_check"], ["start-check", "start_translation_check"],
+  ["finish-check", "finish_translation_check"], ["prepare-projection", "prepare_translation_projection"], ["start-projection", "start_translation_projection"],
+] as const;
+async function preparePluginPhase(phase: typeof pluginPhases[number][0]) {
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); });
+  if (phase === "capture") return () => owner.preflight();
+  await act(async () => { await owner.preflight(); owner.consentProducer(true); await owner.start(); });
+  if (phase === "prepare-check") return () => owner.prepareCheck(fixtureIdentity(800));
+  await act(async () => { await owner.prepareCheck(fixtureIdentity(800)); owner.consentChecker(true); });
+  if (phase === "start-check") return () => owner.startCheck();
+  await act(async () => { await owner.startCheck(); });
+  if (phase === "finish-check") return () => owner.finishCheck(fixtureIdentity(801));
+  await act(async () => { await owner.finishCheck(fixtureIdentity(801)); });
+  if (phase === "prepare-projection") return () => owner.prepareProjection(fixtureIdentity(800));
+  await act(async () => { await owner.prepareProjection(fixtureIdentity(800)); });
+  return () => owner.startProjection();
+}
+it.each(pluginPhases)("keeps the complete original %s request and shared reservation after a later rejected retry", async (phase, command) => {
+  const view = render(<Probe/>, project), work = await preparePluginPhase(phase), original = invoke.getMockImplementation()!;
+  let sent = 0;
+  invoke.mockImplementation((name: string, args) => name === command ? Promise.reject(++sent === 1 ? new Error("Original ACK lost") : mutationRejection()) : original(name, args));
+  await act(async () => { await work(); });
+  const pending = structuredClone(owner.current().pendingPlugin);
+  expect(pending?.pendingKind).toBe(phase); expect(owner.hasPending()).toBe(true); expect(drafts.mutationReserved).toBe(true);
+  const before = calls(command).length;
+  view.rerender(null, { ...project, metadata: { ...project.metadata, sourceLocale: "fr", targetLocales: [] } });
+  await act(async () => { await owner.retryPlugin(); });
+  expect(owner.current().pendingPlugin).toEqual(pending); expect(drafts.mutationReserved).toBe(true);
+  expect(calls(command).slice(-2).map(([, args]) => args.request)).toEqual([pending!.request, pending!.request]);
+  expect(calls(command)).toHaveLength(before + 1);
+});
+it.each(["capture", "prepare-check", "prepare-projection"] as const)("retains a schema-valid foreign source response as unknown in %s", async phase => {
+  render(<Probe/>, project); const work = await preparePluginPhase(phase), original = invoke.getMockImplementation()!;
+  const command = pluginPhases.find(([kind]) => kind === phase)![1];
+  invoke.mockImplementation(async (name: string, args) => {
+    const value = await original(name, args);
+    return name === command ? { ...value, source: { ...value.source, sourceSnapshotId: fixtureIdentity(999) } } : value;
+  });
+  await act(async () => { await work(); });
+  expect(owner.current().pendingPlugin?.pendingKind).toBe(phase); expect(owner.hasPending()).toBe(true);
+  if (phase === "capture") expect(owner.current().preflight).toBeNull();
+  if (phase === "prepare-check") expect(owner.current().checkReview).toBeNull();
+  if (phase === "prepare-projection") expect(owner.current().projection).toBeNull();
+  expect(owner.current().attempt).toBeNull(); expect(drafts.mutationReserved).toBe(true);
+});
+
+async function ordinaryTranslationStart(checker: boolean) {
+  if (checker) return preparePluginPhase("start-check");
+  await act(async () => { await owner.chooseFolder(translationImportChoice(preview.fixedSourceSnapshotId)); owner.setFile("zh.json"); owner.confirmLanguage(true); await owner.preflight(); owner.consentProducer(true); });
+  return () => owner.start();
+}
+it.each([false, true])("confirms an ordinary translation start once across hidden consumers and changed locales (checker=%s)", async checker => {
+  const view = render(<Probe/>, project), work = await ordinaryTranslationStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_translation_check" : "start_plugin_translation";
+  let resolve!: (value: unknown) => void; const response = new Promise<unknown>(done => { resolve = done; });
+  invoke.mockImplementation((name,args) => name === command ? Promise.reject(new Error("Lost ACK")) : name === "read_plugin_execution_start" ? response : original(name,args));
+  let running!: Promise<void>; act(() => { running = work(); }); await waitFor(() => expect(owner.current().checkingStart).toBe(true));
+  const request = calls(command).at(-1)![1].request, read = calls("read_plugin_execution_start").at(-1)![1].request;
+  expect(read).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: request.attemptId,
+    inputDigest: request.inputDigest, operation: checker ? "translation-semantic-check" : "translation-extract" });
+  view.rerender(null, { ...project, metadata: { ...project.metadata, sourceLocale: "fr", targetLocales: [] } });
+  await act(async () => { await owner.checkStart(); await owner.checkPluginStart(); await owner.retryStart(); await owner.retryPlugin(); });
+  await act(async () => { resolve({ projectId: read.projectId, taskId: fixtureIdentity(888), attemptId: read.attemptId, operation: read.operation, inputDigest: read.inputDigest }); await running; });
+  view.rerender(<Probe/>);
+  expect(checker ? owner.current().checkAttempt : owner.current().extractionAttempt).toBe(request.attemptId);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingPlugin).toBeNull();
+  expect(calls(command)).toHaveLength(1); expect(calls("read_plugin_execution_start")).toHaveLength(1);
+  expect(owner.current().confirmed).toBe(false); if (!checker) expect(owner.current().stale).toBe(true);
+});
+it.each([false, true])("requires a pure translation absence read before exact retry and preserves unknown on a later rejection (checker=%s)", async checker => {
+  render(<Probe/>, project); const work = await ordinaryTranslationStart(checker), original = invoke.getMockImplementation()!;
+  const command = checker ? "start_translation_check" : "start_plugin_translation";
+  let reads = 0, sends = 0;
+  invoke.mockImplementation((name,args) => {
+    if (name === command) return Promise.reject(++sends === 1 ? new Error("Lost ACK") : mutationRejection());
+    if (name === "read_plugin_execution_start") return ++reads === 1 || reads === 3 ? Promise.reject(new Error("Read unavailable")) : Promise.resolve(null);
+    return original(name,args);
+  });
+  await act(async () => { await work(); });
+  const pending = checker ? owner.current().pendingPlugin : owner.current().pendingStart;
+  expect(owner.current().startRetryAllowed).toBe(false);
+  await act(async () => { await owner.retryStart(); await owner.retryPlugin(); }); expect(sends).toBe(1); expect(reads).toBe(1);
+  await act(async () => { if (checker) await owner.checkPluginStart(); else await owner.checkStart(); });
+  expect(owner.current().startRetryAllowed).toBe(true); expect(sends).toBe(1);
+  await act(async () => { if (checker) await owner.retryPlugin(); else await owner.retryStart(); });
+  if (!checker) {
+    expect(sends).toBe(2); expect(reads).toBe(2);
+    expect(owner.current().pendingStart).toBe(pending); expect(owner.current().startRetryAllowed).toBe(false);
+    expect(drafts.mutationReserved).toBe(true);
+    await act(async () => { await owner.retryStart(); }); expect(sends).toBe(2); expect(reads).toBe(2);
+    await act(async () => { await owner.checkStart(); });
+  }
+  expect(sends).toBe(2); expect(reads).toBe(3); expect(owner.current().startRetryAllowed).toBe(false);
+  expect(checker ? owner.current().pendingPlugin : owner.current().pendingStart).toBe(pending); expect(drafts.mutationReserved).toBe(true);
+  expect(calls(command).map(([,args]) => args.request)).toEqual([calls(command)[0][1].request, calls(command)[0][1].request]);
+});
+
+it.each([false,true])("ignores a late original translation proof after session replacement (checker=%s)", async checker => {
+  const view=render(<Probe/>,project),work=await ordinaryTranslationStart(checker),original=invoke.getMockImplementation()!;
+  let resolve!:(value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name===(checker?"start_translation_check":"start_plugin_translation")?Promise.reject(new Error("Lost ACK"))
+    :name==="read_plugin_execution_start"?response:original(name,args));
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const old=owner,read=calls("read_plugin_execution_start")[0][1].request;
+  view.rerender(<Probe/>,{...project,sessionToken:"replacement-session"});
+  await act(async()=>{resolve({projectId:read.projectId,taskId:fixtureIdentity(888),attemptId:read.attemptId,operation:read.operation,inputDigest:read.inputDigest});await running;});
+  expect(owner.current().extractionAttempt).toBeNull();expect(owner.current().checkAttempt).toBeNull();expect(owner.hasPending()).toBe(false);
+  expect(checker?old.current().pendingPlugin:old.current().pendingStart).not.toBeNull();
+});
+
+it("confirms one original built-in match preview before any progress read across hidden consumers and metadata changes",async()=>{
+  const view=render(<Probe/>,project),work=await preparePluginPhase("start-projection"),original=invoke.getMockImplementation()!;
+  const review=owner.current().projection!;expect(review).not.toBeNull();
+  let resolve!:(value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.resolve(fixtureIdentity(999))
+    :name==="read_translation_projection_start"?response:original(name,args));
+  const identities=calls("create_execution_identity").length;
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const pending=owner.current().pendingPlugin;expect(pending?.pendingKind).toBe("start-projection");
+  expect(calls("read_translation_projection_start")[0][1].request).toEqual(pending!.request);
+  expect(drafts.mutationReserved).toBe(true);
+  view.rerender(null,{...project,metadata:{...project.metadata,sourceLocale:"fr",targetLocales:[]}});
+  await act(async()=>{await owner.checkProjectionStart();await owner.retryPlugin();});
+  expect(calls("read_translation_projection_start")).toHaveLength(1);expect(calls("start_translation_projection")).toHaveLength(1);
+  await act(async()=>{resolve({projectId:project.metadata.projectId,taskId:fixtureIdentity(888),attemptId:review.attemptId,inputDigest:review.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId});await running;});
+  view.rerender(<Probe/>);
+  expect(owner.current().attempt).toBe(review.attemptId);expect(owner.current().projection).toBe(review);expect(owner.current().pendingPlugin).toBeNull();
+  expect(owner.current().failure).toBeNull();expect(owner.current().stale).toBe(true);expect(owner.current().confirmed).toBe(false);
+  expect(calls("create_execution_identity")).toHaveLength(identities);expect(calls("start_translation_projection")).toHaveLength(1);
+  expect(calls("read_plugin_execution_start")).toHaveLength(0);expect(calls("read_translation_preview")).toHaveLength(0);
+});
+it("requires pure original projection absence before exact retry and preserves unknown after a later formal rejection",async()=>{
+  render(<Probe/>,project);const work=await preparePluginPhase("start-projection"),review=owner.current().projection!,original=invoke.getMockImplementation()!;
+  let reads=0,sends=0;
+  const proof={projectId:project.metadata.projectId,taskId:fixtureIdentity(888),attemptId:review.attemptId,inputDigest:review.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId};
+  invoke.mockImplementation((name,args)=>{
+    if(name==="start_translation_projection")return Promise.reject(++sends===1?new Error("Lost ACK"):mutationRejection());
+    if(name==="read_translation_projection_start")return ++reads===1?Promise.resolve({...proof,translationResultId:fixtureIdentity(999)})
+      :reads===2?Promise.resolve(null):reads===3?Promise.reject(new Error("Read unavailable")):Promise.resolve(proof);
+    return original(name,args);
+  });
+  await act(async()=>{await work();});const pending=owner.current().pendingPlugin;expect(owner.current().startRetryAllowed).toBe(false);
+  await act(async()=>{await owner.retryPlugin();});expect(sends).toBe(1);expect(reads).toBe(1);
+  await act(async()=>{await owner.checkProjectionStart();});expect(owner.current().startRetryAllowed).toBe(true);expect(sends).toBe(1);
+  await act(async()=>{await owner.retryPlugin();});expect(sends).toBe(2);expect(reads).toBe(3);expect(owner.current().startRetryAllowed).toBe(false);
+  expect(owner.current().pendingPlugin).toBe(pending);expect(drafts.mutationReserved).toBe(true);
+  await act(async()=>{await owner.checkProjectionStart();});expect(sends).toBe(2);expect(reads).toBe(4);
+  expect(owner.current().attempt).toBe(review.attemptId);expect(owner.current().pendingPlugin).toBeNull();
+  expect(calls("start_translation_projection").map(([,args])=>args.request)).toEqual([pending!.request,pending!.request]);
+  expect(Object.keys(pending!.request).sort()).toEqual(["projectId","sessionToken","attemptId","inputDigest"].sort());
+});
+it("does not turn a fresh formal projection rejection into a recovery read",async()=>{
+  render(<Probe/>,project);const work=await preparePluginPhase("start-projection"),original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.reject(mutationRejection()):original(name,args));
+  await act(async()=>{await work();});expect(owner.current().pendingPlugin).toBeNull();expect(owner.current().attempt).toBeNull();
+  expect(owner.current().projection).not.toBeNull();expect(calls("read_translation_projection_start")).toHaveLength(0);
+});
+it("ignores a late built-in projection proof after session replacement",async()=>{
+  const view=render(<Probe/>,project),work=await preparePluginPhase("start-projection"),original=invoke.getMockImplementation()!;
+  let resolve!:(value:unknown)=>void;const response=new Promise<unknown>(done=>{resolve=done;});
+  invoke.mockImplementation((name,args)=>name==="start_translation_projection"?Promise.reject(new Error("Lost ACK"))
+    :name==="read_translation_projection_start"?response:original(name,args));
+  let running!:Promise<void>;act(()=>{running=work();});await waitFor(()=>expect(owner.current().checkingStart).toBe(true));
+  const old=owner,review=old.current().projection!;view.rerender(<Probe/>,{...project,sessionToken:"replacement-projection"});
+  await act(async()=>{resolve({projectId:project.metadata.projectId,taskId:fixtureIdentity(888),attemptId:review.attemptId,inputDigest:review.inputDigest,
+    translationAttemptId:review.translationAttemptId,translationResultId:review.translationResultId});await running;});
+  expect(owner.current().attempt).toBeNull();expect(owner.current().pendingPlugin).toBeNull();expect(old.current().pendingPlugin).not.toBeNull();
 });

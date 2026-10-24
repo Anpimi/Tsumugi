@@ -3,11 +3,49 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::{
-    CaptureContext, ContextCapture, ContextRevision, ResourceDecision,
-    SaveContext, SaveTerm, TermResolution, TermRevision,
-    TmSuggestion,
+    CaptureContext, CaptureCorrectionTerm, ContextCapture,
+    ContextRevision, CorrectionTermEvidence, CorrectionTermReceipt,
+    GlossaryCapture, ImpactPage, ResourceDecision, ResourceDecisionResult, ResourcePreview,
+    SaveContext, SaveTerm, TbxExchangePreview, TermResolution, TermRevision,
+    TmSuggestion, TmxExchangePreview,
 };
-use super::resource_wire::{GlossaryCapture, ImpactPage, ResourceDecisionActionRead, ResourceDecisionResult, ResourcePreview};
+use tsumugi_core::ResourceDecisionActionRead;
+
+#[cfg(test)]
+#[path = "resource_exchange_tests.rs"]
+mod exchange_tests;
+
+#[cfg(test)]
+#[path = "resource_correction_tests.rs"]
+mod correction_tests;
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TmxPreviewRequest { locale: String }
+);
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TmxFilePreview {
+    pub project_id: ExecutionId,
+    pub file_name: String,
+    pub preview: TmxExchangePreview,
+}
+
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TbxPreviewRequest { locale: String }
+);
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TbxFilePreview {
+    pub project_id: ExecutionId,
+    pub file_name: String,
+    pub preview: TbxExchangePreview,
+}
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -28,6 +66,26 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     DecisionRequest {
         decision: ResourceDecision
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CorrectionBasisRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        after_selection_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CorrectionCaptureRequest {
+        capture: CaptureCorrectionTerm
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ResourceActionRequest {
+        action_id: ExecutionId
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TermListRequest {
@@ -80,9 +138,423 @@ request!(
     }
 );
 
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactRequest {
+        decision: tsumugi_core::ContextFactWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactsRequest {
+        scope: tsumugi_core::SourceContextRequest,
+        facts: Vec<tsumugi_core::ContextFactPosition>
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactActionRequest {
+        action_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextFactHistoryRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        offset: u32,
+        limit: u32
+    }
+);
+
+#[tauri::command]
+pub async fn decide_context_fact(
+    state: State<'_, AppState>,
+    request: ContextFactRequest,
+) -> Result<tsumugi_core::ContextFactDecision, CommandError> {
+    state
+        .sessions
+        .run(
+            "decide_context_fact",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                if request.project_id != request.decision.basis.scope.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "context-fact-project"),
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .decide_context_fact(&request.decision)
+                    .map_err(|e| resource_error(e, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_context_fact_decisions(
+    state: State<'_, AppState>,
+    request: ContextFactsRequest,
+) -> Result<Vec<tsumugi_core::ContextFactDecision>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_fact_decisions",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                if request.project_id != request.scope.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "context-fact-project"),
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                active
+                    .store
+                    .context_fact_decisions(&request.scope, &request.facts)
+                    .map_err(|e| resource_error(e, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_context_fact_action(
+    state: State<'_, AppState>,
+    request: ContextFactActionRequest,
+) -> Result<Option<tsumugi_core::ContextFactDecision>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_fact_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_fact_action(request.project_id, request.action_id)
+                .map_err(|e| resource_error(e, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_context_fact_history(
+    state: State<'_, AppState>,
+    request: ContextFactHistoryRequest,
+) -> Result<tsumugi_core::ContextFactHistory, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_fact_history",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_fact_history(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|e| resource_error(e, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
 fn resource_error(error: ExecutionError, stage: CommandStage) -> CommandError {
     let mapped = map_execution(error, stage);
     mapped
+}
+
+fn exchange_scope(
+    sessions: &mut SessionManager,
+    session_token: &str,
+    project_id: ExecutionId,
+    locale: &str,
+    scope_reason: &'static str,
+) -> Result<(String, String), CommandError> {
+    let active = authorized(
+        sessions,
+        session_token,
+        project_id,
+        CommandStage::ExecutionRead,
+    )?;
+    let metadata = active
+        .store
+        .metadata()
+        .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?;
+    if !metadata
+        .target_locales()
+        .iter()
+        .any(|target| target.as_str() == locale)
+    {
+        return Err(resource_error(
+            ExecutionError::new(ErrorCode::DependencyConflict, scope_reason),
+            CommandStage::ExecutionRead,
+        ));
+    }
+    Ok((
+        metadata.source_locale().as_str().to_owned(),
+        locale.to_owned(),
+    ))
+}
+
+fn tmx_scope(
+    sessions: &mut SessionManager,
+    request: &TmxPreviewRequest,
+) -> Result<(String, String), CommandError> {
+    exchange_scope(
+        sessions,
+        &request.session_token,
+        request.project_id,
+        &request.locale,
+        "tmx-project-scope",
+    )
+}
+fn tbx_scope(
+    sessions: &mut SessionManager,
+    request: &TbxPreviewRequest,
+) -> Result<(String, String), CommandError> {
+    exchange_scope(
+        sessions,
+        &request.session_token,
+        request.project_id,
+        &request.locale,
+        "tbx-project-scope",
+    )
+}
+
+fn read_exchange_preview<T>(
+    path: &std::path::Path,
+    scope: &(String, String),
+    read: fn(&std::path::Path) -> Result<Vec<u8>, ExecutionError>,
+    preview: fn(&[u8], &str, &str) -> Result<T, ExecutionError>,
+) -> Result<(String, T), CommandError> {
+    let bytes = read(path).map_err(|error| resource_error(error, CommandStage::ExecutionRead))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            CommandError::simple(
+                CommandErrorCode::PermissionDenied,
+                CommandStage::ExecutionRead,
+            )
+        })?;
+    let report = preview(&bytes, &scope.0, &scope.1)
+        .map_err(|error| resource_error(error, CommandStage::ExecutionRead))?;
+    Ok((name.to_owned(), report))
+}
+fn read_tmx_preview(
+    path: &std::path::Path,
+    scope: &(String, String),
+) -> Result<(String, TmxExchangePreview), CommandError> {
+    read_exchange_preview(
+        path,
+        scope,
+        source::capture::read_tmx_file,
+        tsumugi_core::preview_tmx_exchange,
+    )
+}
+fn read_tbx_preview(
+    path: &std::path::Path,
+    scope: &(String, String),
+) -> Result<(String, TbxExchangePreview), CommandError> {
+    read_exchange_preview(
+        path,
+        scope,
+        source::capture::read_tbx_file,
+        tsumugi_core::preview_tbx_exchange,
+    )
+}
+
+fn finish_exchange_preview<T: serde::Serialize>(
+    current_scope: (String, String),
+    initial_scope: (String, String),
+    result: Result<Option<T>, CommandError>,
+    max_bytes: usize,
+    scope_reason: &'static str,
+    report_reason: &'static str,
+) -> Result<Option<T>, CommandError> {
+    if current_scope != initial_scope {
+        return Err(resource_error(
+            ExecutionError::new(ErrorCode::DependencyConflict, scope_reason),
+            CommandStage::ExecutionRead,
+        ));
+    }
+    result?
+        .map(|view| {
+            // The final wire bound includes the original selected filename and project envelope.
+            let encoded = serde_json::to_vec(&view).map_err(|_| {
+                CommandError::simple(CommandErrorCode::OutputInvalid, CommandStage::ExecutionRead)
+            })?;
+            if encoded.len() > max_bytes {
+                return Err(resource_error(
+                    ExecutionError::new(ErrorCode::LimitExceeded, report_reason),
+                    CommandStage::ExecutionRead,
+                ));
+            }
+            Ok(view)
+        })
+        .transpose()
+}
+fn finish_tmx_preview(
+    sessions: &mut SessionManager,
+    request: TmxPreviewRequest,
+    initial_scope: (String, String),
+    result: Result<Option<(String, TmxExchangePreview)>, CommandError>,
+) -> Result<Option<TmxFilePreview>, CommandError> {
+    let current_scope = tmx_scope(sessions, &request)?;
+    let result = result.map(|value| {
+        value.map(|(file_name, preview)| TmxFilePreview {
+            project_id: request.project_id,
+            file_name,
+            preview,
+        })
+    });
+    finish_exchange_preview(
+        current_scope,
+        initial_scope,
+        result,
+        tsumugi_core::MAX_TMX_REPORT_BYTES,
+        "tmx-project-scope",
+        "tmx-report-budget",
+    )
+}
+fn finish_tbx_preview(
+    sessions: &mut SessionManager,
+    request: TbxPreviewRequest,
+    initial_scope: (String, String),
+    result: Result<Option<(String, TbxExchangePreview)>, CommandError>,
+) -> Result<Option<TbxFilePreview>, CommandError> {
+    let current_scope = tbx_scope(sessions, &request)?;
+    let result = result.map(|value| {
+        value.map(|(file_name, preview)| TbxFilePreview {
+            project_id: request.project_id,
+            file_name,
+            preview,
+        })
+    });
+    finish_exchange_preview(
+        current_scope,
+        initial_scope,
+        result,
+        tsumugi_core::MAX_TBX_REPORT_BYTES,
+        "tbx-project-scope",
+        "tbx-report-budget",
+    )
+}
+
+async fn pick_exchange_file<R: tauri::Runtime, T: Send + 'static>(
+    app: tauri::AppHandle<R>,
+    state: &AppState,
+    filter: &'static str,
+    extension: &'static str,
+    scope: (String, String),
+    read: fn(&std::path::Path, &(String, String)) -> Result<(String, T), CommandError>,
+) -> Result<Option<(String, T)>, CommandError> {
+    let selected = state
+        .dialogs
+        .run(CommandStage::ExecutionRead, move || {
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter(filter, &[extension])
+                .blocking_pick_file())
+        })
+        .await?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            let path = selected.into_path().map_err(|_| {
+                CommandError::simple(
+                    CommandErrorCode::PermissionDenied,
+                    CommandStage::ExecutionRead,
+                )
+            })?;
+            read(&path, &scope).map(Some)
+        })
+        .await
+}
+
+/// A file-selection read only. No capture, adoption, execution host or grant is created.
+#[tauri::command]
+pub async fn preview_tmx_exchange<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    request: TmxPreviewRequest,
+) -> Result<Option<TmxFilePreview>, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let scope = lease
+        .run(
+            "preview_tmx_exchange.begin",
+            CommandStage::ExecutionRead,
+            move |sessions| tmx_scope(sessions, &initial),
+        )
+        .await?;
+    let result =
+        pick_exchange_file(app, &state, "TMX", "tmx", scope.clone(), read_tmx_preview).await;
+    lease
+        .run(
+            "preview_tmx_exchange.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| finish_tmx_preview(sessions, request, scope, result),
+        )
+        .await
+}
+
+/// Read a selected terminology exchange without modifying project resource facts.
+#[tauri::command]
+pub async fn preview_tbx_exchange<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    request: TbxPreviewRequest,
+) -> Result<Option<TbxFilePreview>, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let scope = lease
+        .run(
+            "preview_tbx_exchange.begin",
+            CommandStage::ExecutionRead,
+            move |sessions| tbx_scope(sessions, &initial),
+        )
+        .await?;
+    let result =
+        pick_exchange_file(app, &state, "TBX", "tbx", scope.clone(), read_tbx_preview).await;
+    lease
+        .run(
+            "preview_tbx_exchange.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| finish_tbx_preview(sessions, request, scope, result),
+        )
+        .await
 }
 
 #[tauri::command]
@@ -162,8 +634,7 @@ pub async fn choose_resource_file<R: tauri::Runtime>(
                     .map(|bytes| {
                         store
                             .capture_glossary(request.project_id, picker, &bytes)
-                            .and_then(TryInto::try_into)
-                            .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+                                                        .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
                     })
                     .transpose()
             },
@@ -190,8 +661,7 @@ pub async fn list_resource_captures(
                 )?
                 .store
                 .list_glossary_captures(request.project_id, request.limit)
-                .and_then(|captures| captures.into_iter().map(TryInto::try_into).collect())
-                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+                                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )
         .await
@@ -216,12 +686,101 @@ pub async fn read_resource_preview(
                 )?
                 .store
                 .glossary_preview(request.project_id, request.capture_id)
-                .and_then(TryInto::try_into)
+                                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_correction_term_basis(
+    state: State<'_, AppState>,
+    request: CorrectionBasisRequest,
+) -> Result<CorrectionTermEvidence, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_correction_term_basis",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .correction_term_basis(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.after_selection_id,
+                )
                 .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )
         .await
 }
+
+#[tauri::command]
+pub async fn capture_correction_term(
+    state: State<'_, AppState>,
+    request: CorrectionCaptureRequest,
+) -> Result<CorrectionTermReceipt, CommandError> {
+    state
+        .sessions
+        .run(
+            "capture_correction_term",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                if request.capture.basis.project_id != request.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "correction-term-project"),
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .capture_correction_term(&request.capture)
+                    .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_correction_term_action(
+    state: State<'_, AppState>,
+    request: ResourceActionRequest,
+) -> Result<Option<CorrectionTermReceipt>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_correction_term_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .correction_term_capture_action(request.project_id, request.action_id)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+
 
 #[tauri::command]
 pub async fn decide_resource_entry(
@@ -240,6 +799,12 @@ pub async fn decide_resource_entry(
                     request.project_id,
                     CommandStage::ExecutionAdopt,
                 )?;
+                if request.decision.project_id != request.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "resource-decision-project"),
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 store
@@ -250,6 +815,8 @@ pub async fn decide_resource_entry(
         )
         .await
 }
+
+
 
 #[tauri::command]
 pub async fn save_term(
@@ -380,6 +947,8 @@ pub async fn read_context_revision(
         .await
 }
 
+
+
 #[tauri::command]
 pub async fn save_context(
     state: State<'_, AppState>,
@@ -406,6 +975,8 @@ pub async fn save_context(
         )
         .await
 }
+
+
 
 #[tauri::command]
 pub async fn capture_context(
@@ -514,8 +1085,7 @@ pub async fn resource_impacts(
                     request.offset,
                     request.limit,
                 )
-                .and_then(TryInto::try_into)
-                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+                                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )
         .await
@@ -542,10 +1112,15 @@ mod contracts {
             };
         }
         round_trip!("requests", "session", SessionRequest);
+        round_trip!("requests", "tmxPreview", TmxPreviewRequest);
+        round_trip!("requests", "tbxPreview", TbxPreviewRequest);
         round_trip!("requests", "captures", CaptureListRequest);
         round_trip!("requests", "capture", CaptureRequest);
         round_trip!("requests", "term", TermRequest);
         round_trip!("requests", "decision", DecisionRequest);
+        round_trip!("requests", "correctionBasis", CorrectionBasisRequest);
+        round_trip!("requests", "correctionCapture", CorrectionCaptureRequest);
+        round_trip!("requests", "resourceAction", ResourceActionRequest);
         round_trip!("requests", "terms", TermListRequest);
         round_trip!("requests", "termHistory", TermHistoryRequest);
         round_trip!("requests", "unitLocale", UnitLocaleRequest);
@@ -554,9 +1129,23 @@ mod contracts {
         round_trip!("requests", "suggestions", SuggestionRequest);
         round_trip!("requests", "impacts", ImpactRequest);
         round_trip!("responses", "captures", Vec<GlossaryCapture>);
+        round_trip!("responses", "tmxPreview", Option<TmxFilePreview>);
+        round_trip!("responses", "tbxPreview", Option<TbxFilePreview>);
         round_trip!("responses", "capture", Option<GlossaryCapture>);
         round_trip!("responses", "preview", ResourcePreview);
         round_trip!("responses", "decision", ResourceDecisionResult);
+        round_trip!("responses", "correctionBasis", CorrectionTermEvidence);
+        round_trip!("responses", "correctionCapture", CorrectionTermReceipt);
+        round_trip!(
+            "responses",
+            "correctionAction",
+            Option<CorrectionTermReceipt>
+        );
+        round_trip!(
+            "responses",
+            "decisionAction",
+            Option<ResourceDecisionActionRead>
+        );
         round_trip!("responses", "term", TermRevision);
         round_trip!("responses", "terms", Vec<TermRevision>);
         round_trip!("responses", "resolution", TermResolution);
@@ -565,6 +1154,28 @@ mod contracts {
         round_trip!("responses", "contextCapture", ContextCapture);
         round_trip!("responses", "suggestions", Vec<TmSuggestion>);
         round_trip!("responses", "impacts", ImpactPage);
+        assert!(
+            serde_json::from_value::<Option<TmxFilePreview>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        let mut unknown = fixture["requests"]["tmxPreview"].clone();
+        unknown["path"] = serde_json::json!("/not-an-authorized-selection.tmx");
+        assert!(serde_json::from_value::<TmxPreviewRequest>(unknown).is_err());
+        let mut unknown = fixture["responses"]["tmxPreview"].clone();
+        unknown["preview"]["license"] = serde_json::json!("approved");
+        assert!(serde_json::from_value::<Option<TmxFilePreview>>(unknown).is_err());
+        assert!(
+            serde_json::from_value::<Option<TbxFilePreview>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        let mut unknown = fixture["requests"]["tbxPreview"].clone();
+        unknown["schemaHref"] = serde_json::json!("untrusted-schema.xsd");
+        assert!(serde_json::from_value::<TbxPreviewRequest>(unknown).is_err());
+        let mut unknown = fixture["responses"]["tbxPreview"].clone();
+        unknown["preview"]["rows"][0]["status"] = serde_json::json!("adopted");
+        assert!(serde_json::from_value::<Option<TbxFilePreview>>(unknown).is_err());
         assert!(
             serde_json::from_value::<Option<GlossaryCapture>>(serde_json::Value::Null)
                 .unwrap()
@@ -587,6 +1198,15 @@ mod contracts {
         let mut unknown = fixture["requests"]["decision"].clone();
         unknown["decision"]["decision"] = serde_json::json!("apply-all");
         assert!(serde_json::from_value::<DecisionRequest>(unknown).is_err());
+        let mut missing = fixture["responses"]["decision"].clone();
+        missing.as_object_mut().unwrap().remove("request");
+        assert!(serde_json::from_value::<ResourceDecisionResult>(missing).is_err());
+        let mut missing = fixture["responses"]["preview"].clone();
+        missing.as_object_mut().unwrap().remove("correction");
+        assert!(serde_json::from_value::<ResourcePreview>(missing).is_err());
+        let mut missing = fixture["responses"]["preview"].clone();
+        missing.as_object_mut().unwrap().remove("mcp");
+        assert!(serde_json::from_value::<ResourcePreview>(missing).is_err());
         let mut unknown = fixture["responses"]["term"].clone();
         unknown["originKind"] = serde_json::json!("import");
         assert!(serde_json::from_value::<TermRevision>(unknown).is_err());
@@ -605,11 +1225,8 @@ mod contracts {
         let mut unknown = fixture["responses"]["contextCapture"].clone();
         unknown["included"][0]["extra"] = serde_json::json!(true);
         assert!(serde_json::from_value::<ContextCapture>(unknown).is_err());
-        assert_eq!(
-            super::super::resource_wire::ResourceImpactKind::try_from(tsumugi_core::ResourceImpactKind::ContextFact)
-                .unwrap_err().code,
-            ErrorCode::DependencyConflict
-        );
+        let fact = tsumugi_core::ResourceImpactKind::ContextFact;
+        assert_eq!(serde_json::from_value::<tsumugi_core::ResourceImpactKind>(serde_json::to_value(fact).unwrap()).unwrap(), fact);
     }
 }
 

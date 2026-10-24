@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/sourceCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import unicodeFixture from "../../../crates/core/tests/fixtures/source-unicode.contract.json";
-import { sourceCommands, confirmSourceAction, confirmSourceReceipt, type StartRequest, type SourceAdoptRequest } from "./sourceCommands";
+import { sourceCommands, sourceContextBlockBasis, confirmSourceAction, confirmSourceReceipt, type SourceAdoptRequest, type SourceContextBlockDetail, type SourceContextBlockReadRequest } from "./sourceCommands";
 import type { AdoptionAction, Receipt } from "./executionCommands";
 import * as validators from "./generated/source.validators";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -14,19 +14,16 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
 it("preserves bounded source requests, decimal revisions and explicit confirmation across IPC", async () => {
-  const start: StartRequest = fixture.start;
   const prepare: SourceAdoptRequest = fixture.prepare;
   const page = sourcePageFixture();
   for (const [validate, value] of [
-    [validators.validateRequestSession, fixture.session], [validators.validateRequestCapture, fixture.capture],
-    [validators.validateRequestStart, start], [validators.validateRequestPreview, fixture.preview],
+    [validators.validateRequestSession, fixture.session],
+    [validators.validateRequestPreview, fixture.preview],
     [validators.validateRequestContent, fixture.content], [validators.validateRequestComparison, fixture.comparisonRequest],
     [validators.validateRequestHistory, fixture.historyRequest], [validators.validateRequestHistoryContent, fixture.historyContent],
     [validators.validateRequestLineage, fixture.lineageRequest], [validators.validateRequestImpact, fixture.impactRequest],
     [validators.validateRequestAdopt, prepare],
-    [validators.validateResponseIntegration, fixture.integration], [validators.validateResponseSelection, fixture.selection],
-    [validators.validateResponseSelection, null], [validators.validateResponsePreflight, fixture.preflight],
-    [validators.validateResponseAttempt, start.attemptId], [validators.validateResponseCancelled, null],
+    [validators.validateResponseAttempt, fixture.preview.attemptId], [validators.validateResponseCancelled, null],
     [validators.validateResponseScope, page.scope], [validators.validateResponsePage, page],
     [validators.validateResponseComparison, fixture.comparison], [validators.validateResponseHistory, fixture.history],
     [validators.validateResponseLineage, fixture.lineage], [validators.validateResponseEstimates, fixture.estimates],
@@ -35,9 +32,6 @@ it("preserves bounded source requests, decimal revisions and explicit confirmati
   invoke.mockResolvedValueOnce(page);
   expect(await sourceCommands.preview(fixture.preview)).toEqual(page);
   expect(invoke).toHaveBeenLastCalledWith("read_source_preview", { request: fixture.preview });
-  invoke.mockResolvedValueOnce(start.attemptId);
-  expect(await sourceCommands.start(start)).toBe(start.attemptId);
-  expect(invoke).toHaveBeenLastCalledWith("start_source_import", { request: start });
   invoke.mockResolvedValueOnce(sourceActionFixture(prepare));
   expect(await sourceCommands.prepare(prepare)).toEqual(sourceActionFixture(prepare));
   expect(invoke).toHaveBeenLastCalledWith("prepare_source_adoption", { request: prepare });
@@ -56,7 +50,7 @@ it("compares the complete normalized Source confirmation independent of object k
   const decoded = await sourceCommands.prepare(request);
   expect(() => confirmSourceAction(request, action.unitId, decoded)).not.toThrow();
   const defaults: SourceAdoptRequest = { ...fixture.prepare, confirmation: { resultDigest: fixture.prepare.confirmation.resultDigest,
-    identityPolicy: fixture.prepare.confirmation.identityPolicy, expectedContentRevision: fixture.prepare.confirmation.expectedContentRevision, sourceLanguage: fixture.prepare.confirmation.sourceLanguage } };
+    identityPolicy: fixture.prepare.confirmation.identityPolicy, expectedContentRevision: fixture.prepare.confirmation.expectedContentRevision, sourceLanguage: fixture.prepare.confirmation.sourceLanguage, maintenanceHook: null } };
   expect(() => confirmSourceAction(defaults, action.unitId, sourceActionFixture(defaults))).not.toThrow();
 });
 
@@ -123,12 +117,23 @@ it("rejects lossy counters, invalid tuples, unknown decisions and missing respon
   }
   expect(validators.validateResponseHistory({ ...fixture.history, nextOffset: 4294967296 })).toBe(false);
   const page = sourcePageFixture();
-  for (const keyByteRange of [[0, 4294967296], [0, 1, 2], [-1, 2], [0, 0.5]]) {
-    expect(validators.validateResponsePage({ ...page, rows: [{ ...page.rows[0], occurrence: { ...page.rows[0].occurrence, keyByteRange } }] })).toBe(false);
+  for (const range of [
+    { encoding: "utf8-byte", start: 0, end: 4294967296 },
+    { encoding: "utf16", start: -1, end: 2 },
+    { encoding: "grapheme", start: 0, end: 0.5 },
+    { encoding: "characters", start: 0, end: 2 },
+    { encoding: "utf16", start: 0, end: 2, extra: true },
+  ]) {
+    expect(validators.validateResponsePage({ ...page, rows: [{ ...page.rows[0], occurrence: { ...page.rows[0].occurrence,
+      source: { ...page.rows[0].occurrence.source, range } } }] })).toBe(false);
   }
+  const { operationOccurrenceId: _id, ...missingLocalId } = page.rows[0].occurrence;
+  expect(validators.validateResponsePage({ ...page, rows: [{ ...page.rows[0], occurrence: missingLocalId }] })).toBe(false);
+  const nativeIdentity = page.rows[0].occurrence.nativeIdentity!;
+  expect(validators.validateResponsePage({ ...page, rows: [{ ...page.rows[0], occurrence: { ...page.rows[0].occurrence,
+    nativeIdentity: { ...nativeIdentity, display: { value: nativeIdentity.display.value } } } }] })).toBe(false);
   expect(validators.validateRequestAdopt({ ...fixture.prepare, confirmation: { ...fixture.prepare.confirmation,
     lineage: [{ newOrdinal: 0, oldOccurrenceId: fixture.content.snapshotId, decision: "guess", reason: "unknown" }] } })).toBe(false);
-  expect(validators.validateResponseIntegration({ id: "webvtt" })).toBe(false);
   expect(validators.validateResponseCancelled({})).toBe(false);
   expect(validators.validateResponseComparison({ ...fixture.comparison, rows: [{ ...fixture.comparison.rows[0], kind: "future-kind" }] })).toBe(false);
   expect(validators.validateResponseImpact({ ...fixture.impact, rows: [{ ...fixture.impact.rows[0], status: "future-status" }] })).toBe(false);
@@ -143,13 +148,29 @@ it("keeps an invalid preparation acknowledgement unknown without replaying the a
   expect(invoke).toHaveBeenLastCalledWith("prepare_source_adoption", { request: fixture.prepare });
 });
 
-it.each(unicodeFixture.cases)("keeps $profile ranges in original UTF-8 bytes across Rust and TypeScript", caseFixture => {
+it.each(unicodeFixture.cases)("preserves $profile original byte and UTF-16 coordinates without assuming JavaScript indices are bytes", caseFixture => {
   const bytes = new TextEncoder().encode(caseFixture.raw);
   const decoder = new TextDecoder("utf-8", { fatal: true });
-  const rows = caseFixture.rows.map(row => sourceRowFixture({}, { ...row.occurrence,
-    keyByteRange: [row.occurrence.keyByteRange[0], row.occurrence.keyByteRange[1]],
-    valueByteRange: [row.occurrence.valueByteRange[0], row.occurrence.valueByteRange[1]] }));
-  expect(validators.validateResponsePage(sourcePageFixture({ rows, total: rows.length }))).toBe(true);
+  // These format-specific oracle coordinates are test inputs, not a source DTO
+  // interpretation. Source references retain whichever encoding the domain supplied.
+  for (const encoding of ["utf8-byte", "utf16"] as const) {
+    const rows = caseFixture.rows.map(row => {
+      const textRange = encoding === "utf8-byte" ? row.occurrence.valueByteRange : row.valueUtf16Range;
+      const identityRange = encoding === "utf8-byte" ? row.occurrence.keyByteRange : row.keyUtf16Range;
+      return sourceRowFixture({}, { ordinal: row.occurrence.ordinal, artifactId: row.occurrence.artifactId,
+        namespace: row.occurrence.namespace, key: row.occurrence.key, text: row.occurrence.text,
+        operationUnitId: `unit-${row.occurrence.ordinal}`, operationOccurrenceId: `occurrence-${row.occurrence.ordinal}`,
+        operationSourceRevisionId: `revision-${row.occurrence.ordinal}`,
+        source: { artifactId: row.occurrence.artifactId, range: { encoding, start: textRange[0], end: textRange[1] } },
+        nativeIdentity: { namespace: row.occurrence.namespace, value: row.occurrence.key,
+          policy: { id: caseFixture.profile, schemaVersion: 1, behaviorVersion: 1 },
+          display: { value: row.occurrence.key, source: { artifactId: row.occurrence.artifactId,
+            range: { encoding, start: identityRange[0], end: identityRange[1] } } } } });
+    });
+    const page = sourcePageFixture({ rows, total: rows.length });
+    expect(validators.validateResponsePage(page)).toBe(true);
+    expect(JSON.parse(JSON.stringify(page)).rows.map((row: { occurrence: { source: unknown } }) => row.occurrence.source)).toEqual(rows.map(row => row.occurrence.source));
+  }
   for (const row of caseFixture.rows) {
     for (const [byteRange, utf16Range, text] of [
       [row.occurrence.keyByteRange, row.keyUtf16Range, row.occurrence.key],
@@ -163,6 +184,133 @@ it.each(unicodeFixture.cases)("keeps $profile ranges in original UTF-8 bytes acr
     expect(caseFixture.raw.slice(byteRange[0], byteRange[1])).not.toBe(decoder.decode(bytes.slice(byteRange[0], byteRange[1])));
   }
   expect(JSON.parse(JSON.stringify(caseFixture)).raw).toBe(caseFixture.raw);
+});
+
+it("keeps grapheme references, canonical identity and domain-confirmed display distinct on the wire", async () => {
+  const row = sourceRowFixture({}, { source: { artifactId: fixture.page.coverage[0].artifactId,
+    range: { encoding: "grapheme", start: 1, end: 4 } }, nativeIdentity: {
+    namespace: "Fixture.Mod", value: "canonical-id", policy: { id: "fixture-identity", schemaVersion: 1, behaviorVersion: 2 },
+    display: { value: "Original ID", source: null } } });
+  const page = sourcePageFixture({ rows: [row] });
+  invoke.mockResolvedValueOnce(JSON.parse(JSON.stringify(page)));
+  const received = await sourceCommands.preview(fixture.preview);
+  expect(received.rows[0].occurrence.source.range).toEqual({ encoding: "grapheme", start: 1, end: 4 });
+  expect(received.rows[0].occurrence.nativeIdentity?.value).toBe("canonical-id");
+  expect(received.rows[0].occurrence.nativeIdentity?.display).toEqual({ value: "Original ID", source: null });
+});
+
+it("validates and transports separately fixed plugin source and semantic-check requests", async () => {
+  const { default: flow } = await import("../test/fixtures/pluginSourceWorkflow.contract.json");
+  for (const [validate, value] of [
+    [validators.validateRequestPluginSelect, flow.select], [validators.validateResponsePluginSelection, flow.selection],
+    [validators.validateRequestPluginCapture, flow.capture], [validators.validateResponsePluginPreflight, flow.preflight],
+    [validators.validateRequestPluginStart, flow.start], [validators.validateRequestCheckPrepare, flow.prepareCheck],
+    [validators.validateResponseCheckReview, flow.checkReview], [validators.validateRequestCheckFinish, flow.finishCheck],
+  ] as const) expect(validate(value), validate.name).toBe(true);
+  expect(validators.validateRequestPluginStart({ ...flow.start, expiresAtMs: Number(flow.start.expiresAtMs) })).toBe(false);
+  expect(validators.validateRequestPluginStart({ ...flow.start, directory: "/untrusted" })).toBe(false);
+  invoke.mockResolvedValueOnce(flow.selection); await sourceCommands.selectPlugin(flow.select);
+  expect(invoke).toHaveBeenLastCalledWith("select_plugin_source", { request: flow.select });
+  invoke.mockResolvedValueOnce(flow.preflight); await sourceCommands.capturePlugin(flow.capture);
+  expect(invoke).toHaveBeenLastCalledWith("preflight_plugin_source", { request: flow.capture });
+  invoke.mockResolvedValueOnce(flow.start.attemptId); await sourceCommands.startPlugin(flow.start);
+  expect(invoke).toHaveBeenLastCalledWith("start_plugin_source", { request: flow.start });
+  invoke.mockResolvedValueOnce(flow.checkReview); await sourceCommands.prepareCheck(flow.prepareCheck);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_source_check", { request: flow.prepareCheck });
+  invoke.mockResolvedValueOnce(flow.start.attemptId); await sourceCommands.startCheck(flow.start);
+  expect(invoke).toHaveBeenLastCalledWith("start_source_check", { request: flow.start });
+  invoke.mockResolvedValueOnce(null); await sourceCommands.finishCheck(flow.finishCheck);
+  expect(invoke).toHaveBeenLastCalledWith("finish_source_check", { request: flow.finishCheck });
+});
+
+
+it("reads bounded whole source-context entries with exact request and revision evidence", async () => {
+  expect(validators.validateRequestSourceContext(fixture.sourceContextRequest)).toBe(true);
+  expect(validators.validateResponseSourceContext(fixture.sourceContext)).toBe(true);
+  invoke.mockResolvedValueOnce(structuredClone(fixture.sourceContext));
+  const result = await sourceCommands.sourceContext(fixture.sourceContextRequest);
+  expect(result).toEqual(fixture.sourceContext);
+  expect(result.contentRevision).toBe("9007199254740993");
+  expect(invoke).toHaveBeenLastCalledWith("read_source_context", {request:fixture.sourceContextRequest});
+  const numeric = {...fixture.sourceContext,contentRevision:9007199254740992};
+  expect(validators.validateResponseSourceContext(numeric)).toBe(false);
+});
+
+it("refuses source-context responses for a different exact scope", async () => {
+  for (const field of ["projectId","sourceSnapshotId","unitId","sourceRevisionId","locale"] as const) {
+    const response = structuredClone(fixture.sourceContext);
+    response.scope[field] = field === "locale" ? "ja" : fixtureIdentity(999);
+    expect(validators.validateResponseSourceContext(response)).toBe(true);
+    invoke.mockResolvedValueOnce(response);
+    await expect(sourceCommands.sourceContext(fixture.sourceContextRequest)).rejects.toThrow("source context page association");
+  }
+});
+
+it("rejects nonprogressing, overlapping and prematurely terminal source-context page cursors", async () => {
+  for (const change of [{after:1},{nextAfter:0},{nextAfter:4},{entries:[],nextAfter:1},{totalEntries:5,nextAfter:null}]) {
+    invoke.mockResolvedValueOnce({...fixture.sourceContext,...change});
+    await expect(sourceCommands.sourceContext(fixture.sourceContextRequest)).rejects.toThrow();
+  }
+  const page = {...fixture.sourceContext,entries:fixture.sourceContext.entries.slice(0,1),nextAfter:1};
+  invoke.mockResolvedValueOnce(page);
+  expect(await sourceCommands.sourceContext({...fixture.sourceContextRequest,limit:1})).toEqual(page);
+});
+
+function originalRecord() {
+  const payloadUtf8 = '{\r\n  "tick": 18446744073709551615, "settings": "line:90% 世界", "literal": "<script>record</script>"\r\n}';
+  const page: unknown = { ...fixture.sourceContext, entries: [] };
+  if (!validators.validateResponseSourceContext(page)) throw new Error("Invalid source-context fixture");
+  const basis = sourceContextBlockBasis(page);
+  const detail: SourceContextBlockDetail = { basis, descriptor: { blockIndex: 3, target: { kind: "occurrence", id: "original-cue" },
+    schema: { id: "synthetic.original-record", schemaVersion: 1, behaviorVersion: 1 }, handling: "preserve", inRevisionBasis: true,
+    payloadBytes: new TextEncoder().encode(payloadUtf8).byteLength }, payloadUtf8 };
+  const request: SourceContextBlockReadRequest = { ...fixture.session, basis, descriptor: detail.descriptor };
+  return { request, detail };
+}
+
+it("reads one exact original record without parsing or rewriting its payload", async () => {
+  const { request, detail } = originalRecord();
+  expect(validators.validateRequestSourceContextBlock(request)).toBe(true);
+  expect(validators.validateResponseSourceContextBlock(detail)).toBe(true);
+  invoke.mockResolvedValueOnce(detail);
+  expect((await sourceCommands.sourceContextBlock(request)).payloadUtf8).toBe(detail.payloadUtf8);
+  expect(invoke).toHaveBeenLastCalledWith("read_source_context_block", { request });
+  expect(detail.basis.contentRevision).toBe("9007199254740993");
+});
+
+it.each([
+  ["project", value => { value.basis.scope.projectId = fixtureIdentity(999); }],
+  ["snapshot", value => { value.basis.scope.sourceSnapshotId = fixtureIdentity(999); }],
+  ["unit", value => { value.basis.scope.unitId = fixtureIdentity(999); }],
+  ["source revision", value => { value.basis.scope.sourceRevisionId = fixtureIdentity(999); }],
+  ["locale", value => { value.basis.scope.locale = "ja"; }],
+  ["content revision", value => { value.basis.contentRevision = "9007199254740994"; }],
+  ["attempt", value => { value.basis.sourceAttemptId = fixtureIdentity(999); }],
+  ["result", value => { value.basis.sourceResultId = fixtureIdentity(999); }],
+  ["result digest", value => { value.basis.sourceResultDigest = "b".repeat(64); }],
+  ["source locale", value => { value.basis.sourceLocale = "ja"; }],
+  ["local unit", value => { value.basis.localUnitId = "other-cue"; }],
+  ["block index", value => { value.descriptor.blockIndex = 4; }],
+  ["target kind", value => { value.descriptor.target = { kind: "unit", id: "original-cue" }; }],
+  ["target identity", value => { value.descriptor.target = { kind: "occurrence", id: "other-cue" }; }],
+  ["schema", value => { value.descriptor.schema.id = "synthetic.other-record"; }],
+  ["schema version", value => { value.descriptor.schema.schemaVersion = 2; }],
+  ["behavior version", value => { value.descriptor.schema.behaviorVersion = 2; }],
+  ["handling", value => { value.descriptor.handling = "required"; }],
+  ["revision basis", value => { value.descriptor.inRevisionBasis = false; }],
+  ["payload size", value => { value.descriptor.payloadBytes += 1; }],
+] satisfies [string, (value: SourceContextBlockDetail) => void][])("rejects a schema-valid original record with another %s", async (_name, change) => {
+  const { request, detail } = originalRecord(), response = structuredClone(detail);
+  change(response);
+  expect(validators.validateResponseSourceContextBlock(response)).toBe(true);
+  invoke.mockResolvedValueOnce(response);
+  await expect(sourceCommands.sourceContextBlock(request)).rejects.toThrow("source context block association");
+});
+
+it("rejects a truncated original record even when its returned identity is unchanged", async () => {
+  const { request, detail } = originalRecord();
+  invoke.mockResolvedValueOnce({ ...detail, payloadUtf8: detail.payloadUtf8.slice(0, -1) });
+  await expect(sourceCommands.sourceContextBlock(request)).rejects.toThrow("source context block association");
 });
 
 it("reads only the complete original native Source start request and rejects every mismatched proof", async () => {

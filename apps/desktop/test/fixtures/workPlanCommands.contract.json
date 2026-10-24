@@ -1,0 +1,714 @@
+{
+  "requests": {
+    "prepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ],
+      "sessionToken": "isolated-ai-arena-session",
+      "config": {
+        "maxItems": 20,
+        "tokenField": "max_tokens",
+        "shareTerms": true,
+        "concurrency": 1,
+        "timeoutSeconds": 60,
+        "model": "synthetic-model",
+        "shareContext": true,
+        "maxRequests": 20,
+        "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+        "maxOutputTokens": 2000,
+        "credentialEnv": "",
+        "maxRetries": 0,
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        },
+        "contextStrategy": null
+      },
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false,
+        "advisoryChecks": []
+      },
+      "toolSelection": null,
+      "advisoryChecks": [],
+      "maintenance": null
+    },
+    "authorize": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "confirmed": true,
+      "effects": [
+        "save-candidate"
+      ],
+      "expiresAt": "18446744073709551615",
+      "checkerExecutions": [],
+      "toolExecution": false,
+      "applicationToolExecutions": []
+    },
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "expectedGeneration": "1"
+    },
+    "control": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "expectedGeneration": "9007199254740993",
+      "command": "pause",
+      "confirmed": false,
+      "expiresAt": null,
+      "checkerExecutions": [],
+      "toolExecution": false,
+      "applicationToolExecutions": []
+    },
+    "status": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007"
+    },
+    "action": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000008"
+    },
+    "protectionRead": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN"
+    },
+    "protectionSet": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN",
+      "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+      "selectionId": null,
+      "expectedRevision": "9007199254740993",
+      "protected": false,
+      "confirmedRelease": true
+    },
+    "discussionPrepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ],
+      "sessionToken": "isolated-ai-arena-session",
+      "config": {
+        "maxItems": 20,
+        "tokenField": "max_tokens",
+        "shareTerms": true,
+        "concurrency": 1,
+        "timeoutSeconds": 60,
+        "model": "synthetic-model",
+        "shareContext": true,
+        "maxRequests": 20,
+        "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+        "maxOutputTokens": 2000,
+        "credentialEnv": "",
+        "maxRetries": 0,
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        },
+        "contextStrategy": null
+      },
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false,
+        "advisoryChecks": [],
+        "teamDiscussions": {
+          "profile": "current-plan-1"
+        }
+      },
+      "toolSelection": null,
+      "advisoryChecks": [],
+      "maintenance": null
+    },
+    "discussionAuthorize": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "confirmed": true,
+      "effects": [
+        "save-candidate",
+        "publish-discussion"
+      ],
+      "expiresAt": "18446744073709551615",
+      "checkerExecutions": [],
+      "toolExecution": false,
+      "applicationToolExecutions": []
+    },
+    "artifactDiscussionPrepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ],
+      "sessionToken": "isolated-ai-arena-session",
+      "config": {
+        "maxItems": 20,
+        "tokenField": "max_tokens",
+        "shareTerms": true,
+        "concurrency": 1,
+        "timeoutSeconds": 60,
+        "model": "synthetic-model",
+        "shareContext": true,
+        "maxRequests": 20,
+        "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+        "maxOutputTokens": 2000,
+        "credentialEnv": "",
+        "maxRetries": 0,
+        "sourceContext": {
+          "extracted": false,
+          "inferred": false,
+          "neighbors": false,
+          "maxBytes": 16384,
+          "maxItems": 128
+        },
+        "contextStrategy": null
+      },
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false,
+        "advisoryChecks": [],
+        "teamDiscussions": {
+          "profile": "current-plan-2"
+        }
+      },
+      "toolSelection": null,
+      "advisoryChecks": [],
+      "maintenance": null
+    },
+    "artifactDiscussionAuthorize": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "confirmed": true,
+      "effects": [
+        "save-candidate",
+        "publish-discussion"
+      ],
+      "expiresAt": "18446744073709551615",
+      "checkerExecutions": [],
+      "toolExecution": false,
+      "applicationToolExecutions": []
+    }
+  },
+  "responses": {
+    "plan": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "locale": "zh-CN",
+      "tools": null,
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false,
+        "advisoryChecks": []
+      },
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ],
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
+            }
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "tokenField": "max_tokens",
+          "shareTerms": true,
+          "concurrency": 1,
+          "timeoutSeconds": 60,
+          "model": "synthetic-model",
+          "shareContext": true,
+          "maxRequests": 20,
+          "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+          "maxOutputTokens": 2000,
+          "credentialEnv": "",
+          "maxRetries": 0,
+          "sourceContext": {
+            "extracted": false,
+            "inferred": false,
+            "neighbors": false,
+            "maxBytes": 16384,
+            "maxItems": 128
+          },
+          "contextStrategy": null
+        },
+        "recipe": "direct-translation-1"
+      },
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "checkers": [],
+      "maintenance": null
+    },
+    "receipt": {
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "1"
+      },
+      "state": "active",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "parentTask": null
+    },
+    "control": {
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "9007199254740994"
+      },
+      "state": "paused",
+      "attemptId": null,
+      "parentTask": null
+    },
+    "status": {
+      "plan": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "locale": "zh-CN",
+        "options": {
+          "stages": [
+            {
+              "stage": "generation",
+              "mode": "assisted"
+            }
+          ],
+          "selectionPolicy": "candidates-only",
+          "adoptResources": false,
+          "deliver": false,
+          "advisoryChecks": []
+        },
+        "scope": [
+          {
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "selectionId": null
+          }
+        ],
+        "preview": {
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "items": [
+            {
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "targetLocale": "zh-CN",
+              "omissions": [],
+              "resourceBaseline": "18446744073709551615",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "context": {
+                "revisionId": "30000000-0000-4000-8000-000000000008",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "locale": "zh-CN",
+                "text": "Translator note 中文 👩🏽‍💻 é",
+                "reason": "Reviewed context",
+                "previousRevisionId": null
+              },
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "nativeKey": "barrel",
+              "terms": [
+                {
+                  "target": "木桶 👩🏽‍💻 é",
+                  "revisionId": "60000000-0000-4000-8000-000000000006",
+                  "source": "barrel",
+                  "protected": true
+                }
+              ],
+              "sourceText": "Barrel {name}",
+              "sourceLocale": "en",
+              "sourceContext": {
+                "kind": "not-selected"
+              },
+              "projectContext": {
+                "kind": "selected",
+                "scope": {
+                  "projectId": "60000000-0000-4000-8000-000000000001",
+                  "unitId": "60000000-0000-4000-8000-000000000003",
+                  "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                  "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                  "locale": "zh-CN"
+                },
+                "manual": true,
+                "decisions": []
+              }
+            }
+          ],
+          "config": {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0,
+            "sourceContext": {
+              "extracted": false,
+              "inferred": false,
+              "neighbors": false,
+              "maxBytes": 16384,
+              "maxItems": 128
+            },
+            "contextStrategy": null
+          },
+          "recipe": "direct-translation-1"
+        },
+        "attemptId": "60000000-0000-4000-8000-000000000002",
+        "tools": null,
+        "checkers": [],
+        "maintenance": null
+      },
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "1"
+      },
+      "state": "active",
+      "effects": [
+        "save-candidate"
+      ],
+      "expiresAt": "18446744073709551615",
+      "toolInvocations": null
+    },
+    "action": {
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "1"
+      },
+      "state": "active",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "parentTask": null
+    },
+    "protection": {
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN",
+      "revision": "9007199254740994",
+      "protected": false
+    },
+    "discussionPlan": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "locale": "zh-CN",
+      "tools": null,
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false,
+        "advisoryChecks": [],
+        "teamDiscussions": {
+          "profile": "current-plan-1"
+        }
+      },
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ],
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
+            }
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "tokenField": "max_tokens",
+          "shareTerms": true,
+          "concurrency": 1,
+          "timeoutSeconds": 60,
+          "model": "synthetic-model",
+          "shareContext": true,
+          "maxRequests": 20,
+          "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+          "maxOutputTokens": 2000,
+          "credentialEnv": "",
+          "maxRetries": 0,
+          "sourceContext": {
+            "extracted": false,
+            "inferred": false,
+            "neighbors": false,
+            "maxBytes": 16384,
+            "maxItems": 128
+          },
+          "contextStrategy": null
+        },
+        "recipe": "direct-translation-1"
+      },
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "checkers": [],
+      "maintenance": null,
+      "teamDiscussionLimits": {
+        "maxMembers": 8,
+        "maxRoleVersionsPerMember": 16,
+        "maxPosts": 128,
+        "maxPostBytes": 8192,
+        "maxViewPosts": 16,
+        "maxViewBytes": 16384,
+        "maxArtifactBytes": 0
+      }
+    },
+    "artifactDiscussionPlan": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "locale": "zh-CN",
+      "tools": null,
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false,
+        "advisoryChecks": [],
+        "teamDiscussions": {
+          "profile": "current-plan-2"
+        }
+      },
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ],
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en",
+            "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
+            }
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "tokenField": "max_tokens",
+          "shareTerms": true,
+          "concurrency": 1,
+          "timeoutSeconds": 60,
+          "model": "synthetic-model",
+          "shareContext": true,
+          "maxRequests": 20,
+          "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+          "maxOutputTokens": 2000,
+          "credentialEnv": "",
+          "maxRetries": 0,
+          "sourceContext": {
+            "extracted": false,
+            "inferred": false,
+            "neighbors": false,
+            "maxBytes": 16384,
+            "maxItems": 128
+          },
+          "contextStrategy": null
+        },
+        "recipe": "direct-translation-1"
+      },
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "checkers": [],
+      "maintenance": null,
+      "teamDiscussionLimits": {
+        "maxMembers": 8,
+        "maxRoleVersionsPerMember": 16,
+        "maxPosts": 128,
+        "maxPostBytes": 8192,
+        "maxViewPosts": 16,
+        "maxViewBytes": 16384,
+        "maxArtifactBytes": 32768
+      }
+    }
+  }
+}

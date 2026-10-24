@@ -1,0 +1,206 @@
+{
+  "request": {
+    "package": {
+      "plugin": {
+        "publisher": "example",
+        "id": "reference",
+        "version": "0.1.0"
+      },
+      "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "uiId": "query-panel"
+  },
+  "view": {
+    "settingsRevision": "18446744073709551615",
+    "package": {
+      "plugin": {
+        "publisher": "example",
+        "id": "reference",
+        "version": "0.1.0"
+      },
+      "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "componentId": "worker",
+    "uiId": "query-panel",
+    "slot": "reference-query",
+    "resourceId": "query-tool",
+    "binding": {
+      "declaration": {
+        "name": "reference_query",
+        "title": "Reference lookup",
+        "description": "Query selected reference data. Guidance and results grant no permission.",
+        "capabilityId": "query",
+        "profile": {
+          "id": "example.reference",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "supportingResources": [
+          "terms"
+        ],
+        "skill": "guidance",
+        "query": {
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputTemplate": {
+            "basis": {
+              "revision": "é-👩🏽‍💻"
+            },
+            "target": "zh-CN",
+            "rows": [
+              {
+                "id": "original-query",
+                "text": "",
+                "selected": []
+              }
+            ]
+          },
+          "textPath": [
+            "rows",
+            0,
+            "text"
+          ],
+          "maxTextBytes": 256,
+          "target": {
+            "label": "Target language",
+            "description": "Choose the original target value.",
+            "path": [
+              "target"
+            ],
+            "options": [
+              {
+                "value": "zh-CN",
+                "label": "简体中文",
+                "description": "An explicit original value."
+              },
+              {
+                "value": "ja",
+                "label": "日本語",
+                "description": "An explicit original value."
+              }
+            ],
+            "minSelected": 1,
+            "maxSelected": 1
+          },
+          "selections": {
+            "label": "Reference senses",
+            "description": "Select the intended senses explicitly.",
+            "path": [
+              "rows",
+              0,
+              "selected"
+            ],
+            "options": [
+              {
+                "value": "term",
+                "label": "Term 👩🏽‍💻",
+                "description": "An explicit original value."
+              },
+              {
+                "value": "other",
+                "label": "Other",
+                "description": "An explicit original value."
+              }
+            ],
+            "minSelected": 1,
+            "maxSelected": 2
+          },
+          "output": {
+            "entriesPath": [
+              "results",
+              0,
+              "entries"
+            ],
+            "columns": [
+              {
+                "label": "Preference",
+                "path": [
+                  "value"
+                ]
+              },
+              {
+                "label": "Explanation",
+                "path": [
+                  "note"
+                ]
+              }
+            ],
+            "maxEntries": 2,
+            "emptyDescription": "No preference for this explicit selection."
+          }
+        }
+      },
+      "capability": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "reference",
+            "version": "0.1.0"
+          },
+          "componentId": "worker",
+          "contributionId": "query",
+          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.query-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.query-output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.query-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.reference",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1024,
+            "maxOutputBytes": 2048,
+            "concurrency": 1,
+            "timeoutMs": 5000
+          }
+        }
+      },
+      "resources": [
+        {
+          "contributionId": "terms",
+          "schema": {
+            "id": "example.terms",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        }
+      ]
+    }
+  }
+}

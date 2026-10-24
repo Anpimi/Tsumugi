@@ -1,0 +1,226 @@
+{
+  "requests": {
+    "reconcile": {
+      "projectId": "60000000-0000-4000-8000-000000000001", "sessionToken": "isolated-ai-arena-session",
+      "lease": { "planId": "60000000-0000-4000-8000-000000000007", "generation": "9007199254740993" },
+      "taskId": "60000000-0000-4000-8000-000000000013", "attemptId": "60000000-0000-4000-8000-000000000014",
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "delegate": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "delegation": {
+        "delegationId": "60000000-0000-4000-8000-000000000030",
+        "unitIds": ["60000000-0000-4000-8000-000000000003"],
+        "toolHandles": []
+      }
+    },
+    "generationAttempt": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "generation": {
+        "taskId": "60000000-0000-4000-8000-000000000013",
+        "attemptId": "60000000-0000-4000-8000-000000000014",
+        "unitIds": ["60000000-0000-4000-8000-000000000003"]
+      },
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "offset": 0,
+      "limit": 100
+    },
+    "generationOutput": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "generation": {
+        "taskId": "60000000-0000-4000-8000-000000000013",
+        "attemptId": "60000000-0000-4000-8000-000000000014",
+        "unitIds": ["60000000-0000-4000-8000-000000000003"]
+      },
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "itemId": "60000000-0000-4000-8000-000000000031",
+      "resultId": "60000000-0000-4000-8000-000000000032"
+    },
+    "open": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "9007199254740993"
+      }
+    },
+    "prepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "generation": {
+        "taskId": "60000000-0000-4000-8000-000000000013",
+        "attemptId": "60000000-0000-4000-8000-000000000014",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      }
+    },
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "generation": {
+        "taskId": "60000000-0000-4000-8000-000000000013",
+        "attemptId": "60000000-0000-4000-8000-000000000014",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "responses": {
+    "reconciliation": {
+      "identity": {
+        "lease": { "planId": "60000000-0000-4000-8000-000000000007", "generation": "9007199254740993" },
+        "taskId": "60000000-0000-4000-8000-000000000013", "attemptId": "60000000-0000-4000-8000-000000000014",
+        "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "outcome": "not-enqueued"
+    },
+    "child": {
+      "scopeId": "60000000-0000-4000-8000-000000000033",
+      "lease": { "planId": "60000000-0000-4000-8000-000000000007", "generation": "9007199254740993" },
+      "parentTask": "60000000-0000-4000-8000-000000000012",
+      "delegation": {
+        "delegationId": "60000000-0000-4000-8000-000000000030",
+        "parentScopeId": "60000000-0000-4000-8000-000000000011",
+        "unitIds": ["60000000-0000-4000-8000-000000000003"],
+        "toolHandles": []
+      },
+      "scope": [{
+        "unitId": "60000000-0000-4000-8000-000000000003",
+        "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+        "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+        "nativeKey": "barrel", "selectionId": null
+      }],
+      "budget": { "limit": 2, "dispatched": 1, "legacyHeld": 0, "unresolved": 0, "usageUnknown": 0, "promptTokens": "1", "completionTokens": "1",
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
+      }
+    },
+    "generationAttempt": {
+      "taskId": "60000000-0000-4000-8000-000000000013",
+      "attemptId": "60000000-0000-4000-8000-000000000014",
+      "operation": "ai-translation",
+      "progress": { "total": 1, "queued": 0, "running": 0, "succeeded": 1, "failed": 0, "cancelled": 0, "unknown": 0, "adopted": 0 },
+      "items": [{
+        "status": { "itemId": "60000000-0000-4000-8000-000000000031", "execution": "succeeded", "validation": "valid", "adoption": "unapplied", "cancellationRequested": false, "retrySafe": false, "diagnostic": null },
+        "scope": { "kind": "translation-unit", "id": "60000000-0000-4000-8000-000000000003", "locale": "zh-CN" },
+        "resultId": "60000000-0000-4000-8000-000000000032"
+      }],
+      "recovery": { "attemptId": "60000000-0000-4000-8000-000000000014", "units": [] },
+      "nextOffset": null
+    },
+    "generationOutput": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000014",
+      "itemId": "60000000-0000-4000-8000-000000000031",
+      "resultId": "60000000-0000-4000-8000-000000000032",
+      "dispatchToken": "60000000-0000-4000-8000-000000000034",
+      "capabilityId": "openai-compatible.translation", "capabilityVersion": "1", "outcome": "succeeded",
+      "output": { "unitId": "60000000-0000-4000-8000-000000000003", "targetLocale": "zh-CN", "text": "A child candidate 👩🏽‍💻 é", "usage": null, "requests": 1, "usageIncomplete": false },
+      "diagnostic": null, "supersedes": null
+    },
+    "scope": {
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "delegation": null,
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "9007199254740993"
+      },
+      "parentTask": "60000000-0000-4000-8000-000000000012",
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        },
+        {
+          "unitId": "60000000-0000-4000-8000-000000000016",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000017",
+          "nativeKey": "第二条 👩🏽‍💻 é",
+          "selectionId": null
+        }
+      ],
+      "budget": {
+        "limit": 2,
+        "dispatched": 1,
+        "legacyHeld": 0,
+        "unresolved": 0,
+        "usageUnknown": 0,
+        "promptTokens": "1",
+        "completionTokens": "1",
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
+      }
+    },
+    "generation": {
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "parentTask": "60000000-0000-4000-8000-000000000012",
+      "taskId": "60000000-0000-4000-8000-000000000013",
+      "attemptId": "60000000-0000-4000-8000-000000000014",
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ],
+      "budget": {
+        "limit": 2,
+        "dispatched": 1,
+        "legacyHeld": 0,
+        "unresolved": 0,
+        "usageUnknown": 0,
+        "promptTokens": "1",
+        "completionTokens": "1",
+        "cacheRead": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "cacheWrite": {
+          "tokens": "0",
+          "unknownRequests": 1
+        },
+        "reasoning": {
+          "tokens": "0",
+          "unknownRequests": 1
+        }
+      }
+    }
+  }
+}

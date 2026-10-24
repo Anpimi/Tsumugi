@@ -2,6 +2,311 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "ArtifactCheckBuildResultRef": {
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckFinishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "build": {
+            "$ref": "#/definitions/PluginBuildRequest"
+          },
+          "buildAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "buildAttemptId",
+          "buildResultId",
+          "attemptId",
+          "build"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowConsent": {
+        "additionalProperties": false,
+        "properties": {
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "step": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowStepIdentity"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "step",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "ownerId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "workflowId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ownerId",
+          "generation",
+          "workflowId"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowPreparation": {
+        "additionalProperties": false,
+        "properties": {
+          "build": {
+            "$ref": "#/definitions/PluginBuildRequest"
+          },
+          "buildAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildInputDigest": {
+            "type": "string"
+          },
+          "buildResults": {
+            "items": {
+              "$ref": "#/definitions/ArtifactCheckBuildResultRef"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "buildAttemptId",
+          "buildInputDigest",
+          "buildResults",
+          "build"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "preparation": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowPreparation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "preparation"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "preparation": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowPreparation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArtifactCheckWorkflowStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "preparation",
+          "start"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStart": {
+        "additionalProperties": false,
+        "properties": {
+          "consents": {
+            "items": {
+              "$ref": "#/definitions/ArtifactCheckWorkflowConsent"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          },
+          "materializationDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "materializationDigest",
+          "consents"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "start": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowStart"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "start"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStepIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildItemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "producerAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "producerInputDigest": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "locale",
+          "buildItemId",
+          "buildResultId",
+          "producerAttemptId",
+          "producerInputDigest",
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "identity"
+        ],
+        "type": "object"
+      },
       "BuildLocaleChoice": {
         "additionalProperties": false,
         "properties": {
@@ -49,6 +354,52 @@
         ],
         "type": "object"
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "EncodedPayload": {
+        "additionalProperties": false,
+        "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+        "properties": {
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "utf8": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "utf8",
+          "sha256"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "type": "string"
       },
@@ -85,6 +436,160 @@
           "previewId",
           "actionId",
           "overwriteConflicts"
+        ],
+        "type": "object"
+      },
+      "PluginBuildLocaleChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "items": {
+              "$ref": "#/definitions/EncodedPayload"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "outputPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "locale",
+          "outputPaths",
+          "configuration"
+        ],
+        "type": "object"
+      },
+      "PluginBuildPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "build": {
+            "$ref": "#/definitions/PluginBuildRequest"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/PluginBuildLocaleChoice"
+            },
+            "type": "array"
+          },
+          "expectedEligibilityBasis": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "choices",
+          "expectedEligibilityBasis",
+          "build"
+        ],
+        "type": "object"
+      },
+      "PluginBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
         ],
         "type": "object"
       },
@@ -156,6 +661,30 @@
         ],
         "type": "object"
       },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "SavedPluginBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
       "SessionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -171,14 +700,45 @@
           "projectId"
         ],
         "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
       }
     },
     "properties": {
+      "artifactCheck": {
+        "$ref": "#/definitions/ArtifactCheckPrepareRequest"
+      },
+      "artifactWorkflowPrepare": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowPrepareRequest"
+      },
+      "artifactWorkflowRead": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowReadRequest"
+      },
+      "artifactWorkflowSession": {
+        "$ref": "#/definitions/SessionRequest"
+      },
+      "artifactWorkflowStart": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowStartRequest"
+      },
+      "artifactWorkflowStop": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowStopRequest"
+      },
       "build": {
         "$ref": "#/definitions/BuildRequest"
       },
       "export": {
         "$ref": "#/definitions/ExportRequest"
+      },
+      "finishArtifactCheck": {
+        "$ref": "#/definitions/ArtifactCheckFinishRequest"
+      },
+      "pluginBuild": {
+        "$ref": "#/definitions/PluginBuildPrepareRequest"
+      },
+      "pluginStart": {
+        "$ref": "#/definitions/PluginStartRequest"
       },
       "preview": {
         "$ref": "#/definitions/PreviewRequest"
@@ -189,13 +749,26 @@
       "release": {
         "$ref": "#/definitions/ReleaseRequest"
       },
+      "savedPluginBuild": {
+        "$ref": "#/definitions/SavedPluginBuildRequest"
+      },
       "session": {
         "$ref": "#/definitions/SessionRequest"
       }
     },
     "required": [
-      "session",
       "build",
+      "session",
+      "artifactWorkflowSession",
+      "artifactWorkflowPrepare",
+      "artifactWorkflowStart",
+      "artifactWorkflowRead",
+      "artifactWorkflowStop",
+      "savedPluginBuild",
+      "pluginBuild",
+      "pluginStart",
+      "artifactCheck",
+      "finishArtifactCheck",
       "release",
       "preview",
       "export",
@@ -209,6 +782,665 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AdoptionState": {
+        "enum": [
+          "unapplied",
+          "committed",
+          "conflict",
+          "rejected"
+        ],
+        "type": "string"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckBuildResultRef": {
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "itemId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckReview": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/definitions/CheckedArtifact"
+            },
+            "type": "array"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "build": {
+            "$ref": "#/definitions/PluginBuildView"
+          },
+          "buildAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/definitions/CheckRequirement"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "buildAttemptId",
+          "buildResultId",
+          "locale",
+          "artifacts",
+          "requirements",
+          "build"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowConsent": {
+        "additionalProperties": false,
+        "properties": {
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "step": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowStepIdentity"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "step",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowEnqueueOutcome": {
+        "enum": [
+          "pending",
+          "enqueued",
+          "not-enqueued"
+        ],
+        "type": "string"
+      },
+      "ArtifactCheckWorkflowIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "ownerId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "workflowId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ownerId",
+          "generation",
+          "workflowId"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "callbacksDrained": {
+            "type": "boolean"
+          },
+          "currentTask": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArtifactCheckWorkflowTask"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          },
+          "kind": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowObservationKind"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/definitions/ArtifactCheckWorkflowStepObservation"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArtifactCheckWorkflowView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "identity",
+          "kind",
+          "admissionClosed",
+          "callbacksDrained",
+          "currentTask",
+          "view",
+          "steps"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowObservationKind": {
+        "enum": [
+          "current",
+          "retired",
+          "admission-closed"
+        ],
+        "type": "string"
+      },
+      "ArtifactCheckWorkflowPhase": {
+        "enum": [
+          "preparing",
+          "prepared",
+          "running",
+          "paused",
+          "completed",
+          "stopped",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "ArtifactCheckWorkflowPreparation": {
+        "additionalProperties": false,
+        "properties": {
+          "build": {
+            "$ref": "#/definitions/PluginBuildRequest"
+          },
+          "buildAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildInputDigest": {
+            "type": "string"
+          },
+          "buildResults": {
+            "items": {
+              "$ref": "#/definitions/ArtifactCheckBuildResultRef"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "buildAttemptId",
+          "buildInputDigest",
+          "buildResults",
+          "build"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowSessionView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "available",
+                "type": "string"
+              },
+              "nextGeneration": {
+                "$ref": "#/definitions/Revision"
+              },
+              "ownerId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "ownerId",
+              "nextGeneration",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ArtifactCheckWorkflowStart": {
+        "additionalProperties": false,
+        "properties": {
+          "consents": {
+            "items": {
+              "$ref": "#/definitions/ArtifactCheckWorkflowConsent"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          },
+          "materializationDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "materializationDigest",
+          "consents"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStepIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildItemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "buildResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "producerAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "producerInputDigest": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "locale",
+          "buildItemId",
+          "buildResultId",
+          "producerAttemptId",
+          "producerInputDigest",
+          "taskId",
+          "attemptId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStepObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowEnqueueOutcome"
+          },
+          "proof": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SavedArtifactCheckProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowStepIdentity"
+          }
+        },
+        "required": [
+          "step",
+          "outcome",
+          "execution",
+          "resultId",
+          "proof"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStepPhase": {
+        "enum": [
+          "prepared",
+          "not-selected",
+          "waiting",
+          "enqueued",
+          "recording",
+          "proved",
+          "failed",
+          "unknown",
+          "cancelled",
+          "not-started"
+        ],
+        "type": "string"
+      },
+      "ArtifactCheckWorkflowStepView": {
+        "additionalProperties": false,
+        "properties": {
+          "buildResultDigest": {
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CommandError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "phase": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowStepPhase"
+          },
+          "proof": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SavedArtifactCheckProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "review": {
+            "$ref": "#/definitions/ArtifactCheckReview"
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "step": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowStepIdentity"
+          }
+        },
+        "required": [
+          "ordinal",
+          "step",
+          "buildResultDigest",
+          "review",
+          "selected",
+          "phase",
+          "proof",
+          "error"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowStopReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "callbacksDrained": {
+            "type": "boolean"
+          },
+          "currentTask": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArtifactCheckWorkflowTask"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "identity": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "admissionClosed",
+          "callbacksDrained",
+          "currentTask"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowTask": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "ArtifactCheckWorkflowView": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "callbacksDrained": {
+            "type": "boolean"
+          },
+          "currentTask": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArtifactCheckWorkflowTask"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CommandError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "materializationDigest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phase": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowPhase"
+          },
+          "preparation": {
+            "$ref": "#/definitions/ArtifactCheckWorkflowPreparation"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ArtifactCheckWorkflowStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/definitions/ArtifactCheckWorkflowStepView"
+            },
+            "maxItems": 16,
+            "type": "array"
+          }
+        },
+        "required": [
+          "preparation",
+          "materializationDigest",
+          "phase",
+          "start",
+          "steps",
+          "admissionClosed",
+          "callbacksDrained",
+          "currentTask",
+          "error"
+        ],
+        "type": "object"
+      },
+      "BuildBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "builder": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/BuildDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "builder",
+          "checker"
+        ],
+        "type": "object"
+      },
+      "BuildDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "builder": {
+            "type": "string"
+          },
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "outputLimits": {
+            "$ref": "#/definitions/BuildOutputLimits"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "builder",
+          "checker",
+          "outputLimits",
+          "artifactRules"
+        ],
+        "type": "object"
+      },
       "BuildLocaleChoice": {
         "additionalProperties": false,
         "properties": {
@@ -225,6 +1457,26 @@
         ],
         "type": "object"
       },
+      "BuildOutputLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxArtifacts": {
+            "maximum": 32,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxTotalBytes": {
+            "maximum": 2097152,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxArtifacts",
+          "maxTotalBytes"
+        ],
+        "type": "object"
+      },
       "BuildSourceFile": {
         "additionalProperties": false,
         "properties": {
@@ -238,6 +1490,911 @@
         "required": [
           "logicalPath",
           "sha256"
+        ],
+        "type": "object"
+      },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CheckFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/definitions/FindingSeverity"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "target",
+          "severity"
+        ],
+        "type": "object"
+      },
+      "CheckImplementation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "core",
+                "type": "string"
+              },
+              "validator": {
+                "$ref": "#/definitions/ContractRef"
+              }
+            },
+            "required": [
+              "kind",
+              "validator"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "plugin",
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/definitions/ProviderSelectionBinding"
+              }
+            },
+            "required": [
+              "kind",
+              "provider"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckKey": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation": {
+            "$ref": "#/definitions/CheckImplementation"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "implementation"
+        ],
+        "type": "object"
+      },
+      "CheckOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "findings": {
+                "items": {
+                  "$ref": "#/definitions/CheckFinding"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "completed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "findings"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/NotApplicableBasis"
+              },
+              "kind": {
+                "const": "not-applicable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "cancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckRequirement": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "notApplicable": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/NotApplicableBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopeDigest": {
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "waivable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "inputDigest",
+          "scopeDigest",
+          "targets",
+          "mandatory",
+          "waivable",
+          "notApplicable"
+        ],
+        "type": "object"
+      },
+      "CheckResult": {
+        "additionalProperties": false,
+        "properties": {
+          "coveredTargets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CheckOutcome"
+          },
+          "scopeDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "inputDigest",
+          "scopeDigest",
+          "coveredTargets",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "CheckedArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLength": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "logicalPath",
+          "byteLength",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "conflict": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConflictEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "diagnosticId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/RecoveryGuidance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "plugin-install",
+          "plugin-settings",
+          "model-connections",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
+      "ConflictEvidence": {
+        "description": "Values compared at the rejecting boundary, without user text or credentials.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "expected": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "translation-selection",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "review-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-decision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-check",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "review-waiver",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-fallback",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "build-eligibility",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "type": "string"
+              },
+              "expected": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "comparison-basis",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "term-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "context-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expected": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ExecutionId"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "source-snapshot",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "current": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expected": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "content-revision",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expected",
+              "current"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
         ],
         "type": "object"
       },
@@ -389,9 +2546,107 @@
         ],
         "type": "object"
       },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
+      "EncodedPayload": {
+        "additionalProperties": false,
+        "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+        "properties": {
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "utf8": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "utf8",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExecutionState": {
+        "enum": [
+          "queued",
+          "dispatched",
+          "succeeded",
+          "failed",
+          "cancelled-before-dispatch",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "FindingSeverity": {
+        "enum": [
+          "warning",
+          "error"
+        ],
+        "type": "string"
+      },
+      "ItemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/AdoptionState"
+          },
+          "cancellationRequested": {
+            "type": "boolean"
+          },
+          "diagnostic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "retrySafe": {
+            "type": "boolean"
+          },
+          "validation": {
+            "$ref": "#/definitions/ValidationState"
+          }
+        },
+        "required": [
+          "itemId",
+          "execution",
+          "validation",
+          "adoption",
+          "cancellationRequested",
+          "retrySafe",
+          "diagnostic"
+        ],
+        "type": "object"
       },
       "LocaleBuildStartReceipt": {
         "additionalProperties": false,
@@ -433,6 +2688,423 @@
         ],
         "type": "object"
       },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "NotApplicableBasis": {
+        "additionalProperties": false,
+        "description": "A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.",
+        "properties": {
+          "basisDigest": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "basisDigest"
+        ],
+        "type": "object"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginBuildLocaleChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "items": {
+              "$ref": "#/definitions/EncodedPayload"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "outputPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "locale",
+          "outputPaths",
+          "configuration"
+        ],
+        "type": "object"
+      },
+      "PluginBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginBuildReview": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "build": {
+            "$ref": "#/definitions/PluginBuildView"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/PluginBuildLocaleChoice"
+            },
+            "type": "array"
+          },
+          "eligibilityBasis": {
+            "type": "string"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "sourceSnapshotId",
+          "eligibilityBasis",
+          "choices",
+          "build"
+        ],
+        "type": "object"
+      },
+      "PluginBuildView": {
+        "additionalProperties": false,
+        "properties": {
+          "builder": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/BuildDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "builder",
+          "checker",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginExecutionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "componentScope": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ComponentScope"
+              }
+            ],
+            "description": "Captured from the selected component, never inferred from a result."
+          },
+          "environment": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+              }
+            ],
+            "description": "Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "capability",
+          "componentScope",
+          "applicationScope",
+          "profile",
+          "environment"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
       "PreviewFile": {
         "additionalProperties": false,
         "properties": {
@@ -461,6 +3133,72 @@
           "expectedSha256",
           "currentSha256",
           "state"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "RecoveryGuidance": {
+        "description": "A read or user decision to make before another mutation; never replay authority.",
+        "enum": [
+          "reconcile-original",
+          "review-current",
+          "choose-destination"
+        ],
+        "type": "string"
+      },
+      "ReleaseBuildEnvironment": {
+        "additionalProperties": false,
+        "description": "Installed immutable metadata supplied by the trusted Host. Constructing this\nselection neither authenticates package provenance nor authorizes execution.",
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/BuildBinding"
+          },
+          "builderExecution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "checkerExecution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          }
+        },
+        "required": [
+          "binding",
+          "builderExecution",
+          "checkerExecution"
         ],
         "type": "object"
       },
@@ -586,9 +3324,339 @@
           "entryCount"
         ],
         "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
+      },
+      "SavedArtifactCheckProof": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "checkerAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "checkerInputDigest": {
+            "type": "string"
+          },
+          "checkerResultDigest": {
+            "type": "string"
+          },
+          "checkerResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/definitions/CheckResult"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "valid": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "checkerAttemptId",
+          "checkerInputDigest",
+          "checkerResultId",
+          "checkerResultDigest",
+          "checker",
+          "valid",
+          "checks"
+        ],
+        "type": "object"
+      },
+      "SavedBuildArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLength": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "logicalPath",
+          "byteLength",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "SavedBuildLocale": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactCheck": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SavedArtifactCheckProof"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "choice": {
+            "$ref": "#/definitions/PluginBuildLocaleChoice"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SavedBuildResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/ItemStatus"
+          },
+          "targetCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "itemId",
+          "choice",
+          "targetCount",
+          "status",
+          "result",
+          "artifactCheck"
+        ],
+        "type": "object"
+      },
+      "SavedBuildResult": {
+        "additionalProperties": false,
+        "properties": {
+          "artifacts": {
+            "items": {
+              "$ref": "#/definitions/SavedBuildArtifact"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "resultId",
+          "resultDigest",
+          "outcome",
+          "artifacts"
+        ],
+        "type": "object"
+      },
+      "SavedPluginBuildView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "build": {
+            "$ref": "#/definitions/ReleaseBuildEnvironment"
+          },
+          "eligibilityBasis": {
+            "type": "string"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "locales": {
+            "items": {
+              "$ref": "#/definitions/SavedBuildLocale"
+            },
+            "type": "array"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "sourceSnapshotId",
+          "policyVersion",
+          "eligibilityBasis",
+          "build",
+          "locales"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
+      "ValidationState": {
+        "enum": [
+          "absent",
+          "pending",
+          "valid",
+          "invalid"
+        ],
+        "type": "string"
       }
     },
     "properties": {
+      "artifactCheck": {
+        "$ref": "#/definitions/ArtifactCheckReview"
+      },
+      "artifactWorkflow": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowView"
+      },
+      "artifactWorkflowObservation": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowObservation"
+      },
+      "artifactWorkflowSession": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowSessionView"
+      },
+      "artifactWorkflowStopped": {
+        "$ref": "#/definitions/ArtifactCheckWorkflowStopReceipt"
+      },
       "buildAttempt": {
         "anyOf": [
           {
@@ -598,6 +3666,9 @@
             "type": "null"
           }
         ]
+      },
+      "cancelPluginBuild": {
+        "type": "boolean"
       },
       "deliveries": {
         "items": {
@@ -618,8 +3689,14 @@
           }
         ]
       },
+      "finishArtifactCheck": {
+        "type": "null"
+      },
       "identity": {
         "$ref": "#/definitions/ExecutionId"
+      },
+      "pluginBuild": {
+        "$ref": "#/definitions/PluginBuildReview"
       },
       "preview": {
         "$ref": "#/definitions/DeliveryPreview"
@@ -629,6 +3706,9 @@
           "$ref": "#/definitions/ReleaseView"
         },
         "type": "array"
+      },
+      "savedPluginBuild": {
+        "$ref": "#/definitions/SavedPluginBuildView"
       },
       "selection": {
         "anyOf": [
@@ -643,6 +3723,15 @@
     },
     "required": [
       "buildAttempt",
+      "artifactWorkflowSession",
+      "artifactWorkflow",
+      "artifactWorkflowObservation",
+      "artifactWorkflowStopped",
+      "savedPluginBuild",
+      "pluginBuild",
+      "artifactCheck",
+      "finishArtifactCheck",
+      "cancelPluginBuild",
       "deliveryAction",
       "identity",
       "releases",
