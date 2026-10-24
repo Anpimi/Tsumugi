@@ -1,5 +1,11 @@
 # Application versioning and changelog maintenance
 
+Read-only plan-status work remains owned by package cancellation and lifecycle
+coordination, but does not represent an execution callback that must block
+team recovery. Effectful work retains its original drain gate. This internal
+Host correction changes no wire, schema, SDK or dependency and remains in the
+existing bilingual Unreleased batch without a local QA version bump.
+
 Team-recovery previews distinguish immutable captured basis from temporary
 readiness while their own preparation is finishing. Transient cleanup or a
 companion read no longer discards a valid preview; current drain, basis, scope,

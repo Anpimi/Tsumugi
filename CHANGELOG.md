@@ -6,6 +6,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Keep read-only plan-status observations from blocking drained team recovery,
+  while preserving execution cancellation and package lifecycle coordination.
+
 - Keep a team-recovery preview while temporary cleanup or a companion read is
   pending; require current readiness before allowing its explicit authorization.
 

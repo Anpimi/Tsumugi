@@ -1443,8 +1443,9 @@ pub async fn read_work_plan_status(
                 .work_plan_review_checkers(&plan)
                 .map_err(map_read)?;
             let (host, _) = active.execution_parts()?;
-            let work = host.begin_plan_work(
-                plan.plan_id,
+            // This observation owns package/global cleanup, not a continuation
+            // that can produce effects in the original plan.
+            let work = host.begin_package_work(
                 checkers
                     .iter()
                     .map(|checker| package_lifecycle::binding_package(&checker.binding))
@@ -3874,6 +3875,83 @@ mod tests {
                 .prepared
                 .is_some()
         }));
+    }
+
+    #[test]
+    fn concurrent_status_observation_does_not_block_drained_team_recovery() {
+        let fixture = Fixture::create();
+        let unit = fixture.unit;
+        let plan_id = fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            let config = AiConfig {
+                endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+                model: "synthetic-undispatched-team".into(),
+                credential_env: String::new(),
+                max_requests: 4,
+                max_retries: 0,
+                concurrency: 1,
+                ..AiConfig::default()
+            };
+            let member = ExecutionId::new();
+            let mut options = serde_json::to_value(PlanOptions::default()).unwrap();
+            options["teamDiscussions"] = json!({"profile":"current-plan-2"});
+            options["teamExecution"] = json!({"profile":"bounded-team-1",
+                "initialMemberId":member,"initialUnitId":unit,
+                "members":[{"memberId":member,"roleVersionId":ExecutionId::new(),
+                    "displayName":"Synthetic translator","role":"Translate only captured work.",
+                    "config":config,"unitIds":[unit],"toolHandles":[],"kinds":["translation"]}],
+                "limits":{"maxActivations":4,"maxConcurrency":1,"maxNoProgress":4}});
+            let plan = store.prepare_work_plan(Some(config), "zh-CN", &[unit],
+                serde_json::from_value(options).unwrap()).unwrap();
+            let authorization = AuthorizeWorkPlan {
+                action_id: ExecutionId::new(), plan_digest: plan.digest.clone(), confirmed: true,
+                effects: plan.authorization_effects().unwrap(), expires_at: expiry().parse().unwrap(),
+            };
+            let receipt = store.authorize_work_plan(&plan, &authorization).unwrap();
+            let root = store.prepare_team_start(receipt.lease, authorization.action_id).unwrap();
+            host.runtime.submit_team_work(store, &root).unwrap();
+            // Revoke the queued root in this same actor turn, before any runner
+            // can start. This establishes the real anchor with zero HTTP calls.
+            store.control_work_plan(&ControlWorkPlan {
+                action_id: ExecutionId::new(), plan_id: plan.plan_id,
+                expected_generation: receipt.lease.generation, command: WorkPlanCommand::Pause,
+                confirmed: false, expires_at: None,
+            }).unwrap();
+            host.runtime.tick(store).unwrap();
+            let original = host.runtime.team_recovery_state(store, plan.plan_id).unwrap();
+            assert!(original.original_deadline_available && original.producers_drained);
+            assert_eq!(store.read_team_recovery_state(plan.project_id, plan.plan_id).unwrap().budget.dispatched, 0);
+            plan.plan_id
+        });
+        let before = fixture.bytes();
+        let state = fixture.app.state::<AppState>();
+        let held = state.sessions.pause();
+        let mut status = Box::pin(read_work_plan_status(state.clone(), serde_json::from_value(
+            request(&fixture.context, json!({"planId":plan_id}))).unwrap()));
+        let mut recovery = Box::pin(recovery::read_work_plan_team_recovery_state(state.clone(),
+            serde_json::from_value(request(&fixture.context, json!({"planId":plan_id}))).unwrap()));
+        let mut polling = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(std::future::Future::poll(status.as_mut(), &mut polling), std::task::Poll::Pending));
+        assert!(matches!(std::future::Future::poll(recovery.as_mut(), &mut polling), std::task::Poll::Pending));
+        // Both commands are queued before the actor resumes. The recovery read
+        // must follow status.capture and precede its asynchronously queued finish.
+        drop(held);
+        let observing = tauri::async_runtime::block_on(recovery).unwrap();
+        let status = tauri::async_runtime::block_on(status).unwrap();
+        assert_eq!(status.state, WorkPlanState::Paused);
+        assert!(observing.runtime.unwrap().producers_drained);
+        assert!(observing.host_callbacks_drained, "a concurrent status observation is not an original producer callback");
+        assert_eq!(observing.state.budget.dispatched, 0);
+        assert_eq!(fixture.bytes(), before, "both observations remain read-only");
+
+        let work = state.sessions.with(move |sessions| sessions.active.as_mut().unwrap()
+            .execution_parts().unwrap().0.begin_plan_work(plan_id, Vec::new()).unwrap());
+        let blocked = fixture.call("read_work_plan_team_recovery_state", json!({"planId":plan_id})).unwrap();
+        assert_eq!(blocked["hostCallbacksDrained"], false, "real plan-owned work must still block recovery");
+        drop(work);
+        let drained = fixture.call("read_work_plan_team_recovery_state", json!({"planId":plan_id})).unwrap();
+        assert_eq!(drained["hostCallbacksDrained"], true);
+        assert_eq!(drained["state"]["budget"]["dispatched"], 0);
     }
 
     fn assert_control_revokes_its_lease_while_blocking_io_is_saturated(
