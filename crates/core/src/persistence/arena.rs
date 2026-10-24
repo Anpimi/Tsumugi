@@ -169,6 +169,49 @@ fn sql(e: rusqlite::Error) -> ExecutionError {
 fn id(s: String) -> Result<ExecutionId, ExecutionError> {
     ExecutionId::parse(&s)
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ArenaRevealTargetKind { Comparison, Attempt }
+
+/// Visibility is a target fact, not a receipt for a particular reveal action.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ArenaRevealTarget {
+    pub project_id: ExecutionId,
+    pub target_id: ExecutionId,
+    pub target_kind: ArenaRevealTargetKind,
+    pub visible: bool,
+}
+
+fn reveal_target_in(
+    c: &Connection, project: ExecutionId, target: ExecutionId,
+) -> Result<Option<(ArenaRevealTargetKind, bool)>, ExecutionError> {
+    // Preserve the mutation's existing comparison-before-attempt routing.
+    let comparison: Option<(String,String,i64)> = c.query_row(
+        "SELECT project_id,unit_id,blind FROM arena_comparisons WHERE comparison_id=?1",
+        [target.to_string()], |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+    ).optional().map_err(sql)?;
+    if let Some((owner,unit,blind))=comparison {
+        if owner!=project.to_string() {return Err(error(ErrorCode::Unauthorized,"arena-project"));}
+        if !(0..=1).contains(&blind) || !super::content::unit_owned_by_project(c,project,id(unit)?)? {
+            return Err(error(ErrorCode::CorruptLedger,"arena-reveal-target"));
+        }
+        return Ok(Some((ArenaRevealTargetKind::Comparison,blind==1)));
+    }
+    let orphan:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM arena_entries WHERE comparison_id=?1)",
+        [target.to_string()],|row|row.get(0)).map_err(sql)?;
+    if orphan {return Err(error(ErrorCode::CorruptLedger,"arena-reveal-target"));}
+    let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+        [target.to_string()],|row|row.get(0)).map_err(sql)?;
+    if !exists {return Ok(None);}
+    let input=super::ledger::load_input(c,target)?;
+    let settings=settings(&input)?;
+    if input.envelope().project_id!=project {return Err(error(ErrorCode::Unauthorized,"arena-project"));}
+    Ok(Some((ArenaRevealTargetKind::Attempt,settings.config.blind)))
+}
+
 fn checked_ids(ids: &[ExecutionId]) -> Result<(), ExecutionError> {
     if !(2..=4).contains(&ids.len()) || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
         Err(error(ErrorCode::InvalidInput, "arena-candidates"))
@@ -208,6 +251,81 @@ pub(super) fn check_merge(
     Ok(())
 }
 impl ProjectStore {
+    /// Confirm creation from the immutable request, independently of current views.
+    pub fn arena_comparison_action_read(
+        &self, request: &ComparisonRequest,
+    ) -> Result<Option<ComparisonRequest>, ExecutionError> {
+        checked_ids(&request.revision_ids)?;
+        let found = super::review::read_snapshot(
+            self.connection().map_err(|_| error(ErrorCode::StorageFailed, "arena-read"))?, |c| {
+            if !super::content::unit_owned_by_project(c,request.project_id,request.unit_id)? {
+                return Err(error(ErrorCode::Unauthorized,"arena-project"));
+            }
+            let row: Option<(String,String,String,i64,String)> = c.query_row(
+                "SELECT project_id,unit_id,locale,blind,request_digest FROM arena_comparisons WHERE comparison_id=?1",
+                [request.action_id.to_string()], |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+            ).optional().map_err(sql)?;
+            let Some((project,unit,locale,blind,digest)) = row else {
+                let orphan:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM arena_entries WHERE comparison_id=?1)",
+                    [request.action_id.to_string()],|row|row.get(0)).map_err(sql)?;
+                return if orphan {Err(error(ErrorCode::CorruptLedger,"arena-comparison-orphan"))} else {Ok(None)};
+            };
+            if project!=request.project_id.to_string() || unit!=request.unit_id.to_string()
+                || locale!=request.locale || blind!=i64::from(request.blind)
+                || digest!=codec::digest(&codec::encode(request,MAX_INPUT_BYTES)?) {
+                return Err(error(ErrorCode::ResultMismatch,"arena-action"));
+            }
+            let mut statement=c.prepare("SELECT e.ordinal,e.revision_id,r.project_id,r.unit_id,r.locale FROM arena_entries e
+                JOIN translation_revisions r USING(revision_id) WHERE e.comparison_id=?1 ORDER BY e.ordinal").map_err(sql)?;
+            let rows=statement.query_map([request.action_id.to_string()],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?,
+                row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?))).map_err(sql)?
+                .collect::<Result<Vec<_>,_>>().map_err(sql)?;
+            let mut ordered=Vec::new();
+            for (index,(ordinal,revision,project,unit,locale)) in rows.into_iter().enumerate() {
+                if ordinal!=index as i64 || project!=request.project_id.to_string() || unit!=request.unit_id.to_string() || locale!=request.locale {
+                    return Err(error(ErrorCode::CorruptLedger,"arena-comparison-entry"));
+                }
+                ordered.push(id(revision)?);
+            }
+            if ordered.len()!=request.revision_ids.len()
+                || ordered.iter().collect::<BTreeSet<_>>()!=request.revision_ids.iter().collect::<BTreeSet<_>>()
+                || !request.blind && ordered!=request.revision_ids {
+                return Err(error(ErrorCode::CorruptLedger,"arena-comparison-entry"));
+            }
+            Ok(Some(request.clone()))
+        })?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(found)
+    }
+    pub fn arena_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+        confirmed: bool,
+    ) -> Result<Option<ArenaStartReceipt>, ExecutionError> {
+        if !confirmed {
+            return Err(error(ErrorCode::Unauthorized, "arena-consent"));
+        }
+        let found = super::review::read_snapshot(self.connection().map_err(|_| error(ErrorCode::StorageFailed, "arena-start-read"))?, |connection| {
+            let exists: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [attempt.to_string()], |row| row.get(0),
+            ).map_err(|_| error(ErrorCode::StorageFailed, "arena-start-read"))?;
+            if !exists { return Ok(None); }
+            let input = super::ledger::load_input(connection, attempt)?;
+            let settings = settings(&input)?;
+            if input.envelope().project_id != project || settings.preview_digest != digest {
+                return Err(error(ErrorCode::ResultMismatch, "arena-start-request"));
+            }
+            Ok(Some(ArenaStartReceipt {
+                project_id: project, attempt_id: attempt, task_id: input.envelope().task_id,
+                digest: settings.preview_digest,
+            }))
+        })?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
     pub fn preview_arena(
         &self,
         config: ArenaConfig,
@@ -246,6 +364,31 @@ impl ProjectStore {
             digest,
         })
     }
+    pub fn arena_reveal_target_read(
+        &self, project: ExecutionId, target: ExecutionId,
+    ) -> Result<Option<ArenaRevealTarget>, ExecutionError> {
+        let found=super::review::read_snapshot(
+            self.connection().map_err(|_|error(ErrorCode::StorageFailed,"arena-read"))?,|c| {
+            let resolved=reveal_target_in(c,project,target)?;
+            let row:Option<(String,String,String)>=c.query_row(
+                "SELECT project_id,action_id,request_digest FROM arena_reveals WHERE comparison_id=?1",
+                [target.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+            ).optional().map_err(sql)?;
+            let revealed=if let Some((owner,action,digest))=row {
+                let action=id(action).map_err(|_|error(ErrorCode::CorruptLedger,"arena-reveal-record"))?;
+                if resolved.is_none() || owner!=project.to_string()
+                    || digest!=codec::digest(&codec::encode(&(project,target,action),MAX_INPUT_BYTES)?) {
+                    return Err(error(ErrorCode::CorruptLedger,"arena-reveal-record"));
+                }
+                true
+            } else {false};
+            Ok(resolved.map(|(target_kind,blind)|ArenaRevealTarget {
+                project_id:project,target_id:target,target_kind,visible:!blind||revealed,
+            }))
+        })?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(found)
+    }
     pub fn arena_revealed(
         &self,
         project: ExecutionId,
@@ -277,24 +420,8 @@ impl ProjectStore {
         let c = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "arena-read"))?;
-        let owner: Option<String> = c
-            .query_row(
-                "SELECT project_id FROM arena_comparisons WHERE comparison_id=?1",
-                [comparison.to_string()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql)?;
-        if let Some(owner) = owner {
-            if owner != project.to_string() {
-                return Err(error(ErrorCode::Unauthorized, "arena-project"));
-            }
-        } else {
-            let input = self.execution_input(comparison)?;
-            settings(&input)?;
-            if input.envelope().project_id != project {
-                return Err(error(ErrorCode::Unauthorized, "arena-project"));
-            }
+        if reveal_target_in(c,project,comparison)?.is_none() {
+            return Err(error(ErrorCode::InvalidInput,"execution-storage"));
         }
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
@@ -416,7 +543,7 @@ impl ProjectStore {
             if saved != digest {
                 return Err(error(ErrorCode::ResultMismatch, "arena-action"));
             }
-            return self.read_comparison(request.project_id, request.action_id);
+            return self.recorded_comparison_view(request);
         }
         self.preview_comparison(
             request.project_id,
@@ -460,7 +587,14 @@ impl ProjectStore {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "arena-commit")
         })?;
-        self.read_comparison(request.project_id, request.action_id)
+        self.recorded_comparison_view(request)
+    }
+    fn recorded_comparison_view(&self, request: &ComparisonRequest) -> Result<ComparisonView, ExecutionError> {
+        // A failed projection cannot reject an already durable creation.
+        self.read_comparison(request.project_id, request.action_id).map_err(|mut failure| {
+            failure.code = ErrorCode::OutcomeUnknown;
+            failure
+        })
     }
     pub fn read_comparison(
         &self,

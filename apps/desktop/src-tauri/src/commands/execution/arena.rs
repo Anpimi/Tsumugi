@@ -161,6 +161,16 @@ pub async fn preview_arena_translation(
         .await
 }
 #[tauri::command]
+pub async fn read_arena_start_action(
+    state: State<'_, AppState>, request: StartRequest,
+) -> Result<Option<ArenaStartReceipt>, CommandError> {
+    state.sessions.run("read_arena_start_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.arena_start_action_read(request.project_id, request.attempt_id, &request.digest, request.confirmed)
+            .map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn start_arena_translation(
     state: State<'_, AppState>,
     request: StartRequest,
@@ -340,6 +350,16 @@ pub async fn read_arena_translation(
         .await
 }
 #[tauri::command]
+pub async fn read_arena_comparison_action(
+    state: State<'_, AppState>, request: ComparisonCommand,
+) -> Result<Option<ComparisonRequest>, CommandError> {
+    state.sessions.run("read_arena_comparison_action",CommandStage::ExecutionRead,move |sessions| {
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.arena_comparison_action_read(&ComparisonRequest {project_id:request.project_id,action_id:request.action_id,
+                unit_id:request.unit_id,locale:request.locale,revision_ids:request.revision_ids,blind:request.blind}).map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn create_arena_comparison(
     state: State<'_, AppState>,
     request: ComparisonCommand,
@@ -421,6 +441,15 @@ pub async fn list_arena_comparisons(
         .await
 }
 #[tauri::command]
+pub async fn read_arena_reveal_target(
+    state: State<'_, AppState>, request: ComparisonRead,
+) -> Result<Option<tsumugi_core::ArenaRevealTarget>, CommandError> {
+    state.sessions.run("read_arena_reveal_target",CommandStage::ExecutionRead,move |sessions| {
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.arena_reveal_target_read(request.project_id,request.comparison_id).map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn reveal_arena_identity(
     state: State<'_, AppState>,
     request: RevealRequest,
@@ -445,6 +474,17 @@ pub async fn reveal_arena_identity(
             },
         )
         .await
+}
+#[tauri::command]
+pub async fn read_arena_merge_action(
+    state: State<'_, AppState>, request: MergeRequest,
+) -> Result<Option<tsumugi_core::ArenaMergeActionRead>, CommandError> {
+    state.sessions.run("read_arena_merge_action",CommandStage::ExecutionRead,move |sessions| {
+        authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
+            .store.arena_merge_action_read(&SaveTranslationRevision {project_id:request.project_id,action_id:request.action_id,
+                unit_id:request.unit_id,locale:request.locale,source_revision_id:request.source_revision_id,
+                expected_selection_id:request.expected_selection_id,text:request.text},&request.merge).map_err(map_read)
+    }).await
 }
 #[tauri::command]
 pub async fn save_arena_merge(

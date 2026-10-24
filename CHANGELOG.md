@@ -48,6 +48,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Arena start, comparison creation, candidate selection and manual merges can confirm their original saved requests after uncertain acknowledgements without replaying writes. Identity reveal checks the original target visibility, retaining newer edits and requiring an explicit retry only when supported by the read result.
+
 - Resolve uncertain source and translation-import adoption, saved AI/Arena candidates, Task cancellation and continuation through read-only checks of the original request. Automatic checks do not repeat writes; retry remains explicit and is available only after the original result is confirmed absent.
 
 - Confirm uncertain translation saves and revision selections through read-only checks of their complete original requests. Keep newer edits and unknown results available; a confirmed check can continue leaving without saving again.

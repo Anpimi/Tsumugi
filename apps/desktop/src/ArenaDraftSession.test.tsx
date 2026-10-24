@@ -6,7 +6,7 @@ import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { confirmArenaView, useArenaDraftSession } from "./ArenaDraftSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
-import type { ArenaConfig, ArenaPrepared, ArenaView, ComparisonView } from "./arenaCommands";
+import type { ArenaConfig, ArenaPrepared, ArenaView, ComparisonView, CompareRequest, MergeRequest } from "./arenaCommands";
 import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import type { TranslationSelection } from "./translationCommands";
 import type { ProjectView, CommandError } from "./projectCommands";
@@ -54,6 +54,23 @@ function selectionFor(request: {actionId:string;unitId:string;locale:string;expe
   return {eventId:fixtureIdentity(951),revisionId:request.revisionId??fixtureIdentity(952),actionId:request.actionId,unitId:request.unitId,locale:request.locale,
     previousEventId:request.expectedSelectionId??null,sequence:request.expectedSelectionId ? "2" : "1"};
 }
+function comparisonActionFor(request:CompareRequest) {
+  return {projectId:request.projectId,actionId:request.actionId,unitId:request.unitId,locale:request.locale,
+    revisionIds:[...request.revisionIds],blind:request.blind};
+}
+function mergeActionFor(request:MergeRequest,receipt=selectionFor(request)) {
+  return {request:{projectId:request.projectId,actionId:request.actionId,unitId:request.unitId,locale:request.locale,
+    sourceRevisionId:request.sourceRevisionId,expectedSelectionId:request.expectedSelectionId??null,text:request.text},
+    merge:structuredClone(request.merge),receipt};
+}
+const actionReads={compare:"read_arena_comparison_action",select:"read_translation_selection_action",merge:"read_arena_merge_action"};
+function currentActionProof() {
+  const entry=owner.current().pending;
+  if(entry?.kind==="compare")return comparisonActionFor(entry.request);
+  if(entry?.kind==="select")return selectionFor(entry.request);
+  if(entry?.kind==="merge")return mergeActionFor(entry.request);
+  throw new Error("Expected an original Arena action");
+}
 /** Host display order may differ from preview slots and detail storage order. */
 function viewFor(value = prepared, displayOrder = value.preview.config.variants.map((_,index) => index).reverse()): ArenaView {
   const view = arenaViewFixture(value.preview.items[0].item,value.preview.config);
@@ -84,7 +101,7 @@ beforeEach(async()=>{
   prepared=p;prepared.attemptId=aiAttempt;comparison=c;
   let identity=910;
   let checkedWrites=-1;
-  invoke.mockReset();invoke.mockImplementation(async(command:string,payload:{request:PrepareRequest & {config:ArenaConfig;unitIds:string[];locale:string;revisionIds:string[];blind:boolean;expectedSelectionId:string|null;revisionId:string}})=>{
+  invoke.mockReset();invoke.mockImplementation(async(command:string,payload:{request:PrepareRequest & {config:ArenaConfig;unitIds:string[];locale:string;revisionIds:string[];blind:boolean;expectedSelectionId:string|null;revisionId:string;comparisonId:string}})=>{
     const request=payload.request;
     if(command==="create_execution_identity")return fixtureIdentity(identity++);
     if(command==="preview_arena_translation"){
@@ -94,14 +111,19 @@ beforeEach(async()=>{
       return prepared;
     }
     if(command==="start_arena_translation")return prepared.attemptId;
+    if(command==="read_arena_start_action")return null;
     if(command==="read_arena_translation")return viewFor();
     if(command==="create_arena_comparison"){
       comparison={...comparison,comparisonId:request.actionId,unitId:request.unitId,locale:request.locale,blind:request.blind,
         rows:request.revisionIds.map((id,index)=>({...comparison.rows[index],revisionId:id}))};return comparison;
     }
     if(command==="read_arena_comparison")return comparison;
+    if(command==="read_arena_comparison_action"||command==="read_arena_merge_action"||command==="read_translation_selection_action")return null;
     if(command==="list_arena_comparisons")return [];
     if(command==="reveal_arena_identity")return null;
+    if(command==="read_arena_reveal_target")return {projectId:request.projectId,targetId:request.comparisonId,
+      targetKind:request.comparisonId===prepared.attemptId?"attempt":"comparison",
+      visible:request.comparisonId===prepared.attemptId?!prepared.preview.config.blind:comparison.revealed};
     if(command==="select_translation_revision"||command==="save_arena_merge")return selectionFor(request);
     if(command==="read_translation_action"||command==="read_execution_receipt")return null;
     if(command==="prepare_execution_adoption"){action=actionFor(request);return action;}
@@ -113,6 +135,95 @@ beforeEach(async()=>{
     }
     throw new Error(command);
   });
+});
+
+const unknownStart: CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-read",recoveryRequired:true,reason:"start-ack-lost"};
+function arenaStartReceipt(request:{projectId:string;attemptId:string;digest:string}) {
+  return {projectId:request.projectId,attemptId:request.attemptId,taskId:viewFor().detail.taskId,digest:request.digest};
+}
+it.each(["lost","invalid"] as const)("checks one original Arena start after a %s acknowledgement without reading the result view",async kind=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,payload:{request:Parameters<typeof arenaStartReceipt>[0]})=>command==="start_arena_translation"
+    ?kind==="lost"?Promise.reject(unknownStart):Promise.resolve(fixtureIdentity(999))
+    :command==="read_arena_start_action"?Promise.resolve(arenaStartReceipt(payload.request)):original(command,payload));
+  await act(async()=>owner.start());
+  expect(owner.pending).toBeNull();expect(owner.started?.taskId).toBe(viewFor().detail.taskId);expect(owner.failure).toBeNull();
+  expect(payloads("read_arena_start_action")).toEqual(payloads("start_arena_translation"));
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(calls("read_arena_start_action")).toHaveLength(1);
+  expect(calls("read_arena_translation")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("keeps the original start error on a true missing result and permits only an explicit same-request retry",async()=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;let writes=0;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"
+    ?Promise.reject(++writes===1?unknownStart:rejected):original(command,payload));
+  await act(async()=>owner.start());const request=owner.pending!.request;
+  expect(owner.pending).toMatchObject({kind:"start",retryAllowed:true,checking:false,uncertain:true});expect(owner.failure).toEqual(unknownStart);
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(calls("read_arena_start_action")).toHaveLength(1);
+  await act(async()=>owner.retryPending());
+  expect(owner.pending?.request).toBe(request);expect(owner.pending?.retryAllowed).toBe(false);expect(owner.pending?.uncertain).toBe(true);
+  await act(async()=>owner.retryPending());expect(calls("start_arena_translation")).toHaveLength(2);expect(calls("read_arena_start_action")).toHaveLength(1);
+});
+
+it("keeps malformed or unrelated start proofs unknown and uses the same pure read for manual recovery",async()=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;let response:unknown=undefined;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"?Promise.reject(unknownStart)
+    :command==="read_arena_start_action"?Promise.resolve(response):original(command,payload));
+  await act(async()=>owner.start());const entry=owner.pending!;if(entry.kind!=="start")throw new Error("Expected original start");
+  const receipt=arenaStartReceipt(entry.request);
+  for(const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(996)}, {...receipt,attemptId:fixtureIdentity(997)},
+    {...receipt,digest:"f".repeat(64)}, {...receipt,taskId:null}]){
+    response=wrong;await act(async()=>owner.checkPending());
+    expect(owner.pending?.request).toBe(entry.request);expect(owner.pending?.retryAllowed).toBe(false);
+    await act(async()=>owner.retryPending());expect(calls("start_arena_translation")).toHaveLength(1);
+  }
+  response=receipt;await act(async()=>owner.checkPending());
+  expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();expect(owner.attempt).toBe(entry.request.attemptId);
+  expect(payloads("read_arena_start_action").every(request=>JSON.stringify(request)===JSON.stringify(entry.request))).toBe(true);
+});
+
+it("keeps a failed Arena start read blocked until a manual missing result permits the original explicit retry",async()=>{
+  render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!;let readsFail=true,writes=0;
+  const readError:CommandError={...unknownStart,reason:"start-read-unavailable"};
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"&&++writes===1?Promise.reject(unknownStart)
+    :command==="read_arena_start_action"&&readsFail?Promise.reject(readError):original(command,payload));
+  await act(async()=>owner.start());const request=owner.pending!.request;
+  expect(owner.failure).toEqual(readError);expect(owner.pending?.retryAllowed).toBe(false);
+  await act(async()=>owner.retryPending());expect(calls("start_arena_translation")).toHaveLength(1);
+  readsFail=false;await act(async()=>owner.checkPending());expect(owner.pending?.retryAllowed).toBe(true);
+  await act(async()=>owner.retryPending());expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();
+  expect(payloads("start_arena_translation")).toEqual([request,request]);expect(payloads("read_arena_start_action")).toEqual([request,request]);
+  expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("holds the Arena start reservation through its automatic read while hidden and preserves newer configuration",async()=>{
+  const rendered=render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!,response=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"?Promise.reject(unknownStart)
+    :command==="read_arena_start_action"?response.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.start();void owner.start();void owner.checkPending();});
+  await waitFor(()=>expect(calls("read_arena_start_action")).toHaveLength(1));
+  const entry=owner.current().pending!;if(entry.kind!=="start")throw new Error("Expected original start");
+  expect(entry.checking).toBe(true);expect(owner.current().busy).toBe(true);expect(owner.current().failure).toBeNull();
+  act(()=>owner.setConfig({...owner.current().config,maxRequests:80}));
+  rendered.rerender(<Harness mounted={false}/>,project);
+  await act(async()=>{response.resolve(arenaStartReceipt(entry.request));await flight;});
+  rendered.rerender(<Harness/>,project);
+  expect(owner.pending).toBeNull();expect(owner.config.maxRequests).toBe(80);expect(owner.dirty).toBe(true);expect(owner.busy).toBe(false);
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(calls("read_arena_start_action")).toHaveLength(1);
+});
+
+it.each(["before-read","during-read"] as const)("does not send or accept an Arena start read after retirement %s",async phase=>{
+  const rendered=render(<Harness/>,project);await prepare();const original=invoke.getMockImplementation()!,write=deferred<string>(),read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="start_arena_translation"?write.promise
+    :command==="read_arena_start_action"?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.start();});const request=payloads("start_arena_translation")[0];
+  if(phase==="during-read"){
+    await act(async()=>{write.reject(unknownStart);await Promise.resolve();});
+    await waitFor(()=>expect(calls("read_arena_start_action")).toHaveLength(1));
+  }
+  const before=owner.current();rendered.unmount();
+  await act(async()=>{if(phase==="before-read")write.reject(unknownStart);else read.resolve(arenaStartReceipt(request));await flight;});
+  expect(owner.current()).toBe(before);expect(calls("read_arena_start_action")).toHaveLength(phase==="before-read"?0:1);
 });
 afterEach(cleanup);
 async function prepare(){
@@ -217,6 +328,9 @@ it.each(operations)("releases a fresh definitively rejected %s without discardin
   invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(rejected):original(command,payload));
   await act(async()=>{await execute(kind);});expect(owner.pending).toBeNull();
   expect(calls("read_execution_adoption_action")).toHaveLength(0);
+  expect(calls("read_arena_comparison_action")).toHaveLength(0);expect(calls("read_arena_merge_action")).toHaveLength(0);expect(calls("read_translation_selection_action")).toHaveLength(0);
+  expect(calls("read_arena_reveal_target")).toHaveLength(0);
+  if(kind==="start")expect(calls("read_arena_start_action")).toHaveLength(0);
   if(kind==="start")expect(owner.prepared).not.toBeNull();if(kind==="merge")expect(owner.draft?.text).toBe(comparison.rows[0].text);
   const token=translations.reserveMutation();expect(token).not.toBeNull();act(()=>translations.releaseMutation(token!));
 });
@@ -228,10 +342,12 @@ it.each(["select","merge"] as const)("binds wrong %s ACKs and recovered receipts
   expect(pending.uncertain).toBe(true);
   const receipt=selectionFor(pending.request as Parameters<typeof selectionFor>[0]);
   for(const wrong of [{actionId:fixtureIdentity(998)},{unitId:fixtureIdentity(997)},{locale:"ja"},{previousEventId:null},{sequence:"0"},...(kind==="select"?[{revisionId:fixtureIdentity(996)}]:[])]){
-    invoke.mockImplementation((command:string,payload:unknown)=>command==="read_translation_action"?Promise.resolve({...receipt,...wrong}):original(command,payload));
+    invoke.mockImplementation((command:string,payload:unknown)=>command===(kind==="select"?"read_translation_selection_action":"read_arena_merge_action")
+      ?Promise.resolve(kind==="select"?{...receipt,...wrong}:mergeActionFor(pending.request as MergeRequest,{...receipt,...wrong})):original(command,payload));
     await act(async()=>{await owner.checkPending();});expect(owner.pending?.request).toEqual(pending.request);expect(owner.pending?.retryAllowed).toBe(false);
   }
-  invoke.mockImplementation((command:string,payload:unknown)=>command==="read_translation_action"?Promise.resolve(receipt):original(command,payload));
+  invoke.mockImplementation((command:string,payload:unknown)=>command===(kind==="select"?"read_translation_selection_action":"read_arena_merge_action")
+    ?Promise.resolve(kind==="select"?receipt:mergeActionFor(pending.request as MergeRequest,receipt)):original(command,payload));
   await act(async()=>{await owner.checkPending();});expect(owner.pending).toBeNull();expect(owner.notice).toBe("reconciled");
   expect(calls(commands[kind])).toHaveLength(1);
 });
@@ -250,14 +366,14 @@ it("keeps A to B to A merge edits after late confirmation and preserves fixed ba
 it("checks an old comparison by exact action despite a full bounded history list, and keeps failures unknown",async()=>{
   render(<Harness/>,project);await setupOperation("compare");const original=invoke.getMockImplementation()!;
   invoke.mockImplementation((command:string,payload:unknown)=>command==="create_arena_comparison"?Promise.reject({code:"outcome-unknown"})
-    :command==="read_arena_comparison"?Promise.reject(rejected):command==="list_arena_comparisons"?Promise.resolve(Array.from({length:100},(_,i)=>({...arenaFixture.responses.comparisons[0],comparisonId:fixtureIdentity(2000+i)}))):original(command,payload));
+    :command==="read_arena_comparison_action"?Promise.reject(rejected):command==="list_arena_comparisons"?Promise.resolve(Array.from({length:100},(_,i)=>({...arenaFixture.responses.comparisons[0],comparisonId:fixtureIdentity(2000+i)}))):original(command,payload));
   await act(async()=>{await owner.compare();});const pending=owner.pending!;
   await act(async()=>{await owner.checkPending();});expect(calls("list_arena_comparisons")).toHaveLength(0);
-  expect(payloads("read_arena_comparison")).toEqual([{sessionToken:project.sessionToken,projectId:project.metadata.projectId,comparisonId:(pending.request as {actionId:string}).actionId}]);
+  expect(payloads("read_arena_comparison_action")).toEqual([pending.request,pending.request]);expect(calls("read_arena_comparison")).toHaveLength(0);
   expect(owner.pending?.request).toEqual(pending.request);expect(owner.pending?.uncertain).toBe(true);
-  const request=pending.request as {actionId:string;unitId:string;locale:string;blind:boolean};
-  const result={...comparison,comparisonId:request.actionId,sourceRevisionId:fixtureIdentity(990),selectionId:fixtureIdentity(991),basis:"current-projection",rows:[...comparison.rows].reverse()};
-  invoke.mockImplementation((command:string,payload:unknown)=>command==="read_arena_comparison"?Promise.resolve(result):original(command,payload));
+  const request=pending.request as CompareRequest;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="read_arena_comparison_action"?Promise.resolve(comparisonActionFor(request))
+    :command==="read_arena_comparison"?Promise.reject(new Error("Current projection unavailable")):original(command,payload));
   await act(async()=>{await owner.checkPending();});expect(owner.pending).toBeNull();expect(owner.comparisonId).toBe(request.actionId);
   expect(calls("create_arena_comparison")).toHaveLength(1);
 });
@@ -267,6 +383,94 @@ it("requires an exact null reveal ACK, and a revealed read proves the target goa
   invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.resolve({}):original(command,payload));
   await act(async()=>{await owner.reveal(comparison.comparisonId!,"comparison");});expect(owner.pending?.uncertain).toBe(true);
   comparison={...comparison,revealed:true};await act(async()=>{await owner.checkPending();});expect(owner.pending).toBeNull();expect(calls("reveal_arena_identity")).toHaveLength(1);
+  expect(owner.notice).toBe("identitiesVisible");
+  const request=payloads("reveal_arena_identity")[0],{actionId:_action,...target}=request;
+  expect(payloads("read_arena_reveal_target")).toEqual([target,target]);
+});
+
+async function prepareRevealTarget(targetKind:"comparison"|"attempt") {
+  if(targetKind==="comparison"){
+    await compare();return comparison.comparisonId!;
+  }
+  prepared={...prepared,preview:{...prepared.preview,config:{...prepared.preview.config,blind:true}}};
+  const view=await start();act(()=>reads.client.setQueryData(reads.key(["arena",view.detail.attemptId]),view));
+  return view.detail.attemptId;
+}
+const unknownReveal:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-adopt",reason:"reveal-ack-lost",recoveryRequired:true};
+it.each([["comparison","lost"],["comparison","invalid"],["attempt","lost"],["attempt","invalid"]] as const)("checks the %s visibility goal after a %s reveal ACK without another write or a current View",async(targetKind,ack)=>{
+  render(<Harness/>,project);const targetId=await prepareRevealTarget(targetKind),original=invoke.getMockImplementation()!;
+  const identities=calls("create_execution_identity").length,viewReads=calls("read_arena_comparison").length+calls("read_arena_translation").length;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?ack==="lost"?Promise.reject(unknownReveal):Promise.resolve({})
+    :command==="read_arena_reveal_target"?Promise.resolve({projectId:project.metadata.projectId,targetId,targetKind,visible:true})
+    :command==="read_arena_comparison"||command==="read_arena_translation"?Promise.reject(new Error("Current view unavailable")):original(command,payload));
+  await act(async()=>owner.reveal(targetId,targetKind));
+  expect(owner.pending).toBeNull();expect(owner.notice).toBe("identitiesVisible");expect(owner.failure).toBeNull();
+  expect(calls("reveal_arena_identity")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(identities+1);
+  expect(payloads("read_arena_reveal_target")).toEqual([{sessionToken:project.sessionToken,projectId:project.metadata.projectId,comparisonId:targetId}]);
+  expect(calls("read_arena_comparison").length+calls("read_arena_translation").length).toBe(viewReads);
+  await act(async()=>owner.checkPending());expect(calls("read_arena_reveal_target")).toHaveLength(1);
+});
+
+it.each(["comparison","attempt"] as const)("distinguishes a missing %s from a hidden target and keeps the original unknown after a rejected explicit retry",async targetKind=>{
+  render(<Harness/>,project);const targetId=await prepareRevealTarget(targetKind),original=invoke.getMockImplementation()!;let visible:boolean|null=null,writes=0;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.reject(++writes===1?unknownReveal:rejected)
+    :command==="read_arena_reveal_target"?Promise.resolve(visible===null?null:{projectId:project.metadata.projectId,targetId,targetKind,visible}):original(command,payload));
+  await act(async()=>owner.reveal(targetId,targetKind));const entry=owner.pending!;
+  expect(entry).toMatchObject({kind:"reveal",targetMissing:true,checking:false,retryAllowed:false});expect(owner.failure).toEqual(unknownReveal);
+  await act(async()=>owner.retryPending());expect(calls("reveal_arena_identity")).toHaveLength(1);
+  visible=false;await act(async()=>owner.checkPending());
+  expect(owner.pending).toMatchObject({targetMissing:false,retryAllowed:true});expect(owner.pending?.request).toBe(entry.request);
+  await act(async()=>owner.retryPending());expect(owner.pending).toMatchObject({uncertain:true,retryAllowed:false});expect(owner.pending?.request).toBe(entry.request);
+  expect(calls("read_arena_reveal_target")).toHaveLength(2);await act(async()=>owner.retryPending());expect(calls("reveal_arena_identity")).toHaveLength(2);
+  visible=true;await act(async()=>owner.checkPending());
+  expect(owner.pending).toBeNull();expect(owner.notice).toBe("identitiesVisible");expect(owner.failure).toBeNull();
+  expect(payloads("reveal_arena_identity")).toEqual([entry.request,entry.request]);
+});
+
+it("retains reveal recovery after failed, malformed or differently bound target facts",async()=>{
+  render(<Harness/>,project);const targetId=await prepareRevealTarget("comparison"),original=invoke.getMockImplementation()!;
+  const readError:CommandError={...unknownReveal,stage:"execution-read",reason:"target-read-unavailable"};let fail=true,result:unknown;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.reject(unknownReveal)
+    :command==="read_arena_reveal_target"?fail?Promise.reject(readError):Promise.resolve(result):original(command,payload));
+  await act(async()=>owner.reveal(targetId,"comparison"));const request=owner.pending!.request;
+  expect(owner.failure).toEqual(readError);expect(owner.pending?.retryAllowed).toBe(false);fail=false;
+  const fact={projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible:true};
+  for(const wrong of [undefined,{}, {...fact,projectId:fixtureIdentity(993)}, {...fact,targetId:fixtureIdentity(994)},
+    {...fact,targetKind:"attempt"}, {...fact,visible:null}]){
+    result=wrong;await act(async()=>owner.checkPending());await act(async()=>owner.retryPending());
+    expect(owner.pending).toMatchObject({kind:"reveal",checking:false,targetMissing:false,retryAllowed:false});expect(owner.pending?.request).toBe(request);
+    expect(calls("reveal_arena_identity")).toHaveLength(1);
+  }
+  result=fact;await act(async()=>owner.checkPending());expect(owner.pending).toBeNull();expect(owner.notice).toBe("identitiesVisible");expect(owner.failure).toBeNull();
+});
+
+it("continues one reveal target read after consumer removal, preserves newer settings and leaves another owner's token held",async()=>{
+  const rendered=render(<Harness/>,project);const targetId=await prepareRevealTarget("comparison"),original=invoke.getMockImplementation()!,read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?Promise.reject(unknownReveal)
+    :command==="read_arena_reveal_target"?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.reveal(targetId,"comparison");void owner.reveal(targetId,"comparison");void owner.checkPending();});
+  await waitFor(()=>expect(calls("read_arena_reveal_target")).toHaveLength(1));
+  expect(owner.current().pending).toMatchObject({checking:true,retryAllowed:false,targetMissing:false});expect(owner.current().busy).toBe(true);expect(owner.current().failure).toBeNull();
+  let token!:symbol;act(()=>{token=translations.reserveMutation()!;owner.setComparisonBlind(false);reads.invalidate(["source","resources"]);});expect(token).not.toBeNull();
+  const removed={...project,metadata:{...project.metadata,targetLocales:[]}};
+  rendered.rerender(<Harness mounted={false}/>,removed);
+  await act(async()=>{read.resolve({projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible:true});await flight;});
+  rendered.rerender(<Harness/>,removed);expect(owner.pending).toBeNull();expect(owner.comparisonBlind).toBe(false);expect(owner.dirty).toBe(true);expect(owner.targetAvailable).toBe(false);
+  expect(owner.notice).toBe("identitiesVisible");expect(calls("reveal_arena_identity")).toHaveLength(1);expect(calls("read_arena_reveal_target")).toHaveLength(1);
+  expect(translations.reserveMutation()).toBeNull();act(()=>translations.releaseMutation(token));
+});
+
+it.each(["before-read","during-read"] as const)("does not send or accept a reveal target lookup after retirement %s",async phase=>{
+  const rendered=render(<Harness/>,project);const targetId=await prepareRevealTarget("comparison"),original=invoke.getMockImplementation()!,write=deferred<unknown>(),read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="reveal_arena_identity"?write.promise
+    :command==="read_arena_reveal_target"?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=owner.reveal(targetId,"comparison");});await waitFor(()=>expect(calls("reveal_arena_identity")).toHaveLength(1));
+  if(phase==="during-read"){
+    await act(async()=>{write.reject(unknownReveal);});await waitFor(()=>expect(calls("read_arena_reveal_target")).toHaveLength(1));
+  }
+  const before=owner.current();rendered.unmount();
+  await act(async()=>{if(phase==="before-read")write.reject(unknownReveal);else read.resolve({projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible:true});await flight;});
+  expect(owner.current()).toBe(before);expect(calls("read_arena_reveal_target")).toHaveLength(phase==="before-read"?0:1);
 });
 
 it("settles the original adoption receipt after a lost prepare ACK without adopting again",async()=>{
@@ -377,8 +581,92 @@ it("retains original unknown actions and fixed drafts after source, resource and
   await act(async()=>{await owner.saveMerge();});const request=owner.pending!.request;
   act(()=>reads.invalidate(["source","resources"]));rendered.rerender(<Harness/>,{...project,metadata:{...project.metadata,targetLocales:[]}});
   expect(owner.pending!.request).toEqual(request);expect(owner.draft!.basis).toBe(basis);expect(owner.draft!.stale).toBe(true);
-  invoke.mockImplementation((command:string,payload:unknown)=>command==="read_translation_action"?Promise.resolve(selectionFor(request as Parameters<typeof selectionFor>[0])):original(command,payload));
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="read_arena_merge_action"?Promise.resolve(mergeActionFor(request as MergeRequest)):original(command,payload));
   await act(async()=>{await owner.checkPending();});expect(owner.pending).toBeNull();expect(owner.notice).toBe("reconciled");
+});
+
+it.each([["compare","lost"],["compare","invalid"],["select","lost"],["select","invalid"],["merge","lost"],["merge","invalid"]] as const)("automatically confirms one original %s after a %s ACK without replaying or reading its current projection",async(kind,ack)=>{
+  render(<Harness/>,project);await setupOperation(kind);const original=invoke.getMockImplementation()!,identities=calls("create_execution_identity").length;
+  const error:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-adopt",reason:"action-ack-lost",recoveryRequired:true};
+  invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?ack==="lost"?Promise.reject(error):Promise.resolve({})
+    :command===actionReads[kind]?Promise.resolve(currentActionProof())
+    :command==="read_arena_comparison"?Promise.reject(new Error("Current projection unavailable")):original(command,payload));
+  await act(async()=>execute(kind));
+  const request=payloads(commands[kind]).at(-1);
+  expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();expect(owner.notice).toBe("reconciled");
+  expect(payloads(actionReads[kind])).toEqual([request]);expect(calls(commands[kind])).toHaveLength(1);
+  expect(calls("create_execution_identity")).toHaveLength(identities+1);expect(calls("read_translation_action")).toHaveLength(0);
+  await act(async()=>owner.checkPending());expect(calls(actionReads[kind])).toHaveLength(1);
+  if(kind==="compare"){
+    expect(owner.comparisonId).toBe(request.actionId);await expect(owner.readComparison(request.actionId)).rejects.toThrow();
+    expect(owner.current().pending).toBeNull();expect(owner.current().comparisonId).toBe(request.actionId);
+  }
+  const token=translations.reserveMutation();expect(token).not.toBeNull();act(()=>translations.releaseMutation(token!));
+});
+
+it.each(["compare","select","merge"] as const)("permits only an explicit original %s retry after a true missing action and retains unknown after rejection",async kind=>{
+  render(<Harness/>,project);await setupOperation(kind);const original=invoke.getMockImplementation()!;let writes=0;
+  const error:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-adopt",reason:"action-ack-lost",recoveryRequired:true};
+  invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(++writes===1?error:rejected):original(command,payload));
+  await act(async()=>execute(kind));const request=owner.pending!.request;
+  expect(owner.pending).toMatchObject({kind,checking:false,retryAllowed:true,uncertain:true});expect(owner.failure).toEqual(error);
+  expect(calls(commands[kind])).toHaveLength(1);expect(payloads(actionReads[kind])).toEqual([request]);
+  if(kind!=="compare")expect(translations.reserveMutation()).toBeNull();
+  await act(async()=>owner.retryPending());expect(owner.pending?.request).toBe(request);expect(owner.pending?.uncertain).toBe(true);
+  expect(owner.pending?.retryAllowed).toBe(false);await act(async()=>owner.retryPending());
+  expect(calls(commands[kind])).toHaveLength(2);expect(calls(actionReads[kind])).toHaveLength(1);
+  invoke.mockImplementation(original);await act(async()=>owner.checkPending());expect(owner.pending?.retryAllowed).toBe(true);
+  await act(async()=>owner.retryPending());expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();
+  expect(payloads(commands[kind])).toEqual([request,request,request]);expect(payloads(actionReads[kind])).toEqual([request,request]);
+});
+
+it.each(["compare","select","merge"] as const)("keeps a failed or invalid %s lookup blocked and manually confirms only its complete original proof",async kind=>{
+  render(<Harness/>,project);await setupOperation(kind);const original=invoke.getMockImplementation()!;
+  const readError:CommandError={code:"outcome-unknown",outcome:"unknown",stage:"execution-read",reason:"action-read-unavailable",recoveryRequired:true};
+  let proof:unknown=undefined,fail=true;
+  invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(new Error("Lost ACK"))
+    :command===actionReads[kind]?fail?Promise.reject(readError):Promise.resolve(proof):original(command,payload));
+  await act(async()=>execute(kind));const entry=owner.pending!,correct=currentActionProof();
+  expect(owner.failure).toEqual(readError);expect(owner.pending?.retryAllowed).toBe(false);
+  fail=false;await act(async()=>owner.checkPending());expect(owner.pending?.request).toBe(entry.request);expect(owner.pending?.retryAllowed).toBe(false);
+  if(entry.kind==="compare")proof={...comparisonActionFor(entry.request),revisionIds:[...entry.request.revisionIds].reverse()};
+  else if(entry.kind==="select")proof={...selectionFor(entry.request),revisionId:fixtureIdentity(999)};
+  else if(entry.kind==="merge"){const value=mergeActionFor(entry.request);proof={...value,request:{...value.request,text:value.request.text+" changed"}};}
+  await act(async()=>owner.checkPending());await act(async()=>owner.retryPending());
+  expect(owner.pending?.request).toBe(entry.request);expect(owner.pending?.retryAllowed).toBe(false);expect(calls(commands[kind])).toHaveLength(1);
+  if(kind!=="compare")expect(translations.reserveMutation()).toBeNull();
+  proof=correct;await act(async()=>owner.checkPending());
+  expect(owner.pending).toBeNull();expect(owner.failure).toBeNull();expect(payloads(actionReads[kind])).toEqual([entry.request,entry.request,entry.request,entry.request]);
+});
+
+it.each(["compare","select","merge"] as const)("holds the %s flight through automatic checking, consumer removal and newer B",async kind=>{
+  const rendered=render(<Harness/>,project);await setupOperation(kind);const original=invoke.getMockImplementation()!,read=deferred<unknown>();
+  const originalDirty=owner.current().dirty,originalMergeBasis=owner.current().draft?.basis;
+  invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(new Error("Lost ACK"))
+    :command===actionReads[kind]?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=execute(kind);void execute(kind);void owner.checkPending();});
+  await waitFor(()=>expect(calls(actionReads[kind])).toHaveLength(1));const entry=owner.current().pending!,proof=currentActionProof();
+  expect(entry).toMatchObject({kind,checking:true,retryAllowed:false});expect(owner.current().busy).toBe(true);expect(owner.current().failure).toBeNull();
+  if(kind!=="compare")expect(translations.reserveMutation()).toBeNull();
+  act(()=>{if(kind==="merge")owner.editMerge("Newer B");else owner.setComparisonBlind(!owner.current().comparisonBlind);});
+  rendered.rerender(<Harness mounted={false}/>,project);
+  await act(async()=>{read.resolve(proof);await flight;});rendered.rerender(<Harness/>,project);
+  expect(owner.pending).toBeNull();expect(owner.busy).toBe(false);
+  if(entry.kind==="merge"){
+    expect(owner.dirty).toBe(originalDirty);expect(owner.draft?.text).toBe("Newer B");
+    expect(owner.draft?.editSeq).toBe(entry.draftSeq+1);expect(owner.draft?.basis).toBe(originalMergeBasis);
+  }else expect(owner.dirty).toBe(true);
+  expect(calls(commands[kind])).toHaveLength(1);expect(payloads(actionReads[kind])).toEqual([entry.request]);
+  const token=translations.reserveMutation();expect(token).not.toBeNull();act(()=>translations.releaseMutation(token!));
+});
+
+it.each(["compare","merge"] as const)("ignores a late %s proof after owner retirement",async kind=>{
+  const rendered=render(<Harness/>,project);await setupOperation(kind);const original=invoke.getMockImplementation()!,read=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(new Error("Lost ACK"))
+    :command===actionReads[kind]?read.promise:original(command,payload));
+  let flight!:Promise<void>;act(()=>{flight=execute(kind);});await waitFor(()=>expect(calls(actionReads[kind])).toHaveLength(1));
+  const before=owner.current(),proof=currentActionProof();rendered.unmount();
+  await act(async()=>{read.resolve(proof);await flight;});expect(owner.current()).toBe(before);expect(calls(actionReads[kind])).toHaveLength(1);
 });
 
 it("accepts exactly 100 expanded items and rejects 100 sources by four variants before Host preview, without slicing",async()=>{

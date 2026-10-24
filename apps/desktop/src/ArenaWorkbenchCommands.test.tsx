@@ -103,8 +103,12 @@ beforeEach(async () => {
     if (command === "create_arena_comparison") { comparison = { ...comparison, comparisonId: String(request.actionId), blind: Boolean(request.blind), revealed: !request.blind }; return structuredClone(comparison); }
     if (command === "read_arena_comparison") return structuredClone(comparison);
     if (command === "reveal_arena_identity") { comparison = { ...comparison, revealed: true }; view = { ...view, revealed: true, variants: prepared.preview.config.variants }; return null; }
+    if (command === "read_arena_reveal_target") return {projectId:request.projectId,targetId:request.comparisonId,
+      targetKind:request.comparisonId===view.detail.attemptId?"attempt":"comparison",
+      visible:request.comparisonId===view.detail.attemptId?view.revealed:comparison.revealed};
     if (command === "select_translation_revision" || command === "save_arena_merge") return selectionFor(request);
     if (command === "read_translation_action") return null;
+    if (command === "read_arena_comparison_action" || command === "read_arena_merge_action" || command === "read_translation_selection_action") return null;
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "prepare_execution_adoption") { action = actionFor(request as unknown as PrepareRequest); return action; }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receiptFor();
@@ -134,6 +138,100 @@ async function compare() {
   await act(async () => { expect(registry.dispatch("arena.create-comparison", scope, comparePayload())).toBe(true); });
   await waitFor(() => expect(registry.describe("arena.begin-merge", scope, comparisonPayload())?.availability.enabled).toBe(true));
 }
+
+it.each(["en-US","zh-CN"] as const)("checks reveal target facts in %s and distinguishes missing, hidden and visible without an action receipt",async language=>{
+  await open();await compare();const original=invoke.getMockImplementation()!,write=deferred<unknown>(),read=deferred<unknown>();
+  const targetId=comparison.comparisonId!;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="reveal_arena_identity"?write.promise
+    :command==="read_arena_reveal_target"?read.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("arena.reveal-identities",scope,{kind:"arena-reveal",targetKind:"comparison",targetId})).toBe(true);});
+  await waitFor(()=>expect(calls("reveal_arena_identity")).toHaveLength(1));
+  const pending=owner.current().pending;if(pending?.kind!=="reveal")throw new Error("Expected original reveal");
+  const payload={kind:"arena-pending" as const,pendingKind:"reveal" as const,actionId:pending.request.actionId,targetKind:pending.targetKind,targetId};
+  await act(async()=>{await i18n.changeLanguage(language);});
+  const checking=language==="en-US"?"Checking whether candidate identities are visible…":"正在核对候选身份是否已可见…";
+  expect(screen.queryByText(checking)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve({});});await screen.findByText(checking);
+  expect(owner.current().pending).toMatchObject({checking:true,retryAllowed:false});expect(owner.current().failure).toBeNull();
+  act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
+  await act(async()=>{read.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(checking)).not.toBeInTheDocument();
+  await screen.findByText(language==="en-US"?"The original comparison or round could not be found. Your reveal request is kept; check the target again before retrying.":"找不到原比较或轮次。已保留揭盲请求，请重新核对目标后再重试。");
+  expect(owner.current().pending).toMatchObject({targetMissing:true,retryAllowed:false});
+  expect(screen.queryByRole("button",{name:i18n.t("ai.retrySame")})).not.toBeInTheDocument();
+  expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);
+  expect(registry.describe("arena.reconcile-pending",scope,payload)?.risk).toBe("reads-arena");
+  let visible=false;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_arena_reveal_target"?Promise.resolve({projectId:project.metadata.projectId,targetId,targetKind:"comparison",visible})
+    :command==="read_arena_comparison"?Promise.reject(new Error("Current view unavailable")):original(command,args));
+  expect(registry.dispatch("arena.reconcile-pending",scope,{...payload,targetId:fixtureIdentity(999)})).toBe(false);
+  await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current().busy).toBe(false));expect(owner.current().pending).toMatchObject({targetMissing:false,retryAllowed:true});
+  expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
+  visible=true;await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
+  await screen.findByText(language==="en-US"?"Candidate identities are visible.":"候选身份已可见。");
+  expect(owner.current().pending).toBeNull();expect(owner.current().failure).toBeNull();expect(owner.current().notice).toBe("identitiesVisible");
+  expect(screen.queryByText(i18n.t("arena.reconciled"))).not.toBeInTheDocument();
+  expect(payloads("read_arena_reveal_target")).toEqual(Array.from({length:3},()=>({sessionToken:pending.request.sessionToken,projectId:pending.request.projectId,comparisonId:targetId})));
+  expect(calls("reveal_arena_identity")).toHaveLength(1);
+});
+
+it.each([["compare","en-US"],["compare","zh-CN"],["select","en-US"],["select","zh-CN"],["merge","en-US"],["merge","zh-CN"]] as const)("shows the actual %s checking phase in %s and holds the original Registry reservation",async(kind,language)=>{
+  await open();
+  if(kind==="compare"){
+    act(()=>{owner.setUnit(item.unitId);owner.setReferences(comparison.rows.map(row=>row.revisionId));owner.setComparisonBlind(true);});
+    await waitFor(()=>expect(registry.describe("arena.create-comparison",scope,comparePayload())?.availability.enabled).toBe(true));
+  }else{
+    await compare();if(kind==="merge")act(()=>{expect(registry.dispatch("arena.begin-merge",scope,comparisonPayload())).toBe(true);});
+  }
+  const commands={compare:"create_arena_comparison",select:"select_translation_revision",merge:"save_arena_merge"};
+  const lookups={compare:"read_arena_comparison_action",select:"read_translation_selection_action",merge:"read_arena_merge_action"};
+  const original=invoke.getMockImplementation()!,write=deferred<unknown>(),read=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command===commands[kind]?write.promise
+    :command===lookups[kind]?read.promise:original(command,args));
+  await act(async()=>{expect(kind==="compare"?registry.dispatch("arena.create-comparison",scope,comparePayload())
+    :kind==="select"?registry.dispatch("arena.select-candidate",scope,selectPayload()):registry.dispatch("arena.save-merge",scope,mergePayload())).toBe(true);});
+  await waitFor(()=>expect(calls(commands[kind])).toHaveLength(1));
+  const pending=owner.current().pending;if(!pending||pending.kind==="start"||pending.kind==="adopt"||pending.kind==="reveal")throw new Error("Expected original Arena decision");
+  const payload={kind:"arena-pending" as const,pendingKind:pending.kind,actionId:pending.request.actionId,unitId:pending.request.unitId,locale:pending.request.locale};
+  await act(async()=>{await i18n.changeLanguage(language);});
+  const messages={compare:{"en-US":"Checking the saved comparison…","zh-CN":"正在核对保存的比较…"},
+    select:{"en-US":"Checking the saved selection…","zh-CN":"正在核对选择结果…"},merge:{"en-US":"Checking the saved merge…","zh-CN":"正在核对合并结果…"}};
+  const message=messages[kind][language];expect(screen.queryByText(message)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve({});});await screen.findByText(message);
+  expect(owner.current().pending).toMatchObject({kind,checking:true,retryAllowed:false});expect(owner.current().failure).toBeNull();
+  act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
+  await act(async()=>{read.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(message)).not.toBeInTheDocument();expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("arena.retry-pending",scope,{...payload,actionId:fixtureIdentity(999)})).toBe(false);
+  expect(calls(commands[kind])).toHaveLength(1);expect(payloads(lookups[kind])).toEqual([pending.request]);
+});
+
+it.each(["en-US","zh-CN"] as const)("exposes the real Arena start checking phase and gates the exact Registry retry in %s",async language=>{
+  await open();prepared={...prepared,preview:{...prepared.preview,digest:"d".repeat(64)}};
+  await act(async()=>{expect(registry.dispatch("arena.preview",scope,preparationPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.current().prepared).not.toBeNull());act(()=>owner.setConsent(true));
+  const original=invoke.getMockImplementation()!,write=deferred<string>(),lookup=deferred<unknown>();
+  invoke.mockImplementation((command:string,args:unknown)=>command==="start_arena_translation"?write.promise
+    :command==="read_arena_start_action"?lookup.promise:original(command,args));
+  await act(async()=>{expect(registry.dispatch("arena.start",scope,startPayload())).toBe(true);});
+  const entry=owner.current().pending;if(entry?.kind!=="start")throw new Error("Expected original start");
+  const payload={kind:"arena-pending" as const,pendingKind:"start" as const,attemptId:entry.request.attemptId};
+  await act(async()=>{await i18n.changeLanguage(language);});
+  const message=language==="en-US"?"Checking whether this task was started…":"正在核对此次任务是否已启动…";
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  await act(async()=>{write.resolve(fixtureIdentity(999));});await screen.findByText(message);
+  act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
+  await act(async()=>{lookup.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
+  expect(screen.queryByText(message)).not.toBeInTheDocument();
+  expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("arena.retry-pending",scope,{...payload,attemptId:fixtureIdentity(998)})).toBe(false);
+  invoke.mockImplementation((command:string,args:unknown)=>command==="read_arena_start_action"?Promise.resolve({projectId:entry.request.projectId,
+    attemptId:entry.request.attemptId,taskId:aiTask,digest:entry.request.digest}):original(command,args));
+  await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current().pending).toBeNull());
+  expect(calls("start_arena_translation")).toHaveLength(1);expect(payloads("read_arena_start_action")).toEqual([entry.request,entry.request]);
+});
 
 it("registers scoped Arena commands and routes the visible generation and editor actions", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
@@ -316,10 +414,11 @@ it("refuses adoption after a failed replacement is removed during prepare and pr
 
 it("recovers an unknown merge using its original request despite changed source, locale, Query and newer text", async () => {
   const { rendered } = await open(); await compare(); act(() => { expect(registry.dispatch("arena.begin-merge", scope, comparisonPayload())).toBe(true); });
-  const original = invoke.getMockImplementation()!; let first = true;
-  invoke.mockImplementation((command: string, payload: unknown) => command === "save_arena_merge" && first ? (first = false, Promise.reject({ code: "outcome-unknown" })) : original(command, payload));
+  const original = invoke.getMockImplementation()!; let first = true,lookups=0;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "save_arena_merge" && first ? (first = false, Promise.reject({ code: "outcome-unknown" }))
+    :command==="read_arena_merge_action"&&++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):original(command, payload));
   act(() => { expect(registry.dispatch("arena.save-merge", scope, mergePayload())).toBe(true); });
-  await waitFor(() => expect(owner.current().pending?.uncertain).toBe(true));
+  await waitFor(() => expect(owner.current().busy).toBe(false));expect(owner.current().pending?.uncertain).toBe(true);
   const request = payloads("save_arena_merge")[0], identities = calls("create_execution_identity").length;
   act(() => { owner.editMerge("Newer B"); reads.invalidate(["source", "resources"]); });
   const removed = { ...project, metadata: { ...project.metadata, targetLocales: [] } }; rendered.rerender(<Harness project={removed} />, removed);

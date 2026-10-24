@@ -1469,3 +1469,235 @@ fn cancellation_action_ipc_reads_exact_requests_without_initializing_or_replayin
     original["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&webview, "read_execution_cancellation_action", original).unwrap(), expected);
 }
+
+
+fn arena_receipt_source(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    context: &Value,
+) -> (ExecutionId, ExecutionId) {
+    let project = serde_json::from_value(context["projectId"].clone()).unwrap();
+    let context = context.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = authorized(sessions, context["sessionToken"].as_str().unwrap(), project, CommandStage::ExecutionRead).unwrap();
+        let (host, store) = active.execution_parts().unwrap();
+        let bundle = tsumugi_core::content::SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"Hello {name}","second":"Same"}"#, "en-US",
+        ).unwrap();
+        let input = bundle.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let result = store.execution_current_result(input.envelope().attempt_id, input.envelope().items[0].item_id).unwrap().unwrap();
+        let preview = store.source_preview(input.envelope().attempt_id, result, 0, 10).unwrap();
+        let action = store.prepare_adoption_with_id(ExecutionId::new(), input.envelope().attempt_id,
+            input.envelope().units[0].unit_id, vec![result], serde_json::to_value(preview.confirmation).unwrap()).unwrap();
+        store.adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler).unwrap();
+        let row = store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 10).unwrap().rows.remove(0);
+        let identity = (row.unit_id.unwrap(), row.source_revision_id.unwrap());
+        // Subsequent receipt reads must not recreate the fixture's idle runtime.
+        active.execution = None;
+        identity
+    })
+}
+
+fn arena_receipt_config() -> tsumugi_core::ai::arena::ArenaConfig {
+    let variant = tsumugi_core::ai::AiConfig {
+        endpoint: "http://127.0.0.1:9".into(),
+        model: "arena-receipt-model".into(),
+        credential_env: "TSUMUGI_NONEXISTENT_ARENA_RECEIPT_FIXTURE".into(),
+        ..Default::default()
+    };
+    tsumugi_core::ai::arena::ArenaConfig {
+        variants: vec![variant.clone(), variant], max_items: 20, max_requests: 40,
+        concurrency: 1, blind: true, parent_attempt_id: None,
+    }
+}
+
+fn arena_receipt_candidates(
+    app: &tauri::App<tauri::test::MockRuntime>, unit: ExecutionId, source: ExecutionId,
+) -> (tsumugi_core::ComparisonRequest, tsumugi_core::SaveTranslationRevision) {
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let first = tsumugi_core::SaveTranslationRevision {
+            project_id: project, action_id: ExecutionId::new(), unit_id: unit, locale: "zh-CN".into(),
+            source_revision_id: source, expected_selection_id: None, text: "First".into(),
+        };
+        let saved_first = store.save_translation_revision(&first).unwrap();
+        let second = tsumugi_core::SaveTranslationRevision {
+            action_id: ExecutionId::new(), expected_selection_id: Some(saved_first.event_id), text: "Second".into(), ..first
+        };
+        let saved_second = store.save_translation_revision(&second).unwrap();
+        let comparison = tsumugi_core::ComparisonRequest {
+            project_id: project, action_id: ExecutionId::new(), unit_id: unit, locale: "zh-CN".into(),
+            revision_ids: vec![saved_first.revision_id, saved_second.revision_id], blind: true,
+        };
+        (comparison, tsumugi_core::SaveTranslationRevision {
+            action_id: ExecutionId::new(), expected_selection_id: Some(saved_second.event_id), text: "Merged".into(), ..second
+        })
+    })
+}
+
+fn arena_receipt_sequence(app: &tauri::App<tauri::test::MockRuntime>) -> tsumugi_core::execution::Revision {
+    app.state::<AppState>().sessions.with(|sessions| {
+        sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence
+    })
+}
+
+fn arena_receipt_assert_no_runtime(app: &tauri::App<tauri::test::MockRuntime>) {
+    app.state::<AppState>().sessions.with(|sessions| {
+        assert!(sessions.active.as_ref().unwrap().execution.is_none());
+    });
+}
+
+#[test]
+fn arena_start_action_ipc_reads_original_input_without_runtime_or_provider() {
+    let (temp, app, webview, mut context) = setup();
+    let missing = request(&context, json!({"attemptId":ExecutionId::new(),"digest":"0".repeat(64),"confirmed":true}));
+    assert_eq!(call(&webview, "read_arena_start_action", missing).unwrap(), Value::Null);
+    arena_receipt_assert_no_runtime(&app);
+    let (unit, _) = arena_receipt_source(&app, &context);
+    let (input, digest) = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let preview = store.preview_arena(arena_receipt_config(), "zh-CN", &[unit]).unwrap();
+        (preview.fixed_input(store.metadata().unwrap().project_id()).unwrap(), preview.digest)
+    });
+    let mut original = request(&context, json!({"attemptId":input.envelope().attempt_id,"digest":digest,"confirmed":true}));
+    assert_eq!(call(&webview, "read_arena_start_action", original.clone()).unwrap(), Value::Null);
+    let expected = json!({"projectId":input.envelope().project_id,"attemptId":input.envelope().attempt_id,
+        "taskId":input.envelope().task_id,"digest":digest});
+    let task = input.envelope().task_id;
+    app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_mut().unwrap().store.enqueue_execution(&input).unwrap();
+    });
+    let sequence = arena_receipt_sequence(&app);
+    assert_eq!(call(&webview, "read_arena_start_action", original.clone()).unwrap(), expected);
+    assert_eq!(arena_receipt_sequence(&app), sequence);
+    arena_receipt_assert_no_runtime(&app);
+    for (field, value) in [("projectId",json!(ExecutionId::new())),("digest",json!("0".repeat(64))),
+        ("confirmed",json!(false)),("sessionToken",json!("retired-session"))] {
+        let mut wrong = original.clone(); wrong[field] = value;
+        assert!(call(&webview, "read_arena_start_action", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        active.store.cancel_execution(task, ExecutionId::new()).unwrap();
+        active.execution_parts().unwrap().0.quiescing = true;
+    });
+    assert_eq!(call(&webview, "read_arena_start_action", original.clone()).unwrap(), expected);
+    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution = None; });
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview, "read_arena_start_action", original.clone()).is_err());
+    context["sessionToken"] = reopened["sessionToken"].clone(); original["sessionToken"] = context["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_arena_start_action", original).unwrap(), expected);
+    arena_receipt_assert_no_runtime(&app);
+}
+
+#[test]
+fn arena_comparison_merge_action_ipc_preserves_complete_historical_requests() {
+    let (temp, app, webview, mut context) = setup();
+    let (unit, source) = arena_receipt_source(&app, &context);
+    let (comparison, save) = arena_receipt_candidates(&app, unit, source);
+    let comparison_value = serde_json::to_value(&comparison).unwrap();
+    let mut comparison_request = request(&context, comparison_value.clone());
+    assert_eq!(call(&webview, "read_arena_comparison_action", comparison_request.clone()).unwrap(), Value::Null);
+    let original_comparison = comparison.clone();
+    let (save, merge, receipt) = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let view = store.create_comparison(&comparison).unwrap();
+        let merge = tsumugi_core::MergeBasis { contributors: comparison.revision_ids, expected_basis: view.basis };
+        let receipt = store.save_merged_translation(&save, &merge).unwrap();
+        (save, merge, receipt)
+    });
+    let mut merge_value = serde_json::to_value(&save).unwrap(); merge_value["merge"] = serde_json::to_value(&merge).unwrap();
+    let mut merge_request = request(&context, merge_value.clone());
+    let expected = json!({"request":save,"merge":merge,"receipt":receipt});
+    let mut absent = merge_request.clone(); absent["actionId"] = json!(ExecutionId::new());
+    assert_eq!(call(&webview, "read_arena_merge_action", absent).unwrap(), Value::Null);
+    let sequence = arena_receipt_sequence(&app);
+    assert_eq!(call(&webview, "read_arena_comparison_action", comparison_request.clone()).unwrap(), comparison_value);
+    assert_eq!(call(&webview, "read_arena_merge_action", merge_request.clone()).unwrap(), expected);
+    assert_eq!(arena_receipt_sequence(&app), sequence); arena_receipt_assert_no_runtime(&app);
+    for (command, request, field, value) in [
+        ("read_arena_comparison_action",comparison_request.clone(),"blind",json!(false)),
+        ("read_arena_comparison_action",comparison_request.clone(),"revisionIds",json!([original_comparison.revision_ids[1],original_comparison.revision_ids[0]])),
+        ("read_arena_merge_action",merge_request.clone(),"text",json!("Changed")),
+        ("read_arena_merge_action",merge_request.clone(),"expectedSelectionId",Value::Null),
+        ("read_arena_merge_action",merge_request.clone(),"projectId",json!(ExecutionId::new())),
+        ("read_arena_merge_action",merge_request.clone(),"sessionToken",json!("retired-session")),
+    ] {
+        let mut wrong = request; wrong[field] = value; assert!(call(&webview, command, wrong).is_err());
+    }
+    let historical = original_comparison.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let newer = tsumugi_core::SaveTranslationRevision {action_id:ExecutionId::new(), expected_selection_id:Some(receipt.event_id), text:"Newer".into(), ..save};
+        store.save_translation_revision(&newer).unwrap();
+        let revision = store.metadata().unwrap().metadata_revision(); store.set_target_locales(revision, &["ja".into()]).unwrap();
+        assert_eq!(store.create_comparison(&historical).unwrap_err().code, ErrorCode::OutcomeUnknown);
+    });
+    let sequence = arena_receipt_sequence(&app);
+    assert_eq!(call(&webview, "read_arena_comparison_action", comparison_request.clone()).unwrap(), comparison_value);
+    assert_eq!(call(&webview, "read_arena_merge_action", merge_request.clone()).unwrap(), expected);
+    assert_eq!(arena_receipt_sequence(&app), sequence);
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview, "read_arena_merge_action", merge_request.clone()).is_err());
+    context["sessionToken"] = reopened["sessionToken"].clone();
+    comparison_request["sessionToken"] = context["sessionToken"].clone(); merge_request["sessionToken"] = context["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_arena_comparison_action", comparison_request).unwrap(), comparison_value);
+    assert_eq!(call(&webview, "read_arena_merge_action", merge_request).unwrap(), expected);
+    arena_receipt_assert_no_runtime(&app);
+}
+
+#[test]
+fn arena_reveal_target_ipc_checks_visibility_not_individual_action_receipts() {
+    let (temp, app, webview, mut context) = setup();
+    let mut missing = request(&context, json!({"comparisonId":ExecutionId::new()}));
+    assert_eq!(call(&webview, "read_arena_reveal_target", missing.clone()).unwrap(), Value::Null);
+    arena_receipt_assert_no_runtime(&app);
+    let (unit, source) = arena_receipt_source(&app, &context);
+    let (comparison, _) = arena_receipt_candidates(&app, unit, source);
+    let comparison_id = comparison.action_id;
+    let project = comparison.project_id;
+    let attempt = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        store.create_comparison(&comparison).unwrap();
+        let preview = store.preview_arena(arena_receipt_config(), "zh-CN", &[unit]).unwrap();
+        let input = preview.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        let attempt = input.envelope().attempt_id; store.enqueue_execution(&input).unwrap(); attempt
+    });
+    for (target, kind) in [(comparison_id,"comparison"),(attempt,"attempt")] {
+        let original = request(&context, json!({"comparisonId":target}));
+        let hidden = json!({"projectId":project,"targetId":target,"targetKind":kind,"visible":false});
+        assert_eq!(call(&webview, "read_arena_reveal_target", original.clone()).unwrap(), hidden);
+        app.state::<AppState>().sessions.with(move |sessions| {
+            let store = &mut sessions.active.as_mut().unwrap().store;
+            store.reveal_arena(project,target,ExecutionId::new()).unwrap();
+            // The second action is a successful no-op against the same target.
+            store.reveal_arena(project,target,ExecutionId::new()).unwrap();
+        });
+        let mut expected = hidden; expected["visible"] = json!(true);
+        let sequence = arena_receipt_sequence(&app);
+        assert_eq!(call(&webview, "read_arena_reveal_target", original.clone()).unwrap(), expected);
+        assert_eq!(arena_receipt_sequence(&app), sequence); arena_receipt_assert_no_runtime(&app);
+        for field in ["projectId","sessionToken"] {
+            let mut wrong = original.clone(); wrong[field] = json!(ExecutionId::new());
+            assert!(call(&webview, "read_arena_reveal_target", wrong).is_err());
+        }
+    }
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    missing["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_arena_reveal_target", missing).unwrap(), Value::Null);
+    context["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_arena_reveal_target", request(&context,json!({"comparisonId":attempt}))).unwrap(),
+        json!({"projectId":project,"targetId":attempt,"targetKind":"attempt","visible":true}));
+    arena_receipt_assert_no_runtime(&app);
+}

@@ -364,6 +364,63 @@ fn arena_retry_uses_one_budget_and_invalid_unknown_outputs_never_become_candidat
 }
 
 #[test]
+fn arena_reveal_target_reads_preserve_original_attempt_facts_without_provider() {
+    let (_temp,mut store,rows)=source_project();let units=[rows[0].unit_id.unwrap()];
+    let mut config=cfg("http://127.0.0.1:9");config.blind=true;
+    let preview=store.preview_arena(config.clone(),"zh-CN",&units).unwrap();
+    let input=preview.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+    let project=input.envelope().project_id;let target=input.envelope().attempt_id;
+    assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),None);
+    store.enqueue_execution(&input).unwrap();
+    let hidden=crate::ArenaRevealTarget {project_id:project,target_id:target,target_kind:crate::ArenaRevealTargetKind::Attempt,visible:false};
+    assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(hidden.clone()));
+    assert_eq!(store.arena_reveal_target_read(ExecutionId::new(),target).unwrap_err().code,ErrorCode::Unauthorized);
+    store.reveal_arena(project,target,ExecutionId::new()).unwrap();
+    store.reveal_arena(project,target,ExecutionId::new()).unwrap();
+    let visible=crate::ArenaRevealTarget {visible:true,..hidden};
+    assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));
+    config.blind=false;let public=store.preview_arena(config,"zh-CN",&units).unwrap().fixed_input(store.metadata().unwrap().project_id()).unwrap();
+    store.enqueue_execution(&public).unwrap();
+    assert!(store.arena_reveal_target_read(project,public.envelope().attempt_id).unwrap().unwrap().visible);
+    assert_eq!(store.provider_budget(input.envelope().task_id).unwrap().unwrap().dispatched,0);
+    store.cancel_execution(input.envelope().task_id,ExecutionId::new()).unwrap();
+    store.cancel_execution(public.envelope().task_id,ExecutionId::new()).unwrap();
+    replace_source(&mut store,br#"{"changed":"New source"}"#);
+    let sequence=store.execution_sequence().unwrap();
+    assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));
+    assert_eq!(store.execution_sequence().unwrap(),sequence);
+    let directory=store.directory().to_path_buf();store.close().unwrap();let reopened=ProjectStore::open(&directory).unwrap();
+    assert_eq!(reopened.arena_reveal_target_read(project,target).unwrap(),Some(visible));
+}
+
+#[test]
+fn arena_start_reads_confirm_original_fixed_input_without_running_provider() {
+    let (_temp, mut store, rows)=source_project();
+    let preview=store.preview_arena(cfg("http://127.0.0.1:9"),"zh-CN",&[rows[0].unit_id.unwrap()]).unwrap();
+    let input=preview.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+    let project=input.envelope().project_id;
+    let attempt=input.envelope().attempt_id;
+    let sequence=store.execution_sequence().unwrap();
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),None);
+    assert_eq!(store.execution_sequence().unwrap(),sequence);
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,false).unwrap_err().code,ErrorCode::Unauthorized);
+    // Enqueue alone is enough; this test starts no runtime or network request.
+    store.enqueue_execution(&input).unwrap();
+    let expected=Some(ArenaStartReceipt {project_id:project,attempt_id:attempt,task_id:input.envelope().task_id,digest:preview.digest.clone()});
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),expected);
+    assert_eq!(store.arena_start_action_read(ExecutionId::new(),attempt,&preview.digest,true).unwrap_err().code,ErrorCode::ResultMismatch);
+    assert_eq!(store.arena_start_action_read(project,attempt,&"0".repeat(64),true).unwrap_err().code,ErrorCode::ResultMismatch);
+    store.cancel_execution(input.envelope().task_id,ExecutionId::new()).unwrap();
+    replace_source(&mut store,br#"{"changed":"New source"}"#);
+    let sequence=store.execution_sequence().unwrap();
+    assert_eq!(store.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),expected);
+    assert_eq!(store.execution_sequence().unwrap(),sequence);
+    let directory=store.directory().to_path_buf();store.close().unwrap();
+    let reopened=ProjectStore::open(&directory).unwrap();
+    assert_eq!(reopened.arena_start_action_read(project,attempt,&preview.digest,true).unwrap(),expected);
+}
+
+#[test]
 fn arena_boundaries_digest_cancellation_and_parent_round_are_checked() {
     let (_temp, mut store, rows) = source_project();
     let wire = controlled("success");

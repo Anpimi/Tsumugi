@@ -7,6 +7,7 @@ use crate::execution::{
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -82,6 +83,15 @@ pub struct TranslationAdoptionConfirmation {
     pub target_unit_id: ExecutionId,
     pub expected_selection_id: Option<ExecutionId>,
     pub decision: TranslationSelectionDecision,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArenaMergeActionRead {
+    pub request: SaveTranslationRevision,
+    pub merge: super::arena::MergeBasis,
+    pub receipt: TranslationSelection,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -1394,6 +1404,69 @@ impl ProjectStore {
             save_receipt_in(connection, request.project_id, selection)
         })
     }
+    /// Read a historical merge without repeating current target/basis admission.
+    pub fn arena_merge_action_read(
+        &self, request: &SaveTranslationRevision, merge: &super::arena::MergeBasis,
+    ) -> Result<Option<ArenaMergeActionRead>, ExecutionError> {
+        let connection=self.connection().map_err(|_|error(ErrorCode::StorageFailed,"translation-read"))?;
+        let found=super::review::read_snapshot(connection,|c| {
+            if !super::content::unit_owned_by_project(c,request.project_id,request.unit_id)? {
+                return Err(error(ErrorCode::Unauthorized,"translation-project"));
+            }
+            let Some((selection,saved_digest))=selection_by_action(c,request.action_id)? else {
+                let orphan:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM translation_revisions WHERE action_id=?1)",
+                    [request.action_id.to_string()],|row|row.get(0)).map_err(super::ledger::sql_error)?;
+                return if orphan {Err(error(ErrorCode::ResultMismatch,"arena-merge-action"))} else {Ok(None)};
+            };
+            let digest=request_digest(&(request,merge))?;
+            if selection.unit_id!=request.unit_id || selection.locale!=request.locale
+                || selection.previous_event_id!=request.expected_selection_id || saved_digest!=digest {
+                return Err(error(ErrorCode::ResultMismatch,"arena-merge-action"));
+            }
+            let (project,revision_digest):(String,String)=c.query_row(
+                "SELECT s.project_id,r.request_digest FROM translation_selections s JOIN translation_revisions r USING(revision_id) WHERE s.event_id=?1",
+                [selection.event_id.to_string()],|row|Ok((row.get(0)?,row.get(1)?))).map_err(super::ledger::sql_error)?;
+            if project!=request.project_id.to_string() || revision_digest!=digest || selection.sequence==0 {
+                return Err(error(ErrorCode::CorruptLedger,"arena-merge-association"));
+            }
+            let saved=save_receipt_in(c,request.project_id,&selection)?;
+            let revision=&saved.revision;
+            if revision.source_revision_id!=request.source_revision_id || revision.text!=request.text || revision.ordinal==0
+                || revision.attempt_id.is_some() || revision.result_id.is_some() || revision.item_id.is_some()
+                || revision.artifact_id.is_some() || revision.logical_path.is_some() || revision.declared_locale.is_some()
+                || revision.native_key.is_some() || revision.file_digest.is_some() {
+                return Err(error(ErrorCode::CorruptLedger,"arena-merge-revision"));
+            }
+            if let Some(previous)=request.expected_selection_id {
+                let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM translation_selections WHERE event_id=?1 AND project_id=?2
+                    AND unit_id=?3 AND locale=?4 AND sequence=?5)",
+                    params![previous.to_string(),request.project_id.to_string(),request.unit_id.to_string(),request.locale,selection.sequence as i64-1],
+                    |row|row.get(0)).map_err(super::ledger::sql_error)?;
+                if !valid {return Err(error(ErrorCode::CorruptLedger,"arena-merge-previous"));}
+            } else if selection.sequence!=1 {return Err(error(ErrorCode::CorruptLedger,"arena-merge-previous"));}
+            let mut statement=c.prepare("SELECT x.ordinal,x.parent_revision_id,p.project_id,p.unit_id,p.locale,p.source_revision_id,p.ordinal
+                FROM translation_contributors x JOIN translation_revisions p ON p.revision_id=x.parent_revision_id
+                WHERE x.revision_id=?1 ORDER BY x.ordinal").map_err(super::ledger::sql_error)?;
+            let rows=statement.query_map([revision.revision_id.to_string()],|row|Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,
+                row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,String>(5)?,row.get::<_,i64>(6)?))).map_err(super::ledger::sql_error)?
+                .collect::<Result<Vec<_>,_>>().map_err(super::ledger::sql_error)?;
+            let mut parents=Vec::new();
+            for (index,(ordinal,parent,project,unit,locale,source,parent_ordinal)) in rows.into_iter().enumerate() {
+                if ordinal!=index as i64 || project!=request.project_id.to_string() || unit!=request.unit_id.to_string()
+                    || locale!=request.locale || source!=request.source_revision_id.to_string() || parent_ordinal<=0 || parent_ordinal as u64>=revision.ordinal {
+                    return Err(error(ErrorCode::CorruptLedger,"arena-merge-contributor"));
+                }
+                parents.push(id(parent)?);
+            }
+            if !(2..=4).contains(&parents.len()) || parents!=merge.contributors
+                || parents.iter().collect::<BTreeSet<_>>().len()!=parents.len() {
+                return Err(error(ErrorCode::CorruptLedger,"arena-merge-contributor"));
+            }
+            Ok(Some(ArenaMergeActionRead {request:request.clone(),merge:merge.clone(),receipt:selection}))
+        })?;
+        if self.is_reconciling() {self.reconcile_execution()?;}
+        Ok(found)
+    }
     pub fn save_merged_translation(
         &mut self,
         request: &SaveTranslationRevision,
@@ -2040,6 +2113,127 @@ mod tests {
                 .get(),
             0
         );
+    }
+
+    #[test]
+    fn arena_reveal_target_reads_preserve_comparison_facts_and_no_op_semantics() {
+        use crate::{ArenaRevealTarget,ArenaRevealTargetKind,ComparisonRequest};
+        let (temp,mut store,rows)=project_with_source();
+        let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let unit=rows[0].unit_id.unwrap();let source=rows[0].source_revision_id.unwrap();
+        let first=store.save_translation_revision(&SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+            locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:None,text:"First".into()}).unwrap();
+        let second=store.save_translation_revision(&SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+            locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:Some(first.event_id),text:"Second".into()}).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,ExecutionId::new()).unwrap(),None);
+        let compare=ComparisonRequest {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+            revision_ids:vec![first.revision_id,second.revision_id],blind:true};
+        store.create_comparison(&compare).unwrap();
+        let target=compare.action_id;
+        let hidden=ArenaRevealTarget {project_id:project,target_id:target,target_kind:ArenaRevealTargetKind::Comparison,visible:false};
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(hidden.clone()));
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.reveal_arena(project,target,ExecutionId::new()).unwrap_err().code,ErrorCode::OutcomeUnknown);
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(hidden.clone()));assert!(!store.is_reconciling());
+        let other_action=ExecutionId::new();store.reveal_arena(project,target,other_action).unwrap();
+        let original_action=ExecutionId::new();store.reveal_arena(project,target,original_action).unwrap();
+        let count:i64=store.connection().unwrap().query_row("SELECT COUNT(*) FROM arena_reveals WHERE action_id=?1",[original_action.to_string()],|row|row.get(0)).unwrap();
+        assert_eq!(count,0,"successful target no-op does not record this action");
+        let visible=ArenaRevealTarget{visible:true,..hidden};
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));
+        assert_eq!(store.arena_reveal_target_read(ExecutionId::new(),target).unwrap_err().code,ErrorCode::Unauthorized);
+        let public=ComparisonRequest {action_id:ExecutionId::new(),blind:false,..compare.clone()};store.create_comparison(&public).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,public.action_id).unwrap().unwrap().visible,true);
+        let c=store.connection().unwrap();
+        let digest:String=c.query_row("SELECT request_digest FROM arena_reveals WHERE comparison_id=?1",[target.to_string()],|row|row.get(0)).unwrap();
+        c.execute("UPDATE arena_reveals SET request_digest=?2 WHERE comparison_id=?1",params![target.to_string(),"0".repeat(64)]).unwrap();
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap_err().code,ErrorCode::CorruptLedger);assert!(store.is_reconciling());
+        c.execute("UPDATE arena_reveals SET request_digest=?2 WHERE comparison_id=?1",params![target.to_string(),digest]).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));assert!(!store.is_reconciling());
+        let orphan=ExecutionId::new();let action=ExecutionId::new();let digest=codec::digest(&codec::encode(&(project,orphan,action),MAX_INPUT_BYTES).unwrap());
+        let c=store.connection().unwrap();c.execute("INSERT INTO arena_reveals VALUES (?1,?2,?3,?4)",params![orphan.to_string(),project.to_string(),action.to_string(),digest]).unwrap();
+        assert_eq!(store.arena_reveal_target_read(project,orphan).unwrap_err().code,ErrorCode::CorruptLedger);
+        c.execute("DELETE FROM arena_reveals WHERE comparison_id=?1",[orphan.to_string()]).unwrap();
+        adopt_source(&mut store,br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,br#"{"first":"Updated","second":"same"}"#);
+        let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
+        let sequence=store.changes_since(Revision::new(0).unwrap()).sequence;
+        assert_eq!(store.arena_reveal_target_read(project,target).unwrap(),Some(visible.clone()));
+        assert!(store.arena_reveal_target_read(project,public.action_id).unwrap().unwrap().visible);
+        assert_eq!(store.changes_since(sequence).sequence,sequence);
+        store.close().unwrap();let reopened=ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.arena_reveal_target_read(project,target).unwrap(),Some(visible));
+    }
+
+    #[test]
+    fn arena_action_reads_preserve_comparison_merge_and_selection_history() {
+        use crate::{ComparisonRequest,MergeBasis};
+        let (temp,mut store,rows)=project_with_source();
+        let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let unit=rows[0].unit_id.unwrap();let source=rows[0].source_revision_id.unwrap();
+        let first=SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+            source_revision_id:source,expected_selection_id:None,text:"First".into()};
+        let saved_first=store.save_translation_revision(&first).unwrap();
+        let second=SaveTranslationRevision {action_id:ExecutionId::new(),expected_selection_id:Some(saved_first.event_id),text:"Second".into(),..first.clone()};
+        let saved_second=store.save_translation_revision(&second).unwrap();
+        let select=SelectTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:first.locale.clone(),
+            source_revision_id:source,expected_selection_id:Some(saved_second.event_id),revision_id:saved_first.revision_id};
+        let selected=store.select_translation_revision(&select).unwrap();
+        let comparison=ComparisonRequest {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:first.locale.clone(),
+            revision_ids:vec![saved_first.revision_id,saved_second.revision_id],blind:true};
+        assert_eq!(store.arena_comparison_action_read(&comparison).unwrap(),None);
+        let view=store.create_comparison(&comparison).unwrap();
+        let request=SaveTranslationRevision {action_id:ExecutionId::new(),expected_selection_id:Some(selected.event_id),text:"Merged".into(),..first.clone()};
+        let merge=MergeBasis {contributors:comparison.revision_ids.clone(),expected_basis:view.basis};
+        assert_eq!(store.arena_merge_action_read(&request,&merge).unwrap(),None);
+        let receipt=store.save_merged_translation(&request,&merge).unwrap();
+        let expected=Some(ArenaMergeActionRead {request:request.clone(),merge:merge.clone(),receipt:receipt.clone()});
+        assert_eq!(store.arena_comparison_action_read(&comparison).unwrap(),Some(comparison.clone()));
+        assert_eq!(store.arena_merge_action_read(&request,&merge).unwrap(),expected);
+        assert_eq!(store.translation_selection_by_request(&select).unwrap(),Some(selected.clone()));
+        assert_eq!(store.translation_save_receipt_by_request(&request).unwrap_err().code,ErrorCode::ResultMismatch);
+        let mut wrong=comparison.clone();wrong.revision_ids.reverse();assert!(store.arena_comparison_action_read(&wrong).is_err());
+        for wrong in [ComparisonRequest{project_id:ExecutionId::new(),..comparison.clone()},
+            ComparisonRequest{unit_id:rows[1].unit_id.unwrap(),..comparison.clone()},
+            ComparisonRequest{blind:false,..comparison.clone()},ComparisonRequest{locale:"ja".into(),..comparison.clone()}] {
+            assert!(store.arena_comparison_action_read(&wrong).is_err());
+        }
+        for wrong in [SaveTranslationRevision{text:"Changed".into(),..request.clone()},
+            SaveTranslationRevision{expected_selection_id:None,..request.clone()},
+            SaveTranslationRevision{action_id:first.action_id,..request.clone()}] {
+            assert!(store.arena_merge_action_read(&wrong,&merge).is_err());
+        }
+        let mut wrong_merge=merge.clone();wrong_merge.contributors.reverse();assert!(store.arena_merge_action_read(&request,&wrong_merge).is_err());
+        wrong_merge=merge.clone();wrong_merge.expected_basis="changed".into();assert!(store.arena_merge_action_read(&request,&wrong_merge).is_err());
+        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
+        assert!(store.translation_selection_by_request(&SelectTranslationRevision{revision_id:saved_second.revision_id,..select.clone()}).is_err());
+        assert!(store.is_reconciling(),"failed selection lookup must not clear admission");
+        assert!(store.translation_save_receipt_by_request(&SaveTranslationRevision{text:"Changed".into(),..first.clone()}).is_err());
+        assert!(store.is_reconciling(),"failed save lookup must not clear admission");
+        assert_eq!(store.arena_merge_action_read(&request,&merge).unwrap(),expected);assert!(!store.is_reconciling());
+        let c=store.connection().unwrap();
+        c.execute("UPDATE arena_entries SET ordinal=3 WHERE comparison_id=?1 AND ordinal=0",[comparison.action_id.to_string()]).unwrap();
+        assert_eq!(store.arena_comparison_action_read(&comparison).unwrap_err().code,ErrorCode::CorruptLedger);
+        c.execute("UPDATE arena_entries SET ordinal=0 WHERE comparison_id=?1 AND ordinal=3",[comparison.action_id.to_string()]).unwrap();
+        c.execute("UPDATE translation_contributors SET ordinal=3 WHERE revision_id=?1 AND ordinal=0",[receipt.revision_id.to_string()]).unwrap();
+        assert_eq!(store.arena_merge_action_read(&request,&merge).unwrap_err().code,ErrorCode::CorruptLedger);
+        c.execute("UPDATE translation_contributors SET ordinal=0 WHERE revision_id=?1 AND ordinal=3",[receipt.revision_id.to_string()]).unwrap();
+        c.execute("UPDATE translation_revisions SET text='damaged' WHERE revision_id=?1",[receipt.revision_id.to_string()]).unwrap();
+        assert_eq!(store.arena_merge_action_read(&request,&merge).unwrap_err().code,ErrorCode::CorruptLedger);
+        c.execute("UPDATE translation_revisions SET text=?2 WHERE revision_id=?1",params![receipt.revision_id.to_string(),request.text]).unwrap();
+        store.save_translation_revision(&SaveTranslationRevision {action_id:ExecutionId::new(),expected_selection_id:Some(receipt.event_id),text:"Newer".into(),..request.clone()}).unwrap();
+        adopt_source(&mut store,br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,br#"{"first":"Updated","second":"same"}"#);
+        let revision=store.metadata().unwrap().metadata_revision();store.set_target_locales(revision,&["ja".into()]).unwrap();
+        let counts=translation_counts(&store);let clock=store.changes_since(Revision::new(0).unwrap()).sequence;
+        assert_eq!(store.create_comparison(&comparison).unwrap_err().code,ErrorCode::OutcomeUnknown);
+        assert_eq!(store.arena_comparison_action_read(&comparison).unwrap(),Some(comparison.clone()));
+        assert_eq!(store.arena_merge_action_read(&request,&merge).unwrap(),expected);
+        assert_eq!(store.translation_selection_by_request(&select).unwrap(),Some(selected.clone()));
+        assert_eq!(translation_counts(&store),counts);assert_eq!(store.changes_since(clock).sequence,clock);
+        store.close().unwrap();let reopened=ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.arena_comparison_action_read(&comparison).unwrap(),Some(comparison));
+        assert_eq!(reopened.arena_merge_action_read(&request,&merge).unwrap(),expected);
+        assert_eq!(reopened.translation_selection_by_request(&select).unwrap(),Some(selected));
     }
 
     #[test]

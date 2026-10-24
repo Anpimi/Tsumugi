@@ -12,7 +12,7 @@ mod review;
 
 pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
-    ComparisonView, MergeBasis,
+    ArenaMergeActionRead, ArenaRevealTarget, ArenaRevealTargetKind, ComparisonView, MergeBasis,
 };
 pub use persistence::{
     AttemptView, BuildLocaleChoice, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,

@@ -27,7 +27,7 @@ mod review;
 mod translation;
 pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
 pub use arena::{
-    ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
+    ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
 pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
 pub use release::{
@@ -51,6 +51,7 @@ pub use review::{
     ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
+    ArenaMergeActionRead,
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
     TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
     TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,

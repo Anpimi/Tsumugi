@@ -384,7 +384,13 @@
       "comparison": {
         "$ref": "#/definitions/ComparisonRead"
       },
+      "comparisonAction": {
+        "$ref": "#/definitions/ComparisonCommand"
+      },
       "merge": {
+        "$ref": "#/definitions/MergeRequest"
+      },
+      "mergeAction": {
         "$ref": "#/definitions/MergeRequest"
       },
       "preview": {
@@ -396,22 +402,32 @@
       "reveal": {
         "$ref": "#/definitions/RevealRequest"
       },
+      "revealTarget": {
+        "$ref": "#/definitions/ComparisonRead"
+      },
       "session": {
         "$ref": "#/definitions/SessionRequest"
       },
       "start": {
+        "$ref": "#/definitions/StartRequest"
+      },
+      "startAction": {
         "$ref": "#/definitions/StartRequest"
       }
     },
     "required": [
       "preview",
       "start",
+      "startAction",
       "read",
       "compare",
+      "comparisonAction",
       "comparison",
       "session",
       "reveal",
-      "merge"
+      "revealTarget",
+      "merge",
+      "mergeAction"
     ],
     "title": "Requests",
     "type": "object",
@@ -704,6 +720,26 @@
         ],
         "type": "object"
       },
+      "ArenaMergeActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "merge": {
+            "$ref": "#/definitions/MergeBasis"
+          },
+          "receipt": {
+            "$ref": "#/definitions/TranslationSelection"
+          },
+          "request": {
+            "$ref": "#/definitions/SaveTranslationRevision"
+          }
+        },
+        "required": [
+          "request",
+          "merge",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "ArenaPreviewView": {
         "additionalProperties": false,
         "properties": {
@@ -723,6 +759,63 @@
         "required": [
           "config",
           "items",
+          "digest"
+        ],
+        "type": "object"
+      },
+      "ArenaRevealTarget": {
+        "additionalProperties": false,
+        "description": "Visibility is a target fact, not a receipt for a particular reveal action.",
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetKind": {
+            "$ref": "#/definitions/ArenaRevealTargetKind"
+          },
+          "visible": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "projectId",
+          "targetId",
+          "targetKind",
+          "visible"
+        ],
+        "type": "object"
+      },
+      "ArenaRevealTargetKind": {
+        "enum": [
+          "comparison",
+          "attempt"
+        ],
+        "type": "string"
+      },
+      "ArenaStartReceipt": {
+        "additionalProperties": false,
+        "description": "The recorded start input, independently of provider or worker progress.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "taskId",
           "digest"
         ],
         "type": "object"
@@ -818,6 +911,41 @@
           "model",
           "recipe",
           "basisCurrent"
+        ],
+        "type": "object"
+      },
+      "ComparisonRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "blind": {
+            "type": "boolean"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "revisionIds",
+          "blind"
         ],
         "type": "object"
       },
@@ -1045,6 +1173,25 @@
           "status",
           "scope",
           "resultId"
+        ],
+        "type": "object"
+      },
+      "MergeBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributors",
+          "expectedBasis"
         ],
         "type": "object"
       },
@@ -1332,6 +1479,49 @@
         ],
         "type": "object"
       },
+      "SaveTranslationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "expectedSelectionId",
+          "text"
+        ],
+        "type": "object"
+      },
       "Scope": {
         "additionalProperties": false,
         "properties": {
@@ -1515,6 +1705,16 @@
       "comparison": {
         "$ref": "#/definitions/ComparisonView"
       },
+      "comparisonAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ComparisonRequest"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "comparisons": {
         "items": {
           "$ref": "#/definitions/ComparisonSummary"
@@ -1524,14 +1724,44 @@
       "identity": {
         "$ref": "#/definitions/ExecutionId"
       },
+      "mergeAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ArenaMergeActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "prepared": {
         "$ref": "#/definitions/Prepared"
       },
       "reveal": {
         "type": "null"
       },
+      "revealTarget": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ArenaRevealTarget"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "selection": {
         "$ref": "#/definitions/TranslationSelection"
+      },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ArenaStartReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "view": {
         "$ref": "#/definitions/View"
@@ -1540,10 +1770,14 @@
     "required": [
       "prepared",
       "identity",
+      "startAction",
       "view",
       "comparison",
+      "comparisonAction",
+      "mergeAction",
       "comparisons",
       "reveal",
+      "revealTarget",
       "selection"
     ],
     "title": "Responses",

@@ -21,11 +21,36 @@ export function confirmArenaMerge(request:MergeRequest,value:unknown){
   &&value.previousEventId===(request.expectedSelectionId??null)&&BigInt(value.sequence)>0n&&(value.sequence==="1")===(value.previousEventId===null));
  return value;
 }
+export function confirmArenaComparisonAction(request:ComparisonCommand,value:unknown){
+ requireConfirmation(validators.validateResponseComparisonAction(value));
+ if(value!==null)requireConfirmation(value.projectId===request.projectId&&value.actionId===request.actionId
+  &&value.unitId===request.unitId&&value.locale===request.locale&&value.blind===request.blind
+  &&value.revisionIds.length===request.revisionIds.length&&value.revisionIds.every((id,index)=>id===request.revisionIds[index]));
+ return value;
+}
+export function confirmArenaMergeAction(request:MergeRequest,value:unknown){
+ requireConfirmation(validators.validateResponseMergeAction(value));
+ if(value!==null){
+  const saved=value.request,basis=value.merge;
+  requireConfirmation(saved.projectId===request.projectId&&saved.actionId===request.actionId&&saved.unitId===request.unitId
+   &&saved.locale===request.locale&&saved.sourceRevisionId===request.sourceRevisionId
+   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&saved.text===request.text
+   &&basis.expectedBasis===request.merge.expectedBasis&&basis.contributors.length===request.merge.contributors.length
+   &&basis.contributors.every((id,index)=>id===request.merge.contributors[index]));
+  confirmArenaMerge(request,value.receipt);
+ }
+ return value;
+}
 export const arenaCommands={
  preview:(request:PreviewRequest)=>checkedInvoke("preview_arena_translation",request,validators.validateResponsePrepared),
  start:async(request:StartRequest)=>{
   const result=await checkedInvoke("start_arena_translation",request,validators.validateResponseIdentity);
   requireConfirmation(result===request.attemptId);return result;
+ },
+ startAction:async(request:StartRequest)=>{
+  const result=await checkedInvoke("read_arena_start_action",request,validators.validateResponseStartAction);
+  requireConfirmation(result===null||(result.projectId===request.projectId&&result.attemptId===request.attemptId&&result.digest===request.digest));
+  return result;
  },
  read:async(request:ReadRequest)=>{
   const result=await checkedInvoke("read_arena_translation",request,validators.validateResponseView);
@@ -35,14 +60,23 @@ export const arenaCommands={
   const result=await checkedInvoke("create_arena_comparison",request,validators.validateResponseComparison);
   return confirmArenaComparison(request,result);
  },
+ comparisonAction:async(request:ComparisonCommand)=>confirmArenaComparisonAction(request,
+  await checkedInvoke("read_arena_comparison_action",request,validators.validateResponseComparisonAction)),
  comparison:async(request:ComparisonRead)=>{
   const result=await checkedInvoke("read_arena_comparison",request,validators.validateResponseComparison);
   requireConfirmation(result.comparisonId===request.comparisonId);return result;
  },
  comparisons:(request:SessionRequest)=>checkedInvoke("list_arena_comparisons",request,validators.validateResponseComparisons),
  reveal:async(request:RevealRequest)=>{await checkedInvoke("reveal_arena_identity",request,validators.validateResponseReveal);},
+ revealTarget:async(request:ComparisonRead)=>{
+  const value=await checkedInvoke("read_arena_reveal_target",request,validators.validateResponseRevealTarget);
+  requireConfirmation(value===null||(value.projectId===request.projectId&&value.targetId===request.comparisonId));
+  return value;
+ },
  merge:async(request:MergeRequest)=>{
   const result=await checkedInvoke("save_arena_merge",request,validators.validateResponseSelection);
   return confirmArenaMerge(request,result);
  },
+ mergeAction:async(request:MergeRequest)=>confirmArenaMergeAction(request,
+  await checkedInvoke("read_arena_merge_action",request,validators.validateResponseMergeAction)),
 };

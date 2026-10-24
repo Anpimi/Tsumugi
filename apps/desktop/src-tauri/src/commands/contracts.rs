@@ -260,12 +260,16 @@ struct AiResponses {
 struct ArenaRequests {
     preview: execution::arena::PreviewRequest,
     start: execution::arena::StartRequest,
+    start_action: execution::arena::StartRequest,
     read: execution::arena::ReadRequest,
     compare: execution::arena::ComparisonCommand,
+    comparison_action: execution::arena::ComparisonCommand,
     comparison: execution::arena::ComparisonRead,
     session: execution::SessionRequest,
     reveal: execution::arena::RevealRequest,
+    reveal_target: execution::arena::ComparisonRead,
     merge: execution::arena::MergeRequest,
+    merge_action: execution::arena::MergeRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -273,10 +277,14 @@ struct ArenaRequests {
 struct ArenaResponses {
     prepared: execution::arena::Prepared,
     identity: tsumugi_core::execution::ExecutionId,
+    start_action: Option<tsumugi_core::ai::arena::ArenaStartReceipt>,
     view: execution::arena::View,
     comparison: tsumugi_core::ComparisonView,
+    comparison_action: Option<tsumugi_core::ComparisonRequest>,
+    merge_action: Option<tsumugi_core::ArenaMergeActionRead>,
     comparisons: Vec<tsumugi_core::ComparisonSummary>,
     reveal: (),
+    reveal_target: Option<tsumugi_core::ArenaRevealTarget>,
     selection: tsumugi_core::TranslationSelection,
 }
 

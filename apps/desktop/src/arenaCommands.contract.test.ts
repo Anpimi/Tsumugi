@@ -3,10 +3,87 @@ import fixture from "../test/fixtures/arenaCommands.contract.json";
 import { arenaCommands, confirmArenaComparison, confirmArenaMerge } from "./arenaCommands";
 import * as validators from "./generated/arena.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
+
+it("reads a reveal target fact without claiming an action receipt",async()=>{
+  const request=fixture.requests.comparison;
+  for(const targetKind of ["comparison","attempt"] as const){
+    for(const visible of [false,true]){
+      const fact={projectId:request.projectId,targetId:request.comparisonId,targetKind,visible};
+      expect(validators.validateResponseRevealTarget(fact)).toBe(true);
+      invoke.mockResolvedValueOnce(fact);expect(await arenaCommands.revealTarget(request)).toEqual(fact);
+      expect(invoke).toHaveBeenLastCalledWith("read_arena_reveal_target",{request});
+    }
+  }
+  invoke.mockResolvedValueOnce(null);expect(await arenaCommands.revealTarget(request)).toBeNull();
+  const fact={projectId:request.projectId,targetId:request.comparisonId,targetKind:"comparison",visible:true};
+  for(const wrong of [undefined,{}, {...fact,projectId:fixtureIdentity(703)}, {...fact,targetId:fixtureIdentity(704)},
+    {...fact,targetKind:"unknown"}, {...fact,visible:null}, {...fact,actionId:fixtureIdentity(705)}]){
+    invoke.mockResolvedValueOnce(wrong);await expect(arenaCommands.revealTarget(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([command])=>command==="read_arena_reveal_target")).toBe(true);
+});
+
+it("reads an exact comparison creation request without accepting a current comparison projection",async()=>{
+  const request=fixture.requests.compare;
+  const echo={projectId:request.projectId,actionId:request.actionId,unitId:request.unitId,locale:request.locale,
+    revisionIds:request.revisionIds,blind:request.blind};
+  expect(validators.validateResponseComparisonAction(echo)).toBe(true);
+  invoke.mockResolvedValueOnce(echo);expect(await arenaCommands.comparisonAction(request)).toEqual(echo);
+  expect(invoke).toHaveBeenLastCalledWith("read_arena_comparison_action",{request});
+  invoke.mockResolvedValueOnce(null);expect(await arenaCommands.comparisonAction(request)).toBeNull();
+  for(const wrong of [undefined,{},fixture.responses.comparison,{...echo,projectId:fixtureIdentity(703)},
+    {...echo,actionId:fixtureIdentity(704)},{...echo,unitId:fixtureIdentity(705)},{...echo,locale:"ja"},
+    {...echo,blind:!echo.blind},{...echo,revisionIds:[...echo.revisionIds].reverse()},{...echo,revisionIds:echo.revisionIds.slice(1)}]){
+    invoke.mockResolvedValueOnce(wrong);await expect(arenaCommands.comparisonAction(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([command])=>command==="read_arena_comparison_action")).toBe(true);
+});
+
+it("binds a merge read to its entire original text, source, selection and ordered contributor basis",async()=>{
+  const request=fixture.requests.merge;
+  const echo={request:{projectId:request.projectId,actionId:request.actionId,unitId:request.unitId,locale:request.locale,
+    sourceRevisionId:request.sourceRevisionId,expectedSelectionId:request.expectedSelectionId??null,text:request.text},
+    merge:request.merge,receipt:fixture.responses.selection};
+  expect(validators.validateResponseMergeAction(echo)).toBe(true);
+  invoke.mockResolvedValueOnce(echo);expect(await arenaCommands.mergeAction(request)).toEqual(echo);
+  expect(invoke).toHaveBeenLastCalledWith("read_arena_merge_action",{request});
+  invoke.mockResolvedValueOnce(null);expect(await arenaCommands.mergeAction(request)).toBeNull();
+  const {expectedSelectionId:_expected,...missing}=echo.request;
+  for(const wrong of [undefined,{},fixture.responses.selection,{...echo,request:missing},
+    ...[{projectId:fixtureIdentity(703)},{actionId:fixtureIdentity(704)},{unitId:fixtureIdentity(705)},{locale:"ja"},
+      {sourceRevisionId:fixtureIdentity(706)},{expectedSelectionId:null},{text:request.text+" changed"}].map(fields=>({...echo,request:{...echo.request,...fields}})),
+    {...echo,merge:{...echo.merge,expectedBasis:"changed"}},
+    {...echo,merge:{...echo.merge,contributors:[...echo.merge.contributors].reverse()}},
+    {...echo,receipt:{...echo.receipt,actionId:fixtureIdentity(707)}}]){
+    invoke.mockResolvedValueOnce(wrong);await expect(arenaCommands.mergeAction(request)).rejects.toThrow();
+  }
+  const noSelection={...request,expectedSelectionId:null};
+  const noSelectionEcho={...echo,request:{...echo.request,expectedSelectionId:null},receipt:{...echo.receipt,previousEventId:null,sequence:"1"}};
+  const {expectedSelectionId:_absent,...absent}=noSelectionEcho.request;
+  invoke.mockResolvedValueOnce({...noSelectionEcho,request:absent});await expect(arenaCommands.mergeAction(noSelection)).rejects.toThrow();
+  invoke.mockResolvedValueOnce(noSelectionEcho);expect(await arenaCommands.mergeAction(noSelection)).toEqual(noSelectionEcho);
+  expect(invoke.mock.calls.every(([command])=>command==="read_arena_merge_action")).toBe(true);
+});
+
+it("reads only the captured Arena start and distinguishes missing from invalid proof", async () => {
+  const request=fixture.requests.start;
+  const receipt={projectId:request.projectId,attemptId:request.attemptId,taskId:fixtureIdentity(702),digest:request.digest};
+  expect(validators.validateResponseStartAction(receipt)).toBe(true);
+  invoke.mockResolvedValueOnce(receipt);
+  expect(await arenaCommands.startAction(request)).toEqual(receipt);
+  expect(invoke).toHaveBeenLastCalledWith("read_arena_start_action",{request});
+  invoke.mockResolvedValueOnce(null);expect(await arenaCommands.startAction(request)).toBeNull();
+  for(const wrong of [undefined,{}, {...receipt,projectId:fixtureIdentity(703)}, {...receipt,attemptId:fixtureIdentity(704)},
+    {...receipt,digest:"f".repeat(64)}, {...receipt,taskId:null}, {...receipt,extra:true}]){
+    invoke.mockResolvedValueOnce(wrong);await expect(arenaCommands.startAction(request)).rejects.toThrow();
+  }
+  expect(invoke.mock.calls.every(([command])=>command==="read_arena_start_action")).toBe(true);
+});
 
 it("validates both directions of every shared Arena contract", async () => {
   for (const [validate, value] of [

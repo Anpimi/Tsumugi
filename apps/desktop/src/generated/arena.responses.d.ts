@@ -2,8 +2,9 @@
 
 export type ExecutionId = string;
 export type TranslationOrigin = "import" | "manual" | "ai";
-export type UnsignedDecimal = string;
 export type Revision = string;
+export type UnsignedDecimal = string;
+export type ArenaRevealTargetKind = "comparison" | "attempt";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
@@ -12,11 +13,15 @@ export type RecoveryAction =
 
 export interface Responses {
   comparison: ComparisonView;
+  comparisonAction: ComparisonRequest | null;
   comparisons: ComparisonSummary[];
   identity: ExecutionId;
+  mergeAction: ArenaMergeActionRead | null;
   prepared: Prepared;
   reveal: null;
+  revealTarget: ArenaRevealTarget | null;
   selection: TranslationSelection;
+  startAction: ArenaStartReceipt | null;
   view: View;
 }
 export interface ComparisonView {
@@ -44,10 +49,45 @@ export interface ComparisonEntry {
   sourceRevisionId: ExecutionId;
   text: string;
 }
+export interface ComparisonRequest {
+  actionId: ExecutionId;
+  blind: boolean;
+  locale: string;
+  projectId: ExecutionId;
+  revisionIds: ExecutionId[];
+  unitId: ExecutionId;
+}
 export interface ComparisonSummary {
   comparisonId: ExecutionId;
   locale: string;
   nativeKey: string;
+}
+export interface ArenaMergeActionRead {
+  merge: MergeBasis;
+  receipt: TranslationSelection;
+  request: SaveTranslationRevision;
+}
+export interface MergeBasis {
+  contributors: ExecutionId[];
+  expectedBasis: string;
+}
+export interface TranslationSelection {
+  actionId: ExecutionId;
+  eventId: ExecutionId;
+  locale: string;
+  previousEventId: ExecutionId | null;
+  revisionId: ExecutionId;
+  sequence: Revision;
+  unitId: ExecutionId;
+}
+export interface SaveTranslationRevision {
+  actionId: ExecutionId;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
 }
 export interface Prepared {
   attemptId: ExecutionId;
@@ -112,14 +152,23 @@ export interface SharedTerm {
   source: string;
   target: string;
 }
-export interface TranslationSelection {
-  actionId: ExecutionId;
-  eventId: ExecutionId;
-  locale: string;
-  previousEventId: ExecutionId | null;
-  revisionId: ExecutionId;
-  sequence: Revision;
-  unitId: ExecutionId;
+/**
+ * Visibility is a target fact, not a receipt for a particular reveal action.
+ */
+export interface ArenaRevealTarget {
+  projectId: ExecutionId;
+  targetId: ExecutionId;
+  targetKind: ArenaRevealTargetKind;
+  visible: boolean;
+}
+/**
+ * The recorded start input, independently of provider or worker progress.
+ */
+export interface ArenaStartReceipt {
+  attemptId: ExecutionId;
+  digest: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface View {
   blind: boolean;
