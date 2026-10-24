@@ -1,8 +1,8 @@
-import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
+import { ProjectSessionWorkbench, type OverviewSourcePresentation, type ProjectSessionHandle } from "./ProjectSessionWorkbench";
+import type { SessionExitPermit } from "./sessionNavigation";
 import { CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea, type AttemptWorkbenchHandle } from "./WorkbenchFrame";
-import { sourceCommands } from "./sourceCommands";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, type WorkspaceArea } from "./WorkbenchFrame";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -34,20 +34,7 @@ import {
 import { isLocale, localeOptions, type Locale } from "./i18n";
 import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
-import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
-import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
-import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
-import { TranslationDraftSession } from "./TranslationDraftSession";
-import { ReviewDraftSession } from "./ReviewDraftSession";
-import { SourceDraftSession } from "./SourceDraftSession";
-import { ResourceDraftSession } from "./ResourceDraftSession";
-import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
-import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
-import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
-import { AiWorkbench, type AiHandle } from "./AiWorkbench";
-import { AiPreparationSession } from "./AiPreparationSession";
-import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
-import { ArenaWorkbench } from "./ArenaWorkbench";
+import { WorkbenchCommands, WorkbenchCommandsProvider, type ProjectMetadataReconcileCommandPayload } from "./workbenchCommands";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
   clearLastOpenProject,
@@ -144,6 +131,13 @@ interface PendingSave {
   form: ActiveForm;
   value: string;
   directoryName?: string;
+}
+
+interface RetiredSession {
+  project: ProjectView;
+  area: WorkspaceArea;
+  memory: WorkspaceViewMemory;
+  metadata: { form: ActiveForm; values: EditorFormValues } | null;
 }
 
 function sameMetadata(left: ProjectMetadataView, right: ProjectMetadataView) {
@@ -338,19 +332,31 @@ function App() {
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
   const [project, setProject] = useState<ProjectView | null>(null);
   const [area, setArea] = useState<WorkspaceArea>("overview");
-  const [sourceState, setSourceState] = useState<"loading" | "empty" | "ready" | "failed">("loading");
+  const [sourcePresentation, setSourcePresentation] = useState<OverviewSourcePresentation | null>(null);
+  const sourceState = project && sourcePresentation && sourcePresentation.projectId === project.metadata.projectId
+    && sourcePresentation.sessionToken === project.sessionToken ? sourcePresentation.state : "loading";
   const areaNavigation = useRef(false);
   const compositionActive = useRef(false);
   const compositionRelease = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentSession = useRef<string | null>(null);
-  currentSession.current = project?.sessionToken ?? null;
-  const releaseWorkbench = useRef<ReleaseHandle>(null);
-  const tasksWorkbench = useRef<TasksHandle>(null);
+  const currentProject = useRef(project);
+  useLayoutEffect(() => { currentSession.current = project?.sessionToken ?? null; currentProject.current = project; }, [project]);
+  const projectSession = useRef<ProjectSessionHandle>(null);
+  const lifecycleFlight = useRef<{ sessionToken: string | null; projectId: string | null; session: ProjectSessionHandle | null; closed: boolean } | null>(null);
+  const [retiredSession, setRetiredSession] = useState<RetiredSession | null>(null);
+  const currentRetiredSession = useRef<RetiredSession | null>(null);
+  const [coordinating, setCoordinating] = useState(false);
+  const memory = useMemo(() => new WorkspaceViewMemory(), [project?.sessionToken, project?.metadata.projectId]);
+  useEffect(() => () => { if (currentRetiredSession.current?.memory !== memory) memory.clear(); }, [memory]);
+  useEffect(() => () => currentRetiredSession.current?.memory.clear(), []);
+  const coordinationChanged = useCallback((value: boolean) => { areaNavigation.current = value; setCoordinating(value); }, []);
   const [operation, setOperation] = useState<Operation>("idle");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [closedPanel, setClosedPanel] = useState<ClosedPanel>("empty");
   const [openPanel, setOpenPanel] = useState(false);
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
+  const currentExitPresentation = useRef({ form: activeForm, area, memory });
+  useLayoutEffect(() => { currentExitPresentation.current = { form: activeForm, area, memory }; }, [activeForm, area, memory]);
   const [navigationIntent, setNavigationIntent] = useState<NavigationIntent | null>(null);
   const currentNavigationIntent = useRef<NavigationIntent | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => readRecentProjects());
@@ -361,12 +367,11 @@ function App() {
   const [stopping, setStopping] = useState(false);
   const [stoppedSession, setStoppedSession] = useState<string | null>(null);
   const pendingSave = useRef<PendingSave | null>(null);
-  const sourceWorkbench = useRef<SourceHandle>(null);
-  const resourceWorkbench = useRef<ResourceHandle>(null);
-  const reviewWorkbench = useRef<ReviewHandle>(null);
-  const aiWorkbench = useRef<AiHandle>(null);
-  const arenaWorkbench = useRef<AttemptWorkbenchHandle>(null);
-  const translationWorkbench = useRef<TranslationHandle>(null);
+  const metadataOwnerAlive = useRef(true);
+  useLayoutEffect(() => {
+    metadataOwnerAlive.current = true;
+    return () => { metadataOwnerAlive.current = false; };
+  }, []);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
   const folderNameEdited = useRef(false);
@@ -393,7 +398,11 @@ function App() {
       ? "displayName"
       : "targetLocales";
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
-  const busy = operation !== "idle" || stopping || stopIntent !== null;
+  const busy = operation !== "idle" || stopping || stopIntent !== null || retiredSession !== null;
+  const projectActionUnavailable = busy || coordinating;
+  const metadataRecoveryEditable = operation === "reconciling" && !!pendingSave.current
+    && activeForm === pendingSave.current.form && metadataCaptureCurrent(pendingSave.current)
+    && !stopping && stopIntent === null && !restorePromptOpen && !projectActionInFlight();
   const status = statusFor(t, operation, dirty || createDraftDirty);
 
   useLayoutEffect(() => { currentNavigationIntent.current = navigationIntent; }, [navigationIntent]);
@@ -422,8 +431,8 @@ function App() {
   }
 
   useEffect(() => {
-    if (!project && restoreCandidate) setRestorePromptOpen(true);
-  }, [project, restoreCandidate]);
+    if (!project && restoreCandidate && !retiredSession) setRestorePromptOpen(true);
+  }, [project, restoreCandidate, retiredSession]);
 
   function clearFeedback() {
     setFeedback(null);
@@ -511,7 +520,7 @@ function App() {
   }
 
   function startEditor(kind: FormKind, metadata = project?.metadata) {
-    if (!metadata || busy) return;
+    if (!metadata || projectActionUnavailable || projectActionInFlight()) return;
     if (activeForm) {
       if (activeForm.kind === kind) return;
       if (dirty) {
@@ -523,7 +532,7 @@ function App() {
   }
 
   const executeCreate: SubmitHandler<CreateFormValues> = async (values) => {
-    if (createInFlight.current || busy) return;
+    if (createInFlight.current || projectActionUnavailable || projectActionInFlight()) return;
     if (!values.parentDirectory.trim()) {
       createForm.setError("parentDirectory", { type: "required" });
       setFeedback(localValidation("parentDirectory"));
@@ -588,122 +597,141 @@ function App() {
     }
   };
 
+  function projectActionInFlight() {
+    return areaNavigation.current || lifecycleFlight.current !== null || currentRetiredSession.current !== null;
+  }
+  function beginLifecycle() {
+    if (projectActionInFlight()) return null;
+    const value = currentProject.current;
+    const ticket = { sessionToken: value?.sessionToken ?? null, projectId: value?.metadata.projectId ?? null,
+      session: projectSession.current, closed: false };
+    lifecycleFlight.current = ticket;
+    return ticket;
+  }
+  function lifecycleCurrent(ticket: NonNullable<typeof lifecycleFlight.current>) {
+    if (lifecycleFlight.current !== ticket) return false;
+    const value = currentProject.current;
+    return ticket.closed && !value || value?.sessionToken === ticket.sessionToken && value?.metadata.projectId === ticket.projectId
+      || !value && ticket.sessionToken === null;
+  }
+  function metadataReady() {
+    return !pendingSave.current && !editorForm.getFieldState("value").isDirty && !editorForm.getFieldState("syncDirectoryName").isDirty;
+  }
+  async function prepareSessionExit(ticket: NonNullable<typeof lifecycleFlight.current>): Promise<SessionExitPermit | null> {
+    if (!ticket.sessionToken) return { current: () => lifecycleCurrent(ticket) && metadataReady(), release() {} };
+    const session = ticket.session;
+    if (!session) return null;
+    const permit = await session.prepareExit();
+    if (!lifecycleCurrent(ticket) || !permit?.current() || !metadataReady()) { permit?.release(); return null; }
+    return { current: () => lifecycleCurrent(ticket) && permit.current() && metadataReady(), release: permit.release };
+  }
+  function retireSession(ticket: NonNullable<typeof lifecycleFlight.current>) {
+    const value = currentProject.current;
+    if (!value || !lifecycleCurrent(ticket) || !ticket.session) return;
+    const presentation = currentExitPresentation.current;
+    const retained: RetiredSession = { project: value, area: presentation.area, memory: presentation.memory,
+      metadata: presentation.form && !metadataReady() ? { form: { ...presentation.form }, values: { ...editorForm.getValues() } } : null };
+    // Stop the original owners before publishing a replacement Core identity.
+    ticket.session.retire();
+    currentRetiredSession.current = retained; setRetiredSession(retained);
+  }
+  function discardRetiredSession() {
+    const retained = currentRetiredSession.current;
+    if (!retained || lifecycleFlight.current) return;
+    currentRetiredSession.current = null; retained.memory.clear(); setRetiredSession(null); setArea("overview");
+  }
   async function executeOpen(locator: string) {
-    if (!locator.trim()) {
-      setFeedback(localValidation("locator"));
-      return false;
-    }
-
+    if (projectActionInFlight()) return false;
+    if (!locator.trim()) { setFeedback(localValidation("locator")); return false; }
     if (isSameProject(locator)) {
-      setOpenPanel(false);
-      openForm.reset(OPEN_DEFAULT_VALUES);
-      setRestorePromptOpen(false);
+      setOpenPanel(false); openForm.reset(OPEN_DEFAULT_VALUES); setRestorePromptOpen(false);
       setFeedback({ tone: "info", messageKey: "feedback.alreadyOpen" });
       if (project) rememberOpenedProject(project);
       return true;
     }
-
-    if (releaseWorkbench.current && !await releaseWorkbench.current.allowLeave()) return false;
-    if (tasksWorkbench.current && !await tasksWorkbench.current.allowLeave()) return false;
-    if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
-    if (translationWorkbench.current && !await translationWorkbench.current.allowLeave()) return false;
-    if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
-    if (reviewWorkbench.current && !await reviewWorkbench.current.allowLeave()) return false;
-    if (aiWorkbench.current && !await aiWorkbench.current.allowLeave()) return false;
-    if (arenaWorkbench.current && !await arenaWorkbench.current.allowLeave()) return false;
-    setOperation("opening");
-    setFeedback({ tone: "info", messageKey: "status.opening" });
+    const ticket = beginLifecycle(); if (!ticket) return false;
+    let permit: SessionExitPermit | null = null;
     try {
+      permit = await prepareSessionExit(ticket);
+      if (!permit?.current()) return false;
+      setOperation("opening"); setFeedback({ tone: "info", messageKey: "status.opening" });
+      if (!permit.current()) return false;
       const view = await projectCommands.open({ locator });
-      const sameSession = project?.sessionToken === view.sessionToken;
-      setProject(view);
-      rememberOpenedProject(view);
-      setRestorePromptOpen(false);
+      if (!lifecycleCurrent(ticket)) return false;
+      const sameSession = ticket.sessionToken === view.sessionToken && ticket.projectId === view.metadata.projectId;
+      const canContinue = permit.current();
+      if (!sameSession && !canContinue) retireSession(ticket);
+      // A checked ACK updates the original session even if newer input revoked exit permission.
+      currentProject.current = view; currentSession.current = view.sessionToken;
+      setProject(view); rememberOpenedProject(view); setRestorePromptOpen(false);
       if (sameSession) {
-        setOpenPanel(false);
-        openForm.reset(OPEN_DEFAULT_VALUES);
-        setOperation("idle");
-        setFeedback({ tone: "info", messageKey: "feedback.alreadyOpen" });
-        return true;
+        if (canContinue) { setOpenPanel(false); openForm.reset(OPEN_DEFAULT_VALUES); }
+        setFeedback({ tone: "info", messageKey: "feedback.alreadyOpen" }); return true;
       }
-      setActiveForm(null);
-      editorForm.reset(EDITOR_DEFAULT_VALUES);
-      setOpenPanel(false);
-      openForm.reset(OPEN_DEFAULT_VALUES);
-      setClosedPanel("empty");
-      setOperation("idle");
-      setFeedback({ tone: "success", messageKey: "feedback.opened" });
-      return true;
+      setArea("overview"); setActiveForm(null); editorForm.reset(EDITOR_DEFAULT_VALUES);
+      setOpenPanel(false); openForm.reset(OPEN_DEFAULT_VALUES); setClosedPanel("empty");
+      setFeedback({ tone: "success", messageKey: "feedback.opened" }); return true;
     } catch (value) {
-      setOperation("idle");
-      if (asCommandError(value, "open").code === "busy" && project) {
-        setStopIntent({ kind: "open", locator });
-        setFeedback(null);
-        return false;
-      }
-      setFeedback(feedbackFromFailure(asCommandError(value, "open")));
-      return false;
+      if (!lifecycleCurrent(ticket)) return false;
+      if (asCommandError(value, "open").code === "busy" && project) { setStopIntent({ kind: "open", locator }); setFeedback(null); return false; }
+      setFeedback(feedbackFromFailure(asCommandError(value, "open"))); return false;
+    } finally {
+      permit?.release();
+      if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); }
     }
   }
-
-  async function executeClose(preserveRestoreCandidate = false, coordinated = false) {
-    if (releaseWorkbench.current && !await releaseWorkbench.current.allowLeave()) return false;
-    if (tasksWorkbench.current && !await tasksWorkbench.current.allowLeave()) return false;
-    if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
-    if (translationWorkbench.current && !await translationWorkbench.current.allowLeave()) return false;
-    if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
-    if (reviewWorkbench.current && !await reviewWorkbench.current.allowLeave()) return false;
-    if (aiWorkbench.current && !await aiWorkbench.current.allowLeave()) return false;
-    if (arenaWorkbench.current && !await arenaWorkbench.current.allowLeave()) return false;
+  async function executeClose(preserveRestoreCandidate = false, coordinated = false, destroyWindow = false) {
     if (!project || (busy && !coordinated)) return false;
-    setOperation("closing");
-    setFeedback({ tone: "info", messageKey: "status.closing" });
+    const ticket = beginLifecycle(); if (!ticket) return false;
+    let permit: SessionExitPermit | null = null;
     try {
-      const result: CloseProjectView = await projectCommands.close({ sessionToken: project.sessionToken });
+      if (!ticket.sessionToken) return false;
+      permit = await prepareSessionExit(ticket);
+      if (!permit?.current()) return false;
+      setOperation("closing"); setFeedback({ tone: "info", messageKey: "status.closing" });
+      if (!permit.current()) return false;
+      const result: CloseProjectView = await projectCommands.close({ sessionToken: ticket.sessionToken });
+      if (!lifecycleCurrent(ticket)) return false;
       if (!result.closed) throw new Error("close-not-confirmed");
+      const canContinue = permit.current();
+      if (!canContinue) retireSession(ticket);
+      ticket.closed = true;
+      currentProject.current = null; currentSession.current = null;
       setProject(null);
-      if (!preserveRestoreCandidate) {
-        clearLastOpenProject();
-        setRestoreCandidate(null);
-      }
-      setActiveForm(null);
-      editorForm.reset(EDITOR_DEFAULT_VALUES);
-      setOpenPanel(false);
-      setClosedPanel("empty");
-      setOperation("idle");
+      if (!preserveRestoreCandidate) { clearLastOpenProject(); setRestoreCandidate(null); }
+      setActiveForm(null); editorForm.reset(EDITOR_DEFAULT_VALUES); setOpenPanel(false); setClosedPanel("empty"); setArea("overview");
       setFeedback({ tone: "success", messageKey: "feedback.closed" });
+      if (destroyWindow) {
+        // Closing the Core session cannot be undone; a replacement project must never be destroyed.
+        if (!canContinue || currentRetiredSession.current || !lifecycleCurrent(ticket) || !metadataReady()) return false;
+        try { await getCurrentWindow().destroy(); }
+        catch { if (lifecycleCurrent(ticket)) setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" }); return false; }
+        if (!lifecycleCurrent(ticket)) return false;
+      }
       return true;
     } catch (value) {
-      setOperation("idle");
+      if (!lifecycleCurrent(ticket)) return false;
       if (asCommandError(value, "close").code === "busy") {
-        setStopIntent({ kind: preserveRestoreCandidate ? "window-close" : "close" });
-        setFeedback(null);
-        return false;
+        setStopIntent({ kind: preserveRestoreCandidate ? "window-close" : "close" }); setFeedback(null); return false;
       }
-      setFeedback(feedbackFromFailure(asCommandError(value, "close")));
-      return false;
+      setFeedback(feedbackFromFailure(asCommandError(value, "close"))); return false;
+    } finally {
+      permit?.release();
+      if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); }
     }
   }
-
   async function executeWindowClose(coordinated = false) {
-    if (!project) {
-      try {
-        await getCurrentWindow().destroy();
-        return true;
-      } catch {
-        setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
-        return false;
-      }
-    }
-    const closed = await executeClose(true, coordinated);
-    if (!closed) return false;
+    if (project) return executeClose(true, coordinated, true);
+    const ticket = beginLifecycle(); if (!ticket) return false;
+    setOperation("closing");
     try {
+      if (!lifecycleCurrent(ticket)) return false;
       await getCurrentWindow().destroy();
-      return true;
+      return lifecycleCurrent(ticket);
     } catch {
-      setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
+      if (lifecycleCurrent(ticket)) setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
       return false;
-    }
+    } finally { if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); } }
   }
 
   async function stopAndContinue() {
@@ -753,36 +781,82 @@ function App() {
     return { ok: false };
   }
 
-  async function reconcileUnknown(form: ActiveForm): Promise<SaveResult> {
-    if (!project || !pendingSave.current || reconciliationInFlight.current) return { ok: false };
+  function metadataCaptureCurrent(original: PendingSave) {
+    const current = currentProject.current;
+    return metadataOwnerAlive.current && pendingSave.current === original
+      && current?.sessionToken === original.previous.sessionToken
+      && current.metadata.projectId === original.previous.metadata.projectId
+      && currentSession.current === original.previous.sessionToken
+      && currentExitPresentation.current.form === original.form && !currentRetiredSession.current;
+  }
+
+  function metadataReconcilePayload(): ProjectMetadataReconcileCommandPayload | undefined {
+    const original = pendingSave.current;
+    return original ? { kind: "project-metadata-reconcile", previous: structuredClone(original.previous),
+      form: { ...original.form }, value: original.value, directoryName: original.directoryName ?? null } : undefined;
+  }
+
+  function metadataReconcileAvailability(payload?: ProjectMetadataReconcileCommandPayload) {
+    const original = pendingSave.current;
+    if (!original || !metadataCaptureCurrent(original) || (!navigationIntent && area !== "overview")) {
+      return { enabled: false, reason: "hidden" as const };
+    }
+    if (reconciliationInFlight.current || (operation !== "idle" && operation !== "reconciling")
+      || stopping || stopIntent || restorePromptOpen || projectActionInFlight()) {
+      return { enabled: false, reason: "busy" as const };
+    }
+    const previous = payload?.previous, captured = original.previous;
+    const exact = payload?.kind === "project-metadata-reconcile" && previous
+      && previous.sessionToken === captured.sessionToken && previous.locator === captured.locator
+      && previous.reconciliationState === captured.reconciliationState && sameMetadata(previous.metadata, captured.metadata)
+      && previous.metadata.targetLocales.every((locale, index) => locale === captured.metadata.targetLocales[index])
+      && payload.form.kind === original.form.kind && payload.form.expectedRevision === original.form.expectedRevision
+      && payload.value === original.value && payload.directoryName === (original.directoryName ?? null);
+    return exact ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
+  }
+
+  async function reconcileUnknown(original: PendingSave | null): Promise<SaveResult> {
+    if (!original || !metadataCaptureCurrent(original) || reconciliationInFlight.current) return { ok: false };
     reconciliationInFlight.current = true;
     setOperation("reconciling");
     setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
     try {
-      const view = await projectCommands.read({ sessionToken: project.sessionToken, expectedRevision: pendingSave.current.form.expectedRevision });
-      const outcome = classifySave(view, pendingSave.current);
+      const view = await projectCommands.read({ sessionToken: original.previous.sessionToken, expectedRevision: original.form.expectedRevision });
+      if (!metadataCaptureCurrent(original)) return { ok: false };
+      const outcome = classifySave(view, original);
       if (outcome === "unknown") {
         setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
         return { ok: false };
       }
-      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
+      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(original.previous.locator);
       setProject(view);
-      if (locatorChanged) rememberOpenedProject(view, project.locator);
+      if (locatorChanged) rememberOpenedProject(view, original.previous.locator);
       setActiveForm((current) =>
-        current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
+        current === original.form ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
       pendingSave.current = null;
       if (outcome === "committed") {
-        editorForm.reset(EDITOR_DEFAULT_VALUES);
-        setActiveForm(null);
+        const latest = editorForm.getValues();
+        const retained = latest.value !== original.value || latest.syncDirectoryName !== (original.directoryName !== undefined);
+        if (retained) {
+          // The captured raw input is the completed edit basis. New text and
+          // folder consent remain a separate dirty edit against the confirmed revision.
+          editorForm.reset({ value: original.value, syncDirectoryName: original.directoryName !== undefined });
+          editorForm.setValue("value", latest.value, { shouldDirty: true });
+          editorForm.setValue("syncDirectoryName", latest.syncDirectoryName, { shouldDirty: true });
+        } else {
+          editorForm.reset(EDITOR_DEFAULT_VALUES);
+          setActiveForm(null);
+        }
         setOperation("idle");
-        setFeedback({ tone: "success", messageKey: "feedback.committed" });
-        return { ok: true, metadata: view.metadata };
+        setFeedback({ tone: retained ? "warning" : "success", messageKey: retained ? "feedback.committedDraftRetained" : "feedback.committed" });
+        return { ok: !retained, metadata: view.metadata };
       }
       setOperation("idle");
       setFeedback({ tone: "warning", messageKey: "feedback.previous" });
       return { ok: false, metadata: view.metadata };
     } catch {
+      if (!metadataCaptureCurrent(original)) return { ok: false };
       setOperation("reconciling");
       setFeedback({ tone: "error", messageKey: "feedback.reconcileFailed", code: "outcome-unknown", action: "retry-reconciliation" });
     } finally {
@@ -792,14 +866,16 @@ function App() {
   }
 
   async function saveForm(form: ActiveForm, value = editorForm.getValues("value")): Promise<SaveResult> {
-    if (!project || operation !== "idle" || pendingSave.current) return { ok: false };
+    if (!project || operation !== "idle" || pendingSave.current || projectActionInFlight()) return { ok: false };
     if (!editorForm.formState.isDirty) {
       setActiveForm(null);
       return { ok: true, metadata: project.metadata };
     }
 
     setOperation("saving");
-    pendingSave.current = { previous: project, form, value, ...(form.kind === "rename" && editorForm.getValues("syncDirectoryName") ? { directoryName: value } : {}) };
+    const original: PendingSave = { previous: structuredClone(project), form, value,
+      ...(form.kind === "rename" && editorForm.getValues("syncDirectoryName") ? { directoryName: value } : {}) };
+    pendingSave.current = original;
     setFeedback({ tone: "info", messageKey: "status.saving" });
     try {
       let result: MetadataMutationView;
@@ -857,7 +933,7 @@ function App() {
     } catch (value) {
       const failure = asCommandError(value, form.kind === "rename" ? "rename" : "set-target-locales");
       if (failure.code === "busy" && form.kind === "rename" && editorForm.getValues("syncDirectoryName")) setStopIntent({ kind: "rename" });
-      if (failure.code === "outcome-unknown") return reconcileUnknown(form);
+      if (failure.code === "outcome-unknown") return reconcileUnknown(original);
       pendingSave.current = null;
       if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       setOperation("idle");
@@ -922,7 +998,7 @@ function App() {
   }
 
   function handleCloseRequest() {
-    if (!project || busy) return;
+    if (!project || projectActionUnavailable || projectActionInFlight()) return;
     if (dirty) {
       requestNavigation({ kind: "close" });
       return;
@@ -932,7 +1008,7 @@ function App() {
 
   function handleOpenSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
+    if (projectActionUnavailable || projectActionInFlight()) return;
     void openForm.handleSubmit(({ locator }) => {
       if (dirty && !isSameProject(locator)) {
         requestNavigation({ kind: "open", locator });
@@ -955,7 +1031,7 @@ function App() {
   }
 
   function handleSave(value = editorForm.getValues("value")) {
-    if (activeForm && !busy) void saveForm(activeForm, value);
+    if (activeForm && !projectActionUnavailable && !projectActionInFlight()) void saveForm(activeForm, value);
   }
 
   function cancelEditor() {
@@ -984,7 +1060,10 @@ function App() {
   }
 
   function handleRetryReconciliation() {
-    if (activeForm && project && (operation === "idle" || operation === "reconciling")) void reconcileUnknown(activeForm);
+    const payload = metadataReconcilePayload();
+    if (project && payload) commandRegistry.dispatch("project.metadata.reconcile", {
+      projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: navigationIntent ? area : "overview",
+    }, payload);
   }
 
   async function chooseDirectory(target: DirectoryPickerTarget) {
@@ -1069,7 +1148,7 @@ function App() {
       binding: navigationIntent ? null : "Mod+S", risk: "writes-project", confirmation: navigationIntent ? "required" : "none",
       availability: () => !activeForm || (!navigationIntent && area !== "overview")
         ? { enabled: false, reason: "hidden" }
-        : busy || restorePromptOpen || areaNavigation.current || (navigationIntent && createDraftDirty)
+        : projectActionUnavailable || restorePromptOpen || projectActionInFlight() || (navigationIntent && createDraftDirty)
           ? { enabled: false, reason: "busy" }
         : !dirty || operation !== "idle" || pendingSave.current
             ? { enabled: false, reason: "no-changes" }
@@ -1088,6 +1167,20 @@ function App() {
         }, () => {
           if (currentSession.current === sessionToken && currentNavigationIntent.current === intent) handleEditorInvalid();
         })();
+      },
+    });
+  });
+
+  useLayoutEffect(() => {
+    if (!project) return;
+    return commandRegistry.register({
+      id: "project.metadata.reconcile", nameKey: "action.retry", category: "project",
+      scope: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: navigationIntent ? area : "overview" },
+      binding: null, risk: "reconciles-project", confirmation: "none", payloadKind: "project-metadata-reconcile",
+      availability: metadataReconcileAvailability,
+      handler: payload => {
+        const original = pendingSave.current;
+        if (original && metadataReconcileAvailability(payload).enabled) void reconcileUnknown(original);
       },
     });
   });
@@ -1127,7 +1220,7 @@ function App() {
         .onCloseRequested(async (event) => {
           event.preventDefault();
           if (disposed) return;
-          if (busy) {
+          if (busy || projectActionInFlight()) {
             return;
           }
            if (!project && createDraftDirty) {
@@ -1161,32 +1254,29 @@ function App() {
   }, [busy, createDraftDirty, dirty, project, resolvedLanguage]);
 
   useEffect(() => { setArea("overview"); }, [project?.sessionToken]);
-  useEffect(() => {
-    if (!project || area !== "overview") return;
-    let stale = false;
-    setSourceState("loading");
-    void sourceCommands.scope(executionContext(project)).then(scope => {
-      if (!stale) setSourceState(scope.currentSnapshot ? "ready" : "empty");
-    }).catch(() => { if (!stale) setSourceState("failed"); });
-    return () => { stale = true; };
-  }, [project?.sessionToken, area]);
+  const sourceStateChanged = useCallback((value: OverviewSourcePresentation) => {
+    const current = currentProject.current;
+    if (!metadataOwnerAlive.current || currentRetiredSession.current || !current
+      || current.metadata.projectId !== value.projectId || currentSession.current !== value.sessionToken) return;
+    setSourcePresentation(previous => previous?.projectId === value.projectId && previous.sessionToken === value.sessionToken
+      && previous.state === value.state ? previous : value);
+  }, []);
+  const activateArea = useCallback((next: WorkspaceArea) => {
+    if (currentExitPresentation.current.area !== next) setSourcePresentation(null);
+    setArea(next);
+  }, []);
   async function navigateArea(next: WorkspaceArea) {
-    if (next === area || busy || stopping || areaNavigation.current) return;
-    const handles = { source: sourceWorkbench, translation: translationWorkbench, resources: resourceWorkbench,
-      review: reviewWorkbench, ai: aiWorkbench, arena: arenaWorkbench, release: releaseWorkbench, tasks: tasksWorkbench };
-    const session = currentSession.current;
-    areaNavigation.current = true;
-    try {
-      if (area === "source") { if (sourceWorkbench.current && !await sourceWorkbench.current.allowNavigate()) return; }
-      else if (area === "ai") { if (aiWorkbench.current && !await aiWorkbench.current.allowNavigate()) return; }
-      else if (area === "translation") { if (translationWorkbench.current && !await translationWorkbench.current.allowNavigate()) return; }
-      else if (area === "review") { if (reviewWorkbench.current && !await reviewWorkbench.current.allowNavigate()) return; }
-      else if (area === "resources") { if (resourceWorkbench.current && !await resourceWorkbench.current.allowNavigate()) return; }
-      else if (area !== "overview" && handles[area].current && !await handles[area].current!.allowLeave()) return;
-      if (currentSession.current === session) setArea(next);
-    } finally { areaNavigation.current = false; }
+    if (next === area || busy || stopping || coordinating || areaNavigation.current || lifecycleFlight.current) return;
+    if (!project) { if (next === "overview") setArea(next); return; }
+    const session = projectSession.current;
+    if (session) await session.navigate({ kind: "area", area: next });
   }
-  const viewOwner = { area, activate: setArea, deactivate: (closing: WorkspaceArea) => setArea(current => current === closing ? "overview" : current) };
+  const viewOwner = { area, memory, activate: (next: WorkspaceArea) => { void navigateArea(next); },
+    deactivate: (closing: WorkspaceArea) => { if (area === closing) void navigateArea("overview"); } };
+  const sessionPresentation = retiredSession?.project ?? project;
+  const sessionViewOwner = retiredSession
+    ? { area: retiredSession.area, memory: retiredSession.memory, activate() {}, deactivate() {} }
+    : viewOwner;
   const renderFeedback = feedback ? (
     <div className={`feedback feedback-${feedback.tone}`} aria-live="polite" role={feedback.tone === "error" ? "alert" : "status"}>
       <div className="feedback-copy">
@@ -1202,7 +1292,7 @@ function App() {
           </button>
         ) : null}
         {feedback.action === "retry-reconciliation" ? (
-          <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>
+          <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={!metadataReconcileAvailability(metadataReconcilePayload()).enabled}>
             <Icon name="refresh" size={16} />
             {t("action.retry")}
           </button>
@@ -1237,7 +1327,7 @@ function App() {
           </div>
         </div>
 
-        <WorkbenchNavigation area={area} hasProject={Boolean(project)} disabled={busy || stopping} onNavigate={next => void navigateArea(next)} />
+        <WorkbenchNavigation area={area} hasProject={Boolean(project)} disabled={busy || stopping || coordinating} onNavigate={next => void navigateArea(next)} />
 
         <div className="sidebar-footer" aria-live="polite">
           <span className={`status-dot status-dot-${operation}`} aria-hidden="true" />
@@ -1296,7 +1386,7 @@ function App() {
                         <ul>
                           {recentProjects.map((recent) => (
                             <li key={normalizeLocator(recent.locator)}>
-                              <button className="recent-project" type="button" onClick={() => void executeOpen(recent.locator)} disabled={busy}>
+                              <button className="recent-project" type="button" onClick={() => void executeOpen(recent.locator)} disabled={projectActionUnavailable}>
                                 <span className="recent-project-copy">
                                   <strong>{recentProjectName(recent.locator)}</strong>
                                   <small>{recent.locator}</small>
@@ -1437,7 +1527,7 @@ function App() {
                       <button className="secondary-button" type="button" onClick={handleCreateCancel} disabled={busy}>
                         {t("action.cancel")}
                       </button>
-                      <button className="primary-button" type="submit" disabled={busy}>
+                      <button className="primary-button" type="submit" disabled={projectActionUnavailable}>
                         <Icon name="folder-open" size={18} />
                         {busy ? t("status.opening") : t("create.submit")}
                       </button>
@@ -1472,7 +1562,7 @@ function App() {
                       <button className="secondary-button" type="button" onClick={() => { clearFeedback(); setClosedPanel("empty"); }} disabled={busy}>
                         {t("action.cancel")}
                       </button>
-                      <button className="primary-button" type="submit" disabled={busy}>
+                      <button className="primary-button" type="submit" disabled={projectActionUnavailable}>
                         <Icon name="folder-open" size={18} />
                         {busy ? t("status.opening") : t("open.submit")}
                       </button>
@@ -1527,18 +1617,18 @@ function App() {
                 </details>
 
                 <div className="action-bar" aria-label={t("accessibility.projectActions")}>
-                  <button className="secondary-button" type="button" onClick={() => startEditor("rename")} disabled={busy}>
+                  <button className="secondary-button" type="button" onClick={() => startEditor("rename")} disabled={projectActionUnavailable}>
                     {t("project.rename")}
                   </button>
-                  <button className="secondary-button" type="button" onClick={() => startEditor("target")} disabled={busy}>
+                  <button className="secondary-button" type="button" onClick={() => startEditor("target")} disabled={projectActionUnavailable}>
                     <Icon name="plus" size={17} />
                     {t("project.addTarget")}
                   </button>
-                  <button className="secondary-button" type="button" onClick={() => { clearFeedback(); setOpenPanel((current) => !current); }} disabled={busy}>
+                  <button className="secondary-button" type="button" onClick={() => { clearFeedback(); setOpenPanel((current) => !current); }} disabled={projectActionUnavailable}>
                     <Icon name="folder-open" size={17} />
                     {t("project.openAnother")}
                   </button>
-                  <button className="danger-button" type="button" onClick={handleCloseRequest} disabled={busy}>
+                  <button className="danger-button" type="button" onClick={handleCloseRequest} disabled={projectActionUnavailable}>
                     <Icon name="close" size={17} />
                     {t("project.close")}
                   </button>
@@ -1569,7 +1659,7 @@ function App() {
                         <small>{t("open.destinationHelp")}</small>
                         {openForm.formState.errors.locator || fieldError(feedback, "locator") ? <span className="field-error">{t("errors.locator")}</span> : null}
                       </label>
-                      <button className="primary-button" type="submit" disabled={busy}>{t("open.submit")}</button>
+                      <button className="primary-button" type="submit" disabled={projectActionUnavailable}>{t("open.submit")}</button>
                       <button className="secondary-button" type="button" onClick={() => setOpenPanel(false)} disabled={busy}>{t("action.cancel")}</button>
                     </div>
                   </form>
@@ -1577,7 +1667,7 @@ function App() {
 
                 {activeForm ? (
                   <form className="editor-card" onChange={clearEditorFeedback} onSubmit={event => { event.preventDefault(); if (project) commandRegistry.dispatch("project.metadata.save", { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area }); }}>
-                    <fieldset className="editor-fields" disabled={busy}>
+                    <fieldset className="editor-fields" disabled={busy && !metadataRecoveryEditable}>
                     <div className="editor-heading">
                       <div>
                         <p className="eyebrow">{activeForm.kind === "rename" ? t("project.rename") : t("project.addTarget")}</p>
@@ -1633,7 +1723,7 @@ function App() {
                     ) : null}
                     <div className="form-actions">
                       <button className="secondary-button" type="button" onClick={cancelEditor} disabled={busy}>{t("editor.cancel")}</button>
-                      <button className="primary-button" type="submit" disabled={busy || !dirty}>
+                      <button className="primary-button" type="submit" disabled={projectActionUnavailable || !dirty}>
                         <Icon name="save" size={17} />
                         {busy ? t("status.saving") : t("editor.save")}
                       </button>
@@ -1644,7 +1734,21 @@ function App() {
               </section>
             )}
           </div>
-          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><TranslationDraftSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /></AiPreparationSession><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : null}
+          {sessionPresentation ? <WorkspaceViewProvider key={`${sessionPresentation.metadata.projectId}:${sessionPresentation.sessionToken}`} value={sessionViewOwner}>
+            <ProjectSessionWorkbench key={`${sessionPresentation.metadata.projectId}:${sessionPresentation.sessionToken}`} ref={projectSession}
+              project={sessionPresentation} retired={retiredSession !== null} disabled={busy || stopping}
+              onActivate={retiredSession ? () => {} : activateArea} onCoordinatingChange={coordinationChanged}
+              onSourceState={sourceStateChanged} />
+            {retiredSession?.metadata ? <section className="editor-card">
+              <label className="field" htmlFor="retired-metadata-value">
+                <span>{t(retiredSession.metadata.form.kind === "rename" ? "editor.renameLabel" : "editor.targetLabel")}</span>
+                <textarea id="retired-metadata-value" readOnly value={retiredSession.metadata.values.value} />
+              </label>
+              {retiredSession.metadata.values.syncDirectoryName ? <p>{t("editor.syncDirectoryName")}</p> : null}
+            </section> : null}
+            {retiredSession ? <button className="danger-button" type="button" onClick={discardRetiredSession}
+              disabled={operation !== "idle" || stopping}>{t("workbench.retiredDraftDiscard")}</button> : null}
+          </WorkspaceViewProvider> : null}
         </div>
 
         <DialogRoot
@@ -1697,7 +1801,7 @@ function App() {
                   <span>{renderFeedbackMessage(t, feedback)}</span>
                   <CommandFailureDetails failure={feedback.commandError ?? null} />
                   {feedback.action === "refresh" ? <button className="text-button" type="button" onClick={handleRefresh} disabled={busy}>{t("action.refresh")}</button> : null}
-                  {feedback.action === "retry-reconciliation" ? <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>{t("action.retry")}</button> : null}
+                  {feedback.action === "retry-reconciliation" ? <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={!metadataReconcileAvailability(metadataReconcilePayload()).enabled}>{t("action.retry")}</button> : null}
                 </div>
               ) : null}
               <div className="dialog-actions">

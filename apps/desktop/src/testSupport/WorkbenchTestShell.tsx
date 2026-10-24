@@ -1,19 +1,24 @@
 import { SessionReadProvider, useSessionReads } from "../SessionReadProvider";
+import { ExecutionTaskSession } from "../ExecutionTaskSession";
 import { executionContext } from "../executionCommands";
 import type { ProjectView } from "../projectCommands";
-import { useState, useEffect, isValidElement, type ReactNode } from "react";
+import { useState, useEffect, useMemo, isValidElement, type ReactNode } from "react";
 import { render, act } from "@testing-library/react";
-import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "../WorkbenchFrame";
+import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, useWorkspaceViewChanges, type WorkspaceArea } from "../WorkbenchFrame";
 import { TranslationDraftSession } from "../TranslationDraftSession";
+import { TranslationImportSession } from "../TranslationImportSession";
 import { ReviewDraftSession } from "../ReviewDraftSession";
 import { SourceDraftSession } from "../SourceDraftSession";
 import { ResourceDraftSession } from "../ResourceDraftSession";
+import { ArenaDraftSession } from "../ArenaDraftSession";
+import { ReleaseDraftSession } from "../ReleaseDraftSession";
 import { WorkbenchCommands, WorkbenchCommandsProvider } from "../workbenchCommands";
 import type { ChangeScope } from "../sessionReads";
 
 let currentReads: ReturnType<typeof useSessionReads> | undefined;
 function ReadControl() {
   const reads = useSessionReads();
+  useWorkspaceViewChanges();
   useEffect(() => { currentReads = reads; return () => { if (currentReads === reads) currentReads = undefined; }; }, [reads]);
   return null;
 }
@@ -26,9 +31,10 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const [area, setArea] = useState<WorkspaceArea>("overview");
   const [commands] = useState(() => new WorkbenchCommands());
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
-  return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
+  const memory = useMemo(() => new WorkspaceViewMemory(), [project?.sessionToken, project?.metadata.projectId]);
+  return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>{children}</SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={`${project.metadata.projectId}:${project.sessionToken}`} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}><ReleaseDraftSession project={project}>{children}</ReleaseDraftSession></ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></ExecutionTaskSession></TranslationDraftSession></SessionReadProvider> : children}
   </WorkspaceViewProvider></WorkbenchCommandsProvider>;
 }
 

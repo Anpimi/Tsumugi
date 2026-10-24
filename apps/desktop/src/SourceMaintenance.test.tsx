@@ -127,7 +127,7 @@ it("ignores a hidden history response and rereads its exact intent when shown", 
     { ...fixture.session, offset: 0, limit: 50 }, { ...fixture.session, offset: 0, limit: 50 }]);
 });
 
-it("removes its read commands on consumer unmount and ignores the late response before a fresh read", async () => {
+it("removes its read commands on unmount and automatically rereads the retained cursor while ignoring the late response", async () => {
   const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void;
   invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
   const view = render(<><Probe/><SourceHistoryPanel project={project} disabled={false} /></>, project);
@@ -139,7 +139,7 @@ it("removes its read commands on consumer unmount and ignores the late response 
   await act(async () => { finish(sourceHistoryFixture({ total: 99 })); });
   invoke.mockImplementation(original);
   view.rerender(<><Probe/><SourceHistoryPanel project={project} disabled={false}/></>);
-  await user.click(screen.getByRole("button", { name: "Source snapshot history" })); await screen.findByText("1 saved source snapshots");
+  await screen.findByText("1 saved source snapshots");
   expect(screen.queryByText("99 saved source snapshots")).not.toBeInTheDocument();
   expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_source_history", "read_source_history"]);
 });
@@ -240,4 +240,57 @@ it("explains an empty target list without issuing an impact read", async () => {
   expect(screen.getByRole("button", { name: "Read current impact" })).toBeDisabled();
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_content_scope", { request: fixture.session }));
   expect(invoke.mock.calls.filter(([command]) => command === "read_source_impact")).toHaveLength(0);
+});
+
+
+it("retains historical snapshot and unapplied search input through a real consumer remount", async () => {
+  const user = userEvent.setup(), view = render(<SourceHistoryPanel project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Source snapshot history" }));
+  await user.click(await screen.findByRole("button", { name: /Source revision/ }));
+  await user.type(screen.getByRole("textbox", { name: "Search historical keys or text" }), "not yet applied");
+  await screen.findByText("Historical source");
+  const previous = invoke.mock.calls.filter(([command]) => command === "read_source_history_content").length;
+  view.rerender(<></>); view.rerender(<SourceHistoryPanel project={project} disabled={false} />);
+  expect(await screen.findByRole("textbox", { name: "Search historical keys or text" })).toHaveValue("not yet applied");
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_source_history_content").length).toBeGreaterThan(previous));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_history_content").at(-1)?.[1].request)
+    .toMatchObject({ snapshotId, query: "", after: 0 });
+});
+
+it("awaits destination acceptance and does not show late navigation feedback in a replacement source view", async () => {
+  let finish!: (value: boolean) => void;
+  const open = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  const view = render(<SourceImpactPanel project={project} snapshotId={snapshotId} onOpenTranslation={open} />);
+  const user = userEvent.setup(); await user.click(await screen.findByRole("button", { name: "Edit this key" }));
+  expect(open).toHaveBeenCalledOnce();
+  expect(screen.queryByText(i18n.t("source.navigationBlocked"))).not.toBeInTheDocument();
+  view.rerender(<></>); await act(async () => finish(false));
+  view.rerender(<SourceImpactPanel project={project} snapshotId={snapshotId} onOpenTranslation={open} />);
+  await screen.findByRole("button", { name: "Edit this key" });
+  expect(screen.queryByText(i18n.t("source.navigationBlocked"))).not.toBeInTheDocument();
+});
+
+it.each(["synchronous", "asynchronous"])("shows a recoverable navigation failure after a %s callback rejection", async kind => {
+  const open = vi.fn(() => {
+    if (kind === "synchronous") throw new Error("Destination unavailable");
+    return Promise.reject<boolean>(new Error("Destination unavailable"));
+  });
+  render(<SourceImpactPanel project={project} snapshotId={snapshotId} onOpenTranslation={open} />);
+  const user = userEvent.setup(); await user.click(await screen.findByRole("button", { name: "Edit this key" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("source.navigationBlocked"));
+  open.mockImplementation(() => Promise.resolve(true));
+  await user.click(screen.getByRole("button", { name: "Edit this key" }));
+  await waitFor(() => expect(screen.queryByText(i18n.t("source.navigationBlocked"))).not.toBeInTheDocument());
+  expect(open).toHaveBeenCalledTimes(2);
+});
+
+it("ignores a rejected destination callback after its original source consumer unmounts", async () => {
+  let reject!: (reason: Error) => void;
+  const open = vi.fn(() => new Promise<boolean>((_resolve, fail) => { reject = fail; }));
+  const view = render(<SourceImpactPanel project={project} snapshotId={snapshotId} onOpenTranslation={open} />);
+  const user = userEvent.setup(); await user.click(await screen.findByRole("button", { name: "Edit this key" }));
+  view.rerender(<></>); await act(async () => reject(new Error("Old destination unavailable")));
+  view.rerender(<SourceImpactPanel project={project} snapshotId={snapshotId} onOpenTranslation={open} />);
+  await screen.findByRole("button", { name: "Edit this key" });
+  expect(screen.queryByText(i18n.t("source.navigationBlocked"))).not.toBeInTheDocument();
 });

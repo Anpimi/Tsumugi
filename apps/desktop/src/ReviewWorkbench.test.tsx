@@ -1393,6 +1393,9 @@ it.each(["source", "translation", "resources", "review", "project"] as ChangeSco
   expect(screen.getByRole("textbox", { name: "Reviewer name" })).toHaveValue("Reviewer A");
   expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("AB");
   expect(screen.getByRole("checkbox", { name: "Approve selected entries: first" })).toBeChecked();
+  await waitFor(() => expect(invoke.mock.calls.slice(beforeChange).some(([name]) => name === "read_review_target")).toBe(true));
+  await waitFor(() => expect(screen.queryAllByText("Reading current review information…")).toHaveLength(0));
+  expect(screen.getByText("Hello")).toBeVisible();
   expect(screen.queryByText("Changed source")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(2));
@@ -1490,7 +1493,7 @@ it("revokes an assessment through a target-language round trip before an old res
     .toEqual([["zh-CN", "ja"], ["zh-CN", "ja"]]);
 });
 
-it("requires a fresh explicit assessment after the Review consumer unmounts in the same session", async () => {
+it("rereads only the original explicit assessment after the Review consumer remounts in the same session", async () => {
   let finishOld!: (value: unknown) => void;
   const oldAssessment = new Promise(resolve => { finishOld = resolve; });
   const original = invoke.getMockImplementation()!;
@@ -1508,11 +1511,11 @@ it("requires a fresh explicit assessment after the Review consumer unmounts in t
   await act(async () => finishOld(eligibilityResult(["zh-CN"], "unmounted-assessment")));
   view.rerender(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
   await user.click(screen.getByRole("tab", { name: "Build readiness" }));
-  expect(screen.getByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
-  expect(screen.queryByText(/unmounted-assessment/)).not.toBeInTheDocument();
-  expect(assessmentReads).toBe(1);
-  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
   expect(await screen.findByText("remounted-assessment: Run the current checks")).toBeVisible();
+  expect(screen.queryByText(/unmounted-assessment/)).not.toBeInTheDocument();
+  expect(assessmentReads).toBe(2);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request.locales))
+    .toEqual([["zh-CN"], ["zh-CN"]]);
 });
 
 it("does not display another project session's late assessment", async () => {

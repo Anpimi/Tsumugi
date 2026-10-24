@@ -40,6 +40,47 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+it("dispatches captured cancellation after Source hides during identity and recovers it even when current task reads fail", async () => {
+  const user = userEvent.setup(), ref = createRef<SourceHandle>();
+  const original = invoke.getMockImplementation()!;
+  let cancellations = 0, readsFail = false, failedTaskReads = 0, identify!: (value: unknown) => void;
+  invoke.mockImplementation(async (command: string, payload: { request?: Record<string, unknown> }) => {
+    if (command === "read_execution_attempt") {
+      if (readsFail) { failedTaskReads++; throw new Error("Task read unavailable"); }
+      const value = sourceAttemptFixture(payload.request!.attemptId as string);
+      return { ...value, progress: { ...value.progress, queued: 1, succeeded: 0 },
+        items: value.items.map(item => ({ ...item, resultId: null, status: { ...item.status, execution: "queued", validation: "absent" } })) };
+    }
+    if (command === "create_execution_identity") return new Promise(resolve => { identify = resolve; });
+    if (command === "cancel_execution_task") { if (++cancellations === 1) throw new Error("Disconnected"); return "6"; }
+    return original(command, payload);
+  });
+  const view = render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  act(() => { ref.current!.showAttempt(executionFixture.detail.attemptId); });
+  const cancel = await screen.findByRole("button", { name: "Cancel remaining work" });
+  await waitFor(() => expect(cancel).toBeEnabled());
+  await user.click(cancel);
+  await waitFor(() => expect(identify).toBeTypeOf("function"));
+  view.rerender(null, project);
+  await act(async () => { identify(fixtureIdentity(204)); });
+  expect(invoke.mock.calls.filter(([name]) => name === "cancel_execution_task")).toHaveLength(1);
+  view.rerender(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  await screen.findByRole("button", { name: "Retry the original cancellation" });
+  readsFail = true;
+  view.rerender(null, project);
+  view.rerender(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  await refreshWorkbenchReads(["execution"]);
+  await waitFor(() => expect(failedTaskReads).toBeGreaterThan(0));
+  await user.click(await screen.findByRole("button", { name: "Retry the original cancellation" }));
+  await screen.findByText(/Cancellation request recorded/);
+  const requests = invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request);
+  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+  expect(requests[0]).toEqual({ sessionToken: project.sessionToken, projectId: project.metadata.projectId,
+    taskId: sourceAttemptFixture(executionFixture.detail.attemptId).taskId, requestId: fixtureIdentity(204) });
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Retry the original cancellation" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(0);
+});
 it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", "I confirm", "Check source files", "This subtitle does not match caption profile 1."], ["zh-CN", "源内容", "源格式", "选择字幕目录", "我确认", "检查源文件", "字幕不符合 profile 1。"]])("selects WebVTT explicitly and recovers from invalid captions in %s", async (locale, entry, format, choose, declaration, check, message) => {
   await i18n.changeLanguage(locale);
   const original = invoke.getMockImplementation()!;

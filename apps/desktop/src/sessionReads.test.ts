@@ -118,3 +118,56 @@ it("reports semantic scopes without revoking preparation for unchanged focus che
   expect(changes).toHaveBeenCalledWith(["project"]);
   unsubscribe();
 });
+
+it("permanently retires the bridge and ignores delayed registration, hints and attempts to restart", async () => {
+  let registered!: (stop: () => void) => void;
+  const fixture = setup({ listen: () => new Promise(resolve => { registered = resolve; }) });
+  const changes = vi.fn(), stop = vi.fn(); fixture.reads.subscribeChanges(changes);
+  await settle(); const snapshots = fixture.wire.snapshot.mock.calls.length; changes.mockClear();
+  fixture.reads.retire(); fixture.reads.retire();
+  registered(stop); await settle();
+  fixture.reads.invalidate(["source"]);
+  fixture.reads.receive({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["source"] });
+  const cleanup = fixture.reads.start(); await fixture.reads.synchronize(true);
+  await vi.advanceTimersByTimeAsync(3000); await settle(); cleanup();
+  expect(fixture.reads.retired).toBe(true);
+  expect(stop).toHaveBeenCalledOnce(); expect(changes).not.toHaveBeenCalled();
+  expect(fixture.wire.listen).toHaveBeenCalledOnce(); expect(fixture.wire.snapshot).toHaveBeenCalledTimes(snapshots);
+});
+
+it("retains the latest exact Query witness through replacement, removal and old-record notifications", () => {
+  const reads = new SessionReads(context), key = reads.key(["flight", "attempt"]), cache = reads.client.getQueryCache();
+  reads.client.setQueryData(key, "original");
+  const original = cache.find({ queryKey: key, exact: true })!, witness = reads.watchExactQuery(["flight", "attempt"]);
+  expect(witness.current()).toBe(original);
+  reads.client.removeQueries({ queryKey: key, exact: true });
+  expect(witness.current()).toBe(original);
+  reads.client.setQueryData(key, "contradiction");
+  const replacement = cache.find({ queryKey: key, exact: true })!;
+  replacement.setState({ status: "error", error: new Error("Latest exact read failed") });
+  reads.client.removeQueries({ queryKey: key, exact: true });
+  original.setData("late original success");
+  reads.client.setQueryData(reads.key(["flight", "attempt", "other"]), "prefix neighbor");
+  reads.client.setQueryData([context.projectId, "foreign-session", "flight", "attempt"], "foreign");
+  expect(witness.current()).toBe(replacement);
+  expect(witness.current()?.state.status).toBe("error");
+  witness.dispose(); witness.dispose();
+  reads.client.setQueryData(key, "after disposal");
+  expect(witness.current()).toBe(replacement);
+  reads.client.clear();
+});
+
+it("captures a first exact Query added during a caller-owned wait and releases its listener once", () => {
+  const reads = new SessionReads(context), cache = reads.client.getQueryCache(), subscribe = cache.subscribe;
+  const dispose = vi.fn();
+  vi.spyOn(cache, "subscribe").mockImplementation(listener => { const stop = subscribe(listener); return () => { dispose(); stop(); }; });
+  const witness = reads.watchExactQuery(["comparison", "id"]);
+  expect(witness.current()).toBeUndefined();
+  reads.client.setQueryData(reads.key(["comparison", "id"]), "checked");
+  const query = witness.current(); expect(query?.state.data).toBe("checked");
+  witness.dispose(); witness.dispose(); expect(dispose).toHaveBeenCalledTimes(1);
+  reads.client.removeQueries({ queryKey: reads.key(["comparison", "id"]), exact: true });
+  reads.client.setQueryData(reads.key(["comparison", "id"]), "new");
+  expect(witness.current()).toBe(query);
+  reads.client.clear();
+});

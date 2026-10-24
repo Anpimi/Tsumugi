@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
-import { executionCommands, type ContinuationRequest, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
+import { executionCommands, confirmExecutionAction, confirmExecutionReceipt, type ContinuationRequest, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
 import * as validators from "./generated/execution.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 const invoke = vi.hoisted(() => vi.fn());
@@ -81,6 +81,56 @@ it("keeps a malformed adoption acknowledgement unknown without replaying it", as
   invoke.mockResolvedValueOnce(fixture.receipt);
   expect(await executionCommands.receipt(fixture.adopt)).toEqual(fixture.receipt);
 });
+it("requires a positive checked cancellation revision and preserves the exact original request", async () => {
+  expect(validators.validateResponseCancellation("0")).toBe(true);
+  for (const invalid of ["0", 1, "01", "9223372036854775808", {}]) {
+    invoke.mockResolvedValueOnce(invalid);
+    const failure = await executionCommands.cancel(fixture.cancel).catch(error => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(hasUnknownOutcome(failure)).toBe(true);
+    expect(invoke).toHaveBeenLastCalledWith("cancel_execution_task", { request: fixture.cancel });
+  }
+  expect(invoke).toHaveBeenCalledTimes(5);
+  invoke.mockResolvedValueOnce("9007199254740993");
+  expect(await executionCommands.cancel(fixture.cancel)).toBe("9007199254740993");
+  expect(invoke).toHaveBeenLastCalledWith("cancel_execution_task", { request: fixture.cancel });
+});
+
+it("checks the real general preparation contract using canonical unique result sets and null parameters", () => {
+  const other = "10000000-0000-4000-8000-000000000009";
+  const request = { ...prepare, resultIds: [other, prepare.resultIds[0]] };
+  // Host's general adapter supplies null; the shared Core fixture also covers custom parameters.
+  const action = { ...fixture.action, parameters: null, resultIds: [...request.resultIds].sort(), cancellationRevision: "0" };
+  expect(confirmExecutionAction(request, "sample-update", action)).toEqual(action);
+  expect(request.resultIds).toEqual([other, prepare.resultIds[0]]);
+  for (const patch of [
+    { projectId: other }, { attemptId: other }, { actionId: other }, { unitId: other }, { operation: "other" },
+    { parameters: fixture.action.parameters }, { resultIds: [other, other] }, { resultIds: [other] },
+    { resultIds: [...action.resultIds, fixture.prepare.actionId] },
+  ]) expect(() => confirmExecutionAction(request, "sample-update", { ...action, ...patch })).toThrow();
+  expect(() => confirmExecutionAction(request, "sample-update", { ...action, cancellationRevision: "1" }, action)).toThrow();
+});
+
+it("pins complete generic receipts without inventing domain-specific change restrictions", () => {
+  const generic = { ...receipt, changes: [{ kind: "custom fact", id: "a non-UUID fact", revision: "0" }] };
+  expect(confirmExecutionReceipt(prepare, generic)).toEqual(generic);
+  expect(confirmExecutionReceipt(prepare, { ...receipt, changes: [] })).toEqual({ ...receipt, changes: [] });
+  for (const patch of [
+    { projectId: fixture.prepare.unitId }, { attemptId: fixture.prepare.unitId }, { actionId: fixture.prepare.unitId },
+    { unitId: fixture.prepare.actionId }, { requestDigest: "f".repeat(64) },
+    { changes: [] }, { changes: [{ ...generic.changes[0], kind: "other" }] },
+    { changes: [{ ...generic.changes[0], id: "another fact" }] }, { changes: [{ ...generic.changes[0], revision: "1" }] },
+  ]) expect(() => confirmExecutionReceipt(prepare, { ...generic, ...patch }, generic)).toThrow();
+});
+
+it("keeps actual general adoption on the three-field request and accepts a zero change revision", async () => {
+  const action = { ...fixture.action, parameters: null, cancellationRevision: "0" };
+  invoke.mockResolvedValueOnce(action).mockResolvedValueOnce({ ...receipt, changes: [{ kind: "sample-update", id: "Sample A", revision: "0" }] });
+  expect(confirmExecutionAction(prepare, "sample-update", await executionCommands.prepare(prepare))).toEqual(action);
+  await executionCommands.adopt(fixture.adopt);
+  expect(invoke).toHaveBeenLastCalledWith("adopt_execution", { request: fixture.adopt });
+  expect(Object.keys(invoke.mock.calls[1][1].request).sort()).toEqual(["actionId", "projectId", "sessionToken"]);
+});
 
 it("binds continuation ACK and exact lookup to the complete original action", async () => {
   const request: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched" } };
@@ -119,4 +169,21 @@ it("rejects incomplete or mis-scoped continuation history without a false absenc
   }
   invoke.mockResolvedValueOnce({ receipts: [], next: null });
   expect(await executionCommands.continuations({ ...request, after: fixture.continuationReceipt.sequence })).toEqual({ receipts: [], next: null });
+});
+
+it("accepts a zero continuation basis while checking the original TaskView scope and exact revision", async () => {
+  const request: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } };
+  expect(validators.validateRequestContinuation(request)).toBe(true);
+  const receipt = { ...fixture.continuationReceipt, action: request.action };
+  invoke.mockResolvedValueOnce(receipt);
+  expect(await executionCommands.continue(request)).toEqual(receipt);
+  expect(invoke).toHaveBeenLastCalledWith("continue_execution", { request });
+  for (const patch of [{ taskId: fixture.prepare.actionId }, { projectId: fixture.prepare.actionId }, { cancellationRevision: "01" }, { cancellationRevision: 0 }]) {
+    invoke.mockResolvedValueOnce({ ...fixture.task, ...patch });
+    await expect(executionCommands.taskView(fixture.taskViewRequest)).rejects.toThrow();
+  }
+  const task = { ...fixture.task, cancellationRevision: "0" };
+  invoke.mockResolvedValueOnce(task);
+  expect(await executionCommands.taskView(fixture.taskViewRequest)).toEqual(task);
+  expect(invoke).toHaveBeenLastCalledWith("read_execution_task_view", { request: fixture.taskViewRequest });
 });

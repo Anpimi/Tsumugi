@@ -1,5 +1,5 @@
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -16,12 +16,12 @@ import type { QueryKey } from "@tanstack/react-query";
 import type { EditorTarget } from "./TranslationWorkbench";
 
 type Tab = "terms" | "updates" | "context" | "impact";
-export interface ResourceHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export interface ResourceHandle { allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean> }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }: {
   project: ProjectView; disabled: boolean;
-  onOpenTranslation: (target: EditorTarget, locale: string, suggestedText?: string) => boolean;
+  onOpenTranslation: (target: EditorTarget, locale: string, suggestedText?: string) => boolean | Promise<boolean>;
   ref?: Ref<ResourceHandle>;
 }) {
   const { t } = useTranslation();
@@ -34,13 +34,14 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
   const pendingDecision = pending?.kind === "decision" ? pending.request : null;
   const termDirty = owner.termDirty(), contextDirty = owner.contextDirty();
   const [open, setOpen] = useWorkbenchView("resources");
-  const [tab, setTab] = useState<Tab>("terms");
-  const [sourceCursor, setSourceCursor] = useState({ locale, snapshotId: "", revision: "", after: 0 });
-  const [impactCursor, setImpactCursor] = useState({ locale, snapshotId: "", revision: "", offset: 0 });
+  const [tab, setTab] = useWorkbenchState<Tab>("resources", "tab", "terms");
+  const [sourceCursor, setSourceCursor] = useWorkbenchState("resources", "sourceCursor", { locale, snapshotId: "", revision: "", after: 0 });
+  const [impactCursor, setImpactCursor] = useWorkbenchState("resources", "impactCursor", { locale, snapshotId: "", revision: "", offset: 0 });
   const [readBusy, setReadBusy] = useState(false);
   const [readFailure, setReadFailure] = useState<CommandFailure | null>(null);
   const failureValue = owner.state.failure, failure = failureReason(failureValue);
   const [leavePrompt, setLeavePrompt] = useState(false);
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
   const alive = useRef(false), generation = useRef(0), running = useRef(false);
   const committed = useRef({ open, locale, project, disabled, tab });
@@ -133,7 +134,8 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
     if (impactOffset === 0) void impactRead.refetch(); else setImpactCursor({ locale, snapshotId: scope?.currentSnapshot ?? "", revision: scope?.revision ?? "", offset: 0 });
   }
   function allowNavigate() { generation.current++; running.current = false; setReadBusy(false); return Promise.resolve(true); }
-  useImperativeHandle(ref, () => ({ allowNavigate, allowLeave() {
+  useImperativeHandle(ref, () => ({ allowNavigate, allowLeave(current: () => boolean = () => true) {
+    leaveProof.current = current;
     if (owner.inFlight() || owner.current().pending) { setOpen(true); return Promise.resolve(false); }
     if (!owner.termDirty() && !owner.contextDirty()) return Promise.resolve(true);
     setOpen(true); setLeavePrompt(true);
@@ -156,9 +158,10 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
   function requestClose() { void allowNavigate().then(() => setOpen(false)); }
   function finishLeave(discard: boolean) {
     if (owner.inFlight() || owner.current().pending) return;
+    if (discard && leaveProof.current && !leaveProof.current()) { setLeavePrompt(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; }
     setLeavePrompt(false);
     if (discard) { owner.discard(); leaveResolver.current?.(true); } else leaveResolver.current?.(false);
-    leaveResolver.current = null;
+    leaveResolver.current = null; leaveProof.current = null;
   }
   function switchLocale(next: string) { if (!owner.setLocale(next) && !owner.inFlight() && !owner.current().pending) setLeavePrompt(true); }
   function selectTerm(term: TermRevision | null) { if (!owner.beginTerm(term) && !owner.inFlight() && !owner.current().pending) setLeavePrompt(true); }
@@ -173,9 +176,9 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
       owner.beginContext(row, manual);
     }
   }
-  function openTranslation(target: EditorTarget, suggestion?: string) {
+  async function openTranslation(target: EditorTarget, suggestion?: string) {
     if (!owner.localeAvailable(locale) || owner.inFlight() || owner.current().pending) return;
-    if (onOpenTranslation(target, locale, suggestion)) requestClose(); else setReadFailure("translation-draft");
+    if (!await onOpenTranslation(target, locale, suggestion) && alive.current) setReadFailure("translation-draft");
   }
   function ready(key: QueryKey) { const value = reads.client.getQueryState(reads.key(key)); return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated; }
   function sourceReady() { return !!scope?.currentSnapshot && !!sourcePage && ready(sourceScopeKey) && ready(sourceKey); }

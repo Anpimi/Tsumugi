@@ -1,28 +1,36 @@
-import { useSessionQuery } from "./SessionReadProvider";
+import { useSessionQuery, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { hasUnknownOutcome } from "./projectCommands";
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
-import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget } from "./reviewCommands";
+import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget, type ReviewEditorSnapshot, type ReviewNeighbor } from "./reviewCommands";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { executionCommands as execution, executionContext } from "./executionCommands";
-import { sourceCommands, type ContentPage, type ContentRow, type SourceSelection } from "./sourceCommands";
-import { translationCommands as commands, translationHistoryAfter, type TranslationAdoptRequest, type TranslationHistory, type TranslationPreflight, type TranslationPreview, type TranslationPreviewRow, type TranslationStartRequest } from "./translationCommands";
-import type { TranslationDecision } from "./translationCommands";
-import { type ContextRevision, type TermResolution } from "./resourceCommands";
+import { sourceCommands, type ContentPage, type ContentRow, type ContentScope } from "./sourceCommands";
+import { translationCommands as commands, translationHistoryAfter, type TranslationHistory, type TranslationPreview, type TranslationPreviewRow, type TranslationRevision, type TranslationDecision } from "./translationCommands";
+import { useTranslationImportSession } from "./TranslationImportSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
-import { useWorkbenchCommands } from "./workbenchCommands";
+import { useWorkbenchCommands, type CommandAvailability, type TranslationImportSetupCommandPayload, type TranslationImportConsentCommandPayload,
+  type TranslationImportStartPendingCommandPayload, type TranslationImportPreviewCommandPayload, type TranslationImportRowTarget,
+  type TranslationImportRowCommandPayload, type TranslationImportBatchCommandPayload, type TranslationImportPendingCommandPayload,
+  type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload } from "./workbenchCommands";
+import { validateResponseHistory } from "./generated/translation.validators";
+import { validateResponseEditor } from "./generated/review.validators";
+import type { ChangeScope } from "./sessionReads";
+import type { QueryKey } from "@tanstack/react-query";
 
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
-interface BatchOutcome { applied: number; conflicted: number; failed: number; unknown: number }
-interface BatchDetail { key: string; status: "applied" | "conflicted" | "failed" | "unknown" }
+type EditorReadIntent = { id: number; unitId: string; locale: string };
+type ListReadIntent = { id: number; scopeId: string; locale: string; query: string; after: number };
+type ListReadProof = { intent: ListReadIntent; query: object; dataUpdateCount: number };
+type HistoryReadIntent = EditorReadIntent & { after: string };
+type EditorActivation = { target: EditorTarget; locale: string; suggestedText?: string };
 type LeaveIntent = { kind: "close" } | { kind: "project" } | { kind: "switch"; target: EditorTarget; after?: number };
 export interface TranslationHandle {
   showAttempt: (id: string) => void;
   openUnit: (target: EditorTarget, locale: string, suggestedText?: string) => boolean;
-  allowLeave: () => Promise<boolean>;
+  allowLeave: (current?: () => boolean) => Promise<boolean>;
   allowNavigate: () => Promise<boolean>;
   saveCurrent: () => void;
 }
@@ -37,7 +45,7 @@ function errorKey(stage: string) {
   if (stage === "review-scope-source-changed") return "sourceScope";
   if (stage === "review-scope-expired") return "scopeExpired";
   if (stage === "navigation-edited") return "navigationEdited";
-  if (stage === "invalid-save-receipt") return "unknown";
+  if (stage === "invalid-save-receipt" || stage === "invalid-import-receipt") return "unknown";
   if (stage === "save-list-refresh") return "saveRefresh";
   if (stage.includes("source")) return "source";
   if (stage.includes("locale")) return "locale";
@@ -60,47 +68,48 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const { t } = useTranslation();
   const context = executionContext(project);
   const draftSession = useTranslationDraftSession();
+  const importSession = useTranslationImportSession();
+  const importState = importSession.state;
   const commandRegistry = useWorkbenchCommands();
   const editorDraft = draftSession.draft;
   const [open, setOpen] = useWorkbenchView("translation");
-  const [tab, setTab] = useState<"import" | "edit">("edit");
-  const [sourcePage, setSourcePage] = useState<ContentPage | null>(null);
-  const [sourceMissing, setSourceMissing] = useState(false);
-  const [list, setList] = useState<ReviewSummaryPage | null>(null);
-  const listScope = useRef<{ id: string; locale: string; query: string } | null>(null);
-  const [navigationEnd, setNavigationEnd] = useState(false);
-  const [query, setQuery] = useState("");
-  const [appliedQuery, setAppliedQuery] = useState("");
-  const [listAfter, setListAfter] = useState(0);
-  const listBasis = useRef<string | null>(null);
-  const listPosition = useRef({ query: "", after: 0 });
-  const [targetLocale, setTargetLocale] = useState(editorDraft?.locale ?? project.metadata.targetLocales[0] ?? "");
-  const [folder, setFolder] = useState<SourceSelection | null>(null);
-  const [files, setFiles] = useState<string[]>([]);
-  const [fileName, setFileName] = useState("");
-  const [preflight, setPreflight] = useState<TranslationPreflight | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
-  const [pendingStart, setPendingStart] = useState<TranslationStartRequest | null>(null);
-  const [attempt, setAttempt] = useState<string | null>(null);
-  const [preview, setPreview] = useState<TranslationPreview | null>(null);
-  const [selectIfEmpty, setSelectIfEmpty] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
-  const [batchOutcome, setBatchOutcome] = useState<BatchOutcome | null>(null);
-  const [batchDetails, setBatchDetails] = useState<BatchDetail[]>([]);
-  const [uncertain, setUncertain] = useState<TranslationAdoptRequest[]>([]);
-  const [receiptMessage, setReceiptMessage] = useState<"found" | "missing" | null>(null);
-  const [rowAction, setRowAction] = useState<{ row: TranslationPreviewRow; decision: TranslationDecision } | null>(null);
-  const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
-  const [history, setHistory] = useState<TranslationHistory | null>(null);
-  const [historyStale, setHistoryStale] = useState(false);
-  const [editorResources, setEditorResources] = useState<{ terms: TermResolution | null; context: ContextRevision | null; failed: boolean } | null>(null);
+  const [tab, setTab] = useWorkbenchState<"import" | "edit">("translation", "tab", importState.attempt || importState.folder || importState.pendingStart || importState.uncertain.length ? "import" : "edit");
+  const reads = useSessionReads();
+  const semanticEpoch = useRef<Partial<Record<ChangeScope, number>>>({});
+  useLayoutEffect(() => reads.subscribeChanges(scopes => {
+    for (const scope of scopes) semanticEpoch.current[scope] = (semanticEpoch.current[scope] ?? 0) + 1;
+  }), [reads]);
+  function readEpoch(scopes: ChangeScope[]) { return [semanticEpoch.current.project ?? 0, ...scopes.map(scope => semanticEpoch.current[scope] ?? 0)].join(":"); }
+  const readSequence = useWorkbenchRef("translation", "readSequence", 0);
+  const [listIntent, setListIntent] = useWorkbenchState<ListReadIntent | null>("translation", "listReadIntent", null);
+  const [readyListRead, setReadyListRead] = useState<ListReadProof | null>(null);
+  const [editorIntent, setEditorIntent] = useWorkbenchState<EditorReadIntent | null>("translation", "editorReadIntent", null);
+  const [readyEditorRead, setReadyEditorRead] = useState<number | null>(null);
+  const [editorActivation, setEditorActivation] = useState<EditorActivation | null>(null);
+  const [historyIntent, setHistoryIntent] = useWorkbenchState<HistoryReadIntent | null>("translation", "historyReadIntent", null);
+  const listScope = useWorkbenchRef<{ id: string; locale: string; query: string } | null>("translation", "listScope", null);
+  const [navigationEnd, setNavigationEnd] = useWorkbenchState("translation", "navigationEnd", false);
+  const [query, setQuery] = useWorkbenchState("translation", "query", "");
+  const [appliedQuery, setAppliedQuery] = useWorkbenchState("translation", "appliedQuery", "");
+  const [listAfter, setListAfter] = useWorkbenchState("translation", "listAfter", 0);
+  const listBasis = useWorkbenchRef<string | null>("translation", "listBasis", null);
+  const listPosition = useWorkbenchRef("translation", "listPosition", { query: "", after: 0 });
+  const [targetLocale, setTargetLocale] = useWorkbenchState("translation", "targetLocale", editorDraft?.locale ?? importState.targetLocale);
+  const { folder, fileName, preflight, confirmed, pendingStart, attempt, preview, selectIfEmpty,
+    batchProgress, batchOutcome, batchDetails, uncertain, receiptMessage, rowAction, batchCapture } = importState;
+  const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(() => editorDraft ? { unitId: editorDraft.unitId, sourceRevisionId: editorDraft.sourceRevisionId, key: editorDraft.key, sourceText: editorDraft.sourceText } : null);
   const [localBusy, setBusy] = useState(false);
+  const [readBusy, setReadBusy] = useState(false);
+  const readRunning = useRef(false);
+  const readFlight = useRef<symbol | null>(null);
+  const latestListRead = useRef(0);
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
-  const effectiveFailureValue = editorDraft?.failure ?? failureValue;
+  const effectiveFailureValue = editorDraft?.failure ?? importState.failure ?? failureValue;
   const failure = failureReason(effectiveFailureValue);
   const [leaveIntent, setLeaveIntent] = useState<LeaveIntent | null>(null);
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((value: boolean) => void) | null>(null);
-  const mounted = useRef(false);
+  const mounted = useSessionAlive();
   const generation = useRef(0);
   const saveNextViewEpoch = useRef(0);
   const sourceLoad = useRef(0);
@@ -110,27 +119,27 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const draftField = useRef<HTMLTextAreaElement>(null);
   const draft = editorDraft?.text ?? "";
   const pendingSave = editorDraft?.pending?.request ?? null;
+  const pendingSelection = editorDraft?.pendingSelection ?? null;
   const saveReceiptCheck = editorDraft?.receiptCheck ?? null;
   const newerDraftSaved = editorDraft?.newerDraftSaved ?? false;
   const dirty = !!editorDraft && (draft !== (editorDraft.baseText ?? "") || editorDraft.newerDraftSaved);
-  const busy = localBusy || !!editorDraft?.saving;
+  const busy = localBusy || importState.busy || !!editorDraft?.saving || !!editorDraft?.selecting;
   const displayedTarget = editorDraft ? { unitId: editorDraft.unitId, sourceRevisionId: editorDraft.sourceRevisionId,
     key: editorDraft.key, sourceText: editorDraft.sourceText } : editorTarget;
   const targetScope = project.metadata.targetLocales.join("\u0000");
   const availableLocales = useRef(project.metadata.targetLocales);
   const selectedLocale = useRef(targetLocale);
-  const selectedAttempt = useRef(attempt);
-  useLayoutEffect(() => {
+    useLayoutEffect(() => {
     availableLocales.current = project.metadata.targetLocales;
     selectedLocale.current = targetLocale;
-    selectedAttempt.current = attempt;
   }, [targetScope, targetLocale, attempt]);
   const localeAvailable = (locale: string) => locale !== "" && availableLocales.current.includes(locale);
   const currentLocale = (locale: string) => selectedLocale.current === locale && localeAvailable(locale);
   const targetAvailable = targetLocale !== "" && project.metadata.targetLocales.includes(targetLocale);
   const targetUnavailable = targetLocale !== "" && !targetAvailable;
-  useLayoutEffect(() => { saveNextViewEpoch.current++; }, [open, tab, targetLocale, targetAvailable]);
-  const canRebaseTarget = !dirty && !busy && !pendingSave && !pendingStart && !attempt
+  useLayoutEffect(() => { saveNextViewEpoch.current++; readRunning.current = false; readFlight.current = null; setReadBusy(false); if (!open || !targetAvailable) setReadyListRead(null); }, [open, tab, targetLocale, targetAvailable]);
+  useLayoutEffect(() => { if (!open || tab !== "edit" || !targetAvailable) { setReadyEditorRead(null); setEditorIntent(null); setEditorActivation(null); } }, [open, tab, targetAvailable]);
+  const canRebaseTarget = !dirty && !busy && !pendingSave && !pendingSelection && !pendingStart && !attempt
     && uncertain.length === 0 && !rowAction && batchProgress === null;
 
   useEffect(() => {
@@ -142,71 +151,179 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const next = project.metadata.targetLocales[0] ?? "";
     if (next !== targetLocale) changeTarget(next);
   }, [targetLocale, targetScope, targetAvailable, canRebaseTarget]);
+  const sourceScopeKey = ["translation-source-scope"];
+  const sourceRead = useSessionQuery<ContentScope>({ key: sourceScopeKey, scopes: ["source"], enabled: open && targetAvailable,
+    refetchOnMount: false, read: () => sourceCommands.scope(context) });
+  const source = sourceRead.data;
+  const contentKey = ["translation-source-content", source?.revision ?? null, source?.currentSnapshot ?? null, 0, 1];
+  async function readContent(scope: ContentScope) {
+    if (!scope.currentSnapshot) throw new Error("No current source snapshot");
+    const page = await sourceCommands.content({ ...context, snapshotId: scope.currentSnapshot, after: 0, limit: 1 });
+    if (page.snapshotId !== scope.currentSnapshot || page.scope.currentSnapshot !== scope.currentSnapshot || page.scope.revision !== scope.revision) throw { reason: "source-changed" };
+    return page;
+  }
+  const contentRead = useSessionQuery<ContentPage>({ key: contentKey, scopes: ["source"], refetchOnMount: false,
+    enabled: open && targetAvailable && !!source?.currentSnapshot && !sourceRead.error,
+    read: () => { if (!source) throw new Error("No current source scope"); return readContent(source); } });
+  const sourcePage = !sourceRead.error && !contentRead.error ? contentRead.data ?? null : null;
+  const sourceMissing = sourceRead.isSuccess && !sourceRead.isFetching && source?.currentSnapshot === null;
+  const listKey = (intent: ListReadIntent | null): QueryKey => ["translation-list", intent];
+  async function readList(intent: ListReadIntent) {
+    const page = await reviewCommands.summaryPage({ ...context, locale: intent.locale, query: intent.query,
+      afterOrdinal: intent.after, limit: 50, scopeId: intent.scopeId });
+    if (page.scopeId !== intent.scopeId || page.rows.some(row => row.locale !== intent.locale || row.sourceSnapshotId !== page.sourceSnapshotId)) throw { reason: "review-scope-source-changed" };
+    return page;
+  }
+  const listRead = useSessionQuery<ReviewSummaryPage>({ key: listKey(listIntent), scopes: ["source", "translation", "resources", "review"],
+    refetchOnMount: query => query.state.isInvalidated,
+    enabled: open && targetAvailable && !!listIntent && listIntent.locale === targetLocale,
+    read: () => { if (!listIntent) throw new Error("No fixed entry scope"); return readList(listIntent); } });
+  const list = listIntent?.locale === targetLocale && !listRead.error ? listRead.data ?? null : null;
+  const editorKey = (intent: EditorReadIntent | null): QueryKey => ["translation-editor", intent];
+  async function readEditor(intent: EditorReadIntent) {
+    const snapshot = await reviewCommands.editorSnapshot({ ...context, unitId: intent.unitId, locale: intent.locale });
+    if (snapshot.target.unitId !== intent.unitId || snapshot.target.locale !== intent.locale || snapshot.translations.unitId !== intent.unitId
+      || snapshot.translations.locale !== intent.locale || snapshot.terms.unitId !== intent.unitId || snapshot.terms.locale !== intent.locale
+      || (snapshot.context && (snapshot.context.unitId !== intent.unitId || snapshot.context.locale !== intent.locale))) throw { reason: "selection" };
+    return snapshot;
+  }
+  const editorRead = useSessionQuery<ReviewEditorSnapshot>({ key: editorKey(editorIntent), scopes: ["source", "translation", "resources", "review"], refetchOnMount: false,
+    enabled: open && tab === "edit" && targetAvailable && !!editorIntent && editorIntent.locale === targetLocale,
+    read: () => { if (!editorIntent) throw new Error("No editor selection"); return readEditor(editorIntent); } });
+  const snapshot = editorIntent?.unitId === displayedTarget?.unitId && editorIntent?.locale === targetLocale && !editorRead.error ? editorRead.data ?? null : null;
+  const historyKey = (intent: HistoryReadIntent | null): QueryKey => ["translation-history", intent, 100];
+  async function readHistory(intent: HistoryReadIntent) {
+    const value = await commands.history({ ...context, unitId: intent.unitId, locale: intent.locale, afterOrdinal: intent.after, limit: 100 });
+    if (value.unitId !== intent.unitId || value.locale !== intent.locale) throw { reason: "selection" };
+    return value;
+  }
+  const historyRead = useSessionQuery<TranslationHistory>({ key: historyKey(historyIntent), scopes: ["source", "translation"], refetchOnMount: false,
+    enabled: open && tab === "edit" && targetAvailable && !!historyIntent && !!editorIntent && historyIntent.id > editorIntent.id
+      && historyIntent.unitId === displayedTarget?.unitId && historyIntent.locale === targetLocale,
+    read: () => { if (!historyIntent) throw new Error("No translation history selection"); return readHistory(historyIntent); } });
+  const historySelected = !!historyIntent && !!editorIntent && historyIntent.id > editorIntent.id
+    && historyIntent.unitId === displayedTarget?.unitId && historyIntent.locale === targetLocale;
+  const history = historySelected ? !historyRead.error ? historyRead.data ?? null : null : snapshot?.translations ?? null;
+  const historyStale = !!editorDraft && (!snapshot || snapshot.target.sourceRevisionId !== editorDraft.sourceRevisionId
+    || !history || (history.current?.eventId ?? null) !== editorDraft.baseSelectionId);
+  const editorResources = snapshot;
+  useEffect(() => {
+    const error = sourceRead.error ?? contentRead.error ?? listRead.error ?? editorRead.error ?? historyRead.error;
+    if (error) setFailure(commandFailure(error));
+  }, [sourceRead.error, contentRead.error, listRead.error, editorRead.error, historyRead.error]);
+  async function freshRead<T>(key: QueryKey, scopes: ChangeScope[], read: () => Promise<T>) {
+    const epoch = readEpoch(scopes);
+    await reads.client.fetchQuery({ queryKey: reads.key(key), meta: { scopes }, staleTime: 0, queryFn: async ({ signal }) => {
+      if (!mounted.current || reads.retired) throw new Error("Read cancelled");
+      const value = await read();
+      if (signal.aborted || !mounted.current || reads.retired) throw new Error("Read cancelled");
+      return value;
+    } });
+    if (readEpoch(scopes) !== epoch) {
+      await reads.client.invalidateQueries({ queryKey: reads.key(key), exact: true, refetchType: "none" });
+      throw new Error("Read facts changed during confirmation");
+    }
+    const result = reads.client.getQueryState<T>(reads.key(key));
+    if (result?.status !== "success" || result.fetchStatus !== "idle" || result.isInvalidated || result.error !== null || result.data === undefined) {
+      throw new Error("Read remains unconfirmed");
+    }
+    // Query may structurally share a fresh response with its earlier snapshot.
+    return result.data;
+  }
+  function checkedRead<T>(key: QueryKey, value: T) {
+    const result = reads.client.getQueryState<T>(reads.key(key));
+    return !reads.retired && result?.status === "success" && result.fetchStatus === "idle" && !result.isInvalidated && result.error === null && result.data === value;
+  }
+  function confirmedList() {
+    if (!listIntent || !readyListRead || readyListRead.intent !== listIntent || reads.retired) return false;
+    const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(listIntent)), exact: true });
+    return !!query && query === readyListRead.query && query.state.status === "success" && query.state.fetchStatus === "idle"
+      && !query.state.isInvalidated && query.state.error === null && query.state.dataUpdateCount === readyListRead.dataUpdateCount;
+  }
   useEffect(() => {
     if (!open || !targetAvailable) return;
-    const locale = targetLocale;
-    const ticket = ++sourceLoad.current;
-    void (async () => {
-      try {
-        const scope = await sourceCommands.scope(context);
-        if (!currentLocale(locale)) return;
-        const page = scope.currentSnapshot
-          ? await sourceCommands.content({ ...context, snapshotId: scope.currentSnapshot, after: 0, limit: 1 }) : null;
-        if (!currentLocale(locale)) return;
-        const changed = listBasis.current !== scope.currentSnapshot;
-        const position = changed ? { query: "", after: 0 } : listPosition.current;
-        const retained = changed ? null : listScope.current;
-        const next = page ? await reviewCommands.summaryPage({ ...context, locale,
-          query: position.query, afterOrdinal: position.after, limit: 50,
-          scopeId: retained?.locale === locale && retained.query === position.query ? retained.id : null }) : null;
-        if (mounted.current && sourceLoad.current === ticket && currentLocale(locale)) {
-          setSourceMissing(!page); setSourcePage(page); setList(next);
-          listScope.current = next ? { id: next.scopeId, locale, query: position.query } : null;
-          if (changed) { setQuery(""); setAppliedQuery(""); setListAfter(0); listPosition.current = position; }
-          listBasis.current = scope.currentSnapshot;
-          if (page?.namespace === "webvtt:source") setTab("edit");
-        }
-      } catch (error) { if (mounted.current && sourceLoad.current === ticket && currentLocale(locale)) setFailure(commandFailure(error)); }
-    })();
+    const locale = targetLocale, ticket = ++sourceLoad.current;
+    const current = () => mounted.current && sourceLoad.current === ticket && currentLocale(locale);
+    void refreshSource(current).catch(error => { if (current()) setFailure(commandFailure(error)); });
     return () => { sourceLoad.current++; };
   }, [open, targetLocale, targetScope, project.sessionToken]);
+  async function refreshSource(current: () => boolean) {
+    const scope = await freshRead(sourceScopeKey, ["source"], () => sourceCommands.scope(context));
+    if (!current()) return;
+    const page = scope.currentSnapshot ? await freshRead(["translation-source-content", scope.revision, scope.currentSnapshot, 0, 1], ["source"], () => readContent(scope)) : null;
+    if (!current()) return;
+    if (page) {
+      const position = listPosition.current;
+      await loadList(position.after, position.query, current);
+      if (current() && page.namespace === "webvtt:source") setTab("edit");
+    } else setListIntent(null);
+  }
   useEffect(() => {
+    if (!open || tab !== "edit" || !targetAvailable) return;
+    if (editorActivation) {
+      if (editorActivation.locale !== targetLocale) return;
+      // Start after the requested view commits, so its activation does not
+      // invalidate the fresh read that confirms the explicit selection.
+      setEditorActivation(null);
+      readRunning.current = false;
+      void performRead(current => openEditor(editorActivation.target, current, editorActivation.locale, editorActivation.suggestedText));
+      return;
+    }
     const retained = draftSession.current();
-    if (!open || !targetAvailable || !retained || editorTarget || running.current) return;
-    if (targetLocale !== retained.locale) { setTargetLocale(retained.locale); return; }
-    void perform(async current => {
-      const snapshot = await reviewCommands.editorSnapshot({ ...context, unitId: retained.unitId, locale: retained.locale });
-      const latest = draftSession.current();
-      if (!current() || !latest || latest.unitId !== retained.unitId || latest.locale !== retained.locale) return;
-      setEditorTarget(listTarget(snapshot.target));
-      setHistory(snapshot.translations);
-      setEditorResources({ terms: snapshot.terms, context: snapshot.context, failed: false });
-      setHistoryStale(snapshot.target.sourceRevisionId !== latest.sourceRevisionId
-        || (snapshot.translations.current?.eventId ?? null) !== latest.baseSelectionId);
-      setTab("edit");
+    if (!retained || retained.locale !== targetLocale) return;
+    const target = { unitId: retained.unitId, sourceRevisionId: retained.sourceRevisionId, key: retained.key, sourceText: retained.sourceText };
+    void performRead(async current => {
+      if (!retained.pending && !retained.pendingSelection && !retained.saving && !retained.selecting
+        && retained.text === (retained.baseText ?? "") && !retained.newerDraftSaved) await openEditor(target, current, retained.locale, undefined, true);
+      else await refreshEditorReference(target, current, retained.locale);
+      if (current() && historyIntent?.unitId === retained.unitId && historyIntent.locale === retained.locale) await loadHistory(historyIntent.after, current);
     });
-  }, [open, targetLocale, targetScope, editorTarget?.unitId, editorDraft?.unitId, project.sessionToken]);
-  useEffect(() => {
-    if (!open || !targetAvailable || !editorTarget || dirty || pendingSave || running.current) return;
-    const unitId = editorTarget.unitId;
-    const retained = draftSession.current();
-    void perform(async current => {
-      const canRefresh = () => current() && draftSession.current()?.editSeq === retained?.editSeq
-        && draftSession.current()?.text === retained?.text;
-      if (canRefresh()) await openEditor({ ...editorTarget, unitId }, canRefresh);
-    });
-  }, [open, targetLocale, project.sessionToken]);
+  }, [open, tab, targetLocale, targetScope, project.sessionToken, editorActivation]);
   async function loadList(after: number, search: string, current: () => boolean, fresh = false) {
     const locale = targetLocale;
-    if (!currentLocale(locale)) return;
+    if (!currentLocale(locale) || !current()) return;
     if (new TextEncoder().encode(search).length > 256) { setFailure("query-limit"); return; }
+    // A retained page is a projection, not confirmation of this read intent.
+    setReadyListRead(null);
     const retained = fresh ? null : listScope.current;
-    const next = await reviewCommands.summaryPage({ ...context, locale, query: search,
-      afterOrdinal: after, limit: 50, scopeId: retained?.locale === locale && retained.query === search ? retained.id : null });
-    if (current() && currentLocale(locale)) {
-      setList(next); setListAfter(after); setAppliedQuery(search); setNavigationEnd(false);
+    const scopeId = retained?.locale === locale && retained.query === search ? retained.id : null;
+    const dependencies: ChangeScope[] = ["source", "translation", "resources", "review"];
+    const id = ++readSequence.current, captureEpoch = readEpoch(dependencies); latestListRead.current = id;
+    let intent: ListReadIntent, next: ReviewSummaryPage;
+    if (scopeId === null) {
+      // Null scope creates a Host capture and is never an automatic Query function.
+      next = await reviewCommands.summaryPage({ ...context, locale, query: search, afterOrdinal: after, limit: 50, scopeId: null });
+      if (!current() || !currentLocale(locale) || reads.retired || latestListRead.current !== id) return;
+      if (next.rows.some(row => row.locale !== locale || row.sourceSnapshotId !== next.sourceSnapshotId)) throw { reason: "selection" };
+      intent = { id, locale, query: search, after, scopeId: next.scopeId };
+      // Notifications must find the dependencies before the seed is published,
+      // including the interval before its observer subscribes.
+      const query = reads.client.getQueryCache().build(reads.client, { queryKey: reads.key(listKey(intent)),
+        meta: { scopes: dependencies }, queryFn: () => readList(intent) });
+      next = query.setData(next);
+      if (readEpoch(dependencies) !== captureEpoch) {
+        // The capture's key did not exist when the notification arrived. Recheck
+        // that same fixed scope; automatic refresh must never allocate a new one.
+        await reads.client.invalidateQueries({ queryKey: reads.key(listKey(intent)), exact: true, refetchType: "none" });
+        const beforeRead = readEpoch(dependencies);
+        next = await freshRead(listKey(intent), ["source", "translation", "resources", "review"], () => readList(intent));
+        if (readEpoch(dependencies) !== beforeRead) {
+          await reads.client.invalidateQueries({ queryKey: reads.key(listKey(intent)), exact: true, refetchType: "none" });
+          throw new Error("Entry facts changed during confirmation");
+        }
+      }
+    } else {
+      intent = { id, locale, query: search, after, scopeId };
+      next = await freshRead(listKey(intent), ["source", "translation", "resources", "review"], () => readList(intent));
+    }
+    if (current() && currentLocale(locale) && latestListRead.current === id && checkedRead(listKey(intent), next)) {
+      const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(intent)), exact: true });
+      if (!query) return;
+      setListIntent(intent); setListAfter(after); setAppliedQuery(search); setNavigationEnd(false);
+      setReadyListRead({ intent, query, dataUpdateCount: query.state.dataUpdateCount });
       listPosition.current = { query: search, after };
       listScope.current = { id: next.scopeId, locale, query: search };
+      listBasis.current = next.sourceSnapshotId;
     }
   }
   function listTarget(row: ReviewTarget | ReviewSummary): EditorTarget {
@@ -232,7 +349,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
     if (busy || running.current) return { enabled: false, reason: "busy" as const };
     const capture = draftSession.current();
-    if (capture?.pending || capture?.saving || uncertain.length) return { enabled: false, reason: "pending-action" as const };
+    if (capture?.pending || capture?.pendingSelection || capture?.saving || draftSession.mutationReserved) return { enabled: false, reason: "pending-action" as const };
     if (!targetAvailable || !capture || capture.locale !== targetLocale) return { enabled: false, reason: "unavailable" as const };
     if (capture.text === (capture.baseText ?? "") && !capture.newerDraftSaved) return { enabled: false, reason: "no-changes" as const };
     return { enabled: true };
@@ -240,14 +357,14 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   function retryAvailability() {
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
     if (busy || running.current) return { enabled: false, reason: "busy" as const };
-    if (!pendingSave) return { enabled: false, reason: "unavailable" as const };
+    if (!pendingSave || pendingSelection) return { enabled: false, reason: "unavailable" as const };
     if (!targetAvailable) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
   function reconcileAvailability() {
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
     if (busy || running.current) return { enabled: false, reason: "busy" as const };
-    if (!pendingSave) return { enabled: false, reason: "unavailable" as const };
+    if (!pendingSave || pendingSelection) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
   function saveAndNextAvailability() {
@@ -255,11 +372,187 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const available = capture?.pending ? retryAvailability() : saveAvailability();
     if (!available.enabled) return available;
     const scope = listScope.current;
-    if (!capture || capture.locale !== targetLocale || !editorTarget || editorTarget.unitId !== capture.unitId || !list?.total || !scope
+    if (sourceRead.isFetching || sourceRead.error || contentRead.error || editorRead.isFetching || editorRead.error || listRead.isFetching || listRead.error
+      || !confirmedList() || readyEditorRead !== editorIntent?.id || !snapshot || !capture || snapshot.target.sourceRevisionId !== capture.sourceRevisionId
+      || capture.locale !== targetLocale || !editorTarget || editorTarget.unitId !== capture.unitId || !list?.total || !scope
       || scope.id !== list.scopeId || scope.locale !== capture.locale || scope.query !== appliedQuery) {
       return { enabled: false, reason: "unavailable" as const };
     }
     return available;
+  }
+  const unavailableCommand: CommandAvailability = { enabled: false, reason: "unavailable" };
+  function sameCommandValue(left: unknown, right: unknown): boolean {
+    if (Object.is(left,right)) return true;
+    if (Array.isArray(left) || Array.isArray(right)) return Array.isArray(left) && Array.isArray(right)
+      && left.length === right.length && left.every((value,index)=>sameCommandValue(value,right[index]));
+    if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+    const keys=Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(key=>Object.prototype.hasOwnProperty.call(right,key)
+      && sameCommandValue(Reflect.get(left,key),Reflect.get(right,key)));
+  }
+  function businessGate(area: "import" | "edit", recovery = false): CommandAvailability {
+    if (!mounted.current || reads.retired || !open || tab !== area || disabled || leaveIntent
+      || reads.context.projectId !== commandScope.projectId || reads.context.sessionToken !== commandScope.sessionToken) return { enabled: false, reason: "hidden" };
+    const imported = importSession.current(), draft = draftSession.current();
+    if (running.current || localBusy || imported.busy || draft?.saving || draft?.selecting) return { enabled: false, reason: "busy" };
+    if (!recovery && (imported.pendingStart || imported.uncertain.length || draft?.pending || draft?.pendingSelection)) return { enabled: false, reason: "pending-action" };
+    if (!recovery && (!targetAvailable || (area === "import" && imported.targetLocale !== targetLocale))) return unavailableCommand;
+    return { enabled: true };
+  }
+  function sourceReady(snapshotId?: string) {
+    const value = reads.client.getQueryState<ContentScope>(reads.key(sourceScopeKey));
+    return value?.status === "success" && value.error === null && value.fetchStatus === "idle" && !value.isInvalidated
+      && !!value.data?.currentSnapshot && (!snapshotId || value.data.currentSnapshot === snapshotId);
+  }
+  function sourceFlightProof() {
+    const captured = reads.client.getQueryData<ContentScope>(reads.key(sourceScopeKey)), witness = reads.watchExactQuery(sourceScopeKey);
+    return { current: () => {
+      const value = witness.current();
+      return !reads.retired && !!captured && (!value || value.state.status === "success" && value.state.error === null
+        && sameCommandValue(value.state.data, captured));
+    }, dispose: witness.dispose };
+  }
+  function importSetupPayload(): TranslationImportSetupCommandPayload {
+    const value = importSession.current();
+    return { kind: "translation-import-setup", editSeq: value.editSeq, locale: value.targetLocale,
+      selectionId: value.folder?.selectionId ?? null, fileName: value.fileName };
+  }
+  function importSetupAvailability(payload?: TranslationImportSetupCommandPayload, inspecting = false): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    return payload && sameCommandValue(payload, importSetupPayload()) && (!inspecting || !!payload.selectionId && !!payload.fileName
+      && !!sourcePage && sourceReady()) ? { enabled: true } : unavailableCommand;
+  }
+  function importConsentPayload(confirmed = importSession.current().confirmed): TranslationImportConsentCommandPayload | undefined {
+    const value = importSession.current(), checked = value.preflight;
+    return checked && value.folder ? { ...importSetupPayload(), kind: "translation-import-consent", sourceSnapshotId: checked.sourceSnapshotId,
+      fileDigest: checked.fileDigest, declaredLocale: checked.declaredLocale, confirmed } : undefined;
+  }
+  function importConsentAvailability(payload?: TranslationImportConsentCommandPayload, starting = false): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    const value = importSession.current(), actual = importConsentPayload(payload?.confirmed);
+    return payload && actual && sameCommandValue(payload, actual) && value.preflight?.fileName === payload.fileName
+      && value.preflight.targetLocale === payload.locale && sourceReady(payload.sourceSnapshotId)
+      && (!starting || payload.confirmed && value.confirmed && !value.attempt) ? { enabled: true } : unavailableCommand;
+  }
+  function importStartPendingPayload(): TranslationImportStartPendingCommandPayload | undefined {
+    const request = importSession.current().pendingStart;
+    return request ? { kind: "translation-import-start-pending", request: structuredClone(request) } : undefined;
+  }
+  function importStartPendingAvailability(payload?: TranslationImportStartPendingCommandPayload): CommandAvailability {
+    const allowed = businessGate("import", true); if (!allowed.enabled) return allowed;
+    return payload && sameCommandValue(payload, importStartPendingPayload()) ? { enabled: true } : unavailableCommand;
+  }
+  function importPreviewTarget(value: TranslationPreview, editSeq = importSession.current().editSeq) {
+    return { editSeq, attemptId: value.attemptId, bundleId: value.bundleId, basis: value.basis, locale: value.targetLocale,
+      fixedSourceSnapshotId: value.fixedSourceSnapshotId, currentSourceSnapshotId: value.currentSourceSnapshotId,
+      fileDigest: value.fileDigest, previewResultDigest: value.resultDigest };
+  }
+  function importRowTarget(row: TranslationPreviewRow): TranslationImportRowTarget | undefined {
+    return row.unitId && row.occurrenceId && row.sourceRevisionId ? { ordinal: row.entry.ordinal, itemId: row.itemId, resultId: row.resultId,
+      resultDigest: row.resultDigest, unitId: row.unitId, occurrenceId: row.occurrenceId, sourceRevisionId: row.sourceRevisionId,
+      expectedSelectionId: row.currentSelection?.eventId ?? null } : undefined;
+  }
+  function importRowPayload(row: TranslationPreviewRow, decision: TranslationDecision, captured = importSession.current().preview,
+    editSeq = importSession.current().editSeq): TranslationImportRowCommandPayload | undefined {
+    const target = importRowTarget(row);
+    return target && captured ? { kind: "translation-import-row", ...importPreviewTarget(captured, editSeq), ...target, decision } : undefined;
+  }
+  function rowCommandTarget(payload: TranslationImportRowCommandPayload, applying = false) {
+    const value = importSession.current(), capture = value.rowAction, basis = applying ? capture?.preview : value.preview;
+    const row = applying ? capture?.row : basis?.rows.find(row => sameCommandValue(importRowTarget(row), {
+      ordinal: payload.ordinal, itemId: payload.itemId, resultId: payload.resultId, resultDigest: payload.resultDigest, unitId: payload.unitId,
+      occurrenceId: payload.occurrenceId, sourceRevisionId: payload.sourceRevisionId, expectedSelectionId: payload.expectedSelectionId }));
+    if (!row || !basis) return undefined;
+    if (applying) return capture && sameCommandValue(payload, importRowPayload(row, capture.decision, basis, capture.editSeq)) ? row : undefined;
+    return sameCommandValue(payload, importRowPayload(row, payload.decision, basis, value.editSeq)) ? row : undefined;
+  }
+  function importRowAvailability(payload?: TranslationImportRowCommandPayload, applying = false): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    const value = importSession.current(), row = payload ? rowCommandTarget(payload, applying) : undefined;
+    return payload && row && !value.stale && !draftSession.mutationReserved
+      && payload.fixedSourceSnapshotId === payload.currentSourceSnapshotId && payload.editSeq === value.editSeq
+      && payload.locale === targetLocale && (row.status === "unique" || row.status === "selected-conflict")
+      && (payload.decision === "replace" ? !!row.currentSelection : payload.decision !== "select-if-empty" || !row.currentSelection)
+      ? { enabled: true } : unavailableCommand;
+  }
+  function importPreviewPayload(): TranslationImportPreviewCommandPayload | undefined {
+    const value = importSession.current();
+    return value.preview ? { kind: "translation-import-preview", ...importPreviewTarget(value.preview), selectIfEmpty: value.selectIfEmpty } : undefined;
+  }
+  function importPreviewAvailability(payload?: TranslationImportPreviewCommandPayload): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    const value = importSession.current();
+    return payload && sameCommandValue(payload, importPreviewPayload()) && !!value.preview?.unique && !value.preview.sourceChanged
+      && !value.stale && !draftSession.mutationReserved
+      && payload.fixedSourceSnapshotId === payload.currentSourceSnapshotId ? { enabled: true } : unavailableCommand;
+  }
+  function importBatchPayload(): TranslationImportBatchCommandPayload | undefined {
+    const capture = importSession.current().batchCapture; if (!capture || capture.decision === "replace") return undefined;
+    const rows = capture.eligible.map(importRowTarget); if (rows.some(row => !row)) return undefined;
+    return { kind: "translation-import-batch", ...importPreviewTarget(capture.preview, capture.editSeq), decision: capture.decision,
+      rows: rows.filter((row): row is TranslationImportRowTarget => !!row), excluded: capture.excluded };
+  }
+  function importBatchAvailability(payload?: TranslationImportBatchCommandPayload): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    return payload && sameCommandValue(payload, importBatchPayload()) && payload.editSeq === importSession.current().editSeq
+      && !importSession.current().stale && !draftSession.mutationReserved
+      && payload.fixedSourceSnapshotId === payload.currentSourceSnapshotId ? { enabled: true } : unavailableCommand;
+  }
+  function importPendingPayload(actionId: string): TranslationImportPendingCommandPayload | undefined {
+    const value = importSession.current().uncertain.find(pending => pending.request.actionId === actionId);
+    return value ? { kind: "translation-import-pending", request: structuredClone(value.request), recoveryUnitId: value.recoveryUnitId,
+      previousSelectionSequence: value.previousSelectionSequence } : undefined;
+  }
+  function importPendingAvailability(payload?: TranslationImportPendingCommandPayload, retry = false): CommandAvailability {
+    const allowed = businessGate("import", true); if (!allowed.enabled) return allowed;
+    const pending = payload && importSession.current().uncertain.find(value => value.request.actionId === payload.request.actionId);
+    return payload && pending && sameCommandValue(payload, importPendingPayload(payload.request.actionId)) && (!retry || pending.receiptChecked)
+      ? { enabled: true } : unavailableCommand;
+  }
+  function revisionPayload(revision: TranslationRevision): TranslationRevisionCommandPayload | undefined {
+    const value = draftSession.current();
+    return value ? { kind: "translation-revision", unitId: value.unitId, locale: value.locale, sourceRevisionId: value.sourceRevisionId,
+      expectedSelectionId: value.baseSelectionId, editSeq: value.editSeq, revisionId: revision.revisionId, revisionActionId: revision.actionId,
+      revisionOrdinal: revision.ordinal, revisionSourceRevisionId: revision.sourceRevisionId, revisionSourceSnapshotId: revision.sourceSnapshotId } : undefined;
+  }
+  function revisionTarget(payload: TranslationRevisionCommandPayload) {
+    return history?.rows.find(row => sameCommandValue(payload, revisionPayload(row)));
+  }
+  function revisionAvailability(payload?: TranslationRevisionCommandPayload): CommandAvailability {
+    const allowed = businessGate("edit"); if (!allowed.enabled) return allowed;
+    const value = draftSession.current(), revision = payload && revisionTarget(payload);
+    return payload && value && revision && value.text === (value.baseText ?? "") && !value.newerDraftSaved
+      && !draftSession.mutationReserved && payload.locale === targetLocale && editorTarget?.unitId === value.unitId && !historyStale
+      && value.baseRevisionId !== payload.revisionId && !!snapshot && checkedRead(editorKey(editorIntent), snapshot)
+      && (!historySelected || !!history && checkedRead(historyKey(historyIntent), history)) && sourceReady()
+      ? { enabled: true } : unavailableCommand;
+  }
+  function selectionPendingPayload(): TranslationSelectionPendingCommandPayload | undefined {
+    const value = draftSession.current()?.pendingSelection;
+    return value ? { kind: "translation-selection-pending", request: structuredClone(value.request), submittedSeq: value.submittedSeq } : undefined;
+  }
+  function selectionPendingAvailability(payload?: TranslationSelectionPendingCommandPayload, retry = false): CommandAvailability {
+    const allowed = businessGate("edit", true); if (!allowed.enabled) return allowed;
+    const value = draftSession.current()?.pendingSelection;
+    return payload && value && sameCommandValue(payload, selectionPendingPayload()) && (!retry || value.receiptChecked)
+      ? { enabled: true } : unavailableCommand;
+  }
+  function revisionFlightProof(revision: TranslationRevision) {
+    const sourceProof = sourceFlightProof(), editorWitness = reads.watchExactQuery(editorKey(editorIntent));
+    const historyWitness = historySelected ? reads.watchExactQuery(historyKey(historyIntent)) : null, before = draftSession.current();
+    function matches(value: TranslationHistory) {
+      return !!before && value.unitId === before.unitId && value.locale === before.locale
+        && (value.current?.eventId ?? null) === before.baseSelectionId && value.rows.some(row => sameCommandValue(row, revision));
+    }
+    return { current: () => {
+      const editor = editorWitness.current(), selectedHistory = historyWitness?.current();
+      return sourceProof.current() && !!before && (!editor || editor.state.status === "success" && editor.state.error === null
+        && validateResponseEditor(editor.state.data) && editor.state.data.target.unitId === before.unitId
+        && editor.state.data.target.locale === before.locale && editor.state.data.target.sourceRevisionId === before.sourceRevisionId
+        && editor.state.data.target.selectionId === before.baseSelectionId && (historyWitness !== null || matches(editor.state.data.translations)))
+        && (!selectedHistory || selectedHistory.state.status === "success" && selectedHistory.state.error === null
+          && validateResponseHistory(selectedHistory.state.data) && matches(selectedHistory.state.data));
+    }, dispose: () => { sourceProof.dispose(); editorWitness.dispose(); historyWitness?.dispose(); } };
   }
   useLayoutEffect(() => {
     const removeSave = commandRegistry.register({
@@ -282,43 +575,86 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       binding: null, risk: "writes-translation", confirmation: "none", availability: reconcileAvailability,
       handler: () => { void perform(checkSavedAction); },
     });
-    return () => { removeReconcile(); removeRetry(); removeSaveNext(); removeSave(); };
+    const metadata = { category: "translation" as const, scope: commandScope, binding: null, confirmation: "none" as const };
+    const removeBusiness = [
+      commandRegistry.register({ ...metadata, id: "translation.choose-import-folder", nameKey: "translation.chooseFolder", risk: "captures-translation-import",
+        payloadKind: "translation-import-setup", availability: payload => importSetupAvailability(payload), handler: () => { void importSession.chooseFolder(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.inspect-import", nameKey: "translation.inspect", risk: "captures-translation-import",
+        payloadKind: "translation-import-setup", availability: payload => importSetupAvailability(payload, true), handler: () => { const proof=sourceFlightProof(); void importSession.preflight(proof.current,proof.dispose); } }),
+      commandRegistry.register({ ...metadata, id: "translation.confirm-import-language", nameKey: "translation.languageConfirm", risk: "captures-translation-import",
+        payloadKind: "translation-import-consent", availability: payload => importConsentAvailability(payload), handler: payload => importSession.confirmLanguage(payload.confirmed) }),
+      commandRegistry.register({ ...metadata, id: "translation.start-import", nameKey: "translation.start", risk: "runs-translation-import",
+        confirmation: "required", payloadKind: "translation-import-consent", availability: payload => importConsentAvailability(payload,true),
+        handler: () => { const proof=sourceFlightProof(); void importSession.start(proof.current,proof.dispose); } }),
+      commandRegistry.register({ ...metadata, id: "translation.retry-import-start", nameKey: "translation.checkStart", risk: "retries-execution-action",
+        payloadKind: "translation-import-start-pending", availability: importStartPendingAvailability, handler: () => { void importSession.retryStart(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.choose-import-row", nameKey: "translation.addCandidate", risk: "captures-translation-import",
+        payloadKind: "translation-import-row", availability: payload => importRowAvailability(payload), handler: payload => {
+          const row=rowCommandTarget(payload); if(row)importSession.chooseRow(row,payload.decision);
+        } }),
+      commandRegistry.register({ ...metadata, id: "translation.apply-import-row", nameKey: "translation.selectImported", risk: "writes-translation",
+        confirmation: "required", payloadKind: "translation-import-row", availability: payload => importRowAvailability(payload,true),
+        handler: () => { void importSession.applyRow(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.capture-import-batch", nameKey: "translation.apply", risk: "captures-translation-import",
+        payloadKind: "translation-import-preview", availability: importPreviewAvailability,
+        handler: () => { void importSession.captureBatch(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.apply-import-batch", nameKey: "translation.batchStart", risk: "writes-translation",
+        confirmation: "required", payloadKind: "translation-import-batch", availability: importBatchAvailability,
+        handler: () => { void importSession.applyBatch(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.check-import-receipt", nameKey: "translation.checkReceipt", risk: "reconciles-execution-action",
+        payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload), handler: payload => { void importSession.checkReceipt(payload.request.actionId); } }),
+      commandRegistry.register({ ...metadata, id: "translation.retry-import-action", nameKey: "translation.retryAction", risk: "retries-execution-action",
+        payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload,true), handler: payload => { void importSession.retryAction(payload.request.actionId); } }),
+      commandRegistry.register({ ...metadata, id: "translation.select-revision", nameKey: "translation.selectRevision", risk: "writes-translation",
+        payloadKind: "translation-revision", availability: revisionAvailability, handler: payload => { void perform(current => selectRevision(payload,current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.check-selection", nameKey: "translation.checkSelection", risk: "reconciles-execution-action",
+        payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload), handler: () => { void perform(current => checkSelection(current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.retry-selection", nameKey: "translation.retrySelection", risk: "retries-execution-action",
+        payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload,true), handler: () => { void perform(current => checkSelection(current,true)); } }),
+    ];
+    return () => { removeBusiness.forEach(dispose=>dispose()); removeReconcile(); removeRetry(); removeSaveNext(); removeSave(); };
   });
   useImperativeHandle(ref, () => ({
     saveCurrent() {
       commandRegistry.dispatch("translation.save", commandScope);
     },
     showAttempt(id) {
-      if (running.current || draftSession.current()?.saving || dirty || pendingSave || pendingStart || uncertain.length) { setOpen(true); return; }
+      if (running.current || readRunning.current || draftSession.current()?.saving || draftSession.current()?.selecting || dirty || pendingSave || pendingSelection || pendingStart || importState.busy || uncertain.length) { setOpen(true); return; }
       generation.current++;
-      setEditorTarget(null); setHistory(null); draftSession.clear();
-      selectedAttempt.current = id;
-      setTab("import"); setAttempt(id); setPreview(null); setFailure(null); setBatchOutcome(null); setOpen(true);
+      setEditorTarget(null); setEditorIntent(null); setHistoryIntent(null); draftSession.clear();
+      if (!importSession.showAttempt(id)) return;
+      setTargetLocale(importSession.current().targetLocale); setTab("import"); setFailure(null); setOpen(true);
     },
     openUnit(target, locale, suggestedText) {
       if (!localeAvailable(locale)) {
         setOpen(true); setFailure("target-locale");
         return false;
       }
-      if (running.current || draftSession.current()?.saving || dirty || pendingSave || pendingStart || uncertain.length) {
+      if (running.current || readRunning.current || draftSession.current()?.saving || draftSession.current()?.selecting || dirty || pendingSave || pendingSelection || pendingStart || importState.busy || uncertain.length) {
         setOpen(true);
         return false;
       }
       if (locale !== targetLocale) changeTarget(locale);
-      setOpen(true);
-      void perform(current => openEditor(target, current, locale, suggestedText));
+      setTab("edit"); setOpen(true);
+      readRunning.current = true; setReadBusy(true);
+      setEditorActivation({ target, locale, suggestedText });
       return true;
     },
-    allowLeave() {
-      if (running.current || draftSession.current()?.saving) { setOpen(true); return Promise.resolve(false); }
-      if (pendingSave || pendingStart || uncertain.length) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
-      if (!dirty) return Promise.resolve(true);
+    allowLeave(current: () => boolean = () => true) {
+      leaveProof.current = current;
+      const manual = draftSession.current(), imported = importSession.current();
+      if (imported.busy || manual?.saving || manual?.selecting) { setOpen(true); return Promise.resolve(false); }
+      if (manual?.pending || manual?.pendingSelection || imported.pendingStart || imported.uncertain.length) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
+      // Remounting starts view reads. Stop their UI continuation, while the
+      // independent owners above retain authority over actual business work.
+      generation.current++; running.current = false; readRunning.current = false; readFlight.current = null; setEditorActivation(null); setReadBusy(false); setBusy(false);
+      if (!manual || (manual.text === (manual.baseText ?? "") && !manual.newerDraftSaved)) return Promise.resolve(true);
       setOpen(true);
       setLeaveIntent({ kind: "project" });
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
     },
     allowNavigate() {
-      if (leaveIntent || rowAction || pendingStart || uncertain.length || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
+      if (leaveIntent || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
       return Promise.resolve(true);
     },
   }));
@@ -330,171 +666,86 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const current = () => mounted.current && generation.current === ticket;
     setBusy(true); setFailure(null);
     try { await work(current); } catch (error) { if (current()) setFailure(commandFailure(error)); }
-    finally { running.current = false; if (mounted.current) setBusy(false); }
+    finally { if (generation.current === ticket) { running.current = false; if (mounted.current) setBusy(false); } }
+  }
+  async function performRead(work: (current: () => boolean) => Promise<unknown>) {
+    if (running.current || readRunning.current) return;
+    readRunning.current = true; setReadBusy(true);
+    const flight = Symbol("translation-view-read"); readFlight.current = flight;
+    const ticket = ++generation.current, epoch = saveNextViewEpoch.current;
+    const current = () => mounted.current && !reads.retired && generation.current === ticket && saveNextViewEpoch.current === epoch;
+    setFailure(null);
+    try { await work(current); } catch (error) { if (current()) setFailure(commandFailure(error)); }
+    finally { if (readFlight.current === flight) { readFlight.current = null; readRunning.current = false; if (mounted.current) setReadBusy(false); } }
+  }
+  function endMutationWait(current: () => boolean) {
+    if (current()) { running.current = false; setBusy(false); }
   }
   function changeTarget(locale: string) {
     if (locale && !localeAvailable(locale)) return;
+    if (!importSession.setTarget(locale)) return;
     selectedLocale.current = locale;
-    selectedAttempt.current = null;
-    setTargetLocale(locale); setPreflight(null); setConfirmed(false); setPreview(null); setAttempt(null); setPendingStart(null);
-    setList(null); listScope.current = null; listPosition.current = { query: "", after: 0 };
+    setEditorActivation(null);
+    setTargetLocale(locale);
+    setReadyListRead(null);
+    setListIntent(null); listScope.current = null; listPosition.current = { query: "", after: 0 };
     setQuery(""); setAppliedQuery(""); setListAfter(0); setNavigationEnd(false);
-    if (editorTarget) { setEditorTarget(null); setHistory(null); setEditorResources(null); }
+    if (editorTarget) { setEditorTarget(null); setEditorIntent(null); setHistoryIntent(null); }
     if (editorDraft) draftSession.clear();
   }
-  async function chooseFolder(current: () => boolean) {
-    const locale = targetLocale;
-    if (!currentLocale(locale)) return;
-    const selected = await commands.selectFolder(context);
-    if (!current() || !currentLocale(locale)) return;
-    setFolder(selected); setFiles([]); setFileName(""); setPreflight(null); setConfirmed(false); setPreview(null); setAttempt(null); setPendingStart(null);
-    if (selected) {
-      const found = await commands.files({ ...context, selectionId: selected.selectionId });
-      if (current() && currentLocale(locale)) { setFiles(found); setFileName(found[0] ?? ""); }
-    }
-  }
-  async function startImport(request: TranslationStartRequest, current: () => boolean) {
-    if (!localeAvailable(request.targetLocale)) return;
-    try {
-      const id = await commands.start(request);
-      if (current()) { selectedAttempt.current = id; setAttempt(id); setPendingStart(null); setPreview(null); setBatchOutcome(null); }
-    } catch (error) {
-      if (current() && !hasUnknownOutcome(error)) setPendingStart(null);
-      throw error;
-    }
-  }
-  const importRead = useSessionQuery<TranslationPreview | null>({ key: ["translation-import-preview", attempt, 0, 50, null], scopes: ["execution", "translation"], enabled: open && !busy && !!attempt && !preview,
+  const filesRead = useSessionQuery<string[]>({ key: ["translation-files", folder?.selectionId ?? null], scopes: [],
+    enabled: open && tab === "import" && !!folder,
+    read: () => commands.files({ ...context, selectionId: folder!.selectionId }) });
+  const files = filesRead.data ?? [];
+  useEffect(() => {
+    if (!fileName && filesRead.data?.length && importSession.current().folder?.selectionId === folder?.selectionId) importSession.setFile(filesRead.data[0]);
+  }, [filesRead.data, folder?.selectionId, fileName, importState.busy]);
+  useEffect(() => { if (filesRead.error) setFailure(commandFailure(filesRead.error)); }, [filesRead.error]);
+  const importRead = useSessionQuery<TranslationPreview | null>({ key: ["translation-import-preview", attempt, 0, 50, null], scopes: ["execution", "translation"], enabled: open && !importState.busy && !!attempt && !preview,
     read: async () => {
       try { return await commands.preview({ ...context, attemptId: attempt!, after: 0, limit: 50, basis: null }); }
       catch (error) { if (errorStage(error) === "translation-incomplete") return null; throw error; }
     } });
   useEffect(() => {
-    if (!importRead.data || importRead.data.attemptId !== selectedAttempt.current) return;
+    if (!importRead.data || importRead.data.attemptId !== importSession.current().attempt || importSession.current().preview) return;
+    importSession.ready(importRead.data);
     selectedLocale.current = importRead.data.targetLocale;
-    setTargetLocale(importRead.data.targetLocale);
-    setPreview(importRead.data); setFailure(null);
+    setTargetLocale(importRead.data.targetLocale); setFailure(null);
   }, [importRead.data, targetScope]);
-  useEffect(() => { if (importRead.error) setFailure(commandFailure(importRead.error)); }, [importRead.error]);
-  async function loadPreview(after: number, basis: string | null, current: () => boolean) {
-    if (!attempt) return;
-    const requestedAttempt = attempt;
-    const next = await commands.preview({ ...context, attemptId: requestedAttempt, after, limit: 50, basis });
-    if (current() && selectedAttempt.current === requestedAttempt) setPreview(next);
+  useEffect(() => { if (importRead.error && !preview) setFailure(commandFailure(importRead.error)); }, [importRead.error, preview]);
+  async function refreshEditorReference(target: EditorTarget, current: () => boolean, locale = targetLocale) {
+    if (!currentLocale(locale) || !current()) return null;
+    const intent: EditorReadIntent = { id: ++readSequence.current, unitId: target.unitId, locale };
+    setReadyEditorRead(null);
+    setEditorIntent(intent);
+    const snapshot = await freshRead(editorKey(intent), ["source", "translation", "resources", "review"], () => readEditor(intent));
+    if (!current() || !currentLocale(locale) || !checkedRead(editorKey(intent), snapshot)) return null;
+    setReadyEditorRead(intent.id);
+    return { intent, snapshot };
   }
-  async function allPreviewRows(first: TranslationPreview): Promise<TranslationPreviewRow[]> {
-    const rows = [...first.rows];
-    let after = first.nextOrdinal;
-    while (after !== null) {
-      const page = await commands.preview({ ...context, attemptId: first.attemptId, after, limit: 100, basis: first.basis });
-      rows.push(...page.rows);
-      after = page.nextOrdinal;
-    }
-    return rows;
-  }
-  async function applyBatch(current: () => boolean) {
-    if (!preview || !attempt || !currentLocale(targetLocale) || preview.targetLocale !== targetLocale) return;
-    const first = await commands.preview({ ...context, attemptId: attempt, after: 0, limit: 100, basis: null });
-    if (!current() || !currentLocale(targetLocale) || first.targetLocale !== targetLocale) return;
-    const rows = (await allPreviewRows(first)).filter(row => row.status === "unique" && row.unitId && row.occurrenceId && row.sourceRevisionId);
-    if (!current() || !currentLocale(targetLocale) || first.targetLocale !== targetLocale) return;
-    const outcome: BatchOutcome = { applied: 0, conflicted: 0, failed: 0, unknown: 0 };
-    const details: BatchDetail[] = [];
-    setBatchProgress({ done: 0, total: rows.length });
-    try {
-      for (const [index, row] of rows.entries()) {
-        if (!current()) return;
-        if (!currentLocale(targetLocale) || first.targetLocale !== targetLocale) break;
-        const request: TranslationAdoptRequest = {
-          ...context, attemptId: attempt, itemId: row.itemId, resultId: row.resultId,
-          actionId: await execution.identity(context),
-          confirmation: {
-            resultDigest: row.resultDigest, sourceSnapshotId: first.fixedSourceSnapshotId,
-            occurrenceId: row.occurrenceId!, sourceRevisionId: row.sourceRevisionId!,
-            targetUnitId: row.unitId!, expectedSelectionId: null,
-            decision: selectIfEmpty ? "select-if-empty" : "candidate-only",
-          },
-        };
-        try {
-        if (!current() || !currentLocale(targetLocale) || first.targetLocale !== targetLocale) break;
-        await commands.prepare(request);
-        if (!current() || !currentLocale(targetLocale) || first.targetLocale !== targetLocale) break;
-        await execution.adopt({ ...context, actionId: request.actionId });
-        outcome.applied++;
-        details.push({ key: row.entry.nativeKey, status: "applied" });
-        } catch (error) {
-          const code = (error as Partial<CommandError> | null)?.code;
-          if (hasUnknownOutcome(error)) { outcome.unknown++; details.push({ key: row.entry.nativeKey, status: "unknown" }); setUncertain(list => [...list, request]); }
-          else if (code === "dependency-conflict") { outcome.conflicted++; details.push({ key: row.entry.nativeKey, status: "conflicted" }); }
-          else { outcome.failed++; details.push({ key: row.entry.nativeKey, status: "failed" }); }
-        }
-        if (current()) setBatchProgress({ done: index + 1, total: rows.length });
-      }
-      if (current()) {
-        setBatchOutcome(outcome);
-        setBatchDetails(details);
-        await loadPreview(0, null, current);
-      }
-    } finally {
-      if (current()) setBatchProgress(null);
-    }
-  }
-  async function applyRow(current: () => boolean) {
-    if (!preview || !attempt || !rowAction || !currentLocale(targetLocale) || preview.targetLocale !== targetLocale) return;
-    const { row, decision } = rowAction;
-    if (!row.unitId || !row.occurrenceId || !row.sourceRevisionId) return;
-    const request: TranslationAdoptRequest = {
-      ...context, attemptId: attempt, itemId: row.itemId, resultId: row.resultId,
-      actionId: await execution.identity(context),
-      confirmation: {
-        resultDigest: row.resultDigest, sourceSnapshotId: preview.fixedSourceSnapshotId,
-        occurrenceId: row.occurrenceId, sourceRevisionId: row.sourceRevisionId,
-        targetUnitId: row.unitId, expectedSelectionId: row.currentSelection?.eventId ?? null,
-        decision,
-      },
-    };
-    try {
-      if (!current() || !currentLocale(targetLocale) || preview.targetLocale !== targetLocale) return;
-      await commands.prepare(request);
-      if (!current() || !currentLocale(targetLocale) || preview.targetLocale !== targetLocale) return;
-      await execution.adopt({ ...context, actionId: request.actionId });
-      if (current()) { setRowAction(null); await loadPreview(0, null, current); }
-    } catch (error) {
-      if (current() && hasUnknownOutcome(error)) {
-        setUncertain(list => [...list, request]);
-        setRowAction(null);
-      }
-      throw error;
-    }
-  }
-  async function openEditor(target: EditorTarget, current: () => boolean, locale = targetLocale, suggestedText?: string) {
+  async function openEditor(target: EditorTarget, current: () => boolean, locale = targetLocale, suggestedText?: string, preserveEdited = false) {
     if (!currentLocale(locale)) return;
     const retained = draftSession.current();
-    const snapshot = await reviewCommands.editorSnapshot({ ...context, unitId: target.unitId, locale });
-    const next = snapshot.translations;
-    if (!currentLocale(locale)) return;
-    if (current() && (draftSession.current()?.editSeq !== retained?.editSeq
-      || draftSession.current()?.text !== retained?.text)) { setFailure("navigation-edited"); return; }
-    if (current()) {
-      const nextTarget = listTarget(snapshot.target);
-      if (!draftSession.begin({ ...nextTarget, locale }, next.current, next.currentText, suggestedText)) {
-        setFailure("navigation-edited"); return;
-      }
-      setEditorTarget(nextTarget); setHistory(next); setNavigationEnd(false);
-      setHistoryStale(false);
-      setEditorResources({ terms: snapshot.terms, context: snapshot.context, failed: false });
-      setTab("edit");
+    const result = await refreshEditorReference(target, current, locale);
+    if (!result || !current() || !currentLocale(locale) || !checkedRead(editorKey(result.intent), result.snapshot)) return;
+    const { snapshot } = result;
+    if (draftSession.current()?.editSeq !== retained?.editSeq || draftSession.current()?.text !== retained?.text) {
+      if (current() && !preserveEdited) setFailure("navigation-edited"); return;
     }
+    const nextTarget = listTarget(snapshot.target), next = snapshot.translations;
+    if (!draftSession.begin({ ...nextTarget, locale }, next.current, next.currentText, suggestedText)) { setFailure("navigation-edited"); return; }
+    setEditorTarget(nextTarget); setHistoryIntent(null); setNavigationEnd(false); setTab("edit");
   }
   function chooseEditor(target: EditorTarget) {
     if (!targetAvailable) return;
-    if (pendingSave) { setFailure("outcome-unknown"); return; }
+    if (pendingSave || pendingSelection) { setFailure("outcome-unknown"); return; }
     if (dirty) { setLeaveIntent({ kind: "switch", target }); return; }
-    void perform(current => openEditor(target, current));
+    void performRead(current => openEditor(target, current));
   }
   async function saveDraft(current: () => boolean) {
     const result = await draftSession.save();
+    endMutationWait(current);
     if (result.saved && current() && currentLocale(targetLocale)) {
-      setHistoryStale(true);
       try { await loadList(listAfter, appliedQuery, current); }
       catch { if (current()) setFailure("save-list-refresh"); }
     }
@@ -502,8 +753,8 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   async function checkSavedAction(current: () => boolean) {
     const result = await draftSession.checkSavedAction();
+    endMutationWait(current);
     if (result.saved && current() && currentLocale(targetLocale)) {
-      setHistoryStale(true);
       try { await loadList(listAfter, appliedQuery, current); }
       catch { if (current()) setFailure("save-list-refresh"); }
     }
@@ -514,8 +765,10 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const retained = draftSession.current();
     const unchanged = () => current() && currentLocale(locale)
       && draftSession.current()?.editSeq === retained?.editSeq && draftSession.current()?.text === retained?.text;
-    const neighbor = await reviewCommands.neighbor({ ...context, unitId: editorTarget.unitId,
-      locale, scopeId: listScope.current.id, direction });
+    const request = { ...context, unitId: editorTarget.unitId, locale, scopeId: listScope.current.id, direction };
+    const key = ["translation-neighbor", request.unitId, locale, request.scopeId, direction, ++readSequence.current];
+    const neighbor = await freshRead<ReviewNeighbor>(key, ["source", "translation", "review"], () => reviewCommands.neighbor(request));
+    if (!checkedRead(key, neighbor) || neighbor.sourceSnapshotId !== listBasis.current) throw { reason: "review-scope-source-changed" };
     if (!currentLocale(locale)) return;
     if (!unchanged()) { if (current()) setFailure("navigation-edited"); return; }
     if (neighbor.unitId === null || neighbor.afterOrdinal === null) { setNavigationEnd(direction > 0); return; }
@@ -534,31 +787,45 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (result.savedCurrent && currentView() && currentLocale(targetLocale)
       && draftSession.unchanged(result.submittedSeq, result.submittedText)) await navigateEntry(1, currentView, true);
   }
-  async function selectRevision(revisionId: string, current: () => boolean) {
-    const locale = targetLocale;
+  async function selectRevision(payload: TranslationRevisionCommandPayload, current: () => boolean) {
+    const locale = targetLocale, revision = revisionTarget(payload);
     const basis = draftSession.current();
-    if (!editorTarget || !history || !basis || dirty || pendingSave || !currentLocale(locale)) return;
-    const request = { ...context, actionId: await execution.identity(context), unitId: editorTarget.unitId,
-      locale, sourceRevisionId: basis.sourceRevisionId,
-      expectedSelectionId: basis.baseSelectionId, revisionId };
-    if (!current() || !currentLocale(locale)) return;
-    await commands.select(request);
-    if (!currentLocale(locale)) { if (current()) setHistoryStale(true); return; }
-    const next = await commands.history({ ...context, unitId: request.unitId, locale: request.locale,
-      afterOrdinal: translationHistoryAfter(history.total, 100), limit: 100 });
-    if (current() && currentLocale(locale)) { setHistory(next); draftSession.selected(next.current, next.currentText, basis.editSeq); setHistoryStale(false); await loadList(listAfter, appliedQuery, current); }
+    if (!revision || !basis || !editorTarget || dirty || pendingSave || pendingSelection || !currentLocale(locale)) return;
+    const proof = revisionFlightProof(revision);
+    // Query evidence follows this fixed business wait; only the UI refresh is tied to the consumer.
+    const selected = await draftSession.selectRevision(revision, proof.current, proof.dispose);
+    endMutationWait(current);
+    if (!selected || !current() || !currentLocale(locale)) return;
+    try { await refreshHistory(current); await loadList(listAfter, appliedQuery, current); }
+    catch { if (current()) setFailure("save-list-refresh"); }
+  }
+  async function checkSelection(current: () => boolean, retry = false) {
+    const selected = retry ? await draftSession.retrySelection() : await draftSession.checkSelection();
+    endMutationWait(current);
+    if (!selected || !current() || !currentLocale(targetLocale)) return;
+    try { await refreshHistory(current); await loadList(listAfter, appliedQuery, current); }
+    catch { if (current()) setFailure("save-list-refresh"); }
+  }
+  async function loadHistory(after: string, current: () => boolean) {
+    const locale = targetLocale, target = editorTarget;
+    if (!target || !currentLocale(locale) || !current()) return;
+    const intent: HistoryReadIntent = { id: ++readSequence.current, unitId: target.unitId, locale, after };
+    setHistoryIntent(intent);
+    const value = await freshRead(historyKey(intent), ["source", "translation"], () => readHistory(intent));
+    if (!current() || !currentLocale(locale) || !checkedRead(historyKey(intent), value)) return;
   }
   async function refreshHistory(current: () => boolean) {
-    const locale = targetLocale;
-    if (!editorTarget || !currentLocale(locale)) return;
-    const first = await commands.history({ ...context, unitId: editorTarget.unitId, locale, afterOrdinal: "0", limit: 1 });
-    if (!currentLocale(locale)) return;
-    const next = await commands.history({ ...context, unitId: editorTarget.unitId, locale, afterOrdinal: translationHistoryAfter(first.total, 100), limit: 100 });
-    if (current() && currentLocale(locale)) { setHistory(next); setHistoryStale(false); }
+    const locale = targetLocale, target = editorTarget;
+    if (!target || !currentLocale(locale) || !current()) return;
+    const key = ["translation-history-head", target.unitId, locale, 0, 1, ++readSequence.current];
+    const first = await freshRead(key, ["source", "translation"], () => commands.history({ ...context, unitId: target.unitId, locale, afterOrdinal: "0", limit: 1 }));
+    if (!current() || !currentLocale(locale) || !checkedRead(key, first)) return;
+    if (first.unitId !== target.unitId || first.locale !== locale) throw { reason: "selection" };
+    await loadHistory(translationHistoryAfter(first.total, 100), current);
   }
   function requestClose() {
-    if (leaveIntent || pendingStart || uncertain.length || (running.current && !editorDraft?.saving)) return;
-    generation.current++; setOpen(false);
+    if (leaveIntent || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return;
+    generation.current++; setEditorActivation(null); setReadyEditorRead(null); setEditorIntent(null); setOpen(false);
   }
   async function switchEditor(intent: Extract<LeaveIntent, { kind: "switch" }>, current: () => boolean) {
     const retained = draftSession.current();
@@ -570,80 +837,85 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   function resolveLeave(discard: boolean) {
     const intent = leaveIntent;
+    if (discard && intent?.kind === "project" && leaveProof.current && !leaveProof.current()) { setFailure("navigation-edited"); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; setLeaveIntent(null); return; }
     setLeaveIntent(null);
-    if (!discard) { leaveResolver.current?.(false); leaveResolver.current = null; return; }
-    setHistory(null); setEditorTarget(null); draftSession.clear();
-    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; }
+    if (!discard) { leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; return; }
+    setHistoryIntent(null); setEditorIntent(null); setEditorTarget(null); draftSession.clear();
+    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; leaveProof.current = null; }
     if (intent?.kind === "close") setOpen(false);
-    if (intent?.kind === "switch") void perform(current => switchEditor(intent, current));
+    if (intent?.kind === "switch") void performRead(current => switchEditor(intent, current));
   }
   async function saveAndLeave(current: () => boolean) {
     if (!targetAvailable) return;
+    if (leaveProof.current && !leaveProof.current()) { setFailure("navigation-edited"); return; }
     const intent = leaveIntent;
     const result = await saveDraft(current);
     if (!result.savedCurrent) return;
-    if (!current()) return;
+    if (!current() || (leaveProof.current && !leaveProof.current())) return;
     if (!currentLocale(targetLocale)) {
       setLeaveIntent(null);
-      leaveResolver.current?.(false); leaveResolver.current = null;
+      leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null;
       return;
     }
     if (!draftSession.unchanged(result.submittedSeq, result.submittedText)) return;
     setLeaveIntent(null);
-    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; }
+    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; leaveProof.current = null; }
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") await switchEditor(intent, current);
   }
-  const canImport = Boolean(sourcePage && targetAvailable && fileName);
   return <>
-    {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || (busy && !editorDraft?.saving)}>
+    {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || (localBusy && !editorDraft?.saving)}>
         <div className="execution-content" aria-busy={busy}>
           {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={effectiveFailureValue} />{typeof effectiveFailureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
-          {saveReceiptCheck ? <p role="status">{t(saveReceiptCheck === "found" ? "translation.savedActionFound" : "translation.savedActionMissing")}</p> : null}
-          {targetUnavailable ? <div role="alert"><p>{t(editorDraft ? "translation.removedTargetDraft" : "translation.removedTargetImport", { locale: targetLocale })}</p><button className="secondary-button" type="button" disabled={busy && !editorDraft?.saving} onClick={() => setOpen(false)}>{t("translation.returnToSettings")}</button></div> : null}
+          {saveReceiptCheck ? <p role="status">{t(editorDraft?.receiptKind === "selection" ? saveReceiptCheck === "found" ? "translation.selectionActionFound" : "translation.selectionActionMissing" : saveReceiptCheck === "found" ? "translation.savedActionFound" : "translation.savedActionMissing")}</p> : null}
+          {targetUnavailable ? <div role="alert"><p>{t(editorDraft ? "translation.removedTargetDraft" : "translation.removedTargetImport", { locale: targetLocale })}</p><button className="secondary-button" type="button" disabled={localBusy && !editorDraft?.saving} onClick={() => setOpen(false)}>{t("translation.returnToSettings")}</button></div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
+          {sourceRead.isFetching || contentRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}
+          {sourceRead.error || contentRead.error ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable} onClick={() => void performRead(refreshSource)}>{t("execution.refresh")}</button> : null}
           {!project.metadata.targetLocales.length ? <p role="status">{t("translation.noTargets")}</p> : null}
           <div className="execution-actions">{sourcePage?.namespace !== "webvtt:source" ? <button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button> : null}<button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
-          {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || !!pendingStart || uncertain.length > 0} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
-          {tab === "import" && sourcePage && sourcePage.namespace !== "webvtt:source" && targetLocale ? <>
-            <section><button className="secondary-button" disabled={busy || !targetAvailable || uncertain.length > 0} onClick={() => void perform(chooseFolder)}>{t("translation.chooseFolder")}</button>
-              {folder ? <><p>{t("translation.folder", { name: folder.folderName })}</p>{files.length ? <label>{t("translation.file")}<select value={fileName} disabled={busy || !!pendingStart || uncertain.length > 0} onChange={event => { selectedAttempt.current = null; setFileName(event.target.value); setPreflight(null); setConfirmed(false); setAttempt(null); setPreview(null); }}>{files.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t("translation.noFiles")}</p>}
-                <button className="secondary-button" disabled={busy || !canImport} onClick={() => void perform(async current => { const locale = targetLocale; if (!currentLocale(locale)) return; const checked = await commands.preflight({ ...context, selectionId: folder.selectionId, fileName, targetLocale: locale }); if (current() && currentLocale(locale) && localeAvailable(checked.targetLocale)) { setPreflight(checked); setConfirmed(false); } })}>{t("translation.inspect")}</button>
+          {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || !!pendingSelection || !!pendingStart || uncertain.length > 0} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
+          {tab === "import" && targetLocale && ((sourcePage && sourcePage.namespace !== "webvtt:source") || preview || preflight || pendingStart) ? <>
+            <section><button className="secondary-button" disabled={!importSetupAvailability(importSetupPayload()).enabled} onClick={() => commandRegistry.dispatch("translation.choose-import-folder",commandScope,importSetupPayload())}>{t("translation.chooseFolder")}</button>
+              {filesRead.error ? <p role="status">{t("translation.filesUnavailable")} <button className="text-button" onClick={() => void filesRead.refetch()}>{t("execution.refresh")}</button></p> : null}
+              {folder ? <><p>{t("translation.folder", { name: folder.folderName })}</p>{files.length ? <label>{t("translation.file")}<select value={fileName} disabled={busy || !!pendingStart || uncertain.length > 0} onChange={event => importSession.setFile(event.target.value)}>{fileName && !files.includes(fileName) ? <option value={fileName} disabled>{fileName}</option> : null}{files.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t(filesRead.isFetching ? "execution.loading" : filesRead.error ? "translation.filesUnavailable" : "translation.noFiles")}</p>}
+                <button className="secondary-button" disabled={!importSetupAvailability(importSetupPayload(),true).enabled} onClick={() => commandRegistry.dispatch("translation.inspect-import",commandScope,importSetupPayload())}>{t("translation.inspect")}</button>
               </> : null}
-              {preflight ? <><p>{t("translation.preflight", { count: preflight.count, file: preflight.fileName })}</p><label className="source-check"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} />{t("translation.languageConfirm", { file: preflight.fileName, target: preflight.targetLocale, declared: preflight.declaredLocale })}</label>
-                <button className="primary-button" disabled={busy || !targetAvailable || !localeAvailable(preflight.targetLocale) || !confirmed || !!pendingStart || !!attempt} onClick={() => void perform(async current => { if (!currentLocale(targetLocale) || !localeAvailable(preflight.targetLocale)) return; const request: TranslationStartRequest = { ...context, selectionId: folder!.selectionId, fileName: preflight.fileName, targetLocale: preflight.targetLocale, languageConfirmed: true, expectedFileDigest: preflight.fileDigest, expectedSourceSnapshotId: preflight.sourceSnapshotId, attemptId: await execution.identity(context) }; if (!current() || !currentLocale(targetLocale) || !localeAvailable(request.targetLocale)) return; setPendingStart(request); await startImport(request, current); })}>{t("translation.start")}</button></> : null}
-              {pendingStart ? <div role="status"><p>{t("translation.startUnknown")}</p><button className="secondary-button" disabled={busy || !localeAvailable(pendingStart.targetLocale)} onClick={() => void perform(current => startImport(pendingStart, current))}>{t("translation.checkStart")}</button></div> : null}
+              {preflight ? <><p>{t("translation.preflight", { count: preflight.count, file: preflight.fileName })}</p><label className="source-check"><input type="checkbox" checked={confirmed} disabled={!importConsentAvailability(importConsentPayload()).enabled} onChange={event => {const payload=importConsentPayload(event.target.checked);if(payload)commandRegistry.dispatch("translation.confirm-import-language",commandScope,payload);}} />{t("translation.languageConfirm", { file: preflight.fileName, target: preflight.targetLocale, declared: preflight.declaredLocale })}</label>
+                <button className="primary-button" disabled={!importConsentAvailability(importConsentPayload(),true).enabled} onClick={() => {const payload=importConsentPayload();if(payload)commandRegistry.dispatch("translation.start-import",commandScope,payload);}}>{t("translation.start")}</button></> : null}
+              {pendingStart ? <div role="status"><p>{t("translation.startUnknown")}</p><button className="secondary-button" disabled={!importStartPendingAvailability(importStartPendingPayload()).enabled} onClick={() => {const payload=importStartPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-import-start",commandScope,payload);}}>{t("translation.checkStart")}</button></div> : null}
               {attempt && !preview ? <p role="status">{t("translation.progress", { count: preflight?.count ?? 0 })}</p> : null}
             </section>
             {preview ? <section><h3>{t("translation.preview")}</h3><p>{t("translation.counts", { unique: String(preview.unique), unmatched: String(preview.unmatched), conflicts: String(preview.selectedConflicts), changed: String(preview.sourceChanged) })}</p><p>{preview.logicalPath} · {preview.targetLocale}</p>{preview.sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}
-              <div className="source-table-scroll"><table className="source-table"><caption>{t("translation.page", { first: String((preview.rows[0]?.entry.ordinal ?? 0) + 1), last: String((preview.rows.at(-1)?.entry.ordinal ?? -1) + 1), total: String(preview.total) })}</caption><thead><tr><th scope="col">{t("translation.key")}</th><th scope="col">{t("translation.sourceText")}</th><th scope="col">{t("translation.importedText")}</th><th scope="col">{t("translation.selectedText")}</th><th scope="col">{t("translation.match")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.ordinal}><th scope="row">{row.entry.nativeKey}<details><summary>{t("translation.evidence")}</summary><p>{preview.logicalPath} · {row.entry.valueByteRange[0]}–{row.entry.valueByteRange[1]}</p><code>{preview.fileDigest}</code></details></th><td><pre>{row.sourceText === "" ? t("translation.empty") : row.sourceText}</pre></td><td><pre>{row.entry.text === "" ? t("translation.empty") : row.entry.text}</pre></td><td><pre>{row.currentText === "" ? t("translation.empty") : row.currentText}</pre></td><td>{t(`translation.status.${row.status}`)}{row.status === "unique" || row.status === "selected-conflict" ? <div className="translation-row-actions"><button className="text-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale} onClick={() => setRowAction({ row, decision: "candidate-only" })}>{t("translation.addCandidate")}</button><button className="text-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale} onClick={() => setRowAction({ row, decision: row.status === "unique" ? "select-if-empty" : "replace" })}>{t(row.status === "unique" ? "translation.selectImported" : "translation.replaceSelected")}</button></div> : null}{targetFromTranslation(row) ? <button className="text-button" disabled={busy || !targetAvailable} onClick={() => chooseEditor(targetFromTranslation(row)!)}>{t("translation.openEditor")}</button> : null}</td></tr>)}</tbody></table></div>
-              <div className="execution-actions"><button className="secondary-button" disabled={busy} onClick={() => void perform(current => loadPreview(0, null, current))}>{t("translation.refreshPreview")}</button>{preview.nextOrdinal !== null ? <button className="secondary-button" disabled={busy} onClick={() => void perform(current => loadPreview(preview.nextOrdinal!, preview.basis, current))}>{t("execution.nextPage")}</button> : null}</div>
-              <p>{t("translation.applyHelp")}</p><label className="source-check"><input type="checkbox" checked={selectIfEmpty} disabled={busy} onChange={event => setSelectIfEmpty(event.target.checked)} />{t("translation.selectIfEmpty")}</label>
-              <button className="primary-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale || preview.unique === 0 || preview.sourceChanged > 0} onClick={() => void perform(applyBatch)}>{t("translation.apply", { count: preview.unique })}</button>
+              <div className="source-table-scroll"><table className="source-table"><caption>{t("translation.page", { first: String((preview.rows[0]?.entry.ordinal ?? 0) + 1), last: String((preview.rows.at(-1)?.entry.ordinal ?? -1) + 1), total: String(preview.total) })}</caption><thead><tr><th scope="col">{t("translation.key")}</th><th scope="col">{t("translation.sourceText")}</th><th scope="col">{t("translation.importedText")}</th><th scope="col">{t("translation.selectedText")}</th><th scope="col">{t("translation.match")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.ordinal}><th scope="row">{row.entry.nativeKey}<details><summary>{t("translation.evidence")}</summary><p>{preview.logicalPath} · {row.entry.valueByteRange[0]}–{row.entry.valueByteRange[1]}</p><code>{preview.fileDigest}</code></details></th><td><pre>{row.sourceText === "" ? t("translation.empty") : row.sourceText}</pre></td><td><pre>{row.entry.text === "" ? t("translation.empty") : row.entry.text}</pre></td><td><pre>{row.currentText === "" ? t("translation.empty") : row.currentText}</pre></td><td>{t(`translation.status.${row.status}`)}{row.status === "unique" || row.status === "selected-conflict" ? <div className="translation-row-actions"><button className="text-button" disabled={!importRowAvailability(importRowPayload(row,"candidate-only")).enabled} onClick={() => {const payload=importRowPayload(row,"candidate-only");if(payload)commandRegistry.dispatch("translation.choose-import-row",commandScope,payload);}}>{t("translation.addCandidate")}</button><button className="text-button" disabled={!importRowAvailability(importRowPayload(row,row.status === "unique" ? "select-if-empty" : "replace")).enabled} onClick={() => {const payload=importRowPayload(row,row.status === "unique" ? "select-if-empty" : "replace");if(payload)commandRegistry.dispatch("translation.choose-import-row",commandScope,payload);}}>{t(row.status === "unique" ? "translation.selectImported" : "translation.replaceSelected")}</button></div> : null}{targetFromTranslation(row) ? <button className="text-button" disabled={busy || readBusy || !targetAvailable} onClick={() => chooseEditor(targetFromTranslation(row)!)}>{t("translation.openEditor")}</button> : null}</td></tr>)}</tbody></table></div>
+              <div className="execution-actions"><button className="secondary-button" disabled={busy} onClick={() => void importSession.page(0, true)}>{t("translation.refreshPreview")}</button>{preview.nextOrdinal !== null ? <button className="secondary-button" disabled={busy} onClick={() => void importSession.page(preview.nextOrdinal!)}>{t("execution.nextPage")}</button> : null}</div>
+              {importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}
+              <p>{t("translation.applyHelp")}</p><label className="source-check"><input type="checkbox" checked={selectIfEmpty} disabled={busy} onChange={event => importSession.setStrategy(event.target.checked)} />{t("translation.selectIfEmpty")}</label>
+              <button className="primary-button" disabled={!importPreviewAvailability(importPreviewPayload()).enabled} onClick={() => {const payload=importPreviewPayload();if(payload)commandRegistry.dispatch("translation.capture-import-batch",commandScope,payload);}}>{t("translation.apply", { count: preview.unique })}</button>
               {batchProgress ? <p role="status">{t("translation.applying", { done: String(batchProgress.done), total: String(batchProgress.total) })}</p> : null}
               {batchOutcome ? <><p role="status">{t("translation.outcome", { applied: String(batchOutcome.applied), conflicted: String(batchOutcome.conflicted), failed: String(batchOutcome.failed), unknown: String(batchOutcome.unknown) })}</p><details><summary>{t("translation.batchDetails")}</summary><ul>{batchDetails.map((item, index) => <li key={`${item.key}:${index}`}>{item.key}: {t(`translation.batchStatus.${item.status}`)}</li>)}</ul></details></> : null}
-              {uncertain.map(request => <div key={request.actionId} role="status"><button className="secondary-button" disabled={busy} onClick={() => void perform(async current => { const receipt = await execution.receipt({ ...context, actionId: request.actionId }); if (current()) { setReceiptMessage(receipt ? "found" : "missing"); if (receipt) { setUncertain(list => list.filter(item => item.actionId !== request.actionId)); await loadPreview(0, null, current); } } })}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale} onClick={() => void perform(async current => { if (!currentLocale(targetLocale) || preview.targetLocale !== targetLocale) return; await commands.prepare(request); if (!current() || !currentLocale(targetLocale) || preview.targetLocale !== targetLocale) return; await execution.adopt({ ...context, actionId: request.actionId }); if (current()) { setUncertain(list => list.filter(item => item.actionId !== request.actionId)); await loadPreview(0, null, current); } })}>{t("translation.retryAction")}</button></div>)}
+              {uncertain.map(pending => <div key={pending.request.actionId} role="status"><p>{pending.key}</p><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId)).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.check-import-receipt",commandScope,payload);}}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId),true).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.retry-import-action",commandScope,payload);}}>{t("translation.retryAction")}</button></div>)}
               {receiptMessage ? <p role="status">{t(receiptMessage === "found" ? "translation.receiptFound" : "translation.receiptMissing")}</p> : null}
             </section> : null}
           </> : null}
           {tab === "edit" && targetLocale ? <section className="translation-workspace" aria-label={t("translation.editor")}>
-            <form className="translation-search" onSubmit={event => { event.preventDefault(); if (!busy && targetAvailable) void perform(current => loadList(0, query.trim(), current, true)); }}>
+            <form className="translation-search" onSubmit={event => { event.preventDefault(); if (!busy && !readBusy && targetAvailable) void performRead(current => loadList(0, query.trim(), current, true)); }}>
               <input aria-label={t("workbench.search")} value={query} onChange={event => setQuery(event.target.value)} placeholder={t("workbench.search")} aria-invalid={failure === "query-limit" || undefined} />
-              <button className="secondary-button" type="submit" disabled={busy || !targetAvailable}>{t("workbench.searchAction")}</button>
-              <span role="status">{list ? t("workbench.results", { count: list.total }) : t("execution.loading")}</span>
+              <button className="secondary-button" type="submit" disabled={busy || readBusy || !targetAvailable}>{t("workbench.searchAction")}</button>
+              <span role="status">{listRead.error ? t("translation.errors.failed") : list ? t("workbench.results", { count: list.total }) : t("execution.loading")}</span>
             </form>
             <div className="translation-columns">
               <div className="translation-entry-list" aria-label={t("translation.chooseUnit")}>
                 <ul ref={entryList}>{list?.rows.map(row => <li key={row.unitId}><button className="translation-entry" aria-label={row.nativeKey}
-                  aria-current={displayedTarget?.unitId === row.unitId ? "true" : undefined} disabled={busy || !targetAvailable} onClick={() => chooseEditor(listTarget(row))}>
+                  aria-current={displayedTarget?.unitId === row.unitId ? "true" : undefined} disabled={busy || readBusy || !targetAvailable} onClick={() => chooseEditor(listTarget(row))}>
                   <strong>{row.nativeKey}</strong><span className="entry-source">{row.sourcePreview || t("translation.empty")}</span>
                   <span className="entry-translation">{row.translationPreview === null ? t("workbench.unselected") : row.translationPreview || t("translation.empty")}</span>
                   <span className="entry-status">{row.selectionId ? t("workbench.selected") : t("workbench.unselected")} · {reviewState(row)} · {qaState(row)}</span>
                 </button></li>)}</ul>
                 {list?.rows.length === 0 ? <p>{t("translation.noUnit")}</p> : null}
-                <div className="entry-pagination"><button className="text-button" disabled={busy || !targetAvailable || listAfter === 0} onClick={() => void perform(current => loadList(0, appliedQuery, current))}>{t("execution.firstPage")}</button>
-                {list?.nextOrdinal != null ? <button className="text-button" disabled={busy || !targetAvailable} onClick={() => void perform(current => loadList(list.nextOrdinal!, appliedQuery, current))}>{t("execution.nextPage")}</button> : null}</div>
+                <div className="entry-pagination"><button className="text-button" disabled={busy || readBusy || !targetAvailable || listAfter === 0} onClick={() => void performRead(current => loadList(0, appliedQuery, current))}>{t("execution.firstPage")}</button>
+                {list?.nextOrdinal != null ? <button className="text-button" disabled={busy || readBusy || !targetAvailable} onClick={() => void performRead(current => loadList(list.nextOrdinal!, appliedQuery, current))}>{t("execution.nextPage")}</button> : null}</div>
               </div>
               {editorDraft && displayedTarget ? <div className="translation-detail">
                 <div className="translation-editor">
@@ -653,8 +925,8 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                     const boundary = index >= 0 && (delta < 0 ? index === 0 && listAfter === 0
                       : index === (list?.rows.length ?? 0) - 1 && list?.nextOrdinal === null);
                     return <button key={delta} type="button" className="text-button"
-                      disabled={busy || !targetAvailable || !!pendingSave || !editorTarget || !history || !list?.total || boundary}
-                      onClick={() => void perform(current => navigateEntry(delta, current))}>
+                      disabled={busy || readBusy || !targetAvailable || !!pendingSave || !confirmedList() || readyEditorRead !== editorIntent?.id || !editorTarget || !history || !list?.total || editorRead.isFetching || listRead.isFetching || !!editorRead.error || !!listRead.error || boundary}
+                      onClick={() => void performRead(current => navigateEntry(delta, current))}>
                       {t(delta < 0 ? "workbench.previousEntry" : "workbench.nextEntry")}
                     </button>;
                   })}</div>
@@ -662,24 +934,27 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{displayedTarget.sourceText || t("translation.empty")}</pre></section>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
                   <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => draftSession.edit(event.target.value)} /></label>
-                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
+                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
+                  {pendingSelection ? <div role="status"><p>{t("translation.selectionUnknown")}</p><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload()).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.check-selection",commandScope,payload);}}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload(),true).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-selection",commandScope,payload);}}>{t("translation.retrySelection")}</button></div> : null}
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                 </div>
-                {history ? <details className="editor-references"><summary>{t("workbench.references")}</summary>
+                {editorRead.isFetching || historyRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
+                <details className="editor-references"><summary>{t("workbench.references")}</summary>
               <section aria-label={t("resource.editorReference")}><h5>{t("resource.editorReference")}</h5><p>{t("resource.editorReferenceHelp")}</p>
-                {editorResources?.failed ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}
+                {editorRead.error ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}
                 {editorResources?.terms ? <><h6>{t("resource.applicableTerms")}</h6>{editorResources.terms.entries.length ? <ul>{editorResources.terms.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? <>{entry.selected.target} · {entry.selected.originKind === "manual" ? t("resource.manual") : t("resource.external")} · {entry.selected.reason}</> : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}
-                {editorResources && !editorResources.failed ? <><h6>{t("resource.manualContext")}</h6>{editorResources.context ? <p>{editorResources.context.text} · {editorResources.context.reason}</p> : <p>{t("resource.noManualContext")}</p>}</> : null}
+                {editorResources ? <><h6>{t("resource.manualContext")}</h6>{editorResources.context ? <p>{editorResources.context.text} · {editorResources.context.reason}</p> : <p>{t("resource.noManualContext")}</p>}</> : null}
               </section>
-              <div className="execution-section-heading"><h4>{t("translation.history")}</h4><button className="text-button" disabled={busy || !targetAvailable || !!pendingSave || !editorTarget} onClick={() => void perform(refreshHistory)}>{t("translation.refreshHistory")}</button></div>{historyStale ? <p role="status">{t("translation.historyStale")}</p> : null}{history.rows.length ? <ul>{history.rows.map(revision => <li key={revision.revisionId}><p>{revision.ordinal}: {revision.text === "" ? t("translation.empty") : revision.text}</p><p>{revision.originKind === "import" ? t("translation.importOrigin", { file: revision.logicalPath ?? "" }) : revision.originKind === "ai" ? t("ai.origin") : t("translation.manualOrigin")}</p>{revision.originKind === "import" ? <details><summary>{t("translation.evidence")}</summary><p>{t("translation.key")}: {revision.nativeKey}</p><p>{t("translation.file")}: {revision.logicalPath}</p><code>{revision.fileDigest}</code></details> : null}<button className="secondary-button" disabled={busy || !targetAvailable || dirty || !!pendingSave || editorDraft?.baseRevisionId === revision.revisionId} onClick={() => void perform(current => selectRevision(revision.revisionId, current))}>{t("translation.selectRevision")}</button></li>)}</ul> : historyStale ? null : <p>{t("translation.noHistory")}</p>}
-              <div className="execution-actions"><button className="secondary-button" disabled={busy || !targetAvailable || history.rows[0]?.ordinal === "1"} onClick={() => void perform(async current => { const locale = targetLocale; if (!currentLocale(locale)) return; const next = await commands.history({ ...context, unitId: displayedTarget.unitId, locale, afterOrdinal: translationHistoryAfter(history.rows[0]?.ordinal ?? "1", 101), limit: 100 }); if (current() && currentLocale(locale)) { setHistory(next); setHistoryStale(false); } })}>{t("translation.earlier")}</button>{history.nextOrdinal !== null ? <button className="secondary-button" disabled={busy || !targetAvailable} onClick={() => void perform(async current => { const locale = targetLocale; if (!currentLocale(locale)) return; const next = await commands.history({ ...context, unitId: displayedTarget.unitId, locale, afterOrdinal: history.nextOrdinal!, limit: 100 }); if (current() && currentLocale(locale)) { setHistory(next); setHistoryStale(false); } })}>{t("translation.later")}</button> : null}</div>
-                </details> : null}
+              <section aria-label={t("translation.history")}><div className="execution-section-heading"><h4>{t("translation.history")}</h4><button className="text-button" disabled={busy || readBusy || !targetAvailable || !!pendingSave || !editorTarget} onClick={() => void performRead(refreshHistory)}>{t("translation.refreshHistory")}</button></div>{historyRead.error && historyIntent ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable} onClick={() => void performRead(current => loadHistory(historyIntent.after, current))}>{t("execution.refresh")}</button> : null}{historyStale ? <p role="status">{t("translation.historyStale")}</p> : null}{history?.rows.length ? <ul>{history.rows.map(revision => <li key={revision.revisionId}><p>{revision.ordinal}: {revision.text === "" ? t("translation.empty") : revision.text}</p><p>{revision.originKind === "import" ? t("translation.importOrigin", { file: revision.logicalPath ?? "" }) : revision.originKind === "ai" ? t("ai.origin") : t("translation.manualOrigin")}</p>{revision.originKind === "import" ? <details><summary>{t("translation.evidence")}</summary><p>{t("translation.key")}: {revision.nativeKey}</p><p>{t("translation.file")}: {revision.logicalPath}</p><code>{revision.fileDigest}</code></details> : null}<button className="secondary-button" disabled={!revisionAvailability(revisionPayload(revision)).enabled} onClick={() => {const payload=revisionPayload(revision);if(payload)commandRegistry.dispatch("translation.select-revision",commandScope,payload);}}>{t("translation.selectRevision")}</button></li>)}</ul> : historyStale ? null : <p>{t("translation.noHistory")}</p>}
+              {history ? <div className="execution-actions"><button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching || history.rows[0]?.ordinal === "1"} onClick={() => void performRead(current => loadHistory(translationHistoryAfter(history.rows[0]?.ordinal ?? "1", 101), current))}>{t("translation.earlier")}</button>{history.nextOrdinal !== null ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching} onClick={() => void performRead(current => loadHistory(history.nextOrdinal!, current))}>{t("translation.later")}</button> : null}</div> : null}</section>
+                </details>
               </div> : <div className="editor-empty"><h2>{t("workbench.chooseEntry")}</h2><p>{t("workbench.chooseEntryHelp")}</p></div>}
             </div>
           </section> : null}
         </div>
       </WorkbenchPanel> : null}
-    <Dialog.Root open={rowAction !== null} onOpenChange={value => { if (!value && !busy) setRowAction(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</Dialog.Title><Dialog.Description>{t("translation.rowActionHelp", { key: rowAction?.row.entry.nativeKey ?? "" })}</Dialog.Description>{rowAction ? <div className="translation-action-compare"><p>{t("translation.importedText")}: {rowAction.row.entry.text === "" ? t("translation.empty") : rowAction.row.entry.text}</p><p>{t("translation.selectedText")}: {rowAction.row.currentText === null ? t("translation.noSelection") : rowAction.row.currentText === "" ? t("translation.empty") : rowAction.row.currentText}</p></div> : null}{targetUnavailable ? <p role="alert">{t("translation.removedTargetImport", { locale: targetLocale })}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => setRowAction(null)}>{t("execution.back")}</button><button className="primary-button" disabled={busy || !targetAvailable || !preview || preview.targetLocale !== targetLocale} onClick={() => void perform(applyRow)}>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
-    <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>{targetUnavailable ? <p role="alert">{t("translation.removedTargetDraft", { locale: targetLocale })}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}{newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button><button className="secondary-button" disabled={busy || !!pendingSave} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button><button className="primary-button" disabled={busy || !targetAvailable} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={batchCapture !== null} onOpenChange={value => { if (!value && !importState.busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (importState.busy) event.preventDefault(); }}><Dialog.Title>{t("translation.batchConfirm")}</Dialog.Title><Dialog.Description>{t("translation.batchScope", { total: String(batchCapture?.preview.total ?? 0), matches: String(batchCapture?.eligible.length ?? 0), excluded: String(batchCapture?.excluded ?? 0) })}</Dialog.Description><p>{t(batchCapture?.decision === "select-if-empty" ? "translation.batchSelect" : "translation.batchCandidates")}</p>{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={importState.busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={!importBatchAvailability(importBatchPayload()).enabled} onClick={() => {const payload=importBatchPayload();if(payload)commandRegistry.dispatch("translation.apply-import-batch",commandScope,payload);}}>{t("translation.batchStart")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={rowAction !== null} onOpenChange={value => { if (!value && !busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</Dialog.Title><Dialog.Description>{t("translation.rowActionHelp", { key: rowAction?.row.entry.nativeKey ?? "" })}</Dialog.Description>{rowAction ? <div className="translation-action-compare"><p>{t("translation.importedText")}: {rowAction.row.entry.text === "" ? t("translation.empty") : rowAction.row.entry.text}</p><p>{t("translation.selectedText")}: {rowAction.row.currentText === null ? t("translation.noSelection") : rowAction.row.currentText === "" ? t("translation.empty") : rowAction.row.currentText}</p></div> : null}{targetUnavailable ? <p role="alert">{t("translation.removedTargetImport", { locale: targetLocale })}</p> : null}{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={!importRowAvailability(rowAction ? importRowPayload(rowAction.row,rowAction.decision,rowAction.preview,rowAction.editSeq) : undefined,true).enabled} onClick={() => {const capture=importSession.current().rowAction;const payload=capture ? importRowPayload(capture.row,capture.decision,capture.preview,capture.editSeq) : undefined;if(payload)commandRegistry.dispatch("translation.apply-import-row",commandScope,payload);}}>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>{targetUnavailable ? <p role="alert">{t("translation.removedTargetDraft", { locale: targetLocale })}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}{newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button><button className="secondary-button" disabled={busy || !!pendingSave || !!pendingSelection} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button><button className="primary-button" disabled={busy || !targetAvailable} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;
 }

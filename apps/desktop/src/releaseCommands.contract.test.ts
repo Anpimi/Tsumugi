@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/releaseCommands.contract.json";
-import { releaseCommands } from "./releaseCommands";
+import { confirmReleaseDelivery, confirmReleasePreview, releaseCommands, type DeliveryPreview, type DeliveryView, type ReleaseExceptionKind, type ReleaseView } from "./releaseCommands";
 import * as validators from "./generated/release.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 
@@ -102,4 +102,51 @@ it("retains cancellation, explicit unknown delivery and backend rejection semant
   invoke.mockRejectedValueOnce(rejected);
   await expect(releaseCommands.export(fixture.requests.export)).rejects.toBe(rejected);
   expect(invoke).toHaveBeenCalledTimes(3);
+});
+
+function fixtureExceptionKind(kind: string): ReleaseExceptionKind {
+  if (kind !== "source-fallback" && kind !== "qa-waiver") throw new Error("Invalid release exception fixture");
+  return kind;
+}
+it("binds the entire preview vector and digest states to the saved release, regardless of display order", () => {
+  const saved = fixture.responses.releases[0], preview = structuredClone(fixture.responses.preview) as DeliveryPreview;
+  const release: ReleaseView = { ...saved, exceptions: saved.exceptions.map(value => ({ ...value, kind: fixtureExceptionKind(value.kind) })) };
+  expect(() => confirmReleasePreview({ ...preview, files: [...preview.files].reverse() }, release, fixture.requests.preview.selectionId)).not.toThrow();
+  const variants: DeliveryPreview[] = [
+    { ...preview, files: preview.files.slice(0, 1) },
+    { ...preview, files: [preview.files[0], preview.files[0]] },
+    { ...preview, files: [{ ...preview.files[0], expectedSha256: "0".repeat(64) }, preview.files[1]] },
+    { ...preview, files: [{ ...preview.files[0], state: "same" }, preview.files[1]] },
+    { ...preview, files: [{ ...preview.files[0], fileName: "i18n/other.json" }, preview.files[1]] },
+  ];
+  variants.forEach(value => {
+    expect(validators.validateResponsePreview(value)).toBe(true);
+    expect(() => confirmReleasePreview(value, release, fixture.requests.preview.selectionId)).toThrow();
+  });
+});
+
+it("checks aggregate results, all file identities and hashes, and preserves terminal evidence during reconciliation", () => {
+  const receipt = structuredClone(fixture.responses.delivery) as DeliveryView, files = fixture.responses.preview.files;
+  expect(() => confirmReleaseDelivery({ ...receipt, files: [...receipt.files].reverse() }, fixture.requests.export, files)).not.toThrow();
+  const variants: DeliveryView[] = [
+    { ...receipt, files: [] }, { ...receipt, files: [receipt.files[0], receipt.files[0]] },
+    { ...receipt, files: [{ ...receipt.files[0], locale: "ja-JP" }, receipt.files[1]] },
+    { ...receipt, files: [{ ...receipt.files[0], actualSha256: "0".repeat(64) }, receipt.files[1]] },
+    { ...receipt, state: "succeeded" },
+    { ...receipt, files: [{ ...receipt.files[0], state: "pending", actualSha256: null }, receipt.files[1]], state: "pending" },
+  ];
+  variants.forEach(value => {
+    expect(validators.validateResponseDelivery(value)).toBe(true);
+    expect(() => confirmReleaseDelivery(value, fixture.requests.export, files)).toThrow();
+  });
+  expect(() => confirmReleaseDelivery({ ...receipt, directory: "C:\\isolated\\other" }, fixture.requests.export, files, receipt)).toThrow();
+  expect(() => confirmReleaseDelivery({ ...receipt, deliveryId: fixture.responses.releases[0].sourceSnapshotId }, fixture.requests.export, files, receipt)).toThrow();
+  const unknown: DeliveryView = { ...receipt, state: "unknown", files: [receipt.files[0], { ...receipt.files[1], state: "unknown" }] };
+  expect(() => confirmReleaseDelivery(receipt, fixture.requests.export, files, unknown)).not.toThrow();
+  expect(() => confirmReleaseDelivery({ ...unknown, files: [{ ...unknown.files[0], state: "unknown", actualSha256: null }, unknown.files[1]] }, fixture.requests.export, files, unknown)).toThrow();
+  expect(() => confirmReleaseDelivery({ ...receipt, files: [receipt.files[0], { ...receipt.files[1], actualSha256: "0".repeat(64) }] }, fixture.requests.export, files, unknown)).toThrow();
+  const allUnknown: DeliveryView = { ...receipt, state: "unknown", files: receipt.files.map(file => ({ ...file, state: "unknown", actualSha256: null })) };
+  const regressed: DeliveryView = { ...receipt, state: "pending", files: receipt.files.map(file => ({ ...file, state: "pending", actualSha256: null })) };
+  expect(validators.validateResponseDelivery(regressed)).toBe(true);
+  expect(() => confirmReleaseDelivery(regressed, fixture.requests.export, files, allUnknown)).toThrow();
 });

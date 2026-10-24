@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/arenaCommands.contract.json";
-import { arenaCommands } from "./arenaCommands";
+import { arenaCommands, confirmArenaComparison, confirmArenaMerge } from "./arenaCommands";
 import * as validators from "./generated/arena.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 
@@ -92,4 +92,26 @@ it("validates durable budget counters and exact aggregate usage", () => {
   for (const value of [1, "01", "-1", "1e2", "10000000000000000000000"]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,promptTokens:value}})).toBe(false);
   for (const value of [-1, 0.5, 301]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,dispatched:value}})).toBe(false);
   expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,extra:true}})).toBe(false);
+});
+
+
+it("binds the original comparison creation fields while accepting current projection and blind shuffled order", () => {
+  const current = {...fixture.responses.comparison,sourceRevisionId:fixture.responses.selection.revisionId,
+    selectionId:fixture.responses.selection.eventId,basis:"current-basis",sourceText:"Updated current source",rows:[...fixture.responses.comparison.rows].reverse()};
+  expect(confirmArenaComparison(fixture.requests.compare,current)).toEqual(current);
+  for(const wrong of [{comparisonId:fixture.responses.comparison.unitId},{unitId:fixture.responses.comparison.sourceRevisionId},
+    {locale:"ja"},{blind:false},{rows:[current.rows[0],current.rows[0]]},{rows:[current.rows[0]]}]){
+    expect(()=>confirmArenaComparison(fixture.requests.compare,{...current,...wrong})).toThrow();
+  }
+});
+it("validates the exact original merge selection receipt without fabricating revision or text receipt fields", () => {
+  const receipt=fixture.responses.selection;
+  expect(confirmArenaMerge(fixture.requests.merge,receipt)).toEqual(receipt);
+  for(const wrong of [{actionId:receipt.revisionId},{unitId:receipt.revisionId},{locale:"ja"},{previousEventId:null},
+    {sequence:"0"},{sequence:"1"},{eventId:"invalid"},{revisionId:"invalid"}]){
+    expect(()=>confirmArenaMerge(fixture.requests.merge,{...receipt,...wrong})).toThrow();
+  }
+  const first={...fixture.requests.merge,expectedSelectionId:null};
+  expect(confirmArenaMerge(first,{...receipt,previousEventId:null,sequence:"1"})).toEqual({...receipt,previousEventId:null,sequence:"1"});
+  expect(()=>confirmArenaMerge(first,{...receipt,previousEventId:null,sequence:"2"})).toThrow();
 });

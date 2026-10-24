@@ -5,7 +5,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { resourceCommands, type CaptureContext, type ContextCapture, type ContextRevision, type GlossaryCapture,
   type ResourceDecision, type ResourceDecisionResult, type ResourcePreview, type SaveContext, type SaveTerm, type TermRevision } from "./resourceCommands";
 import { sourceCommands, type ContentRow, type ContentScope } from "./sourceCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 
 export type ResourceTermDraft = Pick<SaveTerm, "source" | "aliases" | "target" | "protected" | "scopeUnitId" | "reason">;
 export const resourceTermDraftFor = (term: ResourceTermDraft | null): ResourceTermDraft => term
@@ -87,7 +87,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, busyMutation: false, notice: null, failure: null, completionVersion: 0 }));
   const currentState = useRef(state), projectRef = useRef(project);
   const [session] = useState(() => executionContext(project));
-  const mounted = useRef(false), running = useRef(false);
+  const mounted = useSessionAlive(), running = useRef(false);
   const targetScope = project.metadata.targetLocales.join("\u0000");
   useLayoutEffect(() => { projectRef.current = project; }, [project]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
