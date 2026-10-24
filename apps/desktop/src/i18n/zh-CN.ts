@@ -239,6 +239,8 @@ ai: {
       coverage: "已检查 {{count}} 个源条目",
       exception: "{{key}} 的例外：{{reason}}",
       started: "构建任务 {{id}} 已保存。请在“任务”中查看输出并发布全部合格结果。",
+      checkingBuild: "正在核对这次构建是否已开始…",
+      checkingDelivery: "正在核对已保存的导出结果…",
       buildUnknown: "构建可能已开始。请先核对已保存任务，再发起另一次构建或离开。",
       buildMissing: "未找到这次构建的已保存任务，可以重试同一个构建请求。",
       checkBuild: "核对已保存构建任务",

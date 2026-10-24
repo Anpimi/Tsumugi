@@ -167,7 +167,7 @@ pub async fn list_releases(
 pub async fn read_locale_build_attempt(
     state: State<'_, AppState>,
     request: BuildRequest,
-) -> Result<Option<AttemptDetail>, CommandError> {
+) -> Result<Option<tsumugi_core::LocaleBuildStartReceipt>, CommandError> {
     state
         .sessions
         .run(
@@ -180,20 +180,10 @@ pub async fn read_locale_build_attempt(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                let (host, store) = active.execution_parts()?;
-                if store
-                    .find_locale_build(
-                        request.project_id,
-                        request.attempt_id,
-                        &request.choices,
-                        &request.expected_eligibility_basis,
-                    )
-                    .map_err(map_read)?
-                    .is_none()
-                {
-                    return Ok(None);
-                }
-                attempt_detail(host, store, request.attempt_id, 0, 100).map(Some)
+                active.store.locale_build_start_receipt(
+                    request.project_id, request.attempt_id, &request.choices,
+                    &request.expected_eligibility_basis,
+                ).map_err(map_read)
             },
         )
         .await
@@ -216,11 +206,14 @@ pub async fn read_delivery_action(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                let (host, store) = active.execution_parts()?;
+                // A receipt read may use an existing picker lease, never initialize a runtime.
+                let host = active.execution.as_ref().ok_or_else(|| CommandError::simple(
+                    CommandErrorCode::SessionInvalid, CommandStage::ExecutionRead,
+                ))?;
                 let root = selected(host, request.selection_id)?
                     .destination_root()
                     .map_err(map_read)?;
-                let delivery = store
+                let delivery = active.store
                     .delivery_by_action(request.action_id)
                     .map_err(map_read)?;
                 if delivery
@@ -1024,10 +1017,10 @@ mod contracts {
         round_trip!("requests", "export", ExportRequest);
         round_trip!("requests", "reconcile", ReconcileRequest);
         round_trip!("responses", "identity", ExecutionId);
-        round_trip!("responses", "buildAttempt", Option<AttemptDetail>);
+        round_trip!("responses", "buildAttempt", Option<tsumugi_core::LocaleBuildStartReceipt>);
         round_trip!("responses", "deliveryAction", Option<DeliveryView>);
         assert!(
-            serde_json::from_value::<Option<AttemptDetail>>(serde_json::Value::Null)
+            serde_json::from_value::<Option<tsumugi_core::LocaleBuildStartReceipt>>(serde_json::Value::Null)
                 .unwrap()
                 .is_none()
         );
@@ -1262,3 +1255,7 @@ mod tests {
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
     }
 }
+
+#[cfg(test)]
+#[path = "release_receipt_tests.rs"]
+mod receipt_ipc_tests;

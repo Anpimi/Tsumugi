@@ -31,7 +31,7 @@ pub use arena::{
 };
 pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
 pub use release::{
-    BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
+    BuildLocaleChoice, LocaleBuildStartReceipt, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
     ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind, ReleaseView, ReleasedArtifact,
 };
 pub use resources::{

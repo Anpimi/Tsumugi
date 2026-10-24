@@ -238,6 +238,8 @@ ai: {
       coverage: "{{count}} source entries checked",
       exception: "Exception for {{key}}: {{reason}}",
       started: "Build task {{id}} is saved. Open Tasks to inspect output and publish the verified results.",
+      checkingBuild: "Checking whether this build was started…",
+      checkingDelivery: "Checking the saved export result…",
       buildUnknown: "The build may have started. Check its saved task before starting another build or leaving.",
       buildMissing: "No saved task was found for this build. You can retry the same build request.",
       checkBuild: "Check saved build task",

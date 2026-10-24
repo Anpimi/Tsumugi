@@ -236,7 +236,7 @@ struct ReleaseRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReleaseResponses {
-    build_attempt: Option<execution::AttemptDetail>,
+    build_attempt: Option<tsumugi_core::LocaleBuildStartReceipt>,
     delivery_action: Option<tsumugi_core::DeliveryView>,
     identity: tsumugi_core::execution::ExecutionId,
     releases: Vec<tsumugi_core::ReleaseView>,

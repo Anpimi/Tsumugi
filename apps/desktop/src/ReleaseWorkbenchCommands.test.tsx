@@ -11,7 +11,7 @@ import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type ReleasePreparationCommandPayload, type ReleaseBuildPendingCommandPayload,
   type ReleaseRecordCommandPayload, type ReleasePreviewCommandPayload, type ReleaseDeliveryPendingCommandPayload, type ReleaseDeliveryCommandPayload, type ReleaseBlockerCommandPayload } from "./workbenchCommands";
 import type { BuildRequest, ReleaseView, DeliveryPreview, DeliveryView } from "./releaseCommands";
-import type { ProjectView } from "./projectCommands";
+import { isCommandError, type ProjectView } from "./projectCommands";
 import { validateResponseReleases, validateResponsePreview, validateResponseDelivery } from "./generated/release.validators";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { sourceIntegrationFixture } from "./testSupport/sourceFixture";
@@ -160,9 +160,11 @@ it.each(["retire","destroy"] as const)("blocks a captured build after session %s
 });
 
 it("requires actual build absence before the same-request retry and preserves its first uncertainty after a later rejection",async()=>{
-  await prepared();const original=invoke.getMockImplementation()!;let sent=0;
-  invoke.mockImplementation((command:string,args)=>command==="start_locale_build"?Promise.reject(++sent===1?new Error("ACK lost"):
-    {code:"permission-denied",outcome:"rejected",stage:"execution-start",recoveryRequired:false}):original(command,args));
+  await prepared();const original=invoke.getMockImplementation()!;let sent=0,lookups=0;
+  const rejected={code:"permission-denied",outcome:"rejected",stage:"execution-adopt",recoveryRequired:false};
+  expect(isCommandError(rejected)).toBe(true);
+  invoke.mockImplementation((command:string,args)=>command==="start_locale_build"?Promise.reject(++sent===1?new Error("ACK lost"):rejected)
+    :command==="read_locale_build_attempt"&&lookups++===0?Promise.reject(new Error("Automatic proof unavailable")):original(command,args));
   await act(async()=>{registry.dispatch("release.start-build",scope,preparation());});await waitFor(()=>expect(owner.current().pending?.kind).toBe("build"));
   const payload=buildPending(),request:BuildRequest=requests("start_locale_build")[0];
   expect(registry.dispatch("release.retry-build",scope,payload)).toBe(false);
@@ -172,7 +174,7 @@ it("requires actual build absence before the same-request retry and preserves it
   await waitFor(()=>expect(registry.describe("release.retry-build",scope,payload)?.availability.enabled).toBe(true));
   await act(async()=>{expect(registry.dispatch("release.retry-build",scope,payload)).toBe(true);});
   await waitFor(()=>expect(owner.current().busy).toBe(false));expect(owner.current().pending).toMatchObject({uncertain:true,retryAllowed:false});
-  expect(requests("start_locale_build")).toEqual([request,request]);expect(owner.current().names["zh-CN"]).toBe("newer.json");expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("read_locale_build_attempt")).toHaveLength(2);expect(requests("start_locale_build")).toEqual([request,request]);expect(owner.current().names["zh-CN"]).toBe("newer.json");expect(calls("create_execution_identity")).toHaveLength(1);
 });
 
 it("exports a checked immutable release despite current integration and history errors using only its exact destination consent",async()=>{
@@ -199,7 +201,8 @@ it("revokes the prior overwrite command immediately when a replacement preview i
 
 it("recovers an original export through explicit directory reauthorization without recapturing or exporting another release",async()=>{
   await exportReady();const original=invoke.getMockImplementation()!;
-  invoke.mockImplementation((command:string,args)=>command==="export_release"?Promise.reject(new Error("Export ACK lost")):original(command,args));
+  invoke.mockImplementation((command:string,args)=>command==="export_release"?Promise.reject(new Error("Export ACK lost"))
+    :command==="read_delivery_action"?Promise.reject(new Error("Original lease unavailable")):original(command,args));
   await act(async()=>{registry.dispatch("release.confirm-overwrite",scope,preview(true));registry.dispatch("release.export",scope,preview());});
   await waitFor(()=>expect(owner.current().pending?.kind).toBe("export"));const pending=exportPending(),request=requests("export_release")[0];
   expect(registry.dispatch("release.check-export",scope,{...pending,actionId:fixtureIdentity(999)})).toBe(false);
@@ -210,7 +213,8 @@ it("recovers an original export through explicit directory reauthorization witho
   expect(registry.dispatch("release.check-export",scope,pending)).toBe(false);
   await act(async()=>{expect(registry.dispatch("release.check-export",scope,recovered)).toBe(true);});
   expect(owner.current().pending).toBeNull();expect(owner.current().result?.actionId).toBe(request.actionId);
-  expect(requests("read_delivery_action")).toEqual([{...fixture.requests.session,actionId:request.actionId,selectionId:fixtureIdentity(998)}]);
+  expect(requests("read_delivery_action")).toEqual([{...fixture.requests.session,actionId:request.actionId,selectionId:destination.selectionId},
+    {...fixture.requests.session,actionId:request.actionId,selectionId:fixtureIdentity(998)}]);
   expect(calls("export_release")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
 });
 
