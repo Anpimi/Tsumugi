@@ -159,6 +159,14 @@ fn begin_translation(
     ))
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TranslationAdoptionActionRequest {
+    pub adoption: TranslationAdoptRequest,
+    pub unit_id: ExecutionId,
+}
+
 #[tauri::command]
 pub async fn list_translation_files(
     state: State<'_, AppState>,
@@ -424,6 +432,20 @@ pub async fn read_translation_preview(
 }
 
 #[tauri::command]
+pub async fn read_translation_adoption_action(
+    state: State<'_, AppState>,
+    request: TranslationAdoptionActionRequest,
+) -> Result<Option<AdoptionActionRead>, CommandError> {
+    state.sessions.run("read_translation_adoption_action", CommandStage::ExecutionRead, move |sessions| {
+        let adoption = request.adoption;
+        authorized(sessions, &adoption.session_token, adoption.project_id, CommandStage::ExecutionRead)?
+            .store.translation_adoption_action_read(
+                adoption.project_id, adoption.attempt_id, adoption.action_id,
+                request.unit_id, adoption.item_id, adoption.result_id, &adoption.confirmation,
+            ).map_err(map_source)
+    }).await
+}
+#[tauri::command]
 pub async fn prepare_translation_adoption(
     state: State<'_, AppState>,
     request: TranslationAdoptRequest,
@@ -523,6 +545,72 @@ pub async fn read_translation_action(
                     &request.locale,
                     request.action_id,
                 )
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_translation_save_action(
+    state: State<'_, AppState>,
+    request: TranslationSaveRequest,
+) -> Result<Option<TranslationSaveReceipt>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_translation_save_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .translation_save_receipt_by_request(&SaveTranslationRevision {
+                    project_id: request.project_id,
+                    action_id: request.action_id,
+                    unit_id: request.unit_id,
+                    locale: request.locale,
+                    source_revision_id: request.source_revision_id,
+                    expected_selection_id: request.expected_selection_id,
+                    text: request.text,
+                })
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_translation_selection_action(
+    state: State<'_, AppState>,
+    request: TranslationSelectRequest,
+) -> Result<Option<TranslationSelection>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_translation_selection_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .translation_selection_by_request(&SelectTranslationRevision {
+                    project_id: request.project_id,
+                    action_id: request.action_id,
+                    unit_id: request.unit_id,
+                    locale: request.locale,
+                    source_revision_id: request.source_revision_id,
+                    expected_selection_id: request.expected_selection_id,
+                    revision_id: request.revision_id,
+                })
                 .map_err(map_source)
             },
         )

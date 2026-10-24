@@ -2,8 +2,10 @@
 import type { Requests } from "./execution.requests";
 import type { Responses } from "./execution.responses";
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
+export declare function validateRequestAdoptionAction(value: unknown): value is Requests["adoptionAction"];
 export declare function validateRequestAttempt(value: unknown): value is Requests["attempt"];
 export declare function validateRequestCancel(value: unknown): value is Requests["cancel"];
+export declare function validateRequestCancellationAction(value: unknown): value is Requests["cancellationAction"];
 export declare function validateRequestContinuation(value: unknown): value is Requests["continuation"];
 export declare function validateRequestContinuationList(value: unknown): value is Requests["continuationList"];
 export declare function validateRequestContinuationRead(value: unknown): value is Requests["continuationRead"];
@@ -16,9 +18,11 @@ export declare function validateRequestTask(value: unknown): value is Requests["
 export declare function validateRequestTaskView(value: unknown): value is Requests["taskView"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAdoption(value: unknown): value is Responses["adoption"];
+export declare function validateResponseAdoptionAction(value: unknown): value is Responses["adoptionAction"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseAttempts(value: unknown): value is Responses["attempts"];
 export declare function validateResponseCancellation(value: unknown): value is Responses["cancellation"];
+export declare function validateResponseCancellationAction(value: unknown): value is Responses["cancellationAction"];
 export declare function validateResponseContinuation(value: unknown): value is Responses["continuation"];
 export declare function validateResponseContinuationReceipt(value: unknown): value is Responses["continuationReceipt"];
 export declare function validateResponseContinuations(value: unknown): value is Responses["continuations"];

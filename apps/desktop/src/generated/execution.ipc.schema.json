@@ -409,10 +409,16 @@
       "adopt": {
         "$ref": "#/definitions/AdoptRequest"
       },
+      "adoptionAction": {
+        "$ref": "#/definitions/PrepareRequest"
+      },
       "attempt": {
         "$ref": "#/definitions/AttemptRequest"
       },
       "cancel": {
+        "$ref": "#/definitions/CancelRequest"
+      },
+      "cancellationAction": {
         "$ref": "#/definitions/CancelRequest"
       },
       "continuation": {
@@ -453,12 +459,14 @@
       "attempt",
       "output",
       "cancel",
+      "cancellationAction",
       "recovery",
       "continuation",
       "continuationRead",
       "continuationList",
       "taskView",
       "prepare",
+      "adoptionAction",
       "adopt"
     ],
     "title": "Requests",
@@ -507,6 +515,29 @@
           "resultIds",
           "cancellationRevision",
           "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
         ],
         "type": "object"
       },
@@ -612,6 +643,31 @@
         "required": [
           "attemptId",
           "sequence"
+        ],
+        "type": "object"
+      },
+      "CancellationReceipt": {
+        "additionalProperties": false,
+        "description": "The durable original cancellation request, independently of worker shutdown.",
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "requestId",
+          "revision"
         ],
         "type": "object"
       },
@@ -1711,6 +1767,16 @@
       "adoption": {
         "$ref": "#/definitions/AdoptionReceipt"
       },
+      "adoptionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/AdoptionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "attempt": {
         "$ref": "#/definitions/AttemptDetail"
       },
@@ -1722,6 +1788,16 @@
       },
       "cancellation": {
         "$ref": "#/definitions/Revision"
+      },
+      "cancellationAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/CancellationReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "continuation": {
         "$ref": "#/definitions/ContinuationReceipt"
@@ -1779,12 +1855,14 @@
       "attempt",
       "output",
       "cancellation",
+      "cancellationAction",
       "recovery",
       "continuation",
       "continuationReceipt",
       "continuations",
       "taskView",
       "action",
+      "adoptionAction",
       "adoption",
       "receipt"
     ],

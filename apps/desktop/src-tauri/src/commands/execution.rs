@@ -12,17 +12,19 @@ macro_rules! handlers {
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
-        cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,adopt_execution,
+        cancel_execution_task,read_execution_cancellation_action,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         source::select_source,source::select_webvtt_source,source::read_webvtt_integration,source::preflight_source,source::start_source_import,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
-        source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,
+        source::read_content_scope,source::prepare_source_adoption,source::read_source_adoption_action,source::read_source_integration,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
         source::estimate_source_update,source::read_source_impact,
         source::translation::list_translation_files,source::translation::preflight_translation,
         source::translation::start_translation_import,source::translation::read_translation_preview,
-        source::translation::prepare_translation_adoption,source::translation::read_translation_history,
+        source::translation::prepare_translation_adoption,source::translation::read_translation_adoption_action,source::translation::read_translation_history,
         source::translation::read_translation_action,
+        source::translation::read_translation_save_action,
+        source::translation::read_translation_selection_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
         resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
@@ -772,6 +774,17 @@ pub async fn read_execution_output(
         .await
 }
 #[tauri::command]
+pub async fn read_execution_cancellation_action(
+    state: State<'_, AppState>,
+    request: CancelRequest,
+) -> Result<Option<CancellationReceipt>, CommandError> {
+    state.sessions.run("read_execution_cancellation_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.cancellation_action_read(request.project_id, request.task_id, request.request_id)
+            .map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn cancel_execution_task(
     state: State<'_, AppState>,
     request: CancelRequest,
@@ -807,7 +820,7 @@ pub async fn read_execution_task_view(state: State<'_, AppState>, request: TaskV
 pub async fn read_execution_continuation(state: State<'_, AppState>, request: ContinuationReadRequest) -> Result<Option<ContinuationReceipt>, CommandError> {
     state.sessions.run("read_execution_continuation", CommandStage::ExecutionRead, move |sessions| {
         let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
-        active.store.execution_continuation(request.action_id).map_err(map_read)
+        active.store.read_execution_continuation(request.action_id).map_err(map_read)
     }).await
 }
 #[tauri::command]
@@ -973,6 +986,19 @@ pub async fn recover_execution(
             },
         )
         .await
+}
+#[tauri::command]
+pub async fn read_execution_adoption_action(
+    state: State<'_, AppState>,
+    request: PrepareRequest,
+) -> Result<Option<AdoptionActionRead>, CommandError> {
+    state.sessions.run("read_execution_adoption_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.execution_adoption_action_read(
+                request.project_id, request.attempt_id, request.action_id,
+                request.unit_id, &request.result_ids,
+            ).map_err(|error| map_execution(error, CommandStage::ExecutionRead))
+    }).await
 }
 #[tauri::command]
 pub async fn prepare_execution_adoption(

@@ -12,6 +12,24 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 beforeEach(() => invoke.mockReset());
+it("reads the complete frozen import request and recovery unit with a required nullable receipt", async () => {
+  const adoption: unknown = structuredClone(fixture.adopt),unitId = fixture.prepared.unitId;
+  if (!validators.validateRequestAdopt(adoption)) throw new Error("Invalid original import request fixture");
+  const request = {adoption,unitId},action = translationActionFixture(adoption,unitId),receipt = translationReceiptFixture(adoption,unitId,null);
+  expect(validators.validateRequestAdoptionAction(request)).toBe(true);
+  expect(validators.validateRequestAdoptionAction({...request,sessionToken:adoption.sessionToken,projectId:adoption.projectId})).toBe(false);
+  for (const value of [null,{action,receipt:null},{action,receipt}]) {
+    invoke.mockResolvedValueOnce(value);
+    expect(await translationCommands.adoptionAction(request)).toEqual(value);
+    expect(invoke).toHaveBeenLastCalledWith("read_translation_adoption_action",{request});
+  }
+  for (const value of [undefined,{action},{action,receipt:undefined},{action,receipt,extra:true}]) {
+    invoke.mockResolvedValueOnce(value);
+    const failure = await translationCommands.adoptionAction(request).catch(error=>error);
+    expect(hasUnknownOutcome(failure)).toBe(true);expect(validators.validateResponseAdoptionAction(value)).toBe(false);
+  }
+  expect(invoke.mock.calls.every(([name])=>name==="read_translation_adoption_action")).toBe(true);
+});
 
 it("sends the shared translation command fixture without changing field names or values", async () => {
   const start: TranslationStartRequest = fixture.start;
@@ -168,4 +186,25 @@ it("checks the exact original revision selection instead of accepting a truthy s
   expect(confirmTranslationSelection(fixture.select, fixture.selected)).toEqual(fixture.selected);
   expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, revisionId: fixtureIdentity(99) })).toThrow();
   expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, previousEventId: null })).toThrow();
+});
+
+
+it.each(["save", "selection"] as const)("reads the complete original %s request without another mutation", async kind => {
+  const request = kind === "save" ? fixture.save : fixture.select;
+  const command = kind === "save" ? "read_translation_save_action" : "read_translation_selection_action";
+  const read = () => kind === "save" ? translationCommands.saveAction(fixture.save) : translationCommands.selectionAction(fixture.select);
+  const receipt = kind === "save" ? fixture.receipt : fixture.selected;
+  invoke.mockResolvedValueOnce(receipt).mockResolvedValueOnce(null);
+  expect(await read()).toEqual(receipt); expect(await read()).toBeNull();
+  expect(invoke.mock.calls).toEqual([[command, { request }], [command, { request }]]);
+});
+it.each(["save", "selection"] as const)("keeps malformed or unrelated %s read acknowledgements unknown", async kind => {
+  const read = () => kind === "save" ? translationCommands.saveAction(fixture.save) : translationCommands.selectionAction(fixture.select);
+  const wrong = kind === "save" ? { ...fixture.receipt, revision: { ...fixture.receipt.revision, text: "Another draft" } }
+    : { ...fixture.selected, revisionId: fixtureIdentity(999) };
+  for (const response of [undefined, {}, wrong]) {
+    invoke.mockResolvedValueOnce(response);
+    expect(hasUnknownOutcome(await read().catch(error => error))).toBe(true);
+  }
+  expect(invoke.mock.calls.every(([command]) => command === (kind === "save" ? "read_translation_save_action" : "read_translation_selection_action"))).toBe(true);
 });

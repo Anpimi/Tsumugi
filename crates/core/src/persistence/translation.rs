@@ -1301,6 +1301,84 @@ impl ProjectStore {
         Ok(selection)
     }
 
+    /// Confirm a manual save using its complete original request, without
+    /// requiring the old source or target locale to remain current.
+    pub fn translation_save_receipt_by_request(
+        &self,
+        request: &SaveTranslationRevision,
+    ) -> Result<Option<TranslationSaveReceipt>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        let receipt = super::review::read_snapshot(connection, |connection| {
+            if !super::content::unit_owned_by_project(
+                connection,
+                request.project_id,
+                request.unit_id,
+            )? {
+                return Err(error(ErrorCode::Unauthorized, "translation-project"));
+            }
+            let Some((selection, saved_digest)) =
+                selection_by_action(connection, request.action_id)?
+            else {
+                return Ok(None);
+            };
+            if selection.unit_id != request.unit_id
+                || selection.locale != request.locale
+                || saved_digest != request_digest(request)?
+            {
+                return Err(error(ErrorCode::ResultMismatch, "translation-action"));
+            }
+            save_receipt_in(connection, request.project_id, &selection).map(Some)
+        })?;
+        if self
+            .execution_unknown
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.reconcile_execution()?;
+        }
+        Ok(receipt)
+    }
+
+    /// Confirm a selection using its complete original request, even when a
+    /// newer selection has since become current.
+    pub fn translation_selection_by_request(
+        &self,
+        request: &SelectTranslationRevision,
+    ) -> Result<Option<TranslationSelection>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        let selection = super::review::read_snapshot(connection, |connection| {
+            if !super::content::unit_owned_by_project(
+                connection,
+                request.project_id,
+                request.unit_id,
+            )? {
+                return Err(error(ErrorCode::Unauthorized, "translation-project"));
+            }
+            let Some((selection, saved_digest)) =
+                selection_by_action(connection, request.action_id)?
+            else {
+                return Ok(None);
+            };
+            if selection.unit_id != request.unit_id
+                || selection.locale != request.locale
+                || saved_digest != request_digest(request)?
+            {
+                return Err(error(ErrorCode::ResultMismatch, "translation-action"));
+            }
+            Ok(Some(selection))
+        })?;
+        if self
+            .execution_unknown
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.reconcile_execution()?;
+        }
+        Ok(selection)
+    }
+
     pub fn save_translation_revision(
         &mut self,
         request: &SaveTranslationRevision,
@@ -1672,16 +1750,25 @@ mod tests {
             ProjectMetadata::create("Translations", "en", ["ja", "zh-CN"]).unwrap(),
         )
         .unwrap();
+        let rows = adopt_source(&mut store, manifest, source);
+        (temp, store, rows)
+    }
+
+    fn adopt_source(
+        store: &mut ProjectStore,
+        manifest: &[u8],
+        source: &[u8],
+    ) -> Vec<crate::content::ContentRow> {
         let bundle = SourceBundle::capture(manifest, source, "en").unwrap();
         let input = bundle
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
-        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        let mut runtime = ExecutionRuntime::new(store).unwrap();
         runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
-        runtime.submit(&mut store, &input).unwrap();
+        runtime.submit(store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let result_id = loop {
-            runtime.tick(&mut store).unwrap();
+            runtime.tick(store).unwrap();
             let status = store
                 .execution_attempt(input.envelope().attempt_id, true)
                 .unwrap();
@@ -1697,24 +1784,42 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         };
-        let page = store
-            .source_preview(input.envelope().attempt_id, result_id, 0, 10)
-            .unwrap();
+        let confirmation = if store.content_scope().unwrap().current_snapshot.is_some() {
+            store
+                .source_comparison(input.envelope().attempt_id, result_id, 0, 10)
+                .unwrap()
+                .confirmation
+        } else {
+            store
+                .source_preview(input.envelope().attempt_id, result_id, 0, 10)
+                .unwrap()
+                .confirmation
+        };
         let action = store
             .prepare_adoption_with_id(
                 ExecutionId::new(),
                 input.envelope().attempt_id,
                 input.envelope().units[0].unit_id,
                 vec![result_id],
-                serde_json::to_value(page.confirmation).unwrap(),
+                serde_json::to_value(confirmation).unwrap(),
             )
             .unwrap();
         store
             .adopt_execution(&action, &SourceAdoptionHandler)
             .unwrap();
         let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
-        let rows = store.source_content(snapshot, 0, 10).unwrap().rows;
-        (temp, store, rows)
+        store.source_content(snapshot, 0, 10).unwrap().rows
+    }
+
+    fn translation_counts(store: &ProjectStore) -> (i64, i64) {
+        let connection = store.connection().unwrap();
+        let revisions = connection
+            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |row| row.get(0))
+            .unwrap();
+        let selections = connection
+            .query_row("SELECT COUNT(*) FROM translation_selections", [], |row| row.get(0))
+            .unwrap();
+        (revisions, selections)
     }
 
     #[test]
@@ -1934,6 +2039,220 @@ mod tests {
                 .sequence
                 .get(),
             0
+        );
+    }
+
+    #[test]
+    fn exact_translation_action_reads_preserve_historical_results_without_writes() {
+        let (temp, mut store, rows) = project_with_source();
+        let project_id = ExecutionId::parse(
+            &store.metadata().unwrap().project_id().to_string(),
+        )
+        .unwrap();
+        let first = SaveTranslationRevision {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id: rows[0].unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: rows[0].source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "译文👩‍💻e\u{301}".into(),
+        };
+        let missing = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            ..first.clone()
+        };
+        let before_missing = translation_counts(&store);
+        let missing_clock = store.changes_since(Revision::new(0).unwrap());
+        assert_eq!(store.translation_save_receipt_by_request(&missing).unwrap(), None);
+        assert_eq!(translation_counts(&store), before_missing);
+        assert_eq!(
+            store.changes_since(missing_clock.sequence).sequence,
+            missing_clock.sequence
+        );
+
+        let first_receipt = store.save_translation_edit(&first).unwrap();
+        store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+        let wrong_text = SaveTranslationRevision { text: "Different request".into(), ..first.clone() };
+        assert_eq!(store.translation_save_receipt_by_request(&wrong_text).unwrap_err().code, ErrorCode::ResultMismatch);
+        assert!(store.execution_unknown.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(store.translation_save_receipt_by_request(&first).unwrap(), Some(first_receipt.clone()));
+        assert!(!store.execution_unknown.load(std::sync::atomic::Ordering::Acquire));
+        let empty = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            expected_selection_id: Some(first_receipt.selection.event_id),
+            text: String::new(),
+            ..first.clone()
+        };
+        let empty_receipt = store.save_translation_edit(&empty).unwrap();
+        let select = SelectTranslationRevision {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id: first.unit_id,
+            locale: first.locale.clone(),
+            source_revision_id: first.source_revision_id,
+            expected_selection_id: Some(empty_receipt.selection.event_id),
+            revision_id: first_receipt.revision.revision_id,
+        };
+        let selected = store.select_translation_revision(&select).unwrap();
+        assert_eq!(
+            store.translation_save_receipt_by_request(&first).unwrap(),
+            Some(first_receipt.clone())
+        );
+        assert_eq!(
+            store.translation_save_receipt_by_request(&empty).unwrap(),
+            Some(empty_receipt.clone())
+        );
+        assert_eq!(
+            store.translation_selection_by_request(&select).unwrap(),
+            Some(selected.clone())
+        );
+
+        let wrong_project = SaveTranslationRevision {
+            project_id: ExecutionId::new(),
+            ..first.clone()
+        };
+        assert_eq!(
+            store
+                .translation_save_receipt_by_request(&wrong_project)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        for changed in [
+            SaveTranslationRevision {
+                unit_id: rows[1].unit_id.unwrap(),
+                ..first.clone()
+            },
+            SaveTranslationRevision {
+                locale: "ja".into(),
+                ..first.clone()
+            },
+            SaveTranslationRevision {
+                source_revision_id: ExecutionId::new(),
+                ..first.clone()
+            },
+            SaveTranslationRevision {
+                expected_selection_id: Some(selected.event_id),
+                ..first.clone()
+            },
+            SaveTranslationRevision {
+                text: "changed".into(),
+                ..first.clone()
+            },
+            SaveTranslationRevision {
+                action_id: select.action_id,
+                ..first.clone()
+            },
+        ] {
+            assert_eq!(
+                store
+                    .translation_save_receipt_by_request(&changed)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResultMismatch
+            );
+        }
+        assert_eq!(
+            store
+                .translation_selection_by_request(&SelectTranslationRevision {
+                    project_id: ExecutionId::new(),
+                    ..select.clone()
+                })
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        for changed in [
+            SelectTranslationRevision {
+                unit_id: rows[1].unit_id.unwrap(),
+                ..select.clone()
+            },
+            SelectTranslationRevision {
+                locale: "ja".into(),
+                ..select.clone()
+            },
+            SelectTranslationRevision {
+                source_revision_id: ExecutionId::new(),
+                ..select.clone()
+            },
+            SelectTranslationRevision {
+                expected_selection_id: None,
+                ..select.clone()
+            },
+            SelectTranslationRevision {
+                revision_id: empty_receipt.revision.revision_id,
+                ..select.clone()
+            },
+            SelectTranslationRevision {
+                action_id: first.action_id,
+                ..select.clone()
+            },
+        ] {
+            assert_eq!(
+                store
+                    .translation_selection_by_request(&changed)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::ResultMismatch
+            );
+        }
+        assert_eq!(
+            store
+                .translation_selection_by_request(&SelectTranslationRevision {
+                    action_id: ExecutionId::new(),
+                    ..select.clone()
+                })
+                .unwrap(),
+            None
+        );
+
+        adopt_source(
+            &mut store,
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"updated","second":"same"}"#,
+        );
+        let metadata_revision = store.metadata().unwrap().metadata_revision();
+        store
+            .set_target_locales(metadata_revision, &["ja".into()])
+            .unwrap();
+        let before_reads = translation_counts(&store);
+        let clock = store.changes_since(Revision::new(0).unwrap());
+        assert_eq!(
+            store.translation_save_receipt_by_request(&first).unwrap(),
+            Some(first_receipt.clone())
+        );
+        assert_eq!(
+            store.translation_save_receipt_by_request(&empty).unwrap(),
+            Some(empty_receipt.clone())
+        );
+        assert_eq!(
+            store.translation_selection_by_request(&select).unwrap(),
+            Some(selected.clone())
+        );
+        assert_eq!(translation_counts(&store), before_reads);
+        assert_eq!(store.changes_since(clock.sequence).sequence, clock.sequence);
+
+        store.close().unwrap();
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        let reopened_counts = translation_counts(&reopened);
+        let reopened_clock = reopened.changes_since(Revision::new(0).unwrap());
+        assert_eq!(
+            reopened.translation_save_receipt_by_request(&first).unwrap(),
+            Some(first_receipt)
+        );
+        assert_eq!(
+            reopened.translation_save_receipt_by_request(&empty).unwrap(),
+            Some(empty_receipt)
+        );
+        assert_eq!(
+            reopened.translation_selection_by_request(&select).unwrap(),
+            Some(selected)
+        );
+        assert_eq!(translation_counts(&reopened), reopened_counts);
+        assert_eq!(
+            reopened.changes_since(reopened_clock.sequence).sequence,
+            reopened_clock.sequence
         );
     }
 

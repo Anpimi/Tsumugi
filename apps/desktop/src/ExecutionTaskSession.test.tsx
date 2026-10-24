@@ -47,6 +47,7 @@ beforeEach(async () => {
   invoke.mockImplementation(async command => {
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "cancel_execution_task") return "1";
+    if (command === "read_execution_cancellation_action") return null;
     if (command === "read_execution_task_view") return { ...fixture.task, cancellationRevision: "0" };
     throw new Error(command);
   });
@@ -67,10 +68,16 @@ async function confirmApplication(value = applicationDetail()) {
   expect(owner.activity?.phase).toBe("confirming");
 }
 function installApplication() {
+  let lookups = 0;
   invoke.mockImplementation(async command => {
     if (command === "create_execution_identity") return fixture.prepare.actionId;
     if (command === "prepare_execution_adoption") return generalAction();
     if (command === "adopt_execution" || command === "read_execution_receipt") return structuredClone(fixture.receipt);
+    // Existing manual-recovery scenarios begin with an unavailable automatic read.
+    if (command === "read_execution_adoption_action") {
+      if (++lookups === 1) throw new Error("Automatic lookup unavailable");
+      return { action: generalAction(), receipt: structuredClone(fixture.receipt) };
+    }
     if (command === "cancel_execution_task") return "2";
     throw new Error(command);
   });
@@ -180,7 +187,7 @@ it("rejects a shape-valid wrong preparation before adoption and revokes a missin
   invoke.mockResolvedValueOnce(null);
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity?.retryAllowed).toBe(true);
-  invoke.mockRejectedValueOnce(new Error("Preparation acknowledgement lost again"));
+  invoke.mockRejectedValueOnce(new Error("Preparation acknowledgement lost again")).mockRejectedValueOnce(new Error("Lookup unavailable"));
   await act(async () => { await owner.retryAdoption(); });
   expect(owner.activity).toMatchObject({ phase: "unknown", retryAllowed: false, prepare: fixture.prepare });
   await act(async () => { await owner.retryAdoption(); });
@@ -188,7 +195,7 @@ it("rejects a shape-valid wrong preparation before adoption and revokes a missin
   expect(calls("adopt_execution")).toHaveLength(0);
 });
 
-it("restores lost preparation evidence using only the original prepare when its receipt already exists", async () => {
+it("restores lost preparation evidence through a pure read when its receipt already exists", async () => {
   render(<Probe />, project); installApplication(); await confirmApplication();
   invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
   await act(async () => { await owner.submit(); });
@@ -196,26 +203,78 @@ it("restores lost preparation evidence using only the original prepare when its 
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity).toMatchObject({ phase: "recorded", receipt: fixture.receipt, proof: { parameters: null } });
   expect(calls("adopt_execution")).toHaveLength(0);
-  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([fixture.prepare, fixture.prepare]);
-  expect(calls("read_execution_receipt")[0][1].request).toEqual(fixture.adopt);
+  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([fixture.prepare]);
+  expect(calls("read_execution_adoption_action").map(([, payload]) => payload.request)).toEqual([fixture.prepare, fixture.prepare]);
+  expect(calls("read_execution_receipt")).toHaveLength(0);
   expect(calls("read_project")).toHaveLength(0);
+});
+
+it("automatically reads a lost preparation once inside the original reservation and survives consumer removal", async () => {
+  const view = render(<Probe/>,project); installApplication(); await confirmApplication();
+  let finish!: (value:unknown)=>void;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="prepare_execution_adoption"?Promise.reject(new Error("Lost preparation ACK"))
+    :command==="read_execution_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,payload));
+  let work!:Promise<void>;act(()=>{work=owner.submit();void owner.submit();void owner.checkAdoption();});
+  await act(async()=>{});
+  expect(owner.currentActivity()).toMatchObject({phase:"checking",failure:null});
+  expect(translation.reserveMutation()).toBeNull();expect(calls("read_execution_adoption_action")).toHaveLength(1);
+  view.rerender(null);
+  await act(async()=>{finish({action:generalAction(),receipt:fixture.receipt});await work;});
+  view.rerender(<Probe/>);
+  expect(owner.activity).toMatchObject({phase:"recorded",failure:null,receipt:fixture.receipt});
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);expect(calls("adopt_execution")).toHaveLength(0);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["missing","prepared"] as const)("opens only an explicit original retry after the automatic read is %s",async outcome=>{
+  render(<Probe/>,project);installApplication();await confirmApplication();
+  const original=invoke.getMockImplementation()!;let prepares=0;
+  const failure={code:"outcome-unknown",outcome:"unknown",stage:"execution-adopt",recoveryRequired:true};
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="prepare_execution_adoption"&&++prepares===1?Promise.reject(failure)
+    :command==="read_execution_adoption_action"?Promise.resolve(outcome==="missing"?null:{action:generalAction(),receipt:null}):original(command,payload));
+  await act(async()=>{await owner.submit();});
+  expect(owner.activity).toMatchObject({phase:"unknown",retryAllowed:true,failure});
+  expect(calls("adopt_execution")).toHaveLength(0);expect(calls("prepare_execution_adoption")).toHaveLength(1);
+  await act(async()=>{await owner.retryAdoption();});expect(owner.activity?.phase).toBe("recorded");
+  expect(calls("read_execution_adoption_action")).toHaveLength(1);expect(calls("adopt_execution")).toHaveLength(1);
+  expect(calls("prepare_execution_adoption").map(([,args])=>args.request)).toEqual([fixture.prepare,fixture.prepare]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["before-read","during-read"] as const)("ignores retired task adoption recovery %s",async boundary=>{
+  render(<Probe/>,project);installApplication();await confirmApplication();
+  let reject!: (error:unknown)=>void,finish!: (value:unknown)=>void;
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"?new Promise((_,fail)=>{reject=fail;})
+    :command==="read_execution_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,payload));
+  let work!:Promise<void>;act(()=>{work=owner.submit();});await act(async()=>{});
+  if(boundary==="before-read")act(()=>sessionReads.retire());
+  await act(async()=>{reject(new Error("Lost ACK"));});
+  if(boundary==="during-read"){
+    expect(owner.currentActivity()?.phase).toBe("checking");act(()=>sessionReads.retire());
+    await act(async()=>{finish({action:generalAction(),receipt:fixture.receipt});});
+  }
+  await act(async()=>{await work;});
+  expect(owner.currentActivity()?.phase).not.toBe("recorded");
+  expect(calls("read_execution_adoption_action")).toHaveLength(boundary==="before-read"?0:1);
 });
 
 it("pins a seen receipt before failed proof restoration and never readopts after it disappears or changes", async () => {
   render(<Probe />, project); installApplication(); await confirmApplication();
   invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
   await act(async () => { await owner.submit(); });
-  invoke.mockResolvedValueOnce(fixture.receipt).mockResolvedValueOnce({ ...generalAction(), parameters: {} });
+  invoke.mockResolvedValueOnce({ action: { ...generalAction(), parameters: {} }, receipt: fixture.receipt });
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity).toMatchObject({ phase: "unknown", receipt: fixture.receipt, retryAllowed: false });
   invoke.mockResolvedValueOnce(null);
   await act(async () => { await owner.checkAdoption(); await owner.retryAdoption(); owner.dismiss(); });
   expect(owner.activity).toMatchObject({ phase: "unknown", receipt: fixture.receipt, retryAllowed: false });
-  invoke.mockResolvedValueOnce({ ...fixture.receipt, requestDigest: "f".repeat(64) });
+  invoke.mockResolvedValueOnce({ action: generalAction(), receipt: { ...fixture.receipt, requestDigest: "f".repeat(64) } });
   await act(async () => { await owner.checkAdoption(); });
   expect(owner.activity?.receipt).toEqual(fixture.receipt);
   expect(calls("adopt_execution")).toHaveLength(0);
-  expect(calls("prepare_execution_adoption")).toHaveLength(2);
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);
   expect(owner.unresolved()).toBe(true);
 });
 
@@ -242,7 +301,7 @@ it("pins the first checked cancellation basis and keeps an incompatible replay u
   invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce(generalAction()).mockRejectedValueOnce(new Error("Lost adoption ACK"));
   await act(async () => { await owner.submit(); });
   invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkAdoption(); });
-  invoke.mockResolvedValueOnce({ ...generalAction(), cancellationRevision: "2" });
+  invoke.mockResolvedValueOnce({ ...generalAction(), cancellationRevision: "2" }).mockRejectedValueOnce(new Error("Lookup unavailable"));
   await act(async () => { await owner.retryAdoption(); });
   expect(owner.activity?.phase).toBe("unknown");
   expect(owner.activity?.proof?.cancellationRevision).toBe(fixture.action.cancellationRevision);
@@ -389,7 +448,7 @@ it("requires exact absence after every uncertain continuation and never refreshe
   expect(owner.activity).toMatchObject({ phase: "recorded", continuationRequest: request, continuation: continuationReceipt(request) });
   expect(calls("continue_execution").map(([, payload]) => payload.request)).toEqual([request, request, request]);
   expect(calls("create_execution_identity")).toHaveLength(1); expect(calls("read_execution_task_view")).toHaveLength(1);
-  expect(calls("read_execution_continuation").map(([, payload]) => payload.request)).toEqual(Array(4).fill({ ...fixture.session, actionId: request.action.actionId }));
+  expect(calls("read_execution_continuation").map(([, payload]) => payload.request)).toEqual(Array(6).fill({ ...fixture.session, actionId: request.action.actionId }));
 });
 
 it.each(["source-import", "translation-import", "ai-translation", "arena-translation"])("keeps %s adoption on its dedicated confirmation route", async operation => {
@@ -533,6 +592,7 @@ it("captures a mutable caller's original target before identity and protects its
   expect(original).toMatchObject({ taskId: target.taskId, requestId: fixtureIdentity(132) });
   expect(Object.isFrozen(original)).toBe(true);
   expect(owner.current(projection.taskId)).toBeUndefined();
+  invoke.mockResolvedValueOnce(null); await act(async()=>{await owner.checkCancellation(target.taskId);});
   invoke.mockResolvedValueOnce("4");
   await act(async () => { await owner.retry(target.taskId); });
   expect(calls("cancel_execution_task").map(([, payload]) => payload.request)).toEqual([original, original]);
@@ -544,6 +604,7 @@ it("retains unknown original identity across remount, new attempts and pure read
   invoke.mockImplementation(async command => {
     if (command === "create_execution_identity") return fixtureIdentity(114);
     if (command === "cancel_execution_task") { if (replay) return "8"; throw new Error("Transport disconnected"); }
+    if (command === "read_execution_cancellation_action") return null;
     if (command === "read_execution_task") return [{ ...fixture.summary, attemptId: fixtureIdentity(115), sequence: "2" }];
     throw new Error(command);
   });
@@ -596,6 +657,96 @@ it("keeps a zero acknowledgement unknown until an exact explicit replay returns 
   expect(calls("cancel_execution_task").map(([, payload]) => payload.request)).toEqual([original, original]);
   expect(owner.current(target.taskId)).toMatchObject({ phase: "recorded", revision: "2" });
 });
+
+it("automatically confirms the complete original cancellation once without replaying cancellation or allocating another identity",async()=>{
+  render(<Probe/>,project);const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>command==="cancel_execution_task"?Promise.reject(new Error("Lost ACK"))
+    :command==="read_execution_cancellation_action"?Promise.resolve({projectId:args.request.projectId,taskId:args.request.taskId,requestId:args.request.requestId,revision:"9007199254740993"}):original(command,args));
+  await act(async()=>{await owner.cancel(target);});
+  expect(owner.current(target.taskId)).toMatchObject({phase:"recorded",target,revision:"9007199254740993",failure:null});
+  const request=calls("cancel_execution_task")[0][1].request;
+  expect(calls("read_execution_cancellation_action").map(([,args])=>args.request)).toEqual([request]);
+  expect(calls("cancel_execution_task")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);expect(owner.unresolved()).toBe(false);
+});
+
+it("keeps the task reservation during a hidden automatic read and shows its real bilingual checking stage",async()=>{
+  const view=render(<Probe/>,project),original=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void;
+  const failure={code:"outcome-unknown",stage:"execution-cancel",outcome:"unknown",recoveryRequired:true};
+  invoke.mockImplementation((command:string,args:unknown)=>command==="cancel_execution_task"?Promise.reject(failure)
+    :command==="read_execution_cancellation_action"?new Promise(resolve=>{finish=resolve;}):original(command,args));
+  let work!:Promise<void>;act(()=>{work=owner.cancel(target);void owner.cancel(target);});await act(async()=>{});
+  expect(owner.current(target.taskId)).toMatchObject({phase:"checking",failure:null});expect(owner.unresolved()).toBe(true);
+  expect(screen.getByText("Checking the saved cancellation result…")).toBeInTheDocument();
+  await act(async()=>{await i18n.changeLanguage("zh-CN");await owner.checkCancellation(target.taskId);await owner.retry(target.taskId);});
+  expect(screen.getByText("正在核对取消结果…")).toBeInTheDocument();expect(calls("read_execution_cancellation_action")).toHaveLength(1);
+  view.rerender(null);await act(async()=>{finish(null);await work;});view.rerender(<Probe/>);
+  expect(owner.current(target.taskId)).toMatchObject({phase:"unknown",retryAllowed:true,failure});
+  expect(calls("cancel_execution_task")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["zero","scope","malformed","failed"] as const)("keeps cancellation unknown after a %s read and permits only a later checked-null explicit replay",async boundary=>{
+  render(<Probe/>,project);const original=invoke.getMockImplementation()!;let writes=0;
+  const rejection={code:"busy",stage:"execution-cancel",outcome:"rejected",recoveryRequired:false};
+  invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>{
+    if(command==="cancel_execution_task")return Promise.reject(++writes===1?new Error("Lost ACK"):rejection);
+    if(command==="read_execution_cancellation_action"){
+      if(boundary==="failed")return Promise.reject(new Error("Read failed"));
+      return Promise.resolve(boundary==="malformed"?undefined:{projectId:boundary==="scope"?fixtureIdentity(991):args.request.projectId,taskId:args.request.taskId,requestId:args.request.requestId,revision:boundary==="zero"?"0":"1"});
+    }
+    return original(command,args);
+  });
+  await act(async()=>{await owner.cancel(target);});const request=owner.current(target.taskId)?.request;
+  expect(owner.current(target.taskId)).toMatchObject({phase:"unknown",retryAllowed:false});
+  await act(async()=>{await owner.retry(target.taskId);});expect(calls("cancel_execution_task")).toHaveLength(1);
+  invoke.mockResolvedValueOnce(null);await act(async()=>{await owner.checkCancellation(target.taskId);});
+  expect(owner.current(target.taskId)).toMatchObject({phase:"unknown",request,retryAllowed:true});
+  await act(async()=>{await owner.retry(target.taskId);});expect(owner.current(target.taskId)).toMatchObject({phase:"unknown",request,retryAllowed:false,failure:rejection});
+  expect(calls("read_execution_cancellation_action")).toHaveLength(2);expect(calls("cancel_execution_task").map(([,args])=>args.request)).toEqual([request,request]);
+});
+
+it.each(["before-read","during-read"] as const)("does not start or accept cancellation checks after retirement %s",async boundary=>{
+  render(<Probe/>,project);const original=invoke.getMockImplementation()!;let reject!:(error:unknown)=>void,finish!:(value:unknown)=>void;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="cancel_execution_task"?new Promise((_,fail)=>{reject=fail;})
+    :command==="read_execution_cancellation_action"?new Promise(resolve=>{finish=resolve;}):original(command,args));
+  let work!:Promise<void>;act(()=>{work=owner.cancel(target);});await act(async()=>{});
+  if(boundary==="before-read")act(()=>sessionReads.retire());
+  await act(async()=>{reject(new Error("Lost ACK"));});
+  if(boundary==="during-read"){
+    const request=owner.current(target.taskId)!.request!;act(()=>sessionReads.retire());
+    await act(async()=>{finish({projectId:request.projectId,taskId:request.taskId,requestId:request.requestId,revision:"1"});});
+  }
+  await act(async()=>{await work;await owner.checkCancellation(target.taskId);});
+  expect(owner.current(target.taskId)?.phase).not.toBe("recorded");expect(calls("read_execution_cancellation_action")).toHaveLength(boundary==="before-read"?0:1);
+});
+
+it("keeps independent task cancellation reservations while either original lookup is outstanding",async()=>{
+  render(<Probe/>,project);const original=invoke.getMockImplementation()!,finishes=new Map<string,(value:unknown)=>void>();
+  invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>command==="cancel_execution_task"?Promise.reject(new Error("Lost ACK"))
+    :command==="read_execution_cancellation_action"?new Promise(resolve=>{finishes.set(String(args.request.taskId),resolve);}):original(command,args));
+  const other={...target,taskId:fixtureIdentity(987),attemptId:fixtureIdentity(988)};
+  let first!:Promise<void>,second!:Promise<void>;act(()=>{first=owner.cancel(target);second=owner.cancel(other);});await act(async()=>{});
+  expect(finishes.size).toBe(2);const request=owner.current(target.taskId)!.request!;
+  await act(async()=>{finishes.get(target.taskId)!({projectId:request.projectId,taskId:request.taskId,requestId:request.requestId,revision:"1"});await first;});
+  expect(owner.current(target.taskId)?.phase).toBe("recorded");expect(owner.current(other.taskId)?.phase).toBe("checking");
+  await act(async()=>{finishes.get(other.taskId)!(null);await second;});expect(owner.current(other.taskId)).toMatchObject({phase:"unknown",retryAllowed:true});
+  expect(calls("create_execution_identity")).toHaveLength(2);expect(calls("cancel_execution_task")).toHaveLength(2);
+});
+
+it.each(["lost","invalid"] as const)("automatically reads the complete zero-basis continuation after a %s ACK without continuing again",async boundary=>{
+  render(<Probe/>,project);await confirmContinuation();const original=invoke.getMockImplementation()!;let request!:ContinuationRequest;
+  invoke.mockImplementation((command:string,args:{request:ContinuationRequest})=>{
+    if(command==="continue_execution"){
+      request=args.request;return boundary==="lost"?Promise.reject(new Error("Lost continuation ACK")):Promise.resolve({...continuationReceipt(request),action:{...request.action,unitId:fixtureIdentity(999)}});
+    }
+    if(command==="read_execution_continuation")return Promise.resolve(continuationReceipt(request));
+    return original(command,args);
+  });
+  await act(async()=>{await owner.submit();});
+  expect(owner.activity).toMatchObject({phase:"recorded",continuationRequest:request,continuation:continuationReceipt(request),failure:null});
+  expect(request.action.expectedCancellationRevision).toBe("0");expect(calls("continue_execution")).toHaveLength(1);
+  expect(calls("read_execution_continuation").map(([,args])=>args.request)).toEqual([{...fixture.session,actionId:request.action.actionId}]);
+  expect(calls("read_execution_task_view")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+});
 it("shows original cancellation recovery and checked confirmation in Chinese", async () => {
   await i18n.changeLanguage("zh-CN");
   render(<Probe />, project);
@@ -616,6 +767,7 @@ it("releases only a verified rejection and preserves it through read invalidatio
   invoke.mockResolvedValueOnce(fixtureIdentity(118)).mockRejectedValueOnce(error);
   await act(async () => { await owner.cancel(target); });
   expect(owner.current(target.taskId)).toMatchObject({ phase: "rejected", failure: error });
+  expect(calls("read_execution_cancellation_action")).toHaveLength(0);
   await refreshWorkbenchReads();
   expect(owner.current(target.taskId)?.phase).toBe("rejected");
   await act(async () => { await owner.retry(target.taskId); });
@@ -637,12 +789,13 @@ it("retains original uncertainty when a replay is formally rejected and blocks f
   expect(owner.current(target.taskId)).toMatchObject({ phase: "unknown", failure: rejectedReplay });
   expect(owner.current(target.taskId)?.request).toBe(original);
   expect(owner.unresolved()).toBe(true);
-  expect(screen.getByRole("button", { name: "Retry the original cancellation" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Retry the original cancellation" })).not.toBeInTheDocument();
   const resumed = { ...target, attemptId: fixtureIdentity(135) };
   expect(owner.canCancel(target)).toBe(false); expect(owner.canCancel(resumed)).toBe(false);
   await act(async () => { await owner.cancel(target); await owner.cancel(resumed); });
   expect(calls("create_execution_identity")).toHaveLength(1);
   expect(calls("cancel_execution_task")).toHaveLength(2);
+  invoke.mockResolvedValueOnce(null); await act(async()=>{await owner.checkCancellation(target.taskId);});
   invoke.mockResolvedValueOnce("6");
   await act(async () => { await owner.retry(target.taskId); });
   expect(owner.current(target.taskId)).toMatchObject({ phase: "recorded", revision: "6", target, request: original });
@@ -730,7 +883,7 @@ it("routes cancellation recovery using the original origin and request through t
   const original = { ...target, origin: "source" as const };
   // Preserve a known identity before the uncertain native cancellation.
   invoke.mockImplementation(command => command === "create_execution_identity" ? Promise.resolve(fixtureIdentity(899))
-    : command === "cancel_execution_task" ? Promise.reject(new Error("Transport disconnected")) : Promise.reject(new Error(command)));
+    : command === "cancel_execution_task" ? Promise.reject(new Error("Transport disconnected")) : command === "read_execution_cancellation_action" ? Promise.resolve(null) : Promise.reject(new Error(command)));
   await act(async () => { await owner.cancel(original); });
   const value = owner.current(original.taskId);
   expect(value?.phase).toBe("unknown");

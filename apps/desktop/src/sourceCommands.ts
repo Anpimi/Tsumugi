@@ -1,7 +1,8 @@
 import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
-import type { CaptureRequest, StartRequest, SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest } from "./generated/source.requests";
-import { validateRequestAdopt, validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction } from "./generated/source.validators";
+import type { CaptureRequest, StartRequest, SourceAdoptionActionRequest, SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest } from "./generated/source.requests";
+import type { Responses } from "./generated/source.responses";
+import { validateResponseAdoptionAction, validateRequestAdopt, validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction } from "./generated/source.validators";
 
 export type { CaptureRequest, StartRequest, SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
 export type { SourceSelection, IntegrationDescriptor, FileCoverage as Coverage, Preflight, ContentScope, LineageChoice, SourceOccurrence, ContentRow, ContentPage, SourceChange, SourceChangeKind, SourceChangePage, SourceHistoryEntry, SourceHistory, LineageEvidence, SourceImpactBasis, SourceImpactSummary, SourceImpactRow, SourceImpactStatus, SourceImpactPage } from "./generated/source.responses";
@@ -21,6 +22,7 @@ export const sourceCommands = {
   estimate: (request: SourceAdoptRequest) => checkedInvoke("estimate_source_update", request, validateResponseEstimates),
   impact: (request: ImpactRequest) => checkedInvoke("read_source_impact", request, validateResponseImpact),
   prepare: (request: SourceAdoptRequest) => checkedInvoke("prepare_source_adoption", request, validateResponseAction),
+  adoptionAction: (request: SourceAdoptionActionRequest): Promise<Responses["adoptionAction"]> => checkedInvoke("read_source_adoption_action", request, validateResponseAdoptionAction),
 };
 
 function normalizedConfirmation(value: unknown): unknown {

@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "react";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/translation-commands.json";
@@ -13,7 +13,7 @@ import { useWorkbenchCommands, type TranslationImportSetupCommandPayload, type T
   type TranslationSelectionPendingCommandPayload } from "./workbenchCommands";
 import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import type { TranslationAdoptRequest, TranslationHistory, TranslationRevision, TranslationSelectRequest, TranslationSelection, TranslationPreview, TranslationPreviewRow } from "./translationCommands";
-import { validateRequestAdopt, validateRequestSelect } from "./generated/translation.validators";
+import { validateRequestAdopt, validateRequestSave, validateRequestSelect } from "./generated/translation.validators";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { translationActionFixture, translationAttemptFixture, translationPreviewFixture, translationReceiptFixture, translationRecoveryUnit, translationRowFixture } from "./testSupport/translationFixture";
 import { reviewSummaryFor, reviewSummaryPageFixture, reviewTargetFixture } from "./testSupport/reviewFixture";
@@ -86,7 +86,14 @@ beforeEach(async()=>{
       if(!validateRequestSelect(request))throw new Error("Invalid original selection request");const result=selection(request);
       history={...history,current:result,currentText:candidate.text};return result;
     }
-    if(command==="read_translation_action")return history.current;
+    if(command==="read_translation_selection_action"){
+      if(!validateRequestSelect(request))throw new Error("Invalid selection lookup request");
+      if(history.current?.actionId!==request.actionId)return null;
+      expect(request).toEqual(originalRequests("select_translation_revision").find(original=>original.actionId===request.actionId));return history.current;
+    }
+    if(command==="read_translation_save_action"){
+      if(!validateRequestSave(request))throw new Error("Invalid save lookup request");return null;
+    }
     throw new Error(command);
   });
 });
@@ -126,6 +133,34 @@ async function readyRow(){const result=await readyImport();await result.user.cli
 async function readyEditor(){const user=userEvent.setup(),view=render(<Harness/>,project);await user.click(screen.getByRole("button",{name:i18n.t("translation.title")}));
   await user.click(await screen.findByRole("button",{name:"entry"}));await screen.findByRole("textbox",{name:i18n.t("translation.draft")});
   await waitFor(()=>expect(registry.describe("translation.select-revision",scope,revisionPayload())?.availability.enabled).toBe(true));return{user,view};}
+
+it.each(["en-US", "zh-CN"])("shows only the real selection read phase and preserves composition across its automatic confirmation (%s)", async language => {
+  await i18n.changeLanguage(language); await readyEditor(); const original = invoke.getMockImplementation()!;
+  const write = deferred<TranslationSelection>(), lookup = deferred<TranslationSelection | null>();
+  let written!: TranslationSelectRequest;
+  invoke.mockImplementation((command: string, args) => {
+    if (command === "select_translation_revision") { written = args.request; return write.promise; }
+    if (command === "read_translation_selection_action") return lookup.promise;
+    return original(command, args);
+  });
+  act(() => { expect(registry.dispatch("translation.select-revision", scope, revisionPayload())).toBe(true); });
+  await waitFor(() => expect(calls("select_translation_revision")).toHaveLength(1));
+  expect(drafts.current()).toMatchObject({ selecting: true, checkingAction: null });
+  expect(screen.queryByText(i18n.t("translation.checkingSelectionAction"))).not.toBeInTheDocument();
+  await act(async () => { write.resolve({ ...selection(written), revisionId: fixtureIdentity(999) }); });
+  await screen.findByText(i18n.t("translation.checkingSelectionAction"));
+  expect(drafts.current()).toMatchObject({ selecting: true, checkingAction: "selection", failure: null });
+  expect(screen.getByRole("button", { name: i18n.t("translation.checkSelection") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("translation.retrySelection") })).toBeDisabled();
+  const editor = screen.getByRole("textbox", { name: i18n.t("translation.draft") }); fireEvent.compositionStart(editor);
+  await act(async () => { lookup.resolve(selection(written)); });
+  await waitFor(() => expect(drafts.current()?.pendingSelection).toBeNull());
+  expect(drafts.current()).toMatchObject({ text: "", baseText: candidate.text, newerDraftSaved: true, checkingAction: null, failure: null });
+  expect(editor).toHaveValue(""); fireEvent.compositionEnd(editor);
+  expect(calls("select_translation_revision")).toHaveLength(1); expect(calls("read_translation_selection_action")).toHaveLength(1);
+  expect(originalRequests("read_translation_selection_action")).toEqual([written]); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("read_translation_action")).toHaveLength(0);
+});
 
 it("registers fourteen scoped business entries and confirms an ordered complete multi-page batch through the UI",async()=>{
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
@@ -200,7 +235,7 @@ it("keeps an original import retry behind actual missing-receipt permission desp
   await act(async()=>{registry.dispatch("translation.apply-import-row",scope,rowPayload());});await waitFor(()=>expect(imports.current().uncertain).toHaveLength(1));const payload=importPending();
   expect(registry.dispatch("translation.retry-import-action",scope,payload)).toBe(false);
   expect(registry.dispatch("translation.check-import-receipt",scope,{...payload,request:{...payload.request,resultId:fixtureIdentity(999)}})).toBe(false);
-  invoke.mockImplementation((command:string,args)=>command==="read_execution_receipt"?Promise.resolve(null):command==="prepare_translation_adoption"?
+  invoke.mockImplementation((command:string,args)=>command==="read_translation_adoption_action"?Promise.resolve(null):command==="prepare_translation_adoption"?
     Promise.reject(rejected):original(command,args));
   const removed={...project,metadata:{...project.metadata,targetLocales:[]}};view.rerender(<Harness project={removed}/>,removed);
   act(()=>reads.client.clear());await act(async()=>{expect(registry.dispatch("translation.check-import-receipt",scope,payload)).toBe(true);});
@@ -246,18 +281,20 @@ it("continues a fixed historical selection across pure eviction and settles a la
 
 it("checks and retries only the original unknown history selection after consumer remount and retains newer B on a late rejection",async()=>{
   const {view}=await readyEditor(),original=invoke.getMockImplementation()!,rejected=mutationRejection();
-  invoke.mockImplementation((command:string,args)=>command==="select_translation_revision"?Promise.reject(new Error("ACK lost")):original(command,args));
+  invoke.mockImplementation((command:string,args)=>command==="select_translation_revision"?Promise.reject(new Error("ACK lost"))
+    :command==="read_translation_selection_action"?Promise.reject(new Error("Lookup unavailable")):original(command,args));
   await act(async()=>{registry.dispatch("translation.select-revision",scope,revisionPayload());});await waitFor(()=>expect(drafts.current()?.pendingSelection?.request.actionId).toBeDefined());
   const payload=selectionPending();expect(registry.dispatch("translation.retry-selection",scope,payload)).toBe(false);act(()=>drafts.edit("Newer B"));
   view.rerender(<Harness consumer={false}/>,project);act(()=>reads.client.clear());view.rerender(<Harness/>,project);
   await waitFor(()=>expect(registry.describe("translation.check-selection",scope,payload)?.availability.enabled).toBe(true));
-  invoke.mockImplementation((command:string,args)=>command==="read_translation_action"?Promise.resolve(null):command==="select_translation_revision"?
+  invoke.mockImplementation((command:string,args)=>command==="read_translation_selection_action"?Promise.resolve(null):command==="select_translation_revision"?
     Promise.reject(rejected):original(command,args));
   await act(async()=>{expect(registry.dispatch("translation.check-selection",scope,payload)).toBe(true);});
   await waitFor(()=>expect(registry.describe("translation.retry-selection",scope,payload)?.availability.enabled).toBe(true));
   await act(async()=>{expect(registry.dispatch("translation.retry-selection",scope,payload)).toBe(true);});
   expect(drafts.current()).toMatchObject({text:"Newer B",outcomeUnknown:true,pendingSelection:{request:payload.request,receiptChecked:false}});
   expect(originalRequests("select_translation_revision")).toEqual([payload.request,payload.request]);expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(originalRequests("read_translation_selection_action")).toEqual([payload.request,payload.request]);
 });
 
 it("refuses an original captured row dispatch after the real session is retired",async()=>{

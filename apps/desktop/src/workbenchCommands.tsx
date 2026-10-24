@@ -199,6 +199,7 @@ interface WorkbenchCommandPayloads {
   "tasks.confirm-cancellation": ExecutionCancellationCommandPayload;
   "tasks.cancel-task": ExecutionCancellationCommandPayload;
   "tasks.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "tasks.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "tasks.reconcile-adoption": TaskPendingCommandPayload;
   "tasks.retry-adoption": TaskPendingCommandPayload;
   "tasks.reconcile-continuation": TaskPendingCommandPayload;
@@ -223,6 +224,7 @@ interface WorkbenchCommandPayloads {
   "arena.retry-pending": ArenaPendingCommandPayload;
   "arena.cancel-task": ExecutionCancellationCommandPayload;
   "arena.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "arena.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "arena.open-translation": ArenaTranslationCommandPayload;
   "ai.preview": AiPreparationCommandPayload;
   "ai.start": AiStartCommandPayload;
@@ -233,6 +235,7 @@ interface WorkbenchCommandPayloads {
   "ai.retry-adoption": AiAdoptionPendingCommandPayload;
   "ai.cancel-task": ExecutionCancellationCommandPayload;
   "ai.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "ai.check-cancellation": ExecutionCancellationRetryCommandPayload;
   "ai.open-translation": AiTranslationCommandPayload;
   "review.allow-fallback": ReviewFallbackCommandPayload;
   "review.withdraw-fallback": ReviewFallbackCommandPayload;
@@ -364,7 +367,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"ai-start-pending", "ai.reconcile-start" | "ai.retry-start">
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
   | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task">
-  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation">
+  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation" | "ai.check-cancellation" | "arena.check-cancellation" | "tasks.check-cancellation">
   | ResourceCommand<"ai-translation-target", "ai.open-translation">
   | ResourceCommand<"resource-term", "resource.save-term">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">

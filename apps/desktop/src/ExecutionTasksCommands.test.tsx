@@ -78,6 +78,7 @@ beforeEach(async () => {
     if (command === "continue_execution") return continuationFor(request as unknown as ContinuationRequest);
     if (command === "recover_execution") return { attemptId: request.attemptId, queryStarted: request.action === "query-outcome" };
     if (command === "cancel_execution_task") return "1";
+    if (command === "read_execution_cancellation_action") return null;
     if (command === "read_execution_output") return { ...fixture.output, outcome: "succeeded", output: { saved: "A" }, diagnostic: null };
     throw new Error(command);
   });
@@ -99,10 +100,10 @@ async function capture(action: TaskActionCommandPayload["action"] = "adopt-resul
   await waitFor(() => expect(registry.describe("tasks.submit-action",scope,confirmedPayload())?.availability.enabled).toBe(true));
 }
 
-it("registers the seventeen Tasks commands and routes a fixed adoption through the real confirmation buttons", async () => {
+it("registers the scoped Tasks commands and routes a fixed adoption through the real confirmation buttons", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(command=>command.category==="tasks").map(command=>command.id).sort()).toEqual([
-    "tasks.adopt-result","tasks.cancel-task","tasks.confirm-cancellation","tasks.open-preview","tasks.query-outcome","tasks.reconcile-adoption","tasks.reconcile-continuation",
+    "tasks.adopt-result","tasks.cancel-task","tasks.check-cancellation","tasks.confirm-cancellation","tasks.open-preview","tasks.query-outcome","tasks.reconcile-adoption","tasks.reconcile-continuation",
     "tasks.resume-undispatched","tasks.retry-adoption","tasks.retry-cancellation","tasks.retry-continuation","tasks.retry-safe-failure","tasks.submit-action","tasks.validate-output",
     "tasks.view-continuation","tasks.view-output","tasks.view-receipt",
   ]);
@@ -206,12 +207,14 @@ it.each([["identity","error"],["identity","contradiction"],["prepare","error"]] 
 
 it("preserves an unknown continuation's exact original scope through mismatched lookup, actual null and later rejected replay", async () => {
   value=makeDetail("resume-undispatched");await open();await capture("resume-undispatched");
-  const original=invoke.getMockImplementation()!;let sent=0;
+  const original=invoke.getMockImplementation()!;let sent=0,lookups=0;
   invoke.mockImplementation((command:string,payload:unknown)=>command==="continue_execution"?Promise.reject(++sent===1?new Error("Lost ACK"):
-    {code:"cancelled",outcome:"rejected",stage:"execution-recover",recoveryRequired:false,reason:"continuation-cancellation-basis"}):original(command,payload));
+    {code:"cancelled",outcome:"rejected",stage:"execution-recover",recoveryRequired:false,reason:"continuation-cancellation-basis"}):
+    command==="read_execution_continuation"&&++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):original(command,payload));
   await act(async()=>{expect(registry.dispatch("tasks.submit-action",scope,confirmedPayload())).toBe(true);});
   await waitFor(()=>expect(owner.currentActivity()?.phase).toBe("unknown"));
   const payload=pendingPayload(),request=payloads("continue_execution")[0] as ContinuationRequest;
+  expect(calls("read_execution_continuation")).toHaveLength(1);
   expect(registry.dispatch("tasks.retry-continuation",scope,payload)).toBe(false);
   expect(registry.dispatch("tasks.reconcile-continuation",scope,{...payload,actionId:fixtureIdentity(999)})).toBe(false);
   records=[{...continuationFor(request),action:{...request.action,unitId:fixtureIdentity(999)}}];
@@ -275,6 +278,23 @@ it("keeps another Task's original cancellation feedback recoverable while the cu
   expect(calls("create_execution_identity")).toHaveLength(2);
 });
 
+it("routes a pure cancellation check through Registry only for the complete original pending identity",async()=>{
+  await open();const original=invoke.getMockImplementation()!;let lookups=0;
+  invoke.mockImplementation((command:string,args:unknown)=>command==="cancel_execution_task"?Promise.reject(new Error("Lost ACK"))
+    :command==="read_execution_cancellation_action"?++lookups===1?Promise.reject(new Error("Automatic check unavailable")):Promise.resolve(null):original(command,args));
+  await act(async()=>{await owner.cancel({taskId:value.taskId,attemptId:value.attemptId,origin:"tasks"});});
+  const entry=owner.current(value.taskId);if(entry?.phase!=="unknown")throw new Error("Missing original cancellation");
+  const payload={kind:"execution-cancellation-retry" as const,...entry.target,requestId:entry.request.requestId};
+  expect(registry.describe("tasks.check-cancellation",scope,payload)).toMatchObject({risk:"reads-execution",availability:{enabled:true}});
+  expect(registry.dispatch("tasks.retry-cancellation",scope,payload)).toBe(false);
+  for(const patch of [{taskId:fixtureIdentity(999)},{attemptId:fixtureIdentity(999)},{origin:"source" as const},{requestId:fixtureIdentity(999)}]){
+    expect(registry.dispatch("tasks.check-cancellation",scope,{...payload,...patch})).toBe(false);
+  }
+  await act(async()=>{expect(registry.dispatch("tasks.check-cancellation",scope,payload)).toBe(true);});
+  await waitFor(()=>expect(owner.current(value.taskId)).toMatchObject({phase:"unknown",retryAllowed:true}));
+  expect(payloads("read_execution_cancellation_action")).toEqual([entry.request,entry.request]);expect(calls("cancel_execution_task")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
 it("routes current source preview and checked output/receipt reads using exact targets", async () => {
   value.operation="source-import";const {user}=await open();
   const payload={kind:"task-preview" as const,taskId:value.taskId,attemptId:value.attemptId,operation:value.operation,area:"source" as const,unitId:value.recovery.units[0].unitId};
@@ -324,9 +344,9 @@ it.each(["retire","replace"] as const)("does not dispatch after the original ses
 });
 
 it("checks actual receipt absence before replaying an unknown adoption and keeps its original scope independently of Query", async () => {
-  await open();await capture();const original=invoke.getMockImplementation()!;let count=0;
+  await open();await capture();const original=invoke.getMockImplementation()!;let count=0,lookups=0;
   invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"&&++count===1?Promise.reject(new Error("Adoption ACK lost")):
-    command==="read_execution_receipt"?Promise.resolve(null):original(command,payload));
+    command==="read_execution_adoption_action"?++lookups===1?Promise.reject(new Error("Automatic lookup unavailable")):Promise.resolve(null):original(command,payload));
   await act(async()=>{expect(registry.dispatch("tasks.submit-action",scope,confirmedPayload())).toBe(true);});
   await waitFor(()=>expect(owner.currentActivity()?.phase).toBe("unknown"));const payload=pendingPayload(),request=pendingPrepare;
   if(payload.requestKind!=="adoption")throw new Error("Expected original adoption");

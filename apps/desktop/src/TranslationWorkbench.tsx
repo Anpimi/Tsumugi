@@ -96,7 +96,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const listPosition = useWorkbenchRef("translation", "listPosition", { query: "", after: 0 });
   const [targetLocale, setTargetLocale] = useWorkbenchState("translation", "targetLocale", editorDraft?.locale ?? importState.targetLocale);
   const { folder, fileName, preflight, confirmed, pendingStart, attempt, preview, selectIfEmpty,
-    batchProgress, batchOutcome, batchDetails, uncertain, receiptMessage, rowAction, batchCapture } = importState;
+    batchProgress, batchOutcome, batchDetails, uncertain, receiptMessage, checkingAction: importCheckingAction, rowAction, batchCapture } = importState;
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(() => editorDraft ? { unitId: editorDraft.unitId, sourceRevisionId: editorDraft.sourceRevisionId, key: editorDraft.key, sourceText: editorDraft.sourceText } : null);
   const [localBusy, setBusy] = useState(false);
   const [readBusy, setReadBusy] = useState(false);
@@ -106,7 +106,11 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
   const effectiveFailureValue = editorDraft?.failure ?? importState.failure ?? failureValue;
   const failure = failureReason(effectiveFailureValue);
+  const [composing, setComposing] = useState(false);
+  const composition = useRef(false);
   const [leaveIntent, setLeaveIntent] = useState<LeaveIntent | null>(null);
+  const committedLeaveIntent = useRef(leaveIntent);
+  useLayoutEffect(() => { committedLeaveIntent.current = leaveIntent; }, [leaveIntent]);
   const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((value: boolean) => void) | null>(null);
   const mounted = useSessionAlive();
@@ -347,7 +351,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const commandScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
   function saveAvailability() {
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
-    if (busy || running.current) return { enabled: false, reason: "busy" as const };
+    if (composing || busy || running.current) return { enabled: false, reason: "busy" as const };
     const capture = draftSession.current();
     if (capture?.pending || capture?.pendingSelection || capture?.saving || draftSession.mutationReserved) return { enabled: false, reason: "pending-action" as const };
     if (!targetAvailable || !capture || capture.locale !== targetLocale) return { enabled: false, reason: "unavailable" as const };
@@ -356,14 +360,14 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   function retryAvailability() {
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
-    if (busy || running.current) return { enabled: false, reason: "busy" as const };
-    if (!pendingSave || pendingSelection) return { enabled: false, reason: "unavailable" as const };
+    if (composing || busy || running.current) return { enabled: false, reason: "busy" as const };
+    if (!pendingSave || pendingSelection || saveReceiptCheck !== "missing") return { enabled: false, reason: "unavailable" as const };
     if (!targetAvailable) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
   function reconcileAvailability() {
     if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
-    if (busy || running.current) return { enabled: false, reason: "busy" as const };
+    if (composing || busy || running.current) return { enabled: false, reason: "busy" as const };
     if (!pendingSave || pendingSelection) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
@@ -572,7 +576,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     });
     const removeReconcile = commandRegistry.register({
       id: "translation.reconcile-save", nameKey: "translation.checkSavedAction", category: "translation", scope: commandScope,
-      binding: null, risk: "writes-translation", confirmation: "none", availability: reconcileAvailability,
+      binding: null, risk: "reconciles-execution-action", confirmation: "none", availability: reconcileAvailability,
       handler: () => { void perform(checkSavedAction); },
     });
     const metadata = { category: "translation" as const, scope: commandScope, binding: null, confirmation: "none" as const };
@@ -601,7 +605,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       commandRegistry.register({ ...metadata, id: "translation.apply-import-batch", nameKey: "translation.batchStart", risk: "writes-translation",
         confirmation: "required", payloadKind: "translation-import-batch", availability: importBatchAvailability,
         handler: () => { void importSession.applyBatch(); } }),
-      commandRegistry.register({ ...metadata, id: "translation.check-import-receipt", nameKey: "translation.checkReceipt", risk: "reconciles-execution-action",
+      commandRegistry.register({ ...metadata, id: "translation.check-import-receipt", nameKey: "translation.checkReceipt", risk: "reads-execution",
         payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload), handler: payload => { void importSession.checkReceipt(payload.request.actionId); } }),
       commandRegistry.register({ ...metadata, id: "translation.retry-import-action", nameKey: "translation.retryAction", risk: "retries-execution-action",
         payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload,true), handler: payload => { void importSession.retryAction(payload.request.actionId); } }),
@@ -743,6 +747,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     void performRead(current => openEditor(target, current));
   }
   async function saveDraft(current: () => boolean) {
+    if (composition.current) return { saved: false, savedCurrent: false, submittedSeq: draftSession.current()?.editSeq ?? 0, submittedText: draftSession.current()?.text ?? "" };
     const result = await draftSession.save();
     endMutationWait(current);
     if (result.saved && current() && currentLocale(targetLocale)) {
@@ -751,13 +756,15 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     }
     return result;
   }
-  async function checkSavedAction(current: () => boolean) {
+  async function checkSavedAction(current: () => boolean, continueLeaving = false) {
+    const intent = continueLeaving ? leaveIntent : null, proof = leaveProof.current;
     const result = await draftSession.checkSavedAction();
     endMutationWait(current);
     if (result.saved && current() && currentLocale(targetLocale)) {
       try { await loadList(listAfter, appliedQuery, current); }
       catch { if (current()) setFailure("save-list-refresh"); }
     }
+    if (result.savedCurrent && intent) await finishLeave(intent, current, result.submittedSeq, result.submittedText, proof);
   }
   async function navigateEntry(direction: -1 | 1, current: () => boolean, afterSave = false) {
     const locale = targetLocale;
@@ -845,23 +852,29 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") void performRead(current => switchEditor(intent, current));
   }
-  async function saveAndLeave(current: () => boolean) {
-    if (!targetAvailable) return;
-    if (leaveProof.current && !leaveProof.current()) { setFailure("navigation-edited"); return; }
-    const intent = leaveIntent;
-    const result = await saveDraft(current);
-    if (!result.savedCurrent) return;
-    if (!current() || (leaveProof.current && !leaveProof.current())) return;
+  async function finishLeave(intent: LeaveIntent, current: () => boolean, submittedSeq: number, submittedText: string, proof: (() => boolean) | null) {
+    if (composition.current || !current() || committedLeaveIntent.current !== intent || leaveProof.current !== proof || (proof && !proof())) return;
     if (!currentLocale(targetLocale)) {
       setLeaveIntent(null);
       leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null;
       return;
     }
-    if (!draftSession.unchanged(result.submittedSeq, result.submittedText)) return;
+    if (!draftSession.unchanged(submittedSeq, submittedText)) return;
     setLeaveIntent(null);
     if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; leaveProof.current = null; }
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") await switchEditor(intent, current);
+  }
+  async function saveAndLeave(current: () => boolean) {
+    if (composition.current || !targetAvailable || !leaveIntent) return;
+    const intent = leaveIntent, proof = leaveProof.current;
+    if (proof && !proof()) { setFailure("navigation-edited"); return; }
+    const before = draftSession.current();
+    if (before && !before.pending && !before.pendingSelection && !before.newerDraftSaved && before.text === (before.baseText ?? "")) {
+      await finishLeave(intent, current, before.editSeq, before.text, proof); return;
+    }
+    const result = await saveDraft(current);
+    if (result.savedCurrent) await finishLeave(intent, current, result.submittedSeq, result.submittedText, proof);
   }
   return <>
     {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || (localBusy && !editorDraft?.saving)}>
@@ -869,7 +882,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={effectiveFailureValue} />{typeof effectiveFailureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {saveReceiptCheck ? <p role="status">{t(editorDraft?.receiptKind === "selection" ? saveReceiptCheck === "found" ? "translation.selectionActionFound" : "translation.selectionActionMissing" : saveReceiptCheck === "found" ? "translation.savedActionFound" : "translation.savedActionMissing")}</p> : null}
           {targetUnavailable ? <div role="alert"><p>{t(editorDraft ? "translation.removedTargetDraft" : "translation.removedTargetImport", { locale: targetLocale })}</p><button className="secondary-button" type="button" disabled={localBusy && !editorDraft?.saving} onClick={() => setOpen(false)}>{t("translation.returnToSettings")}</button></div> : null}
-          {busy ? <p role="status">{t("execution.working")}</p> : null}
+          {busy ? <p role="status">{t(editorDraft?.checkingAction === "save" ? "translation.checkingSavedAction" : editorDraft?.checkingAction === "selection" ? "translation.checkingSelectionAction" : "execution.working")}</p> : null}
           {sourceRead.isFetching || contentRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}
           {sourceRead.error || contentRead.error ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable} onClick={() => void performRead(refreshSource)}>{t("execution.refresh")}</button> : null}
@@ -895,7 +908,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
               <button className="primary-button" disabled={!importPreviewAvailability(importPreviewPayload()).enabled} onClick={() => {const payload=importPreviewPayload();if(payload)commandRegistry.dispatch("translation.capture-import-batch",commandScope,payload);}}>{t("translation.apply", { count: preview.unique })}</button>
               {batchProgress ? <p role="status">{t("translation.applying", { done: String(batchProgress.done), total: String(batchProgress.total) })}</p> : null}
               {batchOutcome ? <><p role="status">{t("translation.outcome", { applied: String(batchOutcome.applied), conflicted: String(batchOutcome.conflicted), failed: String(batchOutcome.failed), unknown: String(batchOutcome.unknown) })}</p><details><summary>{t("translation.batchDetails")}</summary><ul>{batchDetails.map((item, index) => <li key={`${item.key}:${index}`}>{item.key}: {t(`translation.batchStatus.${item.status}`)}</li>)}</ul></details></> : null}
-              {uncertain.map(pending => <div key={pending.request.actionId} role="status"><p>{pending.key}</p><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId)).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.check-import-receipt",commandScope,payload);}}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId),true).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.retry-import-action",commandScope,payload);}}>{t("translation.retryAction")}</button></div>)}
+              {uncertain.map(pending => <div key={pending.request.actionId} role="status"><p>{pending.key}</p>{importCheckingAction===pending.request.actionId?<p>{t("execution.checkingAdoption")}</p>:null}<button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId)).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.check-import-receipt",commandScope,payload);}}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId),true).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.retry-import-action",commandScope,payload);}}>{t("translation.retryAction")}</button></div>)}
               {receiptMessage ? <p role="status">{t(receiptMessage === "found" ? "translation.receiptFound" : "translation.receiptMissing")}</p> : null}
             </section> : null}
           </> : null}
@@ -933,9 +946,9 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   {navigationEnd ? <p role="status">{t("workbench.scopeEnd")}</p> : null}
                   <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{displayedTarget.sourceText || t("translation.empty")}</pre></section>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
-                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => draftSession.edit(event.target.value)} /></label>
+                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onCompositionStart={event => { composition.current = true; setComposing(true); draftSession.edit(event.currentTarget.value); }} onCompositionEnd={() => { composition.current = false; setComposing(false); }} onChange={event => draftSession.edit(event.target.value)} /></label>
                   <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
-                  {pendingSelection ? <div role="status"><p>{t("translation.selectionUnknown")}</p><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload()).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.check-selection",commandScope,payload);}}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload(),true).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-selection",commandScope,payload);}}>{t("translation.retrySelection")}</button></div> : null}
+                  {pendingSelection ? <div role="status">{editorDraft?.checkingAction !== "selection" ? <p>{t("translation.selectionUnknown")}</p> : null}<button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload()).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.check-selection",commandScope,payload);}}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload(),true).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-selection",commandScope,payload);}}>{t("translation.retrySelection")}</button></div> : null}
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                 </div>
                 {editorRead.isFetching || historyRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
@@ -955,6 +968,19 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       </WorkbenchPanel> : null}
     <Dialog.Root open={batchCapture !== null} onOpenChange={value => { if (!value && !importState.busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (importState.busy) event.preventDefault(); }}><Dialog.Title>{t("translation.batchConfirm")}</Dialog.Title><Dialog.Description>{t("translation.batchScope", { total: String(batchCapture?.preview.total ?? 0), matches: String(batchCapture?.eligible.length ?? 0), excluded: String(batchCapture?.excluded ?? 0) })}</Dialog.Description><p>{t(batchCapture?.decision === "select-if-empty" ? "translation.batchSelect" : "translation.batchCandidates")}</p>{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={importState.busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={!importBatchAvailability(importBatchPayload()).enabled} onClick={() => {const payload=importBatchPayload();if(payload)commandRegistry.dispatch("translation.apply-import-batch",commandScope,payload);}}>{t("translation.batchStart")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
     <Dialog.Root open={rowAction !== null} onOpenChange={value => { if (!value && !busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</Dialog.Title><Dialog.Description>{t("translation.rowActionHelp", { key: rowAction?.row.entry.nativeKey ?? "" })}</Dialog.Description>{rowAction ? <div className="translation-action-compare"><p>{t("translation.importedText")}: {rowAction.row.entry.text === "" ? t("translation.empty") : rowAction.row.entry.text}</p><p>{t("translation.selectedText")}: {rowAction.row.currentText === null ? t("translation.noSelection") : rowAction.row.currentText === "" ? t("translation.empty") : rowAction.row.currentText}</p></div> : null}{targetUnavailable ? <p role="alert">{t("translation.removedTargetImport", { locale: targetLocale })}</p> : null}{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={!importRowAvailability(rowAction ? importRowPayload(rowAction.row,rowAction.decision,rowAction.preview,rowAction.editSeq) : undefined,true).enabled} onClick={() => {const capture=importSession.current().rowAction;const payload=capture ? importRowPayload(capture.row,capture.decision,capture.preview,capture.editSeq) : undefined;if(payload)commandRegistry.dispatch("translation.apply-import-row",commandScope,payload);}}>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
-    <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>{targetUnavailable ? <p role="alert">{t("translation.removedTargetDraft", { locale: targetLocale })}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}{newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button><button className="secondary-button" disabled={busy || !!pendingSave || !!pendingSelection} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button><button className="primary-button" disabled={busy || !targetAvailable} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
+      <Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>
+      {targetUnavailable ? <p role="alert">{t("translation.removedTargetDraft", { locale: targetLocale })}</p> : null}
+      {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={effectiveFailureValue} /></div> : null}
+      {editorDraft?.checkingAction ? <p role="status">{t(editorDraft.checkingAction === "save" ? "translation.checkingSavedAction" : "translation.checkingSelectionAction")}</p> : null}
+      {pendingSave && saveReceiptCheck === "missing" ? <p role="status">{t("translation.savedActionMissing")}</p> : null}
+      {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
+      <div className="form-actions">
+        <button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button>
+        <button className="secondary-button" disabled={busy || !!pendingSave || !!pendingSelection} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button>
+        {pendingSave ? <button className="secondary-button" disabled={busy || composing} onClick={() => void perform(current => checkSavedAction(current, true))}>{t("translation.checkSavedAction")}</button> : null}
+        <button className="primary-button" disabled={busy || composing || !targetAvailable || (pendingSave !== null && saveReceiptCheck !== "missing")} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button>
+      </div>
+    </Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;
 }

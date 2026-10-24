@@ -3,7 +3,8 @@ import type { ProjectView } from "./projectCommands";
 import { checkedInvoke } from "./ipc";
 import type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest } from "./generated/execution.requests";
 import { validateResponseIdentity, validateResponseStatus, validateResponseTasks, validateResponseAttempts, validateResponseAttempt, validateResponseOutput, validateResponseCancellation, validateResponseRecovery, validateResponseContinuation, validateResponseContinuationReceipt, validateResponseContinuations, validateResponseTaskView, validateResponseAction, validateResponseAdoption, validateResponseReceipt } from "./generated/execution.validators";
-import type { AdoptionAction, AdoptionReceipt } from "./generated/execution.responses";
+import { validateResponseAdoptionAction, validateResponseCancellationAction } from "./generated/execution.validators";
+import type { Responses, AdoptionAction, AdoptionReceipt } from "./generated/execution.responses";
 
 export type { SessionRequest, ListRequest, TaskRequest, AttemptRequest, OutputRequest, CancelRequest, RecoveryRequest, ContinuationRequest, ContinuationReadRequest, ContinuationListRequest, TaskViewRequest, PrepareRequest, AdoptRequest } from "./generated/execution.requests";
 export type { TaskView as Task, AdoptionReceipt as Receipt, AttemptSummary, ExecutionState, ItemStatus, Scope, ItemView, Progress, RecoveryUnit, AttemptDetail, RuntimeStatus, RecoveryView, AdoptionAction, ResultEnvelope, RecoveryAction, ContinuationAction, ContinuationReceipt, ContinuationPage } from "./generated/execution.responses";
@@ -84,6 +85,18 @@ async function readTaskView(request: TaskViewRequest): Promise<TaskView> {
   return task;
 }
 
+export function confirmCancellationReceipt(request: CancelRequest, value: unknown) {
+  if (!validateResponseCancellationAction(value) || value === null || value.projectId !== request.projectId
+    || value.taskId !== request.taskId || value.requestId !== request.requestId || value.revision === "0") {
+    throw new Error("Invalid original cancellation receipt");
+  }
+  return value;
+}
+async function readCancellationAction(request: CancelRequest): Promise<Responses["cancellationAction"]> {
+  const receipt = await checkedInvoke("read_execution_cancellation_action", request, validateResponseCancellationAction);
+  return receipt === null ? null : confirmCancellationReceipt(request,receipt);
+}
+
 export const executionCommands = {
   identity: (request: SessionRequest) => checkedInvoke("create_execution_identity", request, validateResponseIdentity),
   status: (request: SessionRequest) => checkedInvoke("execution_status", request, validateResponseStatus),
@@ -94,12 +107,14 @@ export const executionCommands = {
   // The scalar wire type allows zero, but a persisted cancellation increments it.
   cancel: (request: CancelRequest) => checkedInvoke("cancel_execution_task", request,
     (value): value is string => validateResponseCancellation(value) && value !== "0"),
+  cancellationAction: readCancellationAction,
   continue: continueExecution,
   continuation: readContinuation,
   continuations: readContinuations,
   taskView: readTaskView,
   recover: (request: RecoveryRequest) => checkedInvoke("recover_execution", request, validateResponseRecovery),
   prepare: (request: PrepareRequest) => checkedInvoke("prepare_execution_adoption", request, validateResponseAction),
+  adoptionAction: (request: PrepareRequest): Promise<Responses["adoptionAction"]> => checkedInvoke("read_execution_adoption_action", request, validateResponseAdoptionAction),
   adopt: (request: AdoptRequest) => checkedInvoke("adopt_execution", request, validateResponseAdoption),
   receipt: (request: AdoptRequest) => checkedInvoke("read_execution_receipt", request, validateResponseReceipt),
   quiesce: (request: SessionRequest) => checkedInvoke("quiesce_execution", request, validateResponseStatus),

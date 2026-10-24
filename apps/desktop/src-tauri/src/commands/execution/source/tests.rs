@@ -243,7 +243,17 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     prepare["resultId"] = preview["resultId"].clone();
     prepare["actionId"] = json!(action);
     prepare["confirmation"] = preview["confirmation"].clone();
-    call(&view, "prepare_source_adoption", prepare).unwrap();
+    let original_unit = app.state::<AppState>().sessions.with(move |sessions| sessions.active.as_ref().unwrap().store.execution_input(attempt).unwrap().envelope().units[0].unit_id);
+    let mut source_read = json!({"adoption":prepare,"unitId":original_unit});
+    assert_eq!(call(&view, "read_source_adoption_action", source_read.clone()).unwrap(), Value::Null);
+    let source_prepared = call(&view, "prepare_source_adoption", prepare.clone()).unwrap();
+    assert_eq!(call(&view, "read_source_adoption_action", source_read.clone()).unwrap(), json!({"action":source_prepared,"receipt":null}));
+    assert!(serde_json::from_value::<AdoptionActionRead>(json!({"action":source_prepared})).is_err());
+    for field in ["projectId", "attemptId", "resultId", "sessionToken"] {
+        let mut wrong = source_read.clone(); wrong["adoption"][field] = json!(ExecutionId::new());
+        assert!(call(&view, "read_source_adoption_action", wrong).is_err());
+    }
+
     let mut adopt = context.clone();
     adopt["actionId"] = json!(action);
     let receipt = call(&view, "adopt_execution", adopt.clone()).unwrap();
@@ -252,6 +262,8 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
         receipt
     );
     assert_eq!(call(&view, "adopt_execution", adopt).unwrap(), receipt);
+    let expected_source_read = json!({"action":source_prepared,"receipt":receipt});
+    assert_eq!(call(&view, "read_source_adoption_action", source_read.clone()).unwrap(), expected_source_read);
     let snapshot = receipt["changes"][0]["id"].clone();
     let mut read = context.clone();
     read["snapshotId"] = snapshot.clone();
@@ -365,6 +377,9 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
         call(&view, "read_review_summary_page", summary_request).unwrap()["total"],
         532
     );
+    assert!(call(&view, "read_source_adoption_action", source_read.clone()).is_err());
+    source_read["adoption"]["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_source_adoption_action", source_read).unwrap(), expected_source_read);
     read["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&view, "read_source_content", read).unwrap(), content);
     source_history_request["sessionToken"] = reopened["sessionToken"].clone();
@@ -542,10 +557,27 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
         (action_id, request)
     };
     let (_first_id, first_request) = import(&page["rows"][0], "candidate-only");
-    call(&view, "prepare_translation_adoption", first_request.clone()).unwrap();
+    let original_item = ExecutionId::parse(first_request["itemId"].as_str().unwrap()).unwrap();
+    let recovery_unit = app.state::<AppState>().sessions.with(move |sessions| {
+        let input = sessions.active.as_ref().unwrap().store.execution_input(translation_attempt).unwrap();
+        input.envelope().units.iter().find(|unit| unit.item_ids == [original_item]).unwrap().unit_id
+    });
+    let mut import_read = json!({"adoption":first_request,"unitId":recovery_unit});
+    assert_eq!(call(&view, "read_translation_adoption_action", import_read.clone()).unwrap(), Value::Null);
+    let import_prepared = call(&view, "prepare_translation_adoption", first_request.clone()).unwrap();
+    assert_eq!(call(&view, "read_translation_adoption_action", import_read.clone()).unwrap(), json!({"action":import_prepared,"receipt":null}));
+    for field in ["projectId", "itemId", "sessionToken"] {
+        let mut wrong = import_read.clone(); wrong["adoption"][field] = json!(ExecutionId::new());
+        assert!(call(&view, "read_translation_adoption_action", wrong).is_err());
+    }
+    let mut wrong = import_read.clone(); wrong["adoption"]["confirmation"]["decision"] = json!("replace");
+    assert!(call(&view, "read_translation_adoption_action", wrong).is_err());
+
     let first_id = first_request["actionId"].clone();
     let first_receipt = call(&view, "adopt_execution", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"actionId":first_id})).unwrap();
     assert_eq!(first_receipt["changes"].as_array().unwrap().len(), 1);
+    let expected_import_read = json!({"action":import_prepared,"receipt":first_receipt});
+    assert_eq!(call(&view, "read_translation_adoption_action", import_read.clone()).unwrap(), expected_import_read);
     let (_second_id, second_request) = import(&page["rows"][1], "select-if-empty");
     call(
         &view,
@@ -572,7 +604,7 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     save["text"] = json!("人工编辑");
     let manual = call(&view, "save_translation_revision", save.clone()).unwrap();
     assert_eq!(
-        call(&view, "save_translation_revision", save).unwrap(),
+        call(&view, "save_translation_revision", save.clone()).unwrap(),
         manual
     );
     let mut select = context.clone();
@@ -582,8 +614,102 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     select["sourceRevisionId"] = page["rows"][0]["sourceRevisionId"].clone();
     select["expectedSelectionId"] = manual["selection"]["eventId"].clone();
     select["revisionId"] = imported["rows"][0]["revisionId"].clone();
-    let restored = call(&view, "select_translation_revision", select).unwrap();
+    let restored = call(&view, "select_translation_revision", select.clone()).unwrap();
     assert_eq!(restored["revisionId"], imported["rows"][0]["revisionId"]);
+    let project_id = ExecutionId::parse(context["projectId"].as_str().unwrap()).unwrap();
+    let unit_id = ExecutionId::parse(history["unitId"].as_str().unwrap()).unwrap();
+    let before_reads = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        (
+            store
+                .changes_since(tsumugi_core::execution::Revision::new(0).unwrap())
+                .sequence,
+            store
+                .translation_history(project_id, unit_id, "zh-CN", 0, 10)
+                .unwrap()
+                .total,
+        )
+    });
+    assert_eq!(
+        call(&view, "read_translation_save_action", save.clone()).unwrap(),
+        manual
+    );
+    assert_eq!(
+        call(&view, "read_translation_selection_action", select.clone()).unwrap(),
+        restored
+    );
+    let mut missing = save.clone();
+    missing["actionId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_translation_save_action", missing).unwrap().is_null());
+    let mut missing_selection = select.clone();
+    missing_selection["actionId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_translation_selection_action", missing_selection)
+        .unwrap()
+        .is_null());
+    let mut altered = save.clone();
+    altered["text"] = json!("Different request");
+    assert_eq!(
+        call(&view, "read_translation_save_action", altered).unwrap_err()["code"],
+        "result-mismatch"
+    );
+    let mut other_kind = save.clone();
+    other_kind["actionId"] = select["actionId"].clone();
+    assert_eq!(
+        call(&view, "read_translation_save_action", other_kind).unwrap_err()["code"],
+        "result-mismatch"
+    );
+    let mut other_kind = select.clone();
+    other_kind["actionId"] = save["actionId"].clone();
+    assert_eq!(
+        call(&view, "read_translation_selection_action", other_kind)
+            .unwrap_err()["code"],
+        "result-mismatch"
+    );
+    for command in [
+        "read_translation_save_action",
+        "read_translation_selection_action",
+    ] {
+        let original = if command == "read_translation_save_action" {
+            &save
+        } else {
+            &select
+        };
+        for field in ["sessionToken", "projectId"] {
+            let mut foreign = original.clone();
+            foreign[field] = if field == "sessionToken" {
+                json!("inactive-session")
+            } else {
+                json!(ExecutionId::new())
+            };
+            assert_eq!(call(&view, command, foreign).unwrap_err()["code"], "session-invalid");
+        }
+        let mut unknown = original.clone();
+        unknown["approved"] = json!(true);
+        assert!(call(&view, command, unknown).is_err());
+    }
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.quiescing = true;
+    });
+    assert_eq!(call(&view, "read_translation_save_action", save.clone()).unwrap(), manual);
+    assert_eq!(call(&view, "read_translation_selection_action", select.clone()).unwrap(), restored);
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.quiescing = false;
+    });
+    let after_reads = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        (
+            store
+                .changes_since(tsumugi_core::execution::Revision::new(0).unwrap())
+                .sequence,
+            store
+                .translation_history(project_id, unit_id, "zh-CN", 0, 10)
+                .unwrap()
+                .total,
+        )
+    });
+    assert_eq!(after_reads, before_reads);
     wait_for_execution_idle(&view, &context);
     call(
         &view,
@@ -597,8 +723,15 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
         json!({"locator":temp.path().join("project")}),
     )
     .unwrap();
+    assert!(call(&view, "read_translation_adoption_action", import_read.clone()).is_err());
+    import_read["adoption"]["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_translation_adoption_action", import_read).unwrap(), expected_import_read);
     context["sessionToken"] = reopened["sessionToken"].clone();
     history["sessionToken"] = reopened["sessionToken"].clone();
+    save["sessionToken"] = reopened["sessionToken"].clone();
+    select["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_translation_save_action", save).unwrap(), manual);
+    assert_eq!(call(&view, "read_translation_selection_action", select).unwrap(), restored);
     let saved = call(&view, "read_translation_history", history).unwrap();
     assert_eq!(saved["total"], "2");
     assert_eq!(saved["current"]["revisionId"], restored["revisionId"]);

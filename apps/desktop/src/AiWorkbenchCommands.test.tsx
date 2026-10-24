@@ -102,6 +102,7 @@ beforeEach(async () => {
     if (command === "prepare_execution_adoption") { action = actionFor(payload.request as unknown as PrepareRequest); return action; }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receiptFor();
     if (command === "cancel_execution_task") return "5";
+    if (command === "read_execution_cancellation_action") return null;
     throw new Error(command);
   });
 });
@@ -125,10 +126,10 @@ async function startThroughRegistry() {
   await waitFor(() => expect(registry.describe("ai.adopt-result", scope, candidatePayload())?.availability.enabled).toBe(true));
 }
 
-it("registers the ten scoped AI commands and routes preview, confirmed start, and exact editor navigation through them", async () => {
+it("registers the scoped AI commands and routes preview, confirmed start, and exact editor navigation through them", async () => {
   const { user } = await open(), dispatch = vi.spyOn(registry, "dispatch");
   expect(registry.list(scope).filter(command => command.category === "ai").map(command => command.id).sort()).toEqual([
-    "ai.adopt-result", "ai.cancel-task", "ai.open-translation", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
+    "ai.adopt-result", "ai.cancel-task", "ai.check-cancellation", "ai.open-translation", "ai.preview", "ai.reconcile-adoption", "ai.reconcile-start",
     "ai.retry-adoption", "ai.retry-cancellation", "ai.retry-start", "ai.start",
   ]);
   expect(registry.list(scope).filter(command => command.category === "ai").every(command => command.binding === null)).toBe(true);
@@ -399,10 +400,10 @@ it("settles a Registry adoption A without replacing newer B even when the subseq
 
 it("requires an exact absent receipt before Registry adoption retry", async () => {
   await open(); await startThroughRegistry();
-  const original = invoke.getMockImplementation()!; let adoptions = 0;
+  const original = invoke.getMockImplementation()!; let adoptions = 0,lookups = 0;
   invoke.mockImplementation((command: string, request: unknown) => command === "adopt_execution"
     ? (++adoptions === 1 ? Promise.reject(new Error("Lost adoption acknowledgement")) : original(command, request))
-    : command === "read_execution_receipt" ? Promise.resolve(null) : original(command, request));
+    : command === "read_execution_adoption_action" ? ++lookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : Promise.resolve(null) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.adopt-result", scope, candidatePayload())).toBe(true); });
   await waitFor(() => expect(owner.pendingAdopt?.uncertain).toBe(true));
   const payload = adoptionPendingPayload(), request = owner.pendingAdopt!.request;
@@ -418,9 +419,9 @@ it("requires an exact absent receipt before Registry adoption retry", async () =
 
 it("reconciles a checked Registry receipt without dispatching adoption again", async () => {
   await open(); await startThroughRegistry();
-  const original = invoke.getMockImplementation()!;
+  const original = invoke.getMockImplementation()!; let lookups = 0;
   invoke.mockImplementation((command: string, request: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Lost adoption acknowledgement"))
-    : command === "read_execution_receipt" ? Promise.resolve(receiptFor()) : original(command, request));
+    : command === "read_execution_adoption_action" ? ++lookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : Promise.resolve({action,receipt:receiptFor()}) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.adopt-result", scope, candidatePayload())).toBe(true); });
   await waitFor(() => expect(owner.pendingAdopt?.uncertain).toBe(true));
   await act(async () => { expect(registry.dispatch("ai.reconcile-adoption", scope, adoptionPendingPayload())).toBe(true); });
@@ -465,15 +466,22 @@ it.each(["button", "registry"] as const)("keeps exact original Task cancellation
 
 it("routes fresh cancellation and original feedback retry through Registry while retaining another origin's exact request", async () => {
   const { user } = await open(); await startThroughRegistry();
-  const original = invoke.getMockImplementation()!, dispatch = vi.spyOn(registry, "dispatch"); let cancellations = 0;
+  const original = invoke.getMockImplementation()!, dispatch = vi.spyOn(registry, "dispatch"); let cancellations = 0,lookups = 0;
   view = { ...view, detail: { ...view.detail, progress: { ...view.detail.progress, queued: 1, succeeded: 0 } } };
   invoke.mockImplementation((command: string, request: unknown) => command === "cancel_execution_task"
-    ? (++cancellations === 1 ? Promise.reject(new Error("Lost cancellation acknowledgement")) : Promise.resolve("5")) : original(command, request));
+    ? (++cancellations === 1 ? Promise.reject(new Error("Lost cancellation acknowledgement")) : Promise.resolve("5"))
+    : command === "read_execution_cancellation_action" ? ++lookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : Promise.resolve(null) : original(command, request));
   await act(async () => { await reads.client.refetchQueries({ queryKey: reads.key(["aiCommands", aiAttempt]), exact: true }); });
   await user.click(await screen.findByRole("button", { name: "Cancel remaining work" }));
   await waitFor(() => expect(tasks.current(aiTask)?.phase).toBe("unknown"));
   const captured = tasks.current(aiTask)!;
   if (captured.phase !== "unknown") throw new Error("Expected original cancellation");
+  const pending={kind:"execution-cancellation-retry" as const,...captured.target,requestId:captured.request.requestId};
+  expect(registry.dispatch("ai.retry-cancellation",scope,pending)).toBe(false);
+  expect(registry.dispatch("ai.check-cancellation",scope,{...pending,requestId:fixtureIdentity(999)})).toBe(false);
+  await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
+  await waitFor(()=>expect(tasks.current(aiTask)).toMatchObject({phase:"unknown",retryAllowed:true}));
+  expect(dispatch).toHaveBeenCalledWith("ai.check-cancellation",scope,pending);expect(calls("cancel_execution_task")).toHaveLength(1);
   expect(registry.dispatch("ai.retry-cancellation", scope, { kind: "execution-cancellation-retry", ...captured.target, requestId: fixtureIdentity(999) })).toBe(false);
   await user.click(screen.getByRole("button", { name: "Retry the original cancellation" }));
   await waitFor(() => expect(tasks.current(aiTask)?.phase).toBe("recorded"));

@@ -266,6 +266,7 @@ describe("AI command payloads", () => {
     ["ai.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "ai" }, [{ origin: "other" }, { taskId: "" }]],
     ["ai.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "source", requestId: "original" },
       [{ requestId: "" }, { origin: undefined }]],
+    ["ai.check-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "source", requestId: "original" }, [{requestId:""},{taskId:null}]],
     ["ai.open-translation", { kind: "ai-translation-target", ...item }, [{ sourceRevisionId: null }, { locale: false }]],
   ] as const)("rejects malformed and obsolete UI intent for %s before invoking its owner", (id, payload, malformed) => {
     const commands = new WorkbenchCommands(), handler = vi.fn();
@@ -308,6 +309,7 @@ describe("Arena command payloads", () => {
     ["arena.retry-pending", { kind: "arena-pending", pendingKind: "adopt", attemptId: "attempt", actionId: "action", recoveryUnitId: "recovery", resultId: "result" }, [{ recoveryUnitId: null }, { resultId: "" }]],
     ["arena.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "arena" }, [{ origin: "other" }, { attemptId: null }]],
     ["arena.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "source", requestId: "request" }, [{ requestId: "" }]],
+    ["arena.check-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "source", requestId: "request" }, [{requestId:""},{attemptId:null}]],
     ["arena.open-translation", { kind: "arena-translation-target", ...item }, [{ sourceRevisionId: null }, { locale: "" }]],
     ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "compare", actionId: "action", unitId: "unit", locale: "zh-CN" }, [{ actionId: "" }, { unitId: null }]],
     ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "reveal", actionId: "action", targetKind: "attempt", targetId: "attempt" }, [{ targetKind: "other" }, { targetId: null }]],
@@ -356,6 +358,7 @@ describe("Tasks command payloads", () => {
     ["tasks.confirm-cancellation", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "tasks" }, [{ origin: "other" }]],
     ["tasks.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "tasks" }, [{ taskId: null }]],
     ["tasks.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "arena", requestId: "request" }, [{ requestId: "" }]],
+    ["tasks.check-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "arena", requestId: "request" }, [{requestId:""},{origin:"other"}]],
     ["tasks.reconcile-adoption", adoption, [{ actionId: "" }, { resultIds: [] }]],
     ["tasks.retry-adoption", adoption, [{ requestKind: "other" }]],
     ["tasks.reconcile-continuation", continuation, [{ expectedCancellationRevision: null }, { itemIds: [] }]],

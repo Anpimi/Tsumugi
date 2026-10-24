@@ -3,7 +3,7 @@ import { arenaCommands, defaultArenaConfig, confirmArenaComparison, confirmArena
 import type { StartRequest, RevealRequest } from "./generated/arena.requests";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt } from "./executionCommands";
 import { translationCommands, confirmTranslationSelection, type TranslationSelectRequest, type TranslationSelection } from "./translationCommands";
-import { validateResponseIdentity, validateResponseAction, validateResponseAdoption } from "./generated/execution.validators";
+import { validateResponseIdentity, validateResponseAdoptionAction, validateResponseAction, validateResponseAdoption } from "./generated/execution.validators";
 import { validateResponsePrepared, validateResponseView, validateResponseComparison } from "./generated/arena.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
@@ -27,7 +27,7 @@ type Pending = PendingState & (
   | { kind: "reveal"; request: RevealRequest; targetKind: "attempt" | "comparison" }
   | { kind: "select"; request: TranslationSelectRequest; receipt: TranslationSelection | null }
   | { kind: "merge"; request: MergeRequest; draftSeq: number; receipt: TranslationSelection | null }
-  | { kind: "adopt"; request: PrepareRequest; candidate: Candidate; action: AdoptionAction | null; receipt: Receipt | null }
+  | { kind: "adopt"; request: PrepareRequest; candidate: Candidate; action: AdoptionAction | null; receipt: Receipt | null; checking: boolean }
 );
 interface State {
   config: ArenaConfig; locale: string; selected: string[]; prepared: ArenaPrepared | null; consent: boolean;
@@ -281,7 +281,36 @@ function useArenaOwner(project: ProjectView) {
           update(before => before.pending ? {...before,pending:{...before.pending,uncertain:true,retryAllowed:false}} : before);
         } else { update(before => ({...before,pending:null})); releaseTranslation(); }
       }
+      if (entry.kind === "adopt" && hasUnknownOutcome(error) && matches(entry)) {
+        await lookupAdoption(entry,commandFailure(error,"outcome-unknown")); return;
+      }
       throw error;
+    }
+  }
+  async function lookupAdoption(entry: Extract<Pending,{kind:"adopt"}>, originalFailure = current().failure) {
+    if (!matches(entry)) return;
+    const latest = current().pending;
+    if (latest?.kind !== "adopt") return;
+    replace({...latest,checking:true,uncertain:true,retryAllowed:false}); update(before => ({...before,failure:null}));
+    try {
+      const result = await executionCommands.adoptionAction(entry.request);
+      if (!matches(entry)) return;
+      let checked = current().pending;
+      if (checked?.kind !== "adopt") return;
+      if (!validateResponseAdoptionAction(result)) invalidAck();
+      if (result === null) { if (checked.receipt) invalidAck(); }
+      else {
+        if (result.receipt !== null) { confirmReceipt(checked,result.receipt); checked = {...checked,receipt:fixed(result.receipt)}; replace(checked); }
+        else if (checked.receipt) invalidAck();
+        confirmAction(checked,result.action); checked = {...checked,action:fixed(result.action)}; replace(checked);
+        if (checked.receipt) { settle(checked,"reconciled"); return; }
+      }
+      replace({...checked,checking:false,retryAllowed:true}); update(before => ({...before,failure:originalFailure}));
+    } catch (error) {
+      if (!matches(entry)) return;
+      const checked = current().pending;
+      if (checked?.kind === "adopt") replace({...checked,checking:false,retryAllowed:false});
+      update(before => ({...before,failure:commandFailure(error,"outcome-unknown")}));
     }
   }
   function canStart() {
@@ -424,7 +453,7 @@ function useArenaOwner(project: ProjectView) {
   }
   function cancellationPending(taskId: string) {
     const value = tasksRef.current.current(taskId);
-    return !!value && (value.phase === "preparing" || value.phase === "pending" || value.phase === "unknown");
+    return !!value && (value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown");
   }
   function candidateCurrent(view: ArenaView, value: Candidate) {
     const key = reads.key(["arena",view.detail.attemptId]), query = reads.client.getQueryState(key);
@@ -447,7 +476,7 @@ function useArenaOwner(project: ProjectView) {
       const actionId = await executionCommands.identity(session);
       if (!proof()) return;
       await dispatch({kind:"adopt",request:fixed({...session,attemptId,actionId,unitId:captured.unitId,resultIds:[captured.resultId]}),candidate:captured,
-        action:null,receipt:null,editSeq:before.editSeq,uncertain:false,retryAllowed:false},false,proof);
+        action:null,receipt:null,checking:false,editSeq:before.editSeq,uncertain:false,retryAllowed:false},false,proof);
     }));
   }
   async function checkPending() {
@@ -474,17 +503,7 @@ function useArenaOwner(project: ProjectView) {
         if (!receipt) { if (entry.receipt) invalidAck(); replace({...entry,retryAllowed:true}); return; }
         confirmSelection(entry,receipt); const checked = {...entry,receipt:fixed(receipt)}; replace(checked); settle(checked,"reconciled");
       } else {
-        const receipt = await executionCommands.receipt({...session,actionId:entry.request.actionId});
-        if (!matches(entry)) return;
-        if (!receipt) { if (entry.receipt) invalidAck(); replace({...entry,retryAllowed:true}); return; }
-        confirmReceipt(entry,receipt);
-        let checked = {...entry,receipt:fixed(receipt)}; replace(checked);
-        if (!checked.action) {
-          const action = await executionCommands.prepare(entry.request);
-          if (!matches(entry)) return;
-          confirmAction(checked,action); checked = {...checked,action:fixed(action)}; replace(checked);
-        }
-        settle(checked,"reconciled");
+        await lookupAdoption(entry);
       }
     },true);
   }

@@ -6,6 +6,7 @@ export type LineageDecision = "continue" | "reject";
 
 export interface Requests {
   adopt: SourceAdoptRequest;
+  adoptionAction: SourceAdoptionActionRequest;
   capture: CaptureRequest;
   comparison: ComparisonRequest;
   content: ContentRequest;
@@ -40,6 +41,10 @@ export interface LineageChoice {
   newOrdinal: number;
   oldOccurrenceId: ExecutionId;
   reason: string;
+}
+export interface SourceAdoptionActionRequest {
+  adoption: SourceAdoptRequest;
+  unitId: ExecutionId;
 }
 export interface CaptureRequest {
   projectId: ExecutionId;

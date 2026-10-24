@@ -1,3 +1,4 @@
+import { validateResponseAdoptionAction } from "./generated/translation.validators";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type AdoptionAction, type AttemptDetail, type Receipt } from "./executionCommands";
@@ -39,6 +40,7 @@ export interface TranslationImportState {
   batchDetails: TranslationBatchDetail[];
   uncertain: TranslationImportPending[];
   receiptMessage: "found" | "missing" | null;
+  checkingAction: string | null;
   busy: boolean;
   stale: boolean;
   editSeq: number;
@@ -96,7 +98,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
   const [state, setState] = useState<TranslationImportState>(() => ({ folder: null, fileName: "",
     targetLocale: project.metadata.targetLocales[0] ?? "", preflight: null, confirmed: false, pendingStart: null,
     attempt: null, preview: null, selectIfEmpty: false, rowAction: null, batchCapture: null, batchProgress: null,
-    batchOutcome: null, batchDetails: [], uncertain: [], receiptMessage: null, busy: false, stale: false,
+    batchOutcome: null, batchDetails: [], uncertain: [], receiptMessage: null, checkingAction: null, busy: false, stale: false,
     editSeq: 0, completionVersion: 0, failure: null }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(false);
   const version = useRef(0), mutation = useRef<symbol | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
@@ -319,9 +321,9 @@ export function TranslationImportSession({ project, children }: { project: Proje
   }
   function original(basis: TranslationPreview, row: TranslationPreviewRow, decision: TranslationDecision, actionId: string, recoveryUnitId: string): TranslationImportPending {
     if (!row.unitId || !row.occurrenceId || !row.sourceRevisionId) throw invalid();
-    return { request: { ...session, actionId, attemptId: basis.attemptId, itemId: row.itemId, resultId: row.resultId,
-      confirmation: { resultDigest: row.resultDigest, sourceSnapshotId: basis.fixedSourceSnapshotId, occurrenceId: row.occurrenceId,
-        sourceRevisionId: row.sourceRevisionId, targetUnitId: row.unitId, expectedSelectionId: row.currentSelection?.eventId ?? null, decision } },
+    return { request: Object.freeze({ ...session, actionId, attemptId: basis.attemptId, itemId: row.itemId, resultId: row.resultId,
+      confirmation: Object.freeze({ resultDigest: row.resultDigest, sourceSnapshotId: basis.fixedSourceSnapshotId, occurrenceId: row.occurrenceId,
+        sourceRevisionId: row.sourceRevisionId, targetUnitId: row.unitId, expectedSelectionId: row.currentSelection?.eventId ?? null, decision }) }),
       recoveryUnitId, previousSelectionSequence: row.currentSelection?.sequence ?? null, key: row.entry.nativeKey,
       prepared: null, receiptChecked: false, receipt: null };
   }
@@ -359,10 +361,45 @@ export function TranslationImportSession({ project, children }: { project: Proje
       settle(original, receipt); return "applied";
     } catch (error) {
       if (!live()) return "unknown";
-      if (recovering || hasUnknownOutcome(error)) { replacePending(original); update(before => ({ ...before, failure: commandFailure(error) })); return "unknown"; }
+      if (recovering || hasUnknownOutcome(error)) {
+        replacePending(original);
+        if (hasUnknownOutcome(error)) return lookupAdoption(original,commandFailure(error));
+        update(before => ({...before,failure:commandFailure(error)})); return "unknown";
+      }
       update(before => ({ ...before, uncertain: before.uncertain.filter(value => value.request.actionId !== original.request.actionId), failure: commandFailure(error) }));
       return isCommandError(error) && error.code === "dependency-conflict" ? "conflicted" : "failed";
     }
+  }
+  function currentPending(original: TranslationImportPending) {
+    return live() ? current().uncertain.find(value => value.request === original.request) : undefined;
+  }
+  async function lookupAdoption(pending: TranslationImportPending, originalFailure = current().failure): Promise<BatchStatus> {
+    let original = currentPending(pending);
+    if (!original) return "unknown";
+    original = {...original,receiptChecked:false}; replacePending(original);
+    update(before => ({...before,checkingAction:pending.request.actionId,receiptMessage:null,failure:null}));
+    try {
+      const result = await translationCommands.adoptionAction({adoption:original.request,unitId:original.recoveryUnitId});
+      const latest = currentPending(pending); if (!latest) return "unknown";
+      original = latest;
+      if (!validateResponseAdoptionAction(result)) throw invalid();
+      if (result === null) { if (original.receipt) throw invalid(); }
+      else {
+        if (result.receipt !== null) { original = verifyReceipt(original,result.receipt); replacePending(original); }
+        else if (original.receipt) throw invalid();
+        confirmTranslationAction(original.request,original.recoveryUnitId,result.action);
+        if (original.prepared && original.prepared.cancellationRevision !== result.action.cancellationRevision) throw invalid();
+        original = {...original,prepared:structuredClone(result.action)}; replacePending(original);
+        if (original.receipt) { settle(original,original.receipt); return "applied"; }
+      }
+      replacePending({...original,receiptChecked:true});
+      update(before => ({...before,receiptMessage:"missing",failure:originalFailure}));
+    } catch (error) {
+      if (currentPending(pending)) update(before => ({...before,failure:commandFailure(error)}));
+    } finally {
+      if (live() && current().checkingAction === pending.request.actionId) update(before => ({...before,checkingAction:null}));
+    }
+    return "unknown";
   }
   async function validateFreshBasis(before: TranslationImportState, basis: TranslationPreview, ticket: number, meta: string, proof: () => boolean) {
     const scope = await sourceCommands.scope(session);
@@ -425,23 +462,8 @@ export function TranslationImportSession({ project, children }: { project: Proje
   }
   async function checkReceipt(actionId: string) {
     const pending = current().uncertain.find(value => value.request.actionId === actionId); if (!pending) return;
-    await run(async () => {
-      let original = { ...pending, receiptChecked: false }; replacePending(original);
-      const receipt = await executionCommands.receipt({ ...session, actionId });
-      if (!live()) return;
-      if (!receipt) {
-        if (original.receipt) throw invalid();
-        replacePending({ ...original, receiptChecked: true }); update(before => ({ ...before, receiptMessage: "missing" })); return;
-      }
-      original = verifyReceipt(original, receipt); replacePending(original);
-      if (!original.prepared) {
-        const prepared = await translationCommands.prepare(original.request);
-        if (!live()) return;
-        confirmTranslationAction(original.request, original.recoveryUnitId, prepared);
-        original = { ...original, prepared }; replacePending(original);
-      }
-      settle(original, receipt);
-    }, true);
+    const originalFailure = current().failure;
+    await run(async () => { await lookupAdoption(pending,originalFailure); }, true);
   }
   async function retryAction(actionId: string) {
     const pending = current().uncertain.find(value => value.request.actionId === actionId);

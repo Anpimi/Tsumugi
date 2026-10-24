@@ -155,18 +155,20 @@ function installTranslationEditor() {
   let text: string | null = null;
   let selection: { eventId: string; revisionId: string; unitId: string; locale: string; actionId: string; sequence: string; previousEventId: string | null } | null = null;
   let onSave: (request: Record<string, unknown>, commit: () => unknown) => Promise<unknown> = async (_request, commit) => commit();
+  const savedActions = new Map<string, { request: Record<string, unknown>; receipt: unknown }>();
   const commit = (request: Record<string, unknown>) => {
     const sequence = (BigInt(selection?.sequence ?? "0") + 1n).toString();
     const actionId = String(request.actionId), unitId = String(request.unitId), locale = String(request.locale);
     const previousEventId = selection?.eventId ?? null;
     selection = { eventId: fixtureIdentity(502 + Number(sequence)), revisionId: fixtureIdentity(503 + Number(sequence)), unitId, locale, actionId, sequence, previousEventId };
     text = String(request.text);
-    return { projectId: request.projectId, actionId,
+    const receipt = { projectId: request.projectId, actionId,
       basis: { sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), selectionId: selection.eventId },
       selection,
       revision: { revisionId: selection.revisionId, unitId, locale, actionId, ordinal: sequence, text,
         sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), originKind: "manual", contributors: [],
         attemptId: null, resultId: null, itemId: null, artifactId: null, logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null } };
+    savedActions.set(actionId, { request: structuredClone(request), receipt }); return receipt;
   };
   mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     const locale = String(args?.request?.locale ?? "zh-CN");
@@ -181,6 +183,11 @@ function installTranslationEditor() {
     };
     if (command === "create_execution_identity") return fixtureIdentity(1 + mocks.invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length);
     if (command === "save_translation_revision") return onSave(args.request, () => commit(args.request));
+    if (command === "read_translation_save_action") {
+      const record = savedActions.get(String(args.request.actionId));
+      if (record) expect(args.request).toEqual(record.request);
+      return record?.receipt ?? null;
+    }
     if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
     if (command === "list_execution_tasks") return [];
     return projectView();

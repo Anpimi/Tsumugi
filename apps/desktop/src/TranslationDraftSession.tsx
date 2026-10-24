@@ -4,7 +4,7 @@ import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext } from "./executionCommands";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { sourceCommands } from "./sourceCommands";
-import { translationCommands, confirmTranslationSelection, type TranslationRevision, type TranslationSelectRequest, type TranslationSaveReceipt, type TranslationSaveRequest, type TranslationSelection } from "./translationCommands";
+import { translationCommands, type TranslationRevision, type TranslationSelectRequest, type TranslationSaveReceipt, type TranslationSaveRequest, type TranslationSelection } from "./translationCommands";
 
 interface DraftIdentity { unitId: string; locale: string; sourceRevisionId: string; key: string; sourceText: string }
 interface DraftPending { request: TranslationSaveRequest; submittedSeq: number }
@@ -19,6 +19,7 @@ export interface TranslationDraft extends DraftIdentity {
   pendingSelection: SelectionPending | null;
   selecting: boolean;
   saving: boolean;
+  checkingAction: "save" | "selection" | null;
   outcomeUnknown: boolean;
   receiptCheck: "found" | "missing" | null;
   receiptKind: "save" | "selection" | null;
@@ -95,7 +96,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     const existing = currentDraft.current;
     if (!mounted.current || inFlight.current || existing?.selecting || existing?.pending || existing?.pendingSelection || (existing && (existing.text !== (existing.baseText ?? "") || existing.newerDraftSaved))) return false;
     update(() => ({ ...identity, baseSelectionId: selection?.eventId ?? null, baseRevisionId: selection?.revisionId ?? null,
-      baseText, text: suggestedText ?? baseText ?? "", editSeq: 0, pending: null, pendingSelection: null, selecting: false, saving: false,
+      baseText, text: suggestedText ?? baseText ?? "", editSeq: 0, pending: null, pendingSelection: null, selecting: false, saving: false, checkingAction: null,
       outcomeUnknown: false, receiptCheck: null, receiptKind: null, newerDraftSaved: false, failure: null }));
     return true;
   }
@@ -116,23 +117,66 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     const value = currentDraft.current;
     return !!value && value.editSeq === seq && value.text === text;
   }
-  function confirm(request: TranslationSaveRequest, submittedSeq: number, receipt: TranslationSaveReceipt): SaveResult {
+  function confirm(pending: DraftPending, receipt: TranslationSaveReceipt): SaveResult {
+    const { request, submittedSeq } = pending;
     const before = currentDraft.current;
-    if (!mounted.current || !before || before.pending?.request.actionId !== request.actionId
+    if (!mounted.current || !before || before.pending !== pending
       || before.unitId !== request.unitId || before.locale !== request.locale || before.sourceRevisionId !== request.sourceRevisionId) {
       return { saved: false, savedCurrent: false, submittedSeq, submittedText: request.text };
     }
     const savedCurrent = before.editSeq === submittedSeq && before.text === request.text;
     update(value => value ? { ...value, baseSelectionId: receipt.selection.eventId,
       baseRevisionId: receipt.selection.revisionId, baseText: receipt.revision.text,
-      text: savedCurrent ? receipt.revision.text : value.text, pending: null, saving: false,
+      text: savedCurrent ? receipt.revision.text : value.text, pending: null, saving: false, checkingAction: null,
       outcomeUnknown: false, newerDraftSaved: !savedCurrent, failure: null } : value);
     return { saved: true, savedCurrent, submittedSeq, submittedText: request.text };
+  }
+  function unsaved(pending: DraftPending | null): SaveResult {
+    return { saved: false, savedCurrent: false, submittedSeq: pending?.submittedSeq ?? 0, submittedText: pending?.request.text ?? "" };
+  }
+  async function lookupSavedAction(pending: DraftPending): Promise<SaveResult> {
+    const empty = unsaved(pending);
+    if (!mounted.current || currentDraft.current?.pending !== pending) return empty;
+    update(value => value?.pending === pending ? { ...value, checkingAction: "save", receiptCheck: null, failure: null } : value);
+    try {
+      const receipt = await translationCommands.saveAction(pending.request);
+      if (!mounted.current || currentDraft.current?.pending !== pending) return empty;
+      if (receipt === null) {
+        update(value => value?.pending === pending ? { ...value, receiptCheck: "missing", outcomeUnknown: true } : value); return empty;
+      }
+      const result = confirm(pending, receipt);
+      if (result.saved) update(value => value ? { ...value, receiptCheck: "found" } : value);
+      return result;
+    } finally {
+      if (mounted.current) update(value => value?.pending === pending ? { ...value, checkingAction: null } : value);
+    }
+  }
+  async function dispatchSave(pending: DraftPending, recovering: boolean): Promise<SaveResult> {
+    const empty = unsaved(pending);
+    let writeFailure: CommandFailure | null = null;
+    try { return confirm(pending, await translationCommands.save(pending.request)); }
+    catch (error) {
+      if (!mounted.current || currentDraft.current?.pending !== pending) return empty;
+      const unknown = hasUnknownOutcome(error); writeFailure = commandFailure(error);
+      update(value => value?.pending === pending ? { ...value, pending: recovering || unknown ? pending : null,
+        outcomeUnknown: recovering || unknown, failure: unknown ? null : writeFailure } : value);
+      if (!unknown) return empty;
+    }
+    // A failed read cannot enter the write catch or dispatch another mutation.
+    try {
+      const result = await lookupSavedAction(pending);
+      if (mounted.current) update(value => value?.pending === pending ? { ...value, failure: writeFailure } : value);
+      return result;
+    } catch (error) {
+      if (mounted.current) update(value => value?.pending === pending ? { ...value, failure: commandFailure(error), outcomeUnknown: true } : value);
+      return empty;
+    }
   }
   async function save(): Promise<SaveResult> {
     const start = currentDraft.current;
     const empty = { saved: false, savedCurrent: false, submittedSeq: start?.editSeq ?? 0, submittedText: start?.text ?? "" };
-    if (!mounted.current || !start || inFlight.current || mutation.current || start.pendingSelection || !projectRef.current.metadata.targetLocales.includes(start.locale)) return empty;
+    if (!mounted.current || !start || inFlight.current || mutation.current || start.pendingSelection
+      || start.pending && start.receiptCheck !== "missing" || !projectRef.current.metadata.targetLocales.includes(start.locale)) return empty;
     inFlight.current = true;
     const submittedSeq = start.pending?.submittedSeq ?? start.editSeq;
     const submittedText = start.pending?.request.text ?? start.text;
@@ -147,42 +191,30 @@ export function TranslationDraftSession({ project, children }: { project: Projec
         update(value => value ? { ...value, saving: false } : value);
         return empty;
       }
-      update(value => value ? { ...value, pending: { request, submittedSeq } } : value);
-      const receipt = await translationCommands.save(request);
-      return confirm(request, submittedSeq, receipt);
+      const pending = start.pending ?? { request, submittedSeq };
+      update(value => value ? { ...value, pending } : value);
+      return await dispatchSave(pending, start.pending !== null);
     } catch (error) {
-      if (mounted.current) update(value => value ? { ...value, saving: false,
-        pending: hasUnknownOutcome(error) ? value.pending : null,
-        outcomeUnknown: hasUnknownOutcome(error), failure: commandFailure(error) } : value);
+      if (mounted.current) update(value => value ? { ...value, failure: commandFailure(error) } : value);
       return empty;
-    } finally { inFlight.current = false; }
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) update(value => value ? { ...value, saving: false } : value);
+    }
   }
   async function checkSavedAction(): Promise<SaveResult> {
-    const pending = currentDraft.current?.pending;
-    const empty = { saved: false, savedCurrent: false, submittedSeq: pending?.submittedSeq ?? 0,
-      submittedText: pending?.request.text ?? "" };
+    const pending = currentDraft.current?.pending, previousFailure = currentDraft.current?.failure ?? null;
+    const empty = unsaved(pending ?? null);
     if (!mounted.current || !pending || inFlight.current) return empty;
     inFlight.current = true;
-    update(value => value ? { ...value, saving: true, failure: null } : value);
-    const request = pending.request;
+    update(value => value?.pending === pending ? { ...value, saving: true, failure: null } : value);
     try {
-      const selection = await translationCommands.action({ ...executionContext(projectRef.current),
-        actionId: request.actionId, unitId: request.unitId, locale: request.locale });
-      if (!mounted.current) return empty;
-      if (!selection) { update(value => value ? { ...value, receiptCheck: "missing" } : value); return empty; }
-      if (selection.actionId !== request.actionId || selection.unitId !== request.unitId || selection.locale !== request.locale) {
-        update(value => value ? { ...value, failure: "invalid-save-receipt" } : value); return empty;
-      }
-      const receipt = await translationCommands.save(request);
-      if (!mounted.current) return empty;
-      if (receipt.selection.eventId !== selection.eventId || receipt.selection.revisionId !== selection.revisionId) {
-        update(value => value ? { ...value, failure: "invalid-save-receipt" } : value); return empty;
-      }
-      const result = confirm(request, pending.submittedSeq, receipt);
-      if (result.saved) update(value => value ? { ...value, receiptCheck: "found" } : value);
+      const result = await lookupSavedAction(pending);
+      if (mounted.current) update(value => value?.pending === pending ? { ...value, failure: previousFailure } : value);
       return result;
-    } catch (error) {
-      if (mounted.current) update(value => value ? { ...value, failure: commandFailure(error), outcomeUnknown: true } : value);
+    }
+    catch (error) {
+      if (mounted.current) update(value => value?.pending === pending ? { ...value, failure: commandFailure(error), outcomeUnknown: true } : value);
       return empty;
     } finally {
       inFlight.current = false;
@@ -196,27 +228,53 @@ export function TranslationDraftSession({ project, children }: { project: Projec
       || before.locale !== pending.request.locale || before.sourceRevisionId !== pending.request.sourceRevisionId) return false;
     const sameInput = before.editSeq === pending.submittedSeq;
     update(value => value ? { ...value, baseSelectionId: selection.eventId, baseRevisionId: selection.revisionId,
-      baseText: pending.text, text: sameInput ? pending.text : value.text, pendingSelection: null, selecting: false,
+      baseText: pending.text, text: sameInput ? pending.text : value.text, pendingSelection: null, selecting: false, checkingAction: null,
       newerDraftSaved: !sameInput, outcomeUnknown: false, receiptCheck: "found", failure: null } : value);
     const token = selectionReservation.current;
     selectionReservation.current = null;
     if (token) releaseMutation(token);
     return true;
   }
+  async function lookupSelection(original: SelectionPending) {
+    if (!mounted.current || currentDraft.current?.pendingSelection !== original) return false;
+    update(value => value?.pendingSelection === original ? { ...value, checkingAction: "selection", failure: null, receiptCheck: null } : value);
+    try {
+      const selection = await translationCommands.selectionAction(original.request);
+      if (!mounted.current || currentDraft.current?.pendingSelection !== original) return false;
+      if (selection === null) {
+        update(value => value?.pendingSelection === original ? { ...value, pendingSelection: { ...original, receiptChecked: true }, receiptCheck: "missing", outcomeUnknown: true } : value);
+        return false;
+      }
+      return confirmSelection(original, selection);
+    } finally {
+      if (mounted.current) update(value => value?.pendingSelection?.request === original.request ? { ...value, checkingAction: null, selecting: false } : value);
+    }
+  }
   async function dispatchSelection(pending: SelectionPending, recovering = false) {
     if (!mounted.current) return false;
     update(value => value ? { ...value, pendingSelection: { ...pending, receiptChecked: false }, selecting: true, failure: null, receiptCheck: null, receiptKind: "selection" } : value);
     const original = currentDraft.current?.pendingSelection;
     if (!original) return false;
+    let writeFailure: CommandFailure | null = null;
     try {
       const selection = await translationCommands.select(original.request);
       return confirmSelection(original, selection);
     } catch (error) {
-      if (mounted.current) update(value => value?.pendingSelection === original ? { ...value, selecting: false,
-        pendingSelection: recovering || hasUnknownOutcome(error) ? original : null, outcomeUnknown: recovering || hasUnknownOutcome(error), failure: commandFailure(error) } : value);
-      if (!recovering && !hasUnknownOutcome(error)) {
+      if (!mounted.current || currentDraft.current?.pendingSelection !== original) return false;
+      const unknown = hasUnknownOutcome(error); writeFailure = commandFailure(error);
+      if (mounted.current) update(value => value?.pendingSelection === original ? { ...value, selecting: unknown,
+        pendingSelection: recovering || unknown ? original : null, outcomeUnknown: recovering || unknown, failure: unknown ? null : writeFailure } : value);
+      if (!recovering && !unknown) {
         const token = selectionReservation.current; selectionReservation.current = null; if (token) releaseMutation(token);
       }
+      if (!unknown) return false;
+    }
+    try {
+      const confirmed = await lookupSelection(original);
+      if (mounted.current) update(value => value?.pendingSelection?.request === original.request ? { ...value, failure: writeFailure } : value);
+      return confirmed;
+    } catch (error) {
+      if (mounted.current) update(value => value?.pendingSelection?.request === original.request ? { ...value, failure: commandFailure(error), outcomeUnknown: true } : value);
       return false;
     }
   }
@@ -257,24 +315,17 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     }
   }
   async function checkSelection() {
-    const pending = currentDraft.current?.pendingSelection;
+    const pending = currentDraft.current?.pendingSelection, previousFailure = currentDraft.current?.failure ?? null;
     if (!pending || currentDraft.current?.selecting || !mounted.current) return false;
     update(value => value ? { ...value, selecting: true, failure: null, receiptCheck: null,
       pendingSelection: { ...pending, receiptChecked: false } } : value);
     const original = currentDraft.current!.pendingSelection!;
     try {
-      const selection = await translationCommands.action({ projectId: original.request.projectId, sessionToken: original.request.sessionToken,
-        actionId: original.request.actionId, unitId: original.request.unitId, locale: original.request.locale });
-      if (!mounted.current || currentDraft.current?.pendingSelection !== original) return false;
-      if (!selection) {
-        update(value => value ? { ...value, pendingSelection: { ...original, receiptChecked: true }, receiptCheck: "missing" } : value); return false;
-      }
-      confirmTranslationSelection(original.request, selection);
-      // Replay only the original request: Core checks its digest before current eligibility.
-      const confirmed = await translationCommands.select(original.request);
-      if (confirmed.eventId !== selection.eventId || confirmed.sequence !== selection.sequence) throw new Error("Invalid selection acknowledgement");
-      return confirmSelection(original, confirmed);
-    } catch (error) { if (mounted.current) update(value => value ? { ...value, failure: commandFailure(error), outcomeUnknown: true } : value); return false; }
+      const confirmed = await lookupSelection(original);
+      if (mounted.current) update(value => value?.pendingSelection?.request === original.request ? { ...value, failure: previousFailure } : value);
+      return confirmed;
+    }
+    catch (error) { if (mounted.current) update(value => value?.pendingSelection === original ? { ...value, failure: commandFailure(error), outcomeUnknown: true } : value); return false; }
     finally { if (mounted.current) update(value => value ? { ...value, selecting: false } : value); }
   }
   async function retrySelection() {

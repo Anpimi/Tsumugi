@@ -32,8 +32,10 @@ export interface SourceDraftState {
   editSeq: number;
   pendingStart: StartRequest | null;
   pendingApply: SourceAdoptRequest | null;
+  pendingApplyUnitId: string | null;
   preparedAction: AdoptionAction | null;
   receiptChecked: boolean;
+  checkingReceipt: boolean;
   busyMutation: boolean;
   failure: CommandFailure | null;
   receipt: Receipt | null;
@@ -90,7 +92,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     sourceLanguage: project.metadata.sourceLocale, declared: false, preflight: null, attempt: null, preview: null,
     comparison: null, updating: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null,
     historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null,
-    pendingApply: null, preparedAction: null, receiptChecked: false, busyMutation: false, failure: null, receipt: null, completionVersion: 0 }));
+    pendingApply: null, pendingApplyUnitId: null, preparedAction: null, receiptChecked: false, checkingReceipt: false, busyMutation: false, failure: null, receipt: null, completionVersion: 0 }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(0);
   const captureFlight = useRef(0), pendingReceipt = useRef<{ request: SourceAdoptRequest; receipt: Receipt } | null>(null);
   const basisVersion = useRef(0), identity = useRef<ReadyIdentity | null>(null), submittedSeq = useRef(0);
@@ -233,28 +235,67 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     update(before => {
       if (before.pendingApply !== request) return before;
       const newer = before.editSeq !== submittedSeq.current;
-      return { ...before, receipt, pendingApply: null, preparedAction: null, receiptChecked: false, confirmed: false,
+      return { ...before, receipt, pendingApply: null, pendingApplyUnitId: null, preparedAction: null, receiptChecked: false, checkingReceipt: false, confirmed: false,
         estimate: null, failure: null, stale: newer, ...(newer ? {} : { preview: null, comparison: null, lineage: {}, actor: "", attempt: null, selection: null, preflight: null, updating: false }),
         completionVersion: before.completionVersion + 1 };
     });
     pendingReceipt.current = null;
   }
-  async function dispatchApply(request: SourceAdoptRequest, unitId: string) {
+  function verifyAction(request: SourceAdoptRequest, unitId: string, action: AdoptionAction) {
+    confirmSourceAction(request, unitId, action);
+    if (current().preparedAction && current().preparedAction!.cancellationRevision !== action.cancellationRevision) invalidAcknowledgement();
+  }
+  async function lookupAdoption(request: SourceAdoptRequest, unitId: string) {
+    const ticket = flight.current;
+    const currentRequest = () => live() && flight.current === ticket && !!ticket
+      && current().pendingApply === request && current().pendingApplyUnitId === unitId;
+    if (!currentRequest()) return;
+    update(before => ({ ...before, checkingReceipt: true, receiptChecked: false, failure: null }));
+    try {
+      const value = await sourceCommands.adoptionAction({ adoption: request, unitId });
+      if (!currentRequest()) return;
+      if (value === null) {
+        if (pendingReceipt.current?.request === request) invalidAcknowledgement();
+        update(before => ({ ...before, receiptChecked: true }));
+        return;
+      }
+      // Keep the first matching receipt fixed even if its action proof is bad.
+      if (value.receipt !== null) verifyReceipt(request, value.receipt, unitId);
+      verifyAction(request, unitId, value.action);
+      if (value.receipt === null && pendingReceipt.current?.request === request) invalidAcknowledgement();
+      update(before => ({ ...before, preparedAction: value.action }));
+      if (value.receipt !== null) settlement(request, value.receipt, unitId);
+      else update(before => ({ ...before, receiptChecked: true }));
+    } finally {
+      if (currentRequest()) update(before => ({ ...before, checkingReceipt: false }));
+    }
+  }
+  async function dispatchApply(request: SourceAdoptRequest, unitId: string, recovering = false) {
     if (!live()) return;
     if (pendingReceipt.current?.request !== request) pendingReceipt.current = null;
-    update(before => ({ ...before, pendingApply: request, receiptChecked: false }));
+    update(before => ({ ...before, pendingApply: request, pendingApplyUnitId: unitId, receiptChecked: false }));
+    let writeFailure: CommandFailure | null = null;
     try {
       const action = await sourceCommands.prepare(request);
-      if (!live()) return;
-      confirmSourceAction(request, unitId, action);
-      if (current().preparedAction && current().preparedAction!.cancellationRevision !== action.cancellationRevision) invalidAcknowledgement();
+      if (!live() || current().pendingApply !== request || current().pendingApplyUnitId !== unitId) return;
+      verifyAction(request, unitId, action);
       update(before => before.pendingApply === request ? { ...before, preparedAction: action } : before);
       const receipt = await executionCommands.adopt({ projectId: request.projectId, sessionToken: request.sessionToken, actionId: request.actionId });
-      if (live()) settlement(request, receipt, unitId);
+      if (live() && current().pendingApply === request && current().pendingApplyUnitId === unitId) settlement(request, receipt, unitId);
+      return;
     } catch (error) {
-      if (!hasUnknownOutcome(error)) update(before => before.pendingApply === request ? { ...before, pendingApply: null, preparedAction: null, receiptChecked: false } : before);
-      throw error;
+      if (!live() || current().pendingApply !== request) return;
+      if (!hasUnknownOutcome(error)) {
+        if (!recovering) update(before => ({ ...before, pendingApply: null, pendingApplyUnitId: null, preparedAction: null, receiptChecked: false }));
+        throw error;
+      }
+      writeFailure = commandFailure(error);
     }
+    // A failed lookup is not another lost write acknowledgement.
+    try {
+      await lookupAdoption(request, unitId);
+      if (live() && current().pendingApply === request) update(before => ({ ...before, failure: writeFailure }));
+    } catch (error) { if (live() && current().pendingApply === request) fail(error); }
   }
   function adoptionRequest(before: SourceDraftState): Omit<SourceAdoptRequest, "actionId"> | null {
     const basis = before.comparison ?? before.preview;
@@ -277,35 +318,18 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     });
   }
   async function checkReceipt() {
-    const request = current().pendingApply, unitId = identity.current?.unitId;
+    const request = current().pendingApply, unitId = current().pendingApplyUnitId, previousFailure = current().failure;
     if (!request || !unitId) return;
     await run(async () => {
-      update(before => ({ ...before, receiptChecked: false }));
-      const receipt = await executionCommands.receipt({ projectId: request.projectId, sessionToken: request.sessionToken, actionId: request.actionId });
-      if (!live() || current().pendingApply !== request) return;
-      if (receipt) {
-        verifyReceipt(request, receipt, unitId);
-        // A receipt digest cannot be reconstructed here. Recover the original
-        // action when its preparation acknowledgement was never verified.
-        if (!current().preparedAction) {
-          const action = await sourceCommands.prepare(request);
-          if (!live() || current().pendingApply !== request) return;
-          confirmSourceAction(request, unitId, action);
-          update(before => ({ ...before, preparedAction: action }));
-        }
-        settlement(request, receipt, unitId);
-      }
-      else {
-        if (pendingReceipt.current?.request === request) invalidAcknowledgement();
-        update(before => ({ ...before, receiptChecked: true }));
-      }
+      await lookupAdoption(request, unitId);
+      if (live() && current().pendingApply === request) update(before => ({ ...before, failure: previousFailure }));
     }, true);
   }
   async function retryApply() {
-    const request = current().pendingApply, unitId = identity.current?.unitId;
-    if (request && unitId && current().receiptChecked) await run(() => dispatchApply(request, unitId), true);
+    const request = current().pendingApply, unitId = current().pendingApplyUnitId;
+    if (request && unitId && current().receiptChecked) await run(() => dispatchApply(request, unitId, true), true);
   }
-  function keepOutput() { if (!flight.current && current().receiptChecked) update(before => ({ ...before, pendingApply: null, preparedAction: null, receiptChecked: false, confirmed: false })); }
+  function keepOutput() { if (!flight.current && current().receiptChecked) { pendingReceipt.current = null; update(before => ({ ...before, pendingApply: null, pendingApplyUnitId: null, preparedAction: null, receiptChecked: false, confirmed: false })); } }
   async function estimate(isCurrent: () => boolean) {
     const before = current(), request = adoptionRequest(before), version = basisVersion.current;
     if (!request || !before.comparison || before.stale) return;

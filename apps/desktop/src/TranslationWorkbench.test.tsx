@@ -10,6 +10,7 @@ import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { translationActionFixture, translationAttemptFixture, translationReceiptFixture, translationRecoveryUnit } from "./testSupport/translationFixture";
 import type { TranslationAdoptRequest } from "./translationCommands";
+import { validateRequestSave, validateRequestSelect } from "./generated/translation.validators";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
@@ -38,6 +39,7 @@ let conflicting: boolean;
 let identity: number;
 let importActions: Map<string, TranslationAdoptRequest>;
 let savedActions: Map<string, ReturnType<typeof saveReceipt>>;
+let savedRequests: Map<string, Record<string, unknown>>;
 function saveReceipt(request: Record<string, unknown>) {
   const prior = history.current?.unitId === request.unitId ? history.current : null;
   const sequence = (BigInt(prior?.sequence ?? "0") + 1n).toString();
@@ -51,6 +53,11 @@ function saveReceipt(request: Record<string, unknown>) {
   return { projectId: String(request.projectId), actionId, selection, revision,
     basis: { sourceSnapshotId: revision.sourceSnapshotId, sourceRevisionId: revision.sourceRevisionId, selectionId: selection.eventId } };
 }
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 function seedSelectedTranslation(text = "Saved base") {
   const receipt = saveReceipt({ projectId: project.metadata.projectId, actionId: fixtureIdentity(601),
     unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), expectedSelectionId: null, text });
@@ -60,7 +67,7 @@ function seedSelectedTranslation(text = "Saved base") {
 }
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
-  invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map(); importActions = new Map();
+  invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map(); savedRequests = new Map(); importActions = new Map();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
@@ -91,15 +98,27 @@ beforeEach(async () => {
     if (command === "prepare_translation_adoption") { const request = args.request as unknown as TranslationAdoptRequest; importActions.set(request.actionId, request); return translationActionFixture(request, translationRecoveryUnit(preview.rows[0])); }
     if (command === "adopt_execution") { applied = true; const request = importActions.get(String(args.request.actionId))!; return translationReceiptFixture(request, translationRecoveryUnit(preview.rows[0]), request.confirmation.expectedSelectionId ? "1" : null); }
     if (command === "save_translation_revision") {
+      if (!validateRequestSave(args.request)) throw new Error("Invalid save request");
       const existing = savedActions.get(String(args.request.actionId));
       if (existing) return existing;
       const receipt = saveReceipt(args.request);
       savedActions.set(receipt.actionId, receipt);
+      savedRequests.set(receipt.actionId, structuredClone(args.request));
       history = { ...emptyHistory, total: receipt.revision.ordinal, current: receipt.selection,
         currentText: receipt.revision.text, rows: [receipt.revision] };
       return receipt;
     }
-    if (command === "read_execution_receipt") return null;
+    if (command === "read_translation_save_action") {
+      if (!validateRequestSave(args.request)) throw new Error("Invalid save lookup request");
+      const actionId = args.request.actionId;
+      if (savedRequests.has(actionId)) expect(args.request).toEqual(savedRequests.get(actionId));
+      return savedActions.get(actionId) ?? null;
+    }
+    if (command === "read_translation_selection_action") {
+      if (!validateRequestSelect(args.request)) throw new Error("Invalid selection lookup request");
+      return null;
+    }
+    if (command === "read_translation_adoption_action") throw new Error("Automatic lookup unavailable");
     throw new Error(command);
   });
 });
@@ -205,14 +224,14 @@ it("saves the captured dirty draft after consumer remount even when its referenc
 it("keeps an unknown original action across translation consumer unmount and checks that exact request", async () => {
   seedSelectedTranslation();
   const originalInvoke = invoke.getMockImplementation()!;
-  let loseFirstResponse = true;
+  let loseFirstResponse = true, lookups = 0;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "save_translation_revision" && loseFirstResponse) {
       loseFirstResponse = false;
       await originalInvoke(command, args);
-      throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+      throw { code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true };
     }
-    if (command === "read_translation_action") return history.current;
+    if (command === "read_translation_save_action" && lookups++ === 0) throw new Error("Saved action temporarily unavailable");
     return originalInvoke(command, args);
   });
   const user = userEvent.setup();
@@ -232,24 +251,22 @@ it("keeps an unknown original action across translation consumer unmount and che
   await user.click(screen.getByRole("button", { name: "Check saved result" }));
   expect(await screen.findByText(/The original save was confirmed/)).toBeInTheDocument();
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
-  expect(saves).toHaveLength(2);
-  expect(saves[1][1].request).toEqual(firstSave);
-  expect(invoke.mock.calls.find(([name]) => name === "read_translation_action")?.[1].request)
-    .toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN", actionId: firstSave.actionId });
+  expect(saves).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([firstSave, firstSave]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeCheck);
 });
 
 it("shows the original source and newer draft after an unknown save, unmount, and target removal", async () => {
   seedSelectedTranslation();
   const originalInvoke = invoke.getMockImplementation()!;
-  let loseFirstResponse = true;
+  let loseFirstResponse = true, lookups = 0;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "save_translation_revision" && loseFirstResponse) {
       loseFirstResponse = false;
       await originalInvoke(command, args);
-      throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+      throw { code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true };
     }
-    if (command === "read_translation_action") return history.current;
+    if (command === "read_translation_save_action" && lookups++ === 0) throw new Error("Saved action temporarily unavailable");
     return originalInvoke(command, args);
   });
   const user = userEvent.setup();
@@ -279,10 +296,8 @@ it("shows the original source and newer draft after an unknown save, unmount, an
   await user.click(screen.getByRole("button", { name: "Check saved result" }));
   expect(await screen.findByText(/The original save was confirmed/)).toBeInTheDocument();
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
-  expect(saves).toHaveLength(2);
-  expect(saves[1][1].request).toEqual(originalSave);
-  expect(invoke.mock.calls.find(([name]) => name === "read_translation_action")?.[1].request)
-    .toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN", actionId: originalSave.actionId });
+  expect(saves).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([originalSave, originalSave]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeCheck);
 });
 
@@ -569,17 +584,17 @@ it("accepts an in-flight save acknowledgement after removal without overwriting 
     .toMatchObject({ locale: "zh-CN", expectedSelectionId: confirmedSelection, text: "Saved baseAB" });
 });
 
-it("checks an uncertain original save action after removal before accepting its exact replay", async () => {
+it("checks an uncertain original save action after removal without replaying its mutation", async () => {
   seedSelectedTranslation();
   const originalInvoke = invoke.getMockImplementation()!;
-  let loseFirstResponse = true;
+  let loseFirstResponse = true, lookups = 0;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "save_translation_revision" && loseFirstResponse) {
       loseFirstResponse = false;
       await originalInvoke(command, args);
-      throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+      throw { code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true };
     }
-    if (command === "read_translation_action") return history.current;
+    if (command === "read_translation_save_action" && lookups++ === 0) throw new Error("Saved action temporarily unavailable");
     return originalInvoke(command, args);
   });
   const user = userEvent.setup();
@@ -599,15 +614,14 @@ it("checks an uncertain original save action after removal before accepting its 
   expect(await screen.findByText(/The original save was confirmed/)).toBeInTheDocument();
   expect(editor).toHaveValue("Saved baseAB");
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
-  expect(saves).toHaveLength(2);
-  expect(saves[1][1].request).toEqual(firstSave);
-  expect(invoke.mock.calls.find(([name]) => name === "read_translation_action")?.[1].request)
-    .toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN", actionId: firstSave.actionId });
+  expect(saves).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([firstSave, firstSave]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeCheck);
 });
 
 it("keeps an in-flight import attempt and an uncertain adoption checkable after target removal", async () => {
   const originalInvoke = invoke.getMockImplementation()!;
+  let adoptionLookups = 0;
   let releaseStart!: () => void;
   let delayStart = true;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
@@ -615,8 +629,8 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
       delayStart = false;
       return new Promise(resolve => { releaseStart = () => resolve(args.request.attemptId); });
     }
-    if (command === "adopt_execution") return Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "adopt", recoveryRequired: true });
-    if (command === "read_execution_receipt") return null;
+    if (command === "adopt_execution") return Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true });
+    if (command === "read_translation_adoption_action") return ++adoptionLookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : null;
     return originalInvoke(command, args);
   });
   const user = userEvent.setup();
@@ -652,8 +666,8 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
   rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "4" } }} disabled={false} />);
   expect(screen.getByRole("button", { name: "Retry the same action" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Check the uncertain action's receipt" }));
-  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_execution_receipt")).toBe(true));
-  expect(invoke.mock.calls.find(([name]) => name === "read_execution_receipt")?.[1].request.actionId).toBe(originalAction);
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_translation_adoption_action")).toHaveLength(2));
+  expect(invoke.mock.calls.find(([name]) => name === "read_translation_adoption_action")?.[1].request.adoption.actionId).toBe(originalAction);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
 });
 
@@ -762,7 +776,7 @@ it("confirms a save without a second editor or history read and preserves newer 
   expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
 });
 
-it("retains the action when a committed save has a malformed acknowledgement", async () => {
+it("confirms a committed save with a malformed acknowledgement through one read without retrying", async () => {
   const original = invoke.getMockImplementation()!;
   let malformed = true;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
@@ -778,14 +792,15 @@ it("retains the action when a committed save has a malformed acknowledgement", a
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
   await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Saved once");
+  const identitiesBeforeSave = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
   await user.click(screen.getByRole("button", { name: "Save revision" }));
-  const identitiesBeforeRetry = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
-  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+  await screen.findByText(i18n.t("translation.savedActionFound"));
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
-  expect(saves).toHaveLength(2);
-  expect(saves[1][1].request).toEqual(saves[0][1].request);
-  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeRetry);
+  expect(saves).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([saves[0][1].request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeSave + 1);
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
 });
 
 it("registers scoped save-and-next without a shortcut and dispatches the live command once", async () => {
@@ -830,14 +845,15 @@ it.each([
   { acknowledgement: "unknown", newer: true },
   { acknowledgement: "malformed", newer: false },
   { acknowledgement: "malformed", newer: true },
-])("retries the original save-and-next request before moving ($acknowledgement, newer=$newer)", async ({ acknowledgement, newer }) => {
+])("checks the original save-and-next request once before moving ($acknowledgement, newer=$newer)", async ({ acknowledgement, newer }) => {
   const original = invoke.getMockImplementation()!;
-  let first = true;
+  let first = true, completeLookup!: () => Promise<void>;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_translation_save_action") return new Promise(resolve => { completeLookup = async () => resolve(await original(command, args)); });
     const value = await original(command, args);
     if (command === "save_translation_revision" && first) {
       first = false;
-      if (acknowledgement === "unknown") throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+      if (acknowledgement === "unknown") throw { code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true };
       return { ...value, actionId: fixtureIdentity(999) };
     }
     return value;
@@ -849,21 +865,21 @@ it.each([
   const editor = await screen.findByRole("textbox", { name: "Your draft" });
   await user.type(editor, "A");
   await user.click(screen.getByRole("button", { name: "Save and next" }));
-  await screen.findByRole("alert");
+  await screen.findByText(i18n.t("translation.checkingSavedAction"));
   expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
   const originalRequest = invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1].request;
   const identities = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
   if (newer) await user.type(editor, "B");
-  expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+  await act(async () => { await completeLookup(); });
   await waitFor(() => {
     if (newer) expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
     else expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
   });
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
-  expect(saves).toHaveLength(2);
-  expect(saves[1][1].request).toEqual(originalRequest);
+  expect(saves).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([originalRequest]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identities);
   if (newer) {
     expect(editor).toHaveValue("AB");
@@ -942,12 +958,13 @@ it("keeps a cached list from granting navigation while its fresh confirmation is
   expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "read_review_neighbor")).toBe(false);
 });
 
-it.each(["leave", "leave-and-return", "remove-and-restore", "import", "import-and-return"])("settles the original save without advancing after the committed view changes (%s)", async change => {
+it.each(["leave", "leave-and-return", "remove-and-restore", "import", "import-and-return"].flatMap(change => ["write", "lookup"].map(waitAt => ({ change, waitAt }))))("settles the original save without advancing after $change during $waitAt", async ({ change, waitAt }) => {
   const original = invoke.getMockImplementation()!;
   let releaseSave!: () => Promise<void>;
   let delayed = true;
-  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "save_translation_revision" && delayed) {
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (waitAt === "lookup" && command === "save_translation_revision") { await original(command, args); throw new Error("Lost save acknowledgement"); }
+    if (command === (waitAt === "write" ? "save_translation_revision" : "read_translation_save_action") && delayed) {
       delayed = false;
       return new Promise(resolve => { releaseSave = async () => { resolve(await original(command, args)); }; });
     }
@@ -978,6 +995,7 @@ it.each(["leave", "leave-and-return", "remove-and-restore", "import", "import-an
   await act(async () => releaseSave());
   await waitFor(() => expect(history.currentText).toBe("A"));
   expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action")).toHaveLength(waitAt === "lookup" ? 1 : 0);
   expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
   expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page")).toHaveLength(summaries);
   expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(editorReads);
@@ -1329,11 +1347,11 @@ it("keeps the current editor when a neighboring entry is requested with a dirty 
 });
 
 it.each([
-  { code: "outcome-unknown", outcome: "unknown", reason: "commit" },
-  new Error("IPC response lost"),
-  { code: "dependency-conflict", outcome: "rejected" },
-  { code: "dependency-conflict", outcome: "rejected", stage: "execution-write", recoveryRequired: false },
-])("saves before leaving and retains an uncertain action for a checked retry: %s", async (failure) => {
+  { label: "typed unknown", failure: { code: "outcome-unknown", outcome: "unknown", reason: "commit", stage: "execution-adopt", recoveryRequired: true }, unknown: true },
+  { label: "transport failure", failure: new Error("IPC response lost"), unknown: true },
+  { label: "malformed rejection", failure: { code: "dependency-conflict", outcome: "rejected" }, unknown: true },
+  { label: "definite rejection", failure: { code: "dependency-conflict", outcome: "rejected", stage: "execution-adopt", recoveryRequired: false }, unknown: false },
+])("saves before leaving with a $label and retries only the appropriate request", async ({ failure, unknown }) => {
   const ref = createRef<TranslationHandle>();
   render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
   const user = userEvent.setup();
@@ -1348,15 +1366,84 @@ it.each([
     ? Promise.reject(failure)
     : original(command, args));
   await user.click(screen.getByRole("button", { name: "Save and continue" }));
-  expect(await screen.findByRole("button", { name: "Retry the same action" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Discard draft and continue" })).toBeDisabled();
+  const dialog = within(screen.getByRole("dialog")), retryName = unknown ? "Retry the same action" : "Save and continue";
+  await waitFor(() => expect(dialog.getByRole("button", { name: retryName })).toBeEnabled());
+  expect(dialog.getByRole("button", { name: "Discard draft and continue" }).matches(":disabled")).toBe(unknown);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action")).toHaveLength(unknown ? 1 : 0);
   invoke.mockImplementation(original);
-  await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+  await user.click(dialog.getByRole("button", { name: retryName }));
   expect(await decision).toBe(true);
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
   expect(saves).toHaveLength(2);
-  expect(saves[0][1].request.actionId).toBe(saves[1][1].request.actionId);
+  if (unknown) expect(saves[0][1].request).toEqual(saves[1][1].request);
+  else expect(saves[0][1].request.actionId).not.toBe(saves[1][1].request.actionId);
   expect(saves[1][1].request.text).toBe("Draft");
+});
+
+it.each([
+  { language: "en-US", change: "none" }, { language: "zh-CN", change: "none" },
+  { language: "en-US", change: "text" }, { language: "en-US", change: "composition" }, { language: "en-US", change: "proof" },
+])("checks a lost save inside the leave dialog without another write ($language, $change)", async ({ language, change }) => {
+  await i18n.changeLanguage(language);
+  const ref = createRef<TranslationHandle>(), original = invoke.getMockImplementation()!;
+  const write = deferred<ReturnType<typeof saveReceipt>>(), lookup = deferred<ReturnType<typeof saveReceipt> | null>();
+  let owner!: ReturnType<typeof useTranslationDraftSession>, proof = true, lookups = 0;
+  render(<><QueryProbe capture={(_reads, value) => { owner = value; }} /><TranslationWorkbench ref={ref} project={project} disabled={false} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("translation.title") }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: i18n.t("translation.draft") });
+  await user.type(editor, "A");
+  let leaving!: Promise<boolean>; act(() => { leaving = ref.current!.allowLeave(() => proof); });
+  const dialog = within(await screen.findByRole("dialog", { name: i18n.t("translation.leaveTitle") }));
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_translation_save_action") {
+      if (++lookups === 1) throw { code: "storage-failed", stage: "execution-recover", outcome: "rejected", recoveryRequired: false,
+        reason: "save-action-read", diagnosticId: fixtureIdentity(998) };
+      return lookup.promise;
+    }
+    const value = await original(command, args); return command === "save_translation_revision" ? write.promise : value;
+  });
+  const identitiesBeforeSave = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
+  await user.click(dialog.getByRole("button", { name: i18n.t("translation.saveAndContinue") }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1));
+  expect(owner.current()).toMatchObject({ saving: true, checkingAction: null });
+  expect(dialog.queryByText(i18n.t("translation.checkingSavedAction"))).not.toBeInTheDocument();
+  expect(lookups).toBe(0);
+  await act(async () => { write.reject(new Error("Save acknowledgement lost")); });
+  await waitFor(() => expect(dialog.getByRole("button", { name: i18n.t("translation.checkSavedAction") })).toBeEnabled());
+  expect(dialog.getByRole("button", { name: i18n.t("translation.retryAction") })).toBeDisabled();
+  expect(dialog.getByRole("button", { name: i18n.t("translation.discard") })).toBeDisabled();
+  await user.click(dialog.getByText(i18n.t("execution.diagnostic")));
+  expect(dialog.getByText(fixtureIdentity(998))).toBeVisible();
+  const request = invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1].request;
+  await user.click(dialog.getByRole("button", { name: i18n.t("translation.checkSavedAction") }));
+  await dialog.findByText(i18n.t("translation.checkingSavedAction"));
+  expect(owner.current()).toMatchObject({ saving: true, checkingAction: "save", failure: null });
+  expect(dialog.getByRole("button", { name: i18n.t("translation.checkSavedAction") })).toBeDisabled();
+  expect(dialog.getByRole("button", { name: i18n.t("translation.retryAction") })).toBeDisabled();
+  if (change === "text") act(() => owner.edit("Newer B"));
+  else if (change === "composition") fireEvent.compositionStart(editor);
+  else if (change === "proof") proof = false;
+  await act(async () => { lookup.resolve(await original("read_translation_save_action", { request })); });
+  await waitFor(() => expect(owner.current()?.pending).toBeNull());
+  if (change === "none") { expect(await leaving).toBe(true); expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); }
+  else {
+    expect(screen.getByRole("dialog", { name: i18n.t("translation.leaveTitle") })).toBeInTheDocument();
+    expect(owner.current()?.text).toBe(change === "text" ? "Newer B" : "A");
+    if (change === "proof") {
+      proof = true;
+      await user.click(dialog.getByRole("button", { name: i18n.t("translation.saveAndContinue") }));
+      expect(await leaving).toBe(true);
+    } else {
+      if (change === "composition") fireEvent.compositionEnd(editor);
+      await user.click(dialog.getByRole("button", { name: i18n.t("translation.stay") })); expect(await leaving).toBe(false);
+    }
+  }
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeSave + 1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_save_action").map(([, args]) => args.request)).toEqual([request, request]);
+  expect(owner.current()).toMatchObject({ checkingAction: null, failure: null });
 });
 
 it("requires a separate comparison and confirmation before replacing a selected translation", async () => {

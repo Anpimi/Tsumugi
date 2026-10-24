@@ -30,7 +30,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const [open, setOpen] = useWorkbenchView("source");
   const owner = useSourceDraftSession(), tasks = useExecutionTaskSession();
   const { domain, selection, declared, preflight, attempt, comparison: fixedComparison, updating, lineage, actor, filter, appliedFilter,
-    manualOrdinal, historicalQuery, estimate, confirmed, pendingStart, pendingApply, receiptChecked, busyMutation } = owner.state;
+    manualOrdinal, historicalQuery, estimate, confirmed, pendingStart, pendingApply, receiptChecked, checkingReceipt, busyMutation } = owner.state;
   const fixedPreview = owner.state.preview;
   const lastCompletion = useWorkbenchRef("source", "lastCompletion", owner.state.completionVersion);
   const [readIntent, setReadIntent] = useWorkbenchState<"auto" | "current" | "applied">("source", "readIntent", () => owner.current().receipt ? "applied" : "auto");
@@ -219,7 +219,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       registry.register({ ...meta, id: "source.search-comparison", nameKey: "source.search", payloadKind: "source-comparison", availability: input => comparisonAvailability(input), handler: setComparisonIntent }),
       registry.register({ ...meta, id: "source.refresh-comparison", nameKey: "source.refreshComparison", payloadKind: "source-comparison", availability: input => comparisonAvailability(input, true), handler: input => void refreshComparison(input) }),
       registry.register({ ...meta, id: "source.retry-start", nameKey: "source.checkStart", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" ? pendingAvailability(input) : unavailable, handler: () => void owner.retryStart() }),
-      registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
+      registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "reads-source", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
       registry.register({ ...meta, id: "source.retry-apply", nameKey: "execution.retryAdoption", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: () => void owner.retryApply() }),
       registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
       registry.register({ ...meta, id: "source.cancel-task", nameKey: "execution.cancel", risk: "cancels-source-task", payloadKind: "source-task", availability: taskAvailability, handler: input => void owner.cancelTask(input.taskId, () => owner.current().attempt === input.attemptId) }),
@@ -299,7 +299,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
           {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
           <TaskCancellationFeedback origin="source" taskId={detail?.taskId} disabled={busy} visible={open} />
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
-          {busy ? <p role="status">{t("execution.working")}</p> : null}
+          {busy && !checkingReceipt ? <p role="status">{t("execution.working")}</p> : null}
           <SourceReadFeedback error={open ? integrationRead.error || scopeRead.error : null} fetching={open && (integrationRead.isFetching || scopeRead.isFetching)} messageKey="source.readFailed" retry={() => {
             if (integrationRead.error) void integrationRead.refetch(); if (scopeRead.error) void scopeRead.refetch();
           }} />
@@ -400,7 +400,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
             <p>{t("source.updateImpact")}</p>
             <button className="primary-button" disabled={!basisAvailability(basisPayload(), true, true).enabled} onClick={() => registry.dispatch("source.apply", commandScope, basisPayload())}>{t("source.applyUpdate")}</button>
           </section> : null}
-          {pendingApply && !busy ? <section><p>{t("source.applyUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), false, true).enabled} onClick={() => registry.dispatch("source.check-receipt", commandScope, pendingPayload("apply"))}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.retry-apply", commandScope, pendingPayload("apply"))}>{t("execution.retryAdoption")}</button> : null}
+          {pendingApply && (!busy || checkingReceipt) ? <section><p role="status">{t(checkingReceipt ? "source.checkingReceipt" : "source.applyUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), false, true).enabled} onClick={() => registry.dispatch("source.check-receipt", commandScope, pendingPayload("apply"))}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.retry-apply", commandScope, pendingPayload("apply"))}>{t("execution.retryAdoption")}</button> : null}
             <button className="text-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.keep-output", commandScope, pendingPayload("apply"))}>{t("execution.keepOutput")}</button>
           </section> : null}
           <button className="text-button" disabled={!common(false, true).enabled || !!Object.keys(lineage).length} onClick={() => registry.dispatch("source.show-current", commandScope)}>{t("source.viewCurrent")}</button>

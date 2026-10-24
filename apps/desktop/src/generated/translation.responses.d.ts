@@ -8,14 +8,17 @@ export type TranslationMatch =
 
 export interface Responses {
   action: TranslationSelection | null;
+  adoptionAction: AdoptionActionRead | null;
   attempt: ExecutionId;
   files: string[];
   history: TranslationHistory;
   preflight: TranslationPreflight;
   prepared: AdoptionAction;
   preview: TranslationPreview;
+  saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
+  selectionAction: TranslationSelection | null;
 }
 export interface TranslationSelection {
   actionId: ExecutionId;
@@ -25,6 +28,33 @@ export interface TranslationSelection {
   revisionId: ExecutionId;
   sequence: Revision;
   unitId: ExecutionId;
+}
+export interface AdoptionActionRead {
+  action: AdoptionAction;
+  receipt: AdoptionReceipt | null;
+}
+export interface AdoptionAction {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  cancellationRevision: Revision;
+  operation: string;
+  parameters: unknown;
+  projectId: ExecutionId;
+  resultIds: ExecutionId[];
+  unitId: ExecutionId;
+}
+export interface AdoptionReceipt {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  changes: ChangeReference[];
+  projectId: ExecutionId;
+  requestDigest: string;
+  unitId: ExecutionId;
+}
+export interface ChangeReference {
+  id: string;
+  kind: string;
+  revision: Revision;
 }
 export interface TranslationHistory {
   current: TranslationSelection | null;
@@ -62,16 +92,6 @@ export interface TranslationPreflight {
   fileName: string;
   sourceSnapshotId: ExecutionId;
   targetLocale: string;
-}
-export interface AdoptionAction {
-  actionId: ExecutionId;
-  attemptId: ExecutionId;
-  cancellationRevision: Revision;
-  operation: string;
-  parameters: unknown;
-  projectId: ExecutionId;
-  resultIds: ExecutionId[];
-  unitId: ExecutionId;
 }
 export interface TranslationPreview {
   ambiguous: number;

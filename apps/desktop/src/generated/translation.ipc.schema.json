@@ -73,6 +73,22 @@
         ],
         "type": "object"
       },
+      "TranslationAdoptionActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/TranslationAdoptRequest"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "adoption",
+          "unitId"
+        ],
+        "type": "object"
+      },
       "TranslationAdoptionConfirmation": {
         "additionalProperties": false,
         "properties": {
@@ -390,6 +406,9 @@
       "adopt": {
         "$ref": "#/definitions/TranslationAdoptRequest"
       },
+      "adoptionAction": {
+        "$ref": "#/definitions/TranslationAdoptionActionRequest"
+      },
       "capture": {
         "$ref": "#/definitions/TranslationCaptureRequest"
       },
@@ -405,7 +424,13 @@
       "save": {
         "$ref": "#/definitions/TranslationSaveRequest"
       },
+      "saveAction": {
+        "$ref": "#/definitions/TranslationSaveRequest"
+      },
       "select": {
+        "$ref": "#/definitions/TranslationSelectRequest"
+      },
+      "selectionAction": {
         "$ref": "#/definitions/TranslationSelectRequest"
       },
       "start": {
@@ -418,10 +443,13 @@
       "start",
       "preview",
       "adopt",
+      "adoptionAction",
       "history",
       "save",
       "action",
-      "select"
+      "select",
+      "saveAction",
+      "selectionAction"
     ],
     "title": "Requests",
     "type": "object",
@@ -469,6 +497,84 @@
           "resultIds",
           "cancellationRevision",
           "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "AdoptionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/definitions/ChangeReference"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "requestDigest",
+          "changes"
+        ],
+        "type": "object"
+      },
+      "ChangeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "revision"
         ],
         "type": "object"
       },
@@ -1070,6 +1176,16 @@
           }
         ]
       },
+      "adoptionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/AdoptionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "attempt": {
         "$ref": "#/definitions/ExecutionId"
       },
@@ -1091,11 +1207,31 @@
       "preview": {
         "$ref": "#/definitions/TranslationPreview"
       },
+      "saveAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationSaveReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "saved": {
         "$ref": "#/definitions/TranslationSaveReceipt"
       },
       "selected": {
         "$ref": "#/definitions/TranslationSelection"
+      },
+      "selectionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationSelection"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
@@ -1104,10 +1240,13 @@
       "attempt",
       "preview",
       "prepared",
+      "adoptionAction",
       "history",
       "action",
       "saved",
-      "selected"
+      "selected",
+      "saveAction",
+      "selectionAction"
     ],
     "title": "Responses",
     "type": "object",
