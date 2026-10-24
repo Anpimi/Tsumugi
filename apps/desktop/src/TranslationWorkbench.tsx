@@ -21,6 +21,7 @@ export interface TranslationHandle {
   showAttempt: (id: string) => void;
   openUnit: (target: EditorTarget, locale: string, suggestedText?: string) => boolean;
   allowLeave: () => Promise<boolean>;
+  saveCurrent: () => void;
 }
 
 function errorStage(error: unknown): string {
@@ -174,6 +175,11 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (open && tab === "edit") draftField.current?.focus({ preventScroll: true });
   }, [open, tab, editorTarget?.unitId]);
   useImperativeHandle(ref, () => ({
+    saveCurrent() {
+      if (!open || tab !== "edit" || disabled || busy || running.current || leaveIntent || pendingSave || uncertain.length
+        || !editorTarget || !editorBase || !history || !dirty) return;
+      void perform(saveDraft);
+    },
     showAttempt(id) {
       if (running.current || dirty || pendingSave || uncertain.length) { setOpen(true); return; }
       generation.current++;
@@ -501,7 +507,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   {navigationEnd ? <p role="status">{t("workbench.scopeEnd")}</p> : null}
                   <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{editorTarget.sourceText || t("translation.empty")}</pre></section>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorBase?.selection ? editorBase.text || t("translation.empty") : t("translation.noSelection")}</pre></details>
-                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); setNewerDraftSaved(false); }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!busy) void perform(saveDraft); } }} /></label>
+                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); setNewerDraftSaved(false); }} /></label>
                   <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={busy || (!dirty && !pendingSave)} onClick={() => void perform(saveDraft)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button><button className="secondary-button" disabled={busy || (!dirty && !pendingSave) || !list?.total} onClick={() => void perform(saveAndNext)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => { draftRef.current = editorBase?.text ?? ""; setDraft(draftRef.current); }}>{t("translation.discardDraft")}</button></div></div>
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                 </div>
