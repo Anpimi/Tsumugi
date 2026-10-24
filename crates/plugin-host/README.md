@@ -2,14 +2,15 @@
 
 `tsumugi-plugin-host` provides captured package inspection, a local installation
 Store, offline repository and Pack verification, and bounded child-process
-channels using the [public SDK](../plugin-sdk/README.md). This source profile has
-no Core, project database, domain runner or model dependency. The separate
+channels using the [public SDK](../plugin-sdk/README.md). Its default build has
+no Core, project database, domain runner or model dependency. The opt-in
+`core-adapter` profile connects captured channels to the existing Core Runner
+port. The separate
 [JavaScript component Host](../../runtimes/javascript-host/README.md) implements
 the component side of the same protocol.
 
-Core execution adapters, application member execution and desktop plugin loading
-are outside this checkout's Host profile. Host inspection or successful framing
-does not approve a source import, translation, review, release or model request.
+Application member execution and desktop plugin loading remain separate
+consumers. Host inspection or successful framing does not approve a source import, translation, review, release or model request.
 The application and SDK retain their separate source-only version boundaries in
 [the versioning policy](../../docs/versioning.md).
 
@@ -103,6 +104,28 @@ See the public synthetic [process tests](tests/process.rs),
 complete captured bindings and independent success/refusal/cleanup expectations.
 These fixtures grant no authority over a real project or installed user package.
 
+## Optional Core execution adapter
+
+```sh
+cargo check -p tsumugi-plugin-host --features core-adapter --lib --locked
+```
+
+`core::RunnerProxy` binds one captured package, contribution, profile and runtime
+identity to each original Core dispatch and live plugin permit. It owns no project
+Store and cannot approve or adopt results. Core remains the authority for consent,
+strategy validation, budgets, original requests, cancellation and ledger writes.
+A late result or a replacement channel cannot renew an old dispatch's authority.
+
+`core::ApplicationInstance` reserves an exact application activation and starts
+it only after separate explicit lifetime consent. Each project invocation still
+needs its own current grant. Idle records retain no prior project permit, input or
+deadline; unsandboxed component code can retain data already supplied to it.
+Cancellation, settings withdrawal and failed readiness retire that activation.
+`stop()` requests shutdown; `drained()` confirms actual owned-thread and child
+cleanup. A cancelled handshake does not itself prove that cleanup completed.
+The supported application roster excludes required dependencies and project
+services. This adapter adds neither a Pi member runner nor a desktop registry.
+
 ## Focused conformance
 
 Default Host tests exercise metadata, trust, Store and runtime capture using
@@ -132,5 +155,33 @@ TSUMUGI_NATIVE_SDK_WORKER=/absolute/built/native-worker \
 ```
 
 These tests exercise the same native singleton channel and captured environment;
-they do not link the Core adapter. No Core adapter, desktop, real-model,
-clean-machine or other-platform acceptance is implied by these headless checks.
+they do not link the Core adapter. Core adapter lifecycle tests are a separate
+profile. Build the application fixture, then execute its ignored tests explicitly:
+
+```sh
+cargo build -p tsumugi-plugin-host --example native-application-worker --features native-application-conformance --locked
+TSUMUGI_NATIVE_SDK_WORKER=/absolute/built/native-application-worker \
+  cargo test -p tsumugi-plugin-host --features core-adapter --test native_application --locked -- --ignored --test-threads=1
+```
+
+The main workspace's Host fixture dev-dependency enables Core's
+`execution-test-host`; those tests do not establish ordinary production Core
+behavior. The separate `compatibility/` workspace uses Core and SDK with
+`default-features = false` and enables only Host's `core-adapter`. For a normal
+Core source/translation workflow, provide the approved runtime variables above
+and an explicitly selected WebVTT package and its independently approved digest:
+
+```sh
+TSUMUGI_TEST_PLUGIN_PACKAGE=/absolute/prebuilt/webvtt \
+TSUMUGI_TEST_PLUGIN_DIGEST=approved-package-digest \
+  cargo test --manifest-path crates/plugin-host/compatibility/Cargo.toml --features core-adapter,javascript-conformance --test source_adoption --locked -- --test-threads=1
+```
+
+Select the SMAPI package in those variables to run `--test translation_validation`
+(two cases including mixed capability scopes). Its `source_maintenance` target
+additionally checks source updates, QA, human approval, artifact proof and release
+preservation after reopening; execute that target with `--ignored` explicitly.
+The SMAPI `release_validation` target separately requires real plugin QA and
+independent artifact proof for every output locale before saving a release.
+These headless checks do not establish desktop, real-model, clean-machine or
+other-platform acceptance.

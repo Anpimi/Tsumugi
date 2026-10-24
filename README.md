@@ -64,8 +64,9 @@ buildable Rust data contracts, a conformance CLI, and generated JavaScript
 bindings. Its version and immutable source packages are separate from the desktop
 release. The [standalone plugin Host](crates/plugin-host/README.md) adds captured
 package inspection, local trust/Store management and headless component channels.
-Core adapters, application members and desktop plugin loading remain separate
-integration work.
+The optional Core adapter connects these channels to original execution grants
+and separately authorized application lifetimes. Application members and desktop
+plugin loading remain separate integration work.
 
 ## AI
 

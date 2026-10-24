@@ -310,6 +310,28 @@ impl ProcessSession {
         )
         .await
     }
+    #[cfg(feature = "core-adapter")]
+    pub(crate) async fn launch_observed(
+        image: &PackageImage,
+        contribution_id: &str,
+        staging_parent: &Path,
+        launcher: &RuntimeLauncher,
+        options: LaunchOptions,
+        cleanup: LaunchCleanup,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> HostResult<Self> {
+        Self::launch_inner(
+            image,
+            contribution_id,
+            staging_parent,
+            launcher,
+            options,
+            None,
+            Some(cleanup),
+            authorized,
+        )
+        .await
+    }
     pub async fn launch_with_services(
         image: &PackageImage,
         contribution_id: &str,

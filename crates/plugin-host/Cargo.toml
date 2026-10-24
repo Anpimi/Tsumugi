@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Experimental bounded process channels for Tsumugi plugin contracts"
 
 [dependencies]
+tsumugi-core = { path = "../core", optional = true }
 tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.1" }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
@@ -44,9 +45,17 @@ name = "tsumugi-process-conformance-worker"
 path = "tests/support/worker.rs"
 required-features = ["conformance-worker"]
 
+[[example]]
+name = "native-application-worker"
+path = "examples/native-application-worker.rs"
+required-features = ["native-application-conformance"]
+
 [features]
+core-adapter = ["dep:tsumugi-core"]
+native-application-conformance = ["tsumugi-plugin-sdk/native-worker"]
 conformance-worker = []
 javascript-conformance = []
 
 [dev-dependencies]
+tsumugi-core = { path = "../core", features = ["execution-test-host"] }
 aws-lc-rs = "=1.18.1"

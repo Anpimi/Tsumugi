@@ -62,10 +62,12 @@ Cargo package verification does not publish to crates.io or update any release.
 The experimental `tsumugi-plugin-host` package inherits the workspace application
 version. Its independent source profile provides package/runtime inspection, local
 Store and offline trust management, and headless SDK process channels. It does
-not add Core execution adapters, application member execution, project schemas
-or desktop plugin loading. The private JavaScript Host workspace is an internal
-component runtime with a pinned production dependency, not another public SDK
-version source.
+not add application member execution, project schemas or desktop plugin loading.
+The opt-in `core-adapter` source profile uses the existing Core execution and
+application authority without adding a separate Store or changing its schema.
+The default Host build remains Core-free. The private JavaScript Host workspace
+is an internal component runtime with a pinned production dependency, not another
+public SDK version source.
 
 This source-only integration keeps existing application/SDK versions, protocol
 and profile identities, frozen SDK/plugin/runtime pins and published assets.

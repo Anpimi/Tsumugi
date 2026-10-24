@@ -14,7 +14,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Core application execution, captured plugin grants, team coordination records, context strategies and detailed provider usage now share the project authority and its checked reopen path. This source integration provides their Core owners; desktop plugin loading and the Pi member runtime require their separate adapters.
 
-- Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Core adapters, application members and desktop plugin loading are not included; frozen runtime and plugin pins remain unchanged.
+- Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Its optional Core adapter preserves original dispatch grants and separately authorized application lifetimes, including readiness cancellation and confirmed process cleanup. Application members and desktop plugin loading remain separate; frozen runtime and plugin pins remain unchanged.
 
 - Experimental standalone plugin SDK source with Rust data contracts, a conformance CLI, synthetic examples, and self-contained JavaScript bindings and generation tooling. SDK integration does not add a plugin Host or desktop plugin loading; existing immutable SDK archives remain unchanged.
 

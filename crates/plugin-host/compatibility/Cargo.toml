@@ -1,0 +1,59 @@
+[package]
+name = "tsumugi-plugin-host-compatibility"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+license = "MIT"
+description = "Public prebuilt-package conformance consumers with normal Core dependencies"
+
+# A separate workspace keeps plugin-host's fixture dev-dependencies out of these consumers.
+[workspace]
+resolver = "2"
+
+[patch.crates-io]
+tough = { path = "../../../third_party/tough" }
+
+[features]
+core-adapter = []
+javascript-conformance = []
+
+[dependencies]
+serde_json = "=1.0.151"
+tempfile = "=3.27.0"
+tokio = { version = "=1.53.1", default-features = false, features = ["rt", "macros"] }
+tsumugi-core = { path = "../../core", default-features = false }
+tsumugi-plugin-sdk = { path = "../../plugin-sdk", default-features = false }
+tsumugi-plugin-host = { path = "..", default-features = false, features = ["core-adapter"] }
+
+[[test]]
+name = "source_adoption"
+path = "../tests/source_adoption.rs"
+
+[[test]]
+name = "translation_validation"
+path = "../tests/translation_validation.rs"
+
+[[test]]
+name = "native_catalog"
+path = "../tests/native_catalog.rs"
+
+[[test]]
+name = "source_maintenance"
+path = "tests/source_maintenance.rs"
+
+[[test]]
+name = "version_compatibility"
+path = "../tests/knowledge/version_compatibility.rs"
+
+[[test]]
+name = "sdk_artifact_pair"
+path = "tests/sdk_artifact_pair.rs"
+
+[[test]]
+name = "quality_corpus"
+path = "tests/quality_corpus.rs"
+
+[[test]]
+name = "release_validation"
+path = "../tests/release_validation.rs"

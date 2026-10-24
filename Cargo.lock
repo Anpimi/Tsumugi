@@ -4505,6 +4505,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tough",
+ "tsumugi-core",
  "tsumugi-plugin-sdk",
  "url",
  "uuid",

@@ -1,10 +1,12 @@
 //! Bounded, experimental process channels. The SDK owns wire definitions; this
 //! crate owns captured package bytes and the actual child/pipe identity. It has
-//! no domain implementation or adoption authority. Core execution adapters and
-//! application member execution are outside this standalone Host profile.
+//! no domain implementation or adoption authority. Its optional Core adapter
+//! implements the trusted Runner port without acquiring a Store handle.
 mod candidate_archive;
 pub mod catalog;
 mod child;
+#[cfg(feature = "core-adapter")]
+pub mod core;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod filesystem;
 mod host_error;

@@ -100,7 +100,7 @@ Tsumugi 将本地化语义与领域知识分开。Core 负责项目状态、生�
 
 新领域和新能力也使用这套项目语义和生命周期。
 
-[实验性插件 SDK](crates/plugin-sdk/README.md)提供可独立构建的 Rust 数据契约、契约检查 CLI 和生成的 JavaScript 定义。SDK 版本与不可变源码包独立于桌面发行版。[独立插件 Host](crates/plugin-host/README.md)补充包捕获检查、本地信任与 Store 管理及无界面的组件通道；Core 适配、应用成员执行和桌面插件载入仍需独立集成。
+[实验性插件 SDK](crates/plugin-sdk/README.md)提供可独立构建的 Rust 数据契约、契约检查 CLI 和生成的 JavaScript 定义。SDK 版本与不可变源码包独立于桌面发行版。[独立插件 Host](crates/plugin-host/README.md)补充包捕获检查、本地信任与 Store 管理及无界面的组件通道；可选 Core 适配连接原执行授权与独立批准的应用生命周期，应用成员执行和桌面插件载入仍需独立集成。
 
 ## 构建与发布
 
