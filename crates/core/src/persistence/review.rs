@@ -1070,10 +1070,17 @@ impl ProjectStore {
         if limit == 0 || limit > 50 || offset > MAX_SCOPE as u32 {
             return Err(failure(ErrorCode::InvalidInput, "review-history-page"));
         }
+        let parsed = crate::Locale::parse(locale)
+            .map_err(|_| failure(ErrorCode::InvalidInput, "review-locale"))?;
+        if parsed.as_str() != locale {
+            return Err(failure(ErrorCode::InvalidInput, "review-locale"));
+        }
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
-        let _ = target_in(connection, project_id, unit_id, locale)?;
+        if !super::content::unit_owned_by_project(connection, project_id, unit_id)? {
+            return Err(failure(ErrorCode::Unauthorized, "review-project"));
+        }
         let read_actions = |table: &str| -> Result<Vec<ExecutionId>, ExecutionError> {
             // Table names come only from this fixed list, never request data.
             let query = format!(
@@ -2434,6 +2441,318 @@ pub(super) mod tests {
                 .code,
             ErrorCode::DependencyConflict
         );
+    }
+
+    #[test]
+    fn removed_unit_history_remains_owned_and_readable_without_current_authority() {
+        let (directory, mut store, project, units) = fixture();
+        let removed = units[0];
+        assert_eq!(
+            store
+                .review_target(project, removed, "zh-CN")
+                .unwrap()
+                .native_key,
+            "hello"
+        );
+        let mut original_saves = Vec::new();
+        for text in ["你好 {{name}}", "您好 {{name}}"] {
+            let target = store.review_target(project, removed, "zh-CN").unwrap();
+            let request = SaveTranslationRevision {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: removed,
+                locale: "zh-CN".into(),
+                source_revision_id: target.source_revision_id,
+                expected_selection_id: target.selection_id,
+                text: text.into(),
+            };
+            let selection = store.save_translation_revision(&request).unwrap();
+            original_saves.push((request, selection));
+            check(&mut store, project, removed, "zh-CN");
+            approve(&mut store, project, removed, "zh-CN");
+        }
+        translate(&mut store, project, units[1], "zh-CN", "普通");
+        check(&mut store, project, units[1], "zh-CN");
+        approve(&mut store, project, units[1], "zh-CN");
+        assert!(
+            store
+                .review_eligibility(project, &["zh-CN".into()])
+                .unwrap()
+                .ready
+        );
+
+        let old_target = store.review_target(project, removed, "zh-CN").unwrap();
+        let translations = store
+            .translation_history(project, removed, "zh-CN", 0, 10)
+            .unwrap();
+        let translation_first = store
+            .translation_history(project, removed, "zh-CN", 0, 1)
+            .unwrap();
+        let translation_last = store
+            .translation_history(project, removed, "zh-CN", 1, 1)
+            .unwrap();
+        assert_eq!(translations.total, 2);
+        assert_eq!(translation_first.next_ordinal, Some(1));
+        assert_eq!(translation_last.next_ordinal, None);
+        let reviews = store
+            .review_history(project, removed, "zh-CN", 0, 10)
+            .unwrap();
+        let review_first = store
+            .review_history(project, removed, "zh-CN", 0, 1)
+            .unwrap();
+        let review_last = store
+            .review_history(project, removed, "zh-CN", 1, 1)
+            .unwrap();
+        assert_eq!(reviews.checks.len(), 2);
+        assert_eq!(reviews.decisions.len(), 2);
+        assert_eq!(review_first.next_offset, Some(1));
+        assert_eq!(review_last.next_offset, None);
+
+        // Produce and explicitly adopt S2 through the same source boundary as S1.
+        let bundle = SourceBundle::capture(
+            br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
+            br#"{"plain":"Plain"}"#,
+            "en",
+        ).unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+        runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            runtime.tick(&mut store).unwrap();
+            let state = store
+                .execution_attempt(input.envelope().attempt_id, true)
+                .unwrap();
+            assert!(!matches!(
+                state.items[0].execution,
+                ExecutionState::Failed | ExecutionState::Unknown
+            ));
+            if state.items[0].execution == ExecutionState::Succeeded {
+                break store
+                    .execution_current_result(
+                        input.envelope().attempt_id,
+                        input.envelope().items[0].item_id,
+                    )
+                    .unwrap()
+                    .unwrap();
+            }
+            assert!(Instant::now() < deadline, "source update did not finish");
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        let comparison = store
+            .source_comparison(input.envelope().attempt_id, result, 0, 10)
+            .unwrap();
+        assert_eq!(
+            (comparison.unchanged, comparison.removed, comparison.added),
+            (1, 1, 0)
+        );
+        let action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                vec![result],
+                serde_json::to_value(comparison.confirmation).unwrap(),
+            )
+            .unwrap();
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap();
+        drop(runtime);
+        let adopted_scope = store.content_scope().unwrap();
+        assert_ne!(
+            adopted_scope.current_snapshot,
+            Some(old_target.source_snapshot_id)
+        );
+
+        let assert_history_and_current_boundary = |store: &mut ProjectStore| {
+            let before_changes = store.connection().unwrap().total_changes();
+            assert_eq!(
+                store
+                    .translation_history(project, removed, "zh-CN", 0, 10)
+                    .unwrap(),
+                translations
+            );
+            assert_eq!(
+                store
+                    .translation_history(project, removed, "zh-CN", 0, 1)
+                    .unwrap(),
+                translation_first
+            );
+            assert_eq!(
+                store
+                    .translation_history(project, removed, "zh-CN", 1, 1)
+                    .unwrap(),
+                translation_last
+            );
+            assert_eq!(
+                store
+                    .review_history(project, removed, "zh-CN", 0, 10)
+                    .unwrap(),
+                reviews
+            );
+            assert_eq!(
+                store
+                    .review_history(project, removed, "zh-CN", 0, 1)
+                    .unwrap(),
+                review_first
+            );
+            assert_eq!(
+                store
+                    .review_history(project, removed, "zh-CN", 1, 1)
+                    .unwrap(),
+                review_last
+            );
+            for (request, selection) in &original_saves {
+                assert_eq!(
+                    store
+                        .translation_selection_by_action(
+                            project,
+                            removed,
+                            "zh-CN",
+                            request.action_id,
+                        )
+                        .unwrap(),
+                    Some(selection.clone())
+                );
+                assert_eq!(
+                    store.save_translation_revision(request).unwrap(),
+                    *selection
+                );
+            }
+
+            for (owner, unit) in [(ExecutionId::new(), removed), (project, ExecutionId::new())] {
+                let translation = store
+                    .translation_history(owner, unit, "zh-CN", 0, 10)
+                    .unwrap_err();
+                assert_eq!(
+                    (translation.code, translation.stage.as_str()),
+                    (ErrorCode::Unauthorized, "translation-project")
+                );
+                let review = store
+                    .review_history(owner, unit, "zh-CN", 0, 10)
+                    .unwrap_err();
+                assert_eq!(
+                    (review.code, review.stage.as_str()),
+                    (ErrorCode::Unauthorized, "review-project")
+                );
+            }
+            for locale in ["not a locale", "zh-cn"] {
+                let translation = store
+                    .translation_history(project, removed, locale, 0, 10)
+                    .unwrap_err();
+                assert_eq!(
+                    (translation.code, translation.stage.as_str()),
+                    (ErrorCode::InvalidInput, "translation-locale")
+                );
+                let review = store
+                    .review_history(project, removed, locale, 0, 10)
+                    .unwrap_err();
+                assert_eq!(
+                    (review.code, review.stage.as_str()),
+                    (ErrorCode::InvalidInput, "review-locale")
+                );
+            }
+
+            let target_error = store.review_target(project, removed, "zh-CN").unwrap_err();
+            assert_eq!(
+                (target_error.code, target_error.stage.as_str()),
+                (ErrorCode::DependencyConflict, "review-unit")
+            );
+            let current = store.review_page(project, "zh-CN", 0, 10).unwrap();
+            assert_eq!(current.total, 1);
+            assert_eq!(current.rows[0].unit_id, units[1]);
+            let work = store.review_work_page(project, "zh-CN", 0, 10).unwrap();
+            assert!(work.items.iter().all(|item| item.unit_id != removed));
+            let eligibility = store
+                .review_eligibility(project, &["zh-CN".into()])
+                .unwrap();
+            assert!(eligibility.ready);
+            assert_eq!(eligibility.locales[0].checked_units, 1);
+            assert!(
+                eligibility.locales[0]
+                    .blockers
+                    .iter()
+                    .all(|item| item.unit_id != removed)
+            );
+            assert!(
+                eligibility.locales[0]
+                    .exceptions
+                    .iter()
+                    .all(|item| item.unit_id != removed)
+            );
+
+            let latest = &original_saves[1].1;
+            let save = SaveTranslationRevision {
+                action_id: ExecutionId::new(),
+                expected_selection_id: Some(latest.event_id),
+                text: "不能重新保存 {{name}}".into(),
+                ..original_saves[1].0.clone()
+            };
+            let save_error = store.save_translation_revision(&save).unwrap_err();
+            assert_eq!(
+                (save_error.code, save_error.stage.as_str()),
+                (ErrorCode::DependencyConflict, "translation-source")
+            );
+            let select_error = store
+                .select_translation_revision(&SelectTranslationRevision {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: removed,
+                    locale: "zh-CN".into(),
+                    source_revision_id: old_target.source_revision_id,
+                    expected_selection_id: Some(latest.event_id),
+                    revision_id: original_saves[0].1.revision_id,
+                })
+                .unwrap_err();
+            assert_eq!(
+                (select_error.code, select_error.stage.as_str()),
+                (ErrorCode::DependencyConflict, "translation-source")
+            );
+            let review_error = store
+                .write_review(&ReviewWrite {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: removed,
+                    locale: "zh-CN".into(),
+                    expected_basis: old_target.basis.clone(),
+                    expected_decision_id: old_target
+                        .current_decision
+                        .as_ref()
+                        .map(|decision| decision.decision_id),
+                    actor: "Reviewer A".into(),
+                    kind: ReviewDecisionKind::Approve,
+                    reason: String::new(),
+                })
+                .unwrap_err();
+            assert_eq!(
+                (review_error.code, review_error.stage.as_str()),
+                (ErrorCode::DependencyConflict, "review-unit")
+            );
+            let check_error = store
+                .prepare_review_check(
+                    project,
+                    removed,
+                    "zh-CN",
+                    &old_target.basis,
+                    ExecutionId::new(),
+                )
+                .err()
+                .expect("removed unit must not prepare fresh QA");
+            assert_eq!(
+                (check_error.code, check_error.stage.as_str()),
+                (ErrorCode::DependencyConflict, "review-unit")
+            );
+            assert_eq!(store.connection().unwrap().total_changes(), before_changes);
+            assert_eq!(store.content_scope().unwrap(), adopted_scope);
+        };
+        assert_history_and_current_boundary(&mut store);
+        store.close().unwrap();
+        let mut reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_history_and_current_boundary(&mut reopened);
     }
 
     #[test]
