@@ -363,8 +363,10 @@ it("releases the flight witness immediately when its owner is destroyed, before 
 
 it("retains an unknown start and uses the exact Registry recovery request after rejected replay and locale removal", async () => {
   const { rendered } = await open(); await prepareThroughRegistry();
-  const original = invoke.getMockImplementation()!; let starts = 0;
-  invoke.mockImplementation((command: string, request: unknown) => command === "start_ai_translation"
+  const original = invoke.getMockImplementation()!; let starts = 0, lookups = 0;
+  invoke.mockImplementation((command: string, request: unknown) => command === "read_ai_start_action"
+    ? Promise.resolve(++lookups <= 2 ? null : {projectId:project.metadata.projectId,attemptId:prepared.attemptId,taskId:view.detail.taskId,digest:prepared.preview.digest})
+    : command === "start_ai_translation"
     ? Promise.reject(++starts === 1 ? new Error("Lost start acknowledgement") : { code: "busy", outcome: "rejected", stage: "execution-read", reason: "execution-storage", recoveryRequired: false }) : original(command, request));
   await act(async () => { expect(registry.dispatch("ai.start", scope, startPayload())).toBe(true); });
   await waitFor(() => expect(owner.pendingStart?.uncertain).toBe(true));
@@ -497,4 +499,15 @@ it("routes fresh cancellation and original feedback retry through Registry while
   await waitFor(() => expect(tasks.current(other.taskId)?.phase).toBe("recorded"));
   expect(dispatch.mock.calls).toContainEqual(["ai.retry-cancellation", scope, { kind: "execution-cancellation-retry", ...other, requestId: payloads("cancel_execution_task")[2].requestId }]);
   expect(payloads("cancel_execution_task")[3]).toEqual(payloads("cancel_execution_task")[2]);
+});
+
+beforeEach(() => {
+  const original = invoke.getMockImplementation()!; let checked = -1;
+  invoke.mockImplementation((command: string, payload: unknown) => {
+    if (command !== "read_ai_start_action") return original(command,payload);
+    const writes = invoke.mock.calls.filter(([name]) => name === "start_ai_translation").length;
+    if (checked !== writes) { checked = writes; return Promise.reject(new Error("Automatic start lookup unavailable")); }
+    return Promise.resolve({projectId:project.metadata.projectId,attemptId:prepared.attemptId,
+      taskId:view.detail.taskId,digest:prepared.preview.digest});
+  });
 });

@@ -18,6 +18,17 @@ pub(crate) fn error(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
 }
 
+/// Immutable acknowledgement of the original direct translation request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AiStartReceipt {
+    pub project_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub digest: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

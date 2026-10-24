@@ -15,6 +15,11 @@ export const aiCommands={
     if(result!==request.attemptId)throw new Error("Invalid IPC acknowledgement: AI attempt");
     return result;
   },
+  startAction:async(request:AiStartRequest)=>{
+    const result=await checkedInvoke("read_ai_start_action",request,validators.validateResponseStartAction);
+    if(result&&(result.projectId!==request.projectId||result.attemptId!==request.attemptId||result.digest!==request.digest||!request.confirmed))throw new Error("Invalid IPC acknowledgement: AI start");
+    return result;
+  },
   read:async(request:AiReadRequest)=>{
     const result=await checkedInvoke("read_ai_translation",request,validators.validateResponseView);
     if(result.detail.attemptId!==request.attemptId||result.rows.some(row=>row.output&&(row.output.unitId!==row.item.unitId||row.output.targetLocale!==row.item.targetLocale)))throw new Error("Invalid IPC response: AI attempt");

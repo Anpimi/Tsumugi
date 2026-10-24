@@ -126,6 +126,16 @@ pub async fn preview_ai_translation(
         .await
 }
 #[tauri::command]
+pub async fn read_ai_start_action(
+    state: State<'_, AppState>, request: AiStartRequest,
+) -> Result<Option<tsumugi_core::ai::AiStartReceipt>, CommandError> {
+    state.sessions.run("read_ai_start_action", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.ai_start_action_read(request.project_id, request.attempt_id, &request.digest, request.confirmed)
+            .map_err(map_read)
+    }).await
+}
+#[tauri::command]
 pub async fn start_ai_translation(
     state: State<'_, AppState>,
     request: AiStartRequest,
