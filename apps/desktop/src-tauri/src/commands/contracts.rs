@@ -252,6 +252,7 @@ struct ReleaseResponses {
 struct AiRequests {
     preview: execution::ai::AiPreviewRequest,
     start: execution::ai::AiStartRequest,
+    start_action: execution::ai::AiStartRequest,
     read: execution::ai::AiReadRequest,
 }
 #[derive(JsonSchema)]
@@ -261,6 +262,7 @@ struct AiResponses {
     prepared: execution::ai::AiPrepared,
     identity: tsumugi_core::execution::ExecutionId,
     view: execution::ai::AiView,
+    start_action: Option<tsumugi_core::ai::AiStartReceipt>,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]

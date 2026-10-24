@@ -50,6 +50,7 @@ function actionFor(request: PrepareRequest): AdoptionAction {
   return { ...execution.action, projectId: request.projectId, attemptId: request.attemptId, unitId: request.unitId, actionId: request.actionId,
     operation: "ai-translation", parameters: null, resultIds: [...request.resultIds] };
 }
+function startReceipt() { return {projectId:project.metadata.projectId,attemptId:prepared.attemptId,taskId:viewFor().detail.taskId,digest:prepared.preview.digest}; }
 function receiptFor(value: AdoptionAction): Receipt {
   return { ...execution.receipt, projectId: value.projectId, attemptId: value.attemptId, unitId: value.unitId, actionId: value.actionId,
     changes: [{ kind: "translation-revision", id: fixtureIdentity(950), revision: "1" }] };
@@ -77,7 +78,7 @@ beforeEach(async () => {
   if (!validateResponsePrepared(value)) throw new Error("Invalid prepared fixture");
   prepared = value; prepared.attemptId = aiAttempt; items = prepared.preview.items;
   let identity = 910;
-  let checkedWrites = -1;
+  let checkedWrites = -1, checkedStarts = -1;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: PrepareRequest & { config: AiConfig; unitIds: string[] } }) => {
     if (command === "preview_ai_translation") {
       prepared = { attemptId: aiAttempt, preview: { ...prepared.preview, config: payload.request.config,
@@ -85,6 +86,11 @@ beforeEach(async () => {
       return prepared;
     }
     if (command === "start_ai_translation") return prepared.attemptId;
+    if (command === "read_ai_start_action") {
+      const writes = calls("start_ai_translation").length;
+      if (checkedStarts !== writes) { checkedStarts = writes; throw new Error("Automatic lookup unavailable"); }
+      return startReceipt();
+    }
     if (command === "read_ai_translation") return viewFor();
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "prepare_execution_adoption") { action = actionFor(payload.request); return action; }
@@ -238,30 +244,27 @@ it("keeps the prepared original action for recovery when the basis changes befor
   expect(owner.pendingAdopt).toMatchObject({ uncertain: true, action, retryAllowed: false });
 });
 
-it.each(["config", "scope", "missing-item", "partial-page", "wrong-attempt"] as const)("refuses an unrelated original-start read proof: %s", async mismatch => {
+it.each(["projectId", "attemptId", "digest", "taskId", "extra"] as const)("refuses an unrelated immutable original-start receipt: %s", async mismatch => {
   render(<Harness />, project); await prepare(); const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "start_ai_translation" ? Promise.reject(new Error("Disconnected")) : original(command, payload));
   await act(async () => { await owner.start(); }); const request = owner.pendingStart!.request;
-  const wrong = structuredClone(viewFor());
-  if (mismatch === "config") wrong.config.model = "another-model";
-  if (mismatch === "scope") { wrong.rows[0].item.sourceRevisionId = fixtureIdentity(933); }
-  if (mismatch === "missing-item") { wrong.rows = []; wrong.detail.items = []; wrong.detail.progress.total = 0; }
-  if (mismatch === "partial-page") wrong.detail.nextOffset = 1;
-  if (mismatch === "wrong-attempt") wrong.detail.attemptId = fixtureIdentity(934);
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_ai_translation" ? Promise.resolve(wrong) : original(command, payload));
-  await act(async () => { await owner.checkStart(); });
-  expect(owner.pendingStart).toMatchObject({ request, uncertain: true }); expect(owner.attempt).toBeNull(); expect(owner.reserved()).toBe(true);
-  invoke.mockImplementation(original);
-  await act(async () => { await owner.checkStart(); });
+  const wrong: Record<string,unknown> = {...startReceipt()};
+  wrong[mismatch] = mismatch === "digest" ? "wrong-digest" : mismatch === "taskId" ? "invalid" : fixtureIdentity(933);
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_ai_start_action" ? Promise.resolve(wrong) : original(command,payload));
+  await act(async () => { await owner.checkStart(); await owner.retryStart(); });
+  expect(owner.pendingStart).toMatchObject({request,uncertain:true,retryAllowed:false,checking:false});
+  expect(owner.attempt).toBeNull(); expect(owner.reserved()).toBe(true);
+  invoke.mockImplementation(original); await act(async () => { await owner.checkStart(); });
   expect(owner.pendingStart).toBeNull(); expect(owner.attempt).toBe(aiAttempt);
-  expect(payloads("read_ai_translation")).toEqual([0, 1].map(() => ({ sessionToken: project.sessionToken, projectId: project.metadata.projectId, attemptId: request.attemptId })));
-  expect(calls("start_ai_translation")).toHaveLength(1);
+  expect(payloads("read_ai_start_action")).toEqual([request,request,request]);
+  expect(calls("read_ai_translation")).toHaveLength(0); expect(calls("start_ai_translation")).toHaveLength(1);
 });
 
 it("keeps unknown generation after a rejected original replay and settles only the same checked attempt", async () => {
   render(<Harness />, project); await prepare(); let count = 0;
   invoke.mockImplementation(async command => {
     if (command === "start_ai_translation") { if (++count === 1) throw new Error("Disconnected"); if (count === 2) throw startRejected; return aiAttempt; }
+    if (command === "read_ai_start_action") return null;
     throw new Error(command);
   });
   await act(async () => { await owner.start(); }); const request = owner.pendingStart!.request;
@@ -295,9 +298,10 @@ it("never shrinks a complete cross-page selection to a smaller prepared or recov
   expect(owner.prepared!.preview.items.map(item => item.unitId)).toEqual(owner.selected);
   invoke.mockRejectedValueOnce(new Error("Disconnected")); await act(async () => { await owner.start(); });
   const partial = viewFor(); partial.rows.pop(); partial.detail.items.pop(); partial.detail.progress.total = 1; partial.detail.progress.succeeded = 1;
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_ai_translation" ? Promise.resolve(partial) : original(command, payload));
-  await act(async () => { await owner.checkStart(); }); expect(owner.pendingStart?.uncertain).toBe(true);
-  invoke.mockImplementation(original); await act(async () => { await owner.checkStart(); }); expect(owner.pendingStart).toBeNull();
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_ai_start_action" ? Promise.resolve(startReceipt()) : command === "read_ai_translation" ? Promise.resolve(partial) : original(command,payload));
+  await act(async () => { await owner.checkStart(); }); expect(owner.pendingStart).toBeNull();
+  await expect(owner.readView(aiAttempt)).rejects.toThrow("Invalid AI business acknowledgement");
+  invoke.mockImplementation(original); await act(async () => { await owner.readView(aiAttempt); });
   expect(payloads("preview_ai_translation").map(request => request.unitIds)).toEqual([owner.selected, owner.selected]);
 });
 
@@ -514,9 +518,8 @@ it.each(["checked-start", "unknown-start"] as const)("accepts item-identity read
   }
   let read!: AiView; await act(async () => { read = await owner.readView(aiAttempt); });
   if (origin === "unknown-start") {
-    // Recovery invalidates the inactive cache. This newly checked owner read
-    // still supplies the fixed original evidence without changing UI freshness.
-    expect(reads.client.getQueryState(reads.key(["aiCommands", aiAttempt]))).toMatchObject({ status: "success", isInvalidated: true });
+    // The receipt is a business fact, not a mutable Query projection.
+    expect(reads.client.getQueryState(reads.key(["aiCommands", aiAttempt]))).toBeUndefined();
   }
   expect(owner.pendingStart).toBeNull(); expect(owner.attempt).toBe(aiAttempt);
   expect(owner.selected).toEqual(selection);
@@ -550,7 +553,7 @@ it.each(["item", "recovery"] as const)("refuses the old generic translation %s s
   expect(calls("create_execution_identity")).toHaveLength(0); expect(calls("prepare_execution_adoption")).toHaveLength(0); expect(calls("adopt_execution")).toHaveLength(0);
 });
 
-it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wrong-full-proof", "legacy-item-scope"] as const)("retains the original unknown start when a shape-valid whole scope has %s", async mismatch => {
+it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wrong-full-proof", "legacy-item-scope"] as const)("rejects a mutable result view whose shape-valid whole scope has %s", async mismatch => {
   render(<Harness />, project); addSecondSelectedItem(); await prepare();
   const capture = owner.prepared!, selection = [...owner.selected], original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: unknown) => command === "start_ai_translation" ? Promise.reject(new Error("Lost start ACK")) : original(command,payload));
@@ -579,11 +582,49 @@ it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wr
   if (["duplicate-unit","substituted-unit","wrong-full-proof","legacy-item-scope"].includes(mismatch)) expect(wrong.rows).toHaveLength(capture.preview.items.length);
   invoke.mockImplementation((command: string, payload: unknown) => command === "read_ai_translation" ? Promise.resolve(wrong) : original(command,payload));
   await act(async () => { await owner.checkStart(); });
-  expect(owner.pendingStart).toMatchObject({request,prepared:capture,uncertain:true}); expect(owner.pendingStart!.request).toBe(request);
-  expect(owner.attempt).toBeNull(); expect(owner.selected).toEqual(selection); expect(owner.reserved()).toBe(true);
+  expect(owner.pendingStart).toBeNull(); expect(owner.started?.prepared).toBe(capture);
+  await expect(owner.readView(aiAttempt)).rejects.toThrow("Invalid AI business acknowledgement");
+  expect(owner.attempt).toBe(aiAttempt); expect(owner.selected).toEqual(selection); expect(owner.reserved()).toBe(false);
   expect(capture.preview.items.map(item => item.unitId)).toEqual(selection);
-  invoke.mockImplementation(original); await act(async () => { await owner.checkStart(); });
+  invoke.mockImplementation(original); await act(async () => { await owner.readView(aiAttempt); });
   expect(owner.pendingStart).toBeNull(); expect(owner.attempt).toBe(aiAttempt);
   expect(payloads("start_ai_translation")).toEqual([request]);
   expect(owner.selected).toEqual(selection); expect(owner.started?.prepared).toBe(capture);
+});
+
+it("checks a lost AI start once without result projection, preserves newer input and ignores a retired lookup", async () => {
+  const rendered = render(<Harness />, project); await prepare();
+  const response = deferred<ReturnType<typeof startReceipt>>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "start_ai_translation" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_ai_start_action" ? response.promise : command === "read_ai_translation" ? Promise.reject(new Error("No runtime")) : original(command,payload));
+  let pending!: Promise<void>; act(() => { pending = owner.start(); });
+  await act(async () => { await Promise.resolve(); });
+  expect(owner.pendingStart).toMatchObject({checking:true,uncertain:true,retryAllowed:false});
+  expect(owner.busy).toBe(true); expect(calls("read_ai_start_action")).toHaveLength(1);
+  act(() => { owner.setConfig(config => ({...config,model:"newer-B"})); reads.invalidate(["source"]); });
+  await act(async () => { await owner.retryStart(); await owner.checkStart(); });
+  expect(calls("start_ai_translation")).toHaveLength(1); expect(calls("read_ai_start_action")).toHaveLength(1);
+  rendered.unmount();
+  await act(async () => { response.resolve(startReceipt()); await pending; });
+  expect(owner.attempt).toBeNull(); expect(owner.config.model).toBe("newer-B");
+  expect(calls("read_ai_translation")).toHaveLength(0);
+});
+
+it("settles an automatic immutable AI receipt despite removed locale and newer draft without another generation", async () => {
+  const rendered = render(<Harness />, project); await prepare();
+  const response = deferred<ReturnType<typeof startReceipt>>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "start_ai_translation" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_ai_start_action" ? response.promise : original(command,payload));
+  let pending!: Promise<void>; act(() => { pending = owner.start(); });
+  await act(async () => { await Promise.resolve(); });
+  const request = owner.pendingStart!.request;
+  act(() => { owner.setConfig(config => ({...config,model:"newer-B"})); });
+  const removed = {...project,metadata:{...project.metadata,targetLocales:[]}};
+  rendered.rerender(<Harness project={removed}/>,removed);
+  await act(async () => { response.resolve(startReceipt()); await pending; });
+  expect(owner.pendingStart).toBeNull(); expect(owner.attempt).toBe(request.attemptId);
+  expect(owner.started?.taskId).toBe(viewFor().detail.taskId); expect(owner.config.model).toBe("newer-B");
+  expect(owner.dirty).toBe(true); expect(owner.consent).toBe(false); expect(owner.notice).toBe("newer");
+  expect(payloads("read_ai_start_action")).toEqual([request]); expect(calls("start_ai_translation")).toHaveLength(1);
+  expect(calls("read_ai_translation")).toHaveLength(0);
 });

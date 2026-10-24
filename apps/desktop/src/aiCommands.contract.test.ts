@@ -73,3 +73,17 @@ it("validates durable budget counters and exact aggregate usage", () => {
   for (const value of [-1, 0.5, 301]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,dispatched:value}})).toBe(false);
   expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,extra:true}})).toBe(false);
 });
+
+it("requires a strict original-request receipt and correlates every start identity", async () => {
+  const request = fixture.requests.start;
+  const receipt = {projectId:request.projectId,attemptId:request.attemptId,taskId:fixture.responses.view.detail.taskId,digest:request.digest};
+  for (const response of [null,receipt]) {
+    invoke.mockResolvedValueOnce(response); expect(await aiCommands.startAction(request)).toEqual(response);
+    expect(invoke).toHaveBeenLastCalledWith("read_ai_start_action",{request});
+  }
+  for (const response of [{...receipt,projectId:receipt.taskId},{...receipt,attemptId:receipt.taskId},
+    {...receipt,digest:"wrong"},{...receipt,taskId:"invalid"},{...receipt,extra:true},{...receipt,taskId:undefined}]) {
+    invoke.mockResolvedValueOnce(response); await expect(aiCommands.startAction(request)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce(receipt); await expect(aiCommands.startAction({...request,confirmed:false})).rejects.toThrow();
+});

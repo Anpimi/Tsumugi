@@ -7,7 +7,7 @@ import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 
-type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean };
+type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean; checking: boolean; retryAllowed: boolean };
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
 type AdoptCapture = { request: PrepareRequest; candidate: Candidate; editSeq: number; action: AdoptionAction | null; receipt: Receipt | null; uncertain: boolean; retryAllowed: boolean; checking: boolean };
 interface State {
@@ -129,9 +129,22 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     update(before => ({ ...before,pendingStart:entry }));
     try { await aiCommands.start(entry.request); if (live()) settleStart(entry); }
     catch (error) {
-      // A rejected replay only classifies that invocation; it cannot disprove the first unknown dispatch.
-      update(before => before.pendingStart?.request !== entry.request ? before : { ...before,pendingStart:retryingUnknown || hasUnknownOutcome(error) ? { ...entry,uncertain:true } : null });
-      throw error;
+      // A rejected replay cannot disprove the first unknown dispatch.
+      const uncertain = retryingUnknown || hasUnknownOutcome(error);
+      update(before => before.pendingStart?.request !== entry.request ? before : { ...before,pendingStart:uncertain ? { ...entry,uncertain:true,retryAllowed:false } : null });
+      if (uncertain && live()) await lookupStart(entry,commandFailure(error,"outcome-unknown"));
+      if (!uncertain) throw error;
+    }
+  }
+  async function lookupStart(entry: StartCapture, originalFailure = current().failure) {
+    update(before => before.pendingStart?.request !== entry.request ? before : { ...before,pendingStart:{...before.pendingStart,checking:true,retryAllowed:false} });
+    try {
+      const receipt = await aiCommands.startAction(entry.request);
+      if (!live() || current().pendingStart?.request !== entry.request) return;
+      if (receipt) settleStart(entry,receipt.taskId);
+      else update(before => ({...before,pendingStart:{...before.pendingStart!,checking:false,retryAllowed:true},failure:originalFailure}));
+    } catch (error) {
+      update(before => before.pendingStart?.request !== entry.request ? before : {...before,pendingStart:{...before.pendingStart,checking:false,retryAllowed:false},failure:originalFailure ?? commandFailure(error,"outcome-unknown")});
     }
   }
   function canStart() {
@@ -142,7 +155,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   async function start() {
     if (!canStart() || !available()) return;
     const before = current(), prepared = before.prepared!;
-    const entry: StartCapture = { request:fixed({ ...session,attemptId:prepared.attemptId,digest:prepared.preview.digest,confirmed:true }),prepared,editSeq:before.editSeq,uncertain:false };
+    const entry: StartCapture = { request:fixed({ ...session,attemptId:prepared.attemptId,digest:prepared.preview.digest,confirmed:true }),prepared,editSeq:before.editSeq,uncertain:false,checking:false,retryAllowed:false };
     await run(() => dispatchStart(entry));
   }
   async function readView(attemptId: string) {
@@ -155,15 +168,13 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     return result;
   }
   async function checkStart() {
-    const entry = current().pendingStart;
-    if (!entry) return;
-    await run(async () => {
-      const result = await reads.client.fetchQuery({ queryKey:reads.key(["aiCommands",entry.request.attemptId]),staleTime:0,meta:{scopes:["execution"]},
-        queryFn:async () => { const value = await aiCommands.read({ ...session,attemptId:entry.request.attemptId }); confirmView(value,entry.request.attemptId,entry.prepared); return value; } });
-      if (live()) settleStart(entry,result.detail.taskId);
-    },true);
+    const entry = current().pendingStart, originalFailure = current().failure;
+    if (entry?.uncertain) await run(() => lookupStart(entry,originalFailure),true);
   }
-  async function retryStart() { const entry = current().pendingStart; if (entry) await run(() => dispatchStart(entry,true),true); }
+  async function retryStart() {
+    const entry = current().pendingStart;
+    if (entry?.uncertain && entry.retryAllowed) await run(() => dispatchStart({...entry,retryAllowed:false},true),true);
+  }
   function candidate(view: AiView, resultId: string): Candidate | null {
     if (!validateResponseIdentity(session.projectId) || !session.sessionToken || view.detail.attemptId !== current().attempt) return null;
     const proof = current().started;

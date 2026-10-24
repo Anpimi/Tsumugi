@@ -4,6 +4,8 @@ import type { Responses } from "./ai.responses";
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
+export declare function validateRequestStartAction(value: unknown): value is Requests["startAction"];
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
+export declare function validateResponseStartAction(value: unknown): value is Responses["startAction"];
 export declare function validateResponseView(value: unknown): value is Responses["view"];

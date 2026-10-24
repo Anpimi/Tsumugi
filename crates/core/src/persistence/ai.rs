@@ -3,6 +3,40 @@ use crate::{ai::*, execution::*};
 use rusqlite::params;
 
 impl ProjectStore {
+    pub fn ai_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+        confirmed: bool,
+    ) -> Result<Option<AiStartReceipt>, ExecutionError> {
+        if !confirmed { return Err(error(ErrorCode::Unauthorized, "ai-consent")); }
+        if self.metadata().map_err(|_| error(ErrorCode::StorageFailed, "ai-project"))?.project_id().to_string() != project.to_string() {
+            return Err(error(ErrorCode::ResultMismatch, "ai-start-request"));
+        }
+        let found = super::review::read_snapshot(
+            self.connection().map_err(|_| error(ErrorCode::StorageFailed, "ai-start-read"))?,
+            |connection| {
+                let exists: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt.to_string()], |row| row.get(0),
+                ).map_err(|_| error(ErrorCode::StorageFailed, "ai-start-read"))?;
+                if !exists { return Ok(None); }
+                let input = super::ledger::load_input(connection, attempt)?;
+                let config = settings(&input)?.config;
+                let items = input.envelope().items.iter().map(|item| item_payload(&input, item.item_id)).collect::<Result<Vec<_>, _>>()?;
+                let original_digest = preview_digest(&config, &items)?;
+                if input.envelope().project_id != project || original_digest != digest {
+                    return Err(error(ErrorCode::ResultMismatch, "ai-start-request"));
+                }
+                Ok(Some(AiStartReceipt { project_id: project, attempt_id: attempt,
+                    task_id: input.envelope().task_id, digest: original_digest }))
+            },
+        )?;
+        // A mismatched or corrupt request must not clear a prior uncertain write.
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
     pub fn preview_ai(
         &self,
         config: AiConfig,

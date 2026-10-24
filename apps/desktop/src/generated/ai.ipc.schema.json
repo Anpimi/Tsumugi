@@ -168,11 +168,15 @@
       },
       "start": {
         "$ref": "#/definitions/AiStartRequest"
+      },
+      "startAction": {
+        "$ref": "#/definitions/AiStartRequest"
       }
     },
     "required": [
       "preview",
       "start",
+      "startAction",
       "read"
     ],
     "title": "Requests",
@@ -451,6 +455,31 @@
           "itemId",
           "resultId",
           "output"
+        ],
+        "type": "object"
+      },
+      "AiStartReceipt": {
+        "additionalProperties": false,
+        "description": "Immutable acknowledgement of the original direct translation request.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "taskId",
+          "digest"
         ],
         "type": "object"
       },
@@ -953,6 +982,16 @@
       "prepared": {
         "$ref": "#/definitions/AiPrepared"
       },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/AiStartReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "view": {
         "$ref": "#/definitions/AiView"
       }
@@ -960,7 +999,8 @@
     "required": [
       "prepared",
       "identity",
-      "view"
+      "view",
+      "startAction"
     ],
     "title": "Responses",
     "type": "object",
