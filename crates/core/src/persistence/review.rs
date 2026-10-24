@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::review::CHECK_VERSION;
+mod actions;
+pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
 mod checks;
-pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
+pub use checks::{ComputedReviewCheck, PreparedReviewCheck, ReviewCheckActionRequest, ReviewCheckActionRead};
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
@@ -25,6 +27,43 @@ pub use views::{
     ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary,
     ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
 };
+
+// A selected translation may predate the captured source. These associations
+// establish historical scope without requiring today's selection or locale.
+fn validate_historical_basis(
+    c: &Connection,
+    project: ExecutionId,
+    unit: ExecutionId,
+    locale: &str,
+    basis: &ReviewBasis,
+) -> Result<(), ExecutionError> {
+    let source: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_occurrences
+        WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",
+            params![
+                basis.source_snapshot_id.to_string(),
+                unit.to_string(),
+                basis.source_revision_id.to_string()
+            ],
+            |row| row.get(0),
+        )
+        .map_err(sql)?;
+    let selection = match (basis.selection_id,basis.revision_id) {
+        (Some(selection),Some(revision)) => c.query_row("SELECT EXISTS(SELECT 1 FROM translation_selections s
+            JOIN translation_revisions t ON t.revision_id=s.revision_id
+            WHERE s.event_id=?1 AND s.project_id=?2 AND s.unit_id=?3 AND s.locale=?4
+            AND s.revision_id=?5 AND t.project_id=s.project_id AND t.unit_id=s.unit_id AND t.locale=s.locale)",
+            params![selection.to_string(),project.to_string(),unit.to_string(),locale,revision.to_string()],
+            |row| row.get::<_,bool>(0)).map_err(sql)?,
+        (None,None) => true,
+        _ => false,
+    };
+    if !source || !selection || !super::content::unit_owned_by_project(c, project, unit)? {
+        return Err(failure(ErrorCode::CorruptLedger, "review-basis-history"));
+    }
+    Ok(())
+}
 
 fn check_outcome(rules: &[CheckRuleResult]) -> ReviewCheckOutcome {
     if rules.iter().all(|rule| rule.status == "cancelled") {
@@ -2174,7 +2213,7 @@ pub(super) mod tests {
             })
             .unwrap()
     }
-    fn check(
+    pub(super) fn check(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,

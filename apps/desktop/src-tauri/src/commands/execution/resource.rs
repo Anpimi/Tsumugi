@@ -601,3 +601,127 @@ mod contracts {
         assert!(serde_json::from_value::<ContextCapture>(unknown).is_err());
     }
 }
+
+#[tauri::command]
+pub async fn read_term_save_action(
+    state: State<'_, AppState>,
+    request: TermRequest,
+) -> Result<Option<tsumugi_core::TermSaveActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_term_save_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.project_id != request.term.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "resource-project"),
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .term_save_action(&request.term)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_context_save_action(
+    state: State<'_, AppState>,
+    request: ContextWriteRequest,
+) -> Result<Option<tsumugi_core::ContextSaveActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_save_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.project_id != request.context.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "resource-project"),
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_save_action(&request.context)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_context_capture_action(
+    state: State<'_, AppState>,
+    request: ContextCaptureRequest,
+) -> Result<Option<tsumugi_core::ContextCaptureActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_context_capture_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.project_id != request.capture.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "resource-project"),
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_capture_action(&request.capture)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_resource_decision_action(
+    state: State<'_, AppState>,
+    request: DecisionRequest,
+) -> Result<Option<tsumugi_core::ResourceDecisionActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_resource_decision_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.project_id != request.decision.project_id {
+                    return Err(resource_error(
+                        ExecutionError::new(ErrorCode::Unauthorized, "resource-project"),
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .resource_decision_action(&request.decision)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}

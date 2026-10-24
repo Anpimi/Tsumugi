@@ -26,10 +26,12 @@ macro_rules! handlers {
         source::translation::read_translation_save_action,
         source::translation::read_translation_selection_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
+        resource::read_term_save_action,resource::read_context_save_action,resource::read_context_capture_action,resource::read_resource_decision_action,
         resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
         resource::read_context_revision,resource::save_context,resource::capture_context,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
+        review::read_review_decision_action,review::read_review_waiver_action,review::read_review_fallback_action,review::read_review_check_action,
         review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
@@ -1124,3 +1126,6 @@ pub async fn quiesce_execution(
 
 #[cfg(all(test, feature = "execution-test-host"))]
 mod tests;
+
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod receipt_reads_tests;

@@ -48,6 +48,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Uncertain review decisions, built-in checks, terminology saves, context saves and captures, and file glossary decisions can be checked against the complete original request without replaying a write. Only a confirmed missing result enables an explicit retry; newer drafts and review evidence are preserved.
+
 - Confirm uncertain translation saves and revision selections through read-only checks of their complete original requests. Keep newer edits and unknown results available; a confirmed check can continue leaving without saving again.
 
 - Project overview rereads source availability through the shared session cache after source changes and when returning to the view. Refreshing or failed reads cannot keep the translation shortcut ready, and responses from a previous project cannot change the current overview.

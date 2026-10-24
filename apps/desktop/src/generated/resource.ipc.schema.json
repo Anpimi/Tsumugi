@@ -565,6 +565,41 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "CaptureContext": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "budgetBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "budgetBytes"
+        ],
+        "type": "object"
+      },
       "ContextCapture": {
         "additionalProperties": false,
         "properties": {
@@ -607,6 +642,22 @@
           "budgetBytes",
           "included",
           "omitted"
+        ],
+        "type": "object"
+      },
+      "ContextCaptureActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/ContextCapture"
+          },
+          "request": {
+            "$ref": "#/definitions/CaptureContext"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
         ],
         "type": "object"
       },
@@ -690,6 +741,22 @@
           "text",
           "reason",
           "previousRevisionId"
+        ],
+        "type": "object"
+      },
+      "ContextSaveActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/ContextRevision"
+          },
+          "request": {
+            "$ref": "#/definitions/SaveContext"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
         ],
         "type": "object"
       },
@@ -925,6 +992,61 @@
         ],
         "type": "string"
       },
+      "ResourceDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "captureId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "decision": {
+            "$ref": "#/definitions/ResourceDecisionKind"
+          },
+          "entryId": {
+            "type": "string"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "captureId",
+          "entryId",
+          "expectedRevisionId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "ResourceDecisionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/ResourceDecisionResult"
+          },
+          "request": {
+            "$ref": "#/definitions/ResourceDecision"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "ResourceDecisionKind": {
         "enum": [
           "adopt",
@@ -1043,6 +1165,125 @@
           "kind",
           "current",
           "scopeUnitId"
+        ],
+        "type": "object"
+      },
+      "SaveContext": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "expectedRevisionId",
+          "text",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "SaveTerm": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "scopeUnitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "termId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "termId",
+          "locale",
+          "source",
+          "aliases",
+          "target",
+          "protected",
+          "scopeUnitId",
+          "expectedRevisionId",
+          "reason"
         ],
         "type": "object"
       },
@@ -1201,6 +1442,22 @@
         ],
         "type": "object"
       },
+      "TermSaveActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/TermRevision"
+          },
+          "request": {
+            "$ref": "#/definitions/SaveTerm"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
       "TmMatchKind": {
         "enum": [
           "exact",
@@ -1283,6 +1540,16 @@
           }
         ]
       },
+      "captureAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextCaptureActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "captures": {
         "items": {
           "$ref": "#/definitions/GlossaryCapture"
@@ -1299,11 +1566,31 @@
           }
         ]
       },
+      "contextAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextSaveActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "contextCapture": {
         "$ref": "#/definitions/ContextCapture"
       },
       "decision": {
         "$ref": "#/definitions/ResourceDecisionResult"
+      },
+      "decisionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ResourceDecisionActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "impacts": {
         "$ref": "#/definitions/ImpactPage"
@@ -1326,6 +1613,16 @@
       "term": {
         "$ref": "#/definitions/TermRevision"
       },
+      "termAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TermSaveActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "terms": {
         "items": {
           "$ref": "#/definitions/TermRevision"
@@ -1334,6 +1631,10 @@
       }
     },
     "required": [
+      "termAction",
+      "contextAction",
+      "captureAction",
+      "decisionAction",
       "captures",
       "capture",
       "preview",

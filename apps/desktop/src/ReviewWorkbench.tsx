@@ -227,11 +227,15 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (!current.selected || !current.activeCheckId) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
-  function retryAvailability() {
+  function pendingAvailability() {
     if (!open || leavePrompt || batchPrompt || batchConfirmation.current) return { enabled: false, reason: "hidden" as const };
     if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
     if (!owner.current().pending) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
+  }
+  function retryAvailability() {
+    const available = pendingAvailability();
+    return !available.enabled ? available : owner.current().pendingCheckedMissing ? available : { enabled: false, reason: "unavailable" as const };
   }
   function targetActionAvailability(payload: ReviewFallbackCommandPayload | ReviewWaiverCommandPayload | undefined) {
     const available = reviewActionAvailability(false);
@@ -326,6 +330,11 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       binding: null, risk: "cancels-review-checks", confirmation: "none", availability: cancelAvailability,
       handler: () => { void cancelCheck(); },
     });
+    const removePendingCheck = commandRegistry.register({
+      id: "review.check-pending", nameKey: "review.checkAction", category: "review", scope: commandScope,
+      binding: null, risk: "reads-review", confirmation: "none", availability: pendingAvailability,
+      handler: () => { void owner.checkPending(); },
+    });
     const removeRetry = commandRegistry.register({
       id: "review.retry-pending", nameKey: "review.retry", category: "review", scope: commandScope,
       binding: null, risk: "retries-review-action", confirmation: "none", availability: retryAvailability,
@@ -364,7 +373,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       handler: owner.stopBatch,
     });
     return () => { removeStop(); removeBatch(); removeRevokeWaiver(); removeGrantWaiver(); removeWithdrawFallback(); removeAllowFallback();
-      removeRetry(); removeCancel(); removeCheck(); removeRequestChanges(); removeApprove(); };
+      removePendingCheck(); removeRetry(); removeCancel(); removeCheck(); removeRequestChanges(); removeApprove(); };
   });
   function captureSelected() {
     const current = owner.current(), target = current.selected;
@@ -618,7 +627,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
           {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
           {pending && !owner.inFlight() && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
-          {pending ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
+          {pending ? <div className="execution-actions"><button className="secondary-button" disabled={!pendingAvailability().enabled} onClick={() => commandRegistry.dispatch("review.check-pending", commandScope)}>{t(owner.state.checkingAction ? "review.checkingAction" : "review.checkAction")}</button><button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button>{owner.state.pendingCheckedMissing ? <p role="status">{t("review.actionMissing")}</p> : null}</div> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
           {batchRunning ? <button className="secondary-button" disabled={!stopBatchAvailability().enabled} onClick={() => commandRegistry.dispatch("review.stop-batch", commandScope)}>{t("review.batchCancel")}</button> : null}

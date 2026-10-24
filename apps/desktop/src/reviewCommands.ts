@@ -14,7 +14,54 @@ function sameAction(actual: { actionId: string; unitId: string; locale: string }
   return actual.actionId === expected.actionId && actual.unitId === expected.unitId && actual.locale === expected.locale;
 }
 
+function sameOriginal(actual: object, expected: object) {
+  const a = actual as Record<string, unknown>, b = expected as Record<string, unknown>;
+  return Object.keys(a).every(key => JSON.stringify(a[key] ?? null) === JSON.stringify(b[key] ?? null))
+    && Object.keys(b).every(key => Object.hasOwn(a, key));
+}
+
 export const reviewCommands = {
+  checkAction: async (request: ReviewCheckRequest) => {
+    const value = await checkedInvoke("read_review_check_action", request, validators.validateResponseCheckAction);
+    if (value === null) return null;
+    const { sessionToken: _sessionToken, ...original } = request;
+    requireConfirmation(sameOriginal(value.request, original)
+      && sameAction(value.receipt, request) && value.receipt.basis === request.expectedBasis);
+    return value.receipt;
+  },
+  fallbackAction: async (session: SessionRequest, fallback: FallbackWrite) => {
+    const value = await checkedInvoke("read_review_fallback_action", { ...session, fallback }, validators.validateResponseFallbackAction);
+    if (value === null) return null;
+    requireConfirmation(sameOriginal(value.request, fallback));
+    const result = value.receipt;
+    requireConfirmation(sameAction(result, fallback) && result.allow === fallback.allow
+      && result.previousFallbackId === (fallback.expectedFallbackId ?? null) && result.actor === fallback.actor && result.reason === fallback.reason);
+    return result;
+  },
+
+  waiverAction: async (session: SessionRequest, waiver: WaiverWrite) => {
+    const value = await checkedInvoke("read_review_waiver_action", { ...session, waiver }, validators.validateResponseWaiverAction);
+    if (value === null) return null;
+    requireConfirmation(sameOriginal(value.request, waiver));
+    const result = value.receipt;
+    requireConfirmation(sameAction(result, waiver) && result.basis === waiver.expectedBasis && result.issueId === waiver.issueId
+      && result.grant === waiver.grant && result.previousWaiverId === (waiver.expectedWaiverId ?? null)
+      && result.actor === waiver.actor && result.reason === waiver.reason);
+    return result;
+  },
+
+  decisionAction: async (session: SessionRequest, decision: ReviewWrite) => {
+    const value = await checkedInvoke("read_review_decision_action", { ...session, decision }, validators.validateResponseDecisionAction);
+    if (value === null) return null;
+    requireConfirmation(sameOriginal(value.request, decision));
+    const result = value.receipt;
+    requireConfirmation(sameAction(result, decision) && result.basis === decision.expectedBasis
+      && result.actor === decision.actor && result.kind === decision.kind && result.reason === decision.reason
+      && result.selectionId === result.basisEvidence.selectionId && result.revisionId === result.basisEvidence.revisionId
+      && result.sourceRevisionId === result.basisEvidence.sourceRevisionId);
+    return result;
+  },
+
   // A captured list is one source snapshot. Keep response correlation at the
   // transport boundary alongside the generated shape validator.
   summaryPage: (request: ReviewSummaryPageRequest) => checkedInvoke("read_review_summary_page", request,

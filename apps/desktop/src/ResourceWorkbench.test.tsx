@@ -42,6 +42,7 @@ beforeEach(async () => {
       previousRevisionId: null, removed: false,
     };
     if (command === "read_term_history") return [];
+    if (["read_term_save_action", "read_context_save_action", "read_context_capture_action", "read_resource_decision_action"].includes(command)) return null;
     throw new Error(command);
   });
 });
@@ -108,8 +109,11 @@ it("keeps newer term edits when checking an uncertain original save", async () =
   await user.type(target, "A");
   await user.type(screen.getByRole("textbox", { name: "Reason or source note" }), "Reviewed");
   await user.click(screen.getByRole("button", { name: "Save term" }));
-  const retry = await screen.findByRole("button", { name: "Check or retry the same action" });
+  const retry = await screen.findByRole("button", { name: "Retry the original action" });
   await user.type(target, "B");
+  const checkSaved = screen.getByRole("button", { name: "Check saved action" });
+  expect(checkSaved).toBeEnabled(); await user.click(checkSaved);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_term_save_action")).toHaveLength(2);
   await user.click(retry);
   await screen.findByText("Saved. Earlier revisions remain available.");
   expect(target).toHaveValue("AB");
@@ -148,11 +152,11 @@ it.each(["delayed", "replayed"] as const)("keeps newer context and reason after 
   await user.type(reason, "Reason A");
   await user.click(screen.getByRole("button", { name: "Save context" }));
   await waitFor(() => expect(saves).toBe(1));
-  if (mode === "replayed") await screen.findByRole("button", { name: "Check or retry the same action" });
+  if (mode === "replayed") await screen.findByRole("button", { name: "Retry the original action" });
   await user.type(context, "B");
   await user.type(reason, "B");
   if (mode === "delayed") await act(async () => finishSave(saved));
-  else await user.click(screen.getByRole("button", { name: "Check or retry the same action" }));
+  else await user.click(screen.getByRole("button", { name: "Retry the original action" }));
   await screen.findByText("Saved. Earlier revisions remain available.");
   expect(context).toHaveValue("AB");
   expect(reason).toHaveValue("Reason AB");
@@ -426,7 +430,7 @@ it("rebases a clean removed language and recovers a picker uncertainty through a
   await user.click(screen.getByRole("button", { name: "Choose glossary file" }));
   await screen.findByText(/The file selection result is uncertain/);
   expect(resourceOwner.current().pending).toBeNull();
-  expect(screen.queryByRole("button", { name: "Check or retry the same action" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the original action" })).not.toBeInTheDocument();
   view.rerender(null); view.rerender(<ResourceView project={next} />);
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(await screen.findByRole("button", { name: `${capture.resourceId} · ${capture.revision}` }));
@@ -466,7 +470,7 @@ it("retains the chosen capture after preview failure and uses its actual languag
   expect(pending?.kind === "decision" && pending.locale).toBe("fr");
   view.rerender(<ResourceView project={project} />);
   expect(within(screen.getByRole("row", { name: /Barrel/ })).getByRole("button", { name: "Keep current" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Check or retry the same action" }));
+  await user.click(screen.getByRole("button", { name: "Retry the original action" }));
   await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
   const requests = invoke.mock.calls.filter(([name]) => name === "decide_resource_entry").map(([, payload]) => payload.request);
   expect(requests[1]).toEqual(requests[0]); expect(requests[0].decision.captureId).toBe(capture.captureId);
@@ -710,8 +714,8 @@ it.each(["term", "context", "decision", "capture"] as const)("reconciles the ori
   const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Glossary and context" })); await screen.findAllByRole("button", { name: "Retry this read" });
   const input = { kind: "resource-pending" as const, pendingKind: kind, actionId: pending.request.actionId };
   expect(resourceRegistry.dispatch("resource.retry-pending", resourceScope, { ...input, actionId: fixtureIdentity(481) })).toBe(false);
-  expect(screen.getByRole("button", { name: "Check or retry the same action" })).toBeEnabled();
-  await user.click(screen.getByRole("button", { name: "Check or retry the same action" })); await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
+  expect(screen.getByRole("button", { name: "Retry the original action" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Retry the original action" })); await waitFor(() => expect(resourceOwner.current().pending).toBeNull());
   const requests = invoke.mock.calls.filter(([name]) => name === command).map(([, payload]) => payload.request);
   expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);

@@ -717,3 +717,126 @@ pub async fn read_review_eligibility(
         )
         .await
 }
+
+#[tauri::command]
+pub async fn read_review_decision_action(
+    state: State<'_, AppState>,
+    request: ReviewWriteRequest,
+) -> Result<Option<tsumugi_core::ReviewDecisionActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_decision_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.decision.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionRead,
+                        Some("review-project"),
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_decision_action_read(&request.decision)
+                .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_review_waiver_action(
+    state: State<'_, AppState>,
+    request: WaiverRequest,
+) -> Result<Option<tsumugi_core::ReviewWaiverActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_waiver_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.waiver.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionRead,
+                        Some("review-project"),
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_waiver_action_read(&request.waiver)
+                .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_review_fallback_action(
+    state: State<'_, AppState>,
+    request: FallbackRequest,
+) -> Result<Option<tsumugi_core::ReviewFallbackActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_fallback_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                if request.fallback.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionRead,
+                        Some("review-project"),
+                    ));
+                }
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_fallback_action_read(&request.fallback)
+                .map_err(map_read)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_review_check_action(
+    state: State<'_, AppState>,
+    request: ReviewCheckRequest,
+) -> Result<Option<tsumugi_core::ReviewCheckActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_check_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let session = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                session
+                    .store
+                    .review_check_action_read(&tsumugi_core::ReviewCheckActionRequest {
+                        project_id: request.project_id,
+                        action_id: request.action_id,
+                        unit_id: request.unit_id,
+                        locale: request.locale,
+                        expected_basis: request.expected_basis,
+                    })
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
