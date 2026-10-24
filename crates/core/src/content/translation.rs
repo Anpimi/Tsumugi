@@ -167,8 +167,11 @@ impl TranslationBundle {
         {
             return Err(invalid("unsupported-format"));
         }
-        let bundle: Self = from_value(&envelope.settings)?;
+        let (bundle, native_start) = super::import_start::translation_settings(&envelope.settings)?;
         bundle.validate()?;
+        if let Some(request) = native_start {
+            super::import_start::validate_translation_start(input, &bundle, &request)?;
+        }
         let entries = parsed_translation(&bundle, &Cancellation::default())?;
         if envelope.items.len() != entries.len().max(1) {
             return Err(invalid("invalid-structure"));

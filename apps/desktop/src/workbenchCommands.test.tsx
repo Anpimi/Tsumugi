@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import sourceFixture from "../test/fixtures/sourceCommands.contract.json";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import translationFixture from "../test/fixtures/translation-commands.json";
 import { validateResponseDelivery } from "./generated/release.validators";
@@ -55,6 +56,7 @@ describe("Translation business command payloads",()=>{
     ["translation.inspect-import",setup,[{locale:""},{fileName:null}]],
     ["translation.confirm-import-language",consent,[{confirmed:"yes"},{fileDigest:""}]],
     ["translation.start-import",consent,[{sourceSnapshotId:null},{selectionId:null}]],
+    ["translation.check-import-start",{kind:"translation-import-start-pending",request:translationFixture.start},[{request:{}}]],
     ["translation.retry-import-start",{kind:"translation-import-start-pending",request:translationFixture.start},[{request:{}}]],
     ["translation.choose-import-row",{...target,...row,kind:"translation-import-row",decision:"candidate-only"},[{expectedSelectionId:undefined},{decision:"other"}]],
     ["translation.apply-import-row",{...target,...row,kind:"translation-import-row",decision:"select-if-empty"},[{ordinal:-1},{itemId:null}]],
@@ -215,9 +217,10 @@ describe("source command payloads", () => {
     ["source.estimate", { kind: "source-basis", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", base: "base", editSeq: 1 }, [{ base: "" }, { editSeq: -1 }]],
     ["source.search-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: "base", filter: "A", after: 1, editSeq: 1 }, [{ filter: [] }, { after: -1 }, { originalBase: null }]],
     ["source.refresh-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: null, filter: "", after: 0, editSeq: 1 }, [{ base: undefined }]],
-    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: "attempt", actionId: null }, [{ actionId: "action" }, { pendingKind: "other" }]],
-    ["source.check-receipt", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action" }, [{ actionId: null }]],
-    ["source.retry-apply", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action" }, [{ actionId: undefined }]],
+    ["source.check-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceFixture.start.attemptId, actionId: null, request: sourceFixture.start }, [{ request: null }, { request: {} }]],
+    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: sourceFixture.start.attemptId, actionId: null, request: sourceFixture.start }, [{ actionId: "action" }, { pendingKind: "other" }, { request: null }]],
+    ["source.check-receipt", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action", request: null }, [{ actionId: null }]],
+    ["source.retry-apply", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action", request: null }, [{ actionId: undefined }]],
     ["source.cancel-task", { kind: "source-task", attemptId: "attempt", taskId: "task" }, [{ taskId: "" }]],
     ["source.read-page", { kind: "source-page", snapshotId: null, attemptId: "attempt", resultId: "result", after: 50 }, [{ snapshotId: undefined }, { after: NaN }]],
     ["source.read-history", { kind: "source-history", offset: 50 }, [{ offset: -1 }]],

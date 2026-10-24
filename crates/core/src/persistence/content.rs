@@ -866,6 +866,28 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
     changes
 }
 impl ProjectStore {
+    pub fn source_import_start_action_read(
+        &self, request: &SourceImportStart,
+    ) -> Result<Option<SourceImportStartRead>, ExecutionError> {
+        request.validate()?;
+        let found = super::review::read_snapshot(
+            self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "source-start-read"))?, |connection| {
+            if super::read_metadata_from(connection).map_err(|_| corrupt())?.project_id().to_string() != request.project_id.to_string() {
+                return Err(failure(ErrorCode::Unauthorized, "source-start-project"));
+            }
+            let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [request.attempt_id.to_string()], |row| row.get(0)).map_err(sql_error)?;
+            if !exists { return Ok(None); }
+            let input = load_input(connection, request.attempt_id)?;
+            let saved = SourceImportStart::from_input(&input)?;
+            if saved != *request { return Err(failure(ErrorCode::ResultMismatch, "source-start-request")); }
+            let bundle = SourceBundle::from_input(&input)?;
+            if read_bundle(connection, bundle.set_id)? != bundle { return Err(corrupt()); }
+            Ok(Some(SourceImportStartRead { request: saved, task_id: input.envelope().task_id, input_digest: input.digest().into() }))
+        })?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
     pub fn source_bundle(&self, snapshot: ExecutionId) -> Result<SourceBundle, ExecutionError> {
         let connection = self
             .connection()

@@ -7,6 +7,8 @@ import type { BuildLocaleChoice, DeliveryView } from "./releaseCommands";
 import { validateResponseDelivery } from "./generated/release.validators";
 import type { TranslationStartRequest, TranslationAdoptRequest, TranslationSelectRequest, TranslationDecision } from "./translationCommands";
 import { validateRequestStart, validateRequestAdopt, validateRequestSelect } from "./generated/translation.validators";
+import type { StartRequest as SourceStartRequest } from "./sourceCommands";
+import { validateRequestStart as validateSourceStart } from "./generated/source.validators";
 import type { ProjectView } from "./projectCommands";
 import { validateResponseProjectView } from "./generated/validators";
 
@@ -53,7 +55,7 @@ export interface SourceCaptureCommandPayload { kind: "source-capture"; selection
 export interface SourceBasisCommandPayload { kind: "source-basis"; attemptId: string; resultId: string; revision: string; currentSnapshot: string | null; base: string | null; editSeq: number }
 export interface SourceComparisonCommandPayload { kind: "source-comparison"; attemptId: string; resultId: string; revision: string; currentSnapshot: string | null;
   originalBase: string; base: string | null; filter: string; after: number; editSeq: number }
-export interface SourcePendingCommandPayload { kind: "source-pending"; pendingKind: "start" | "apply"; attemptId: string; actionId: string | null }
+export interface SourcePendingCommandPayload { kind: "source-pending"; pendingKind: "start" | "apply"; attemptId: string; actionId: string | null; request: SourceStartRequest | null }
 export interface SourceTaskCommandPayload { kind: "source-task"; attemptId: string; taskId: string }
 export interface SourcePageCommandPayload { kind: "source-page"; snapshotId: string | null; attemptId: string; resultId: string; after: number }
 export interface SourceHistoryCommandPayload { kind: "source-history"; offset: number }
@@ -167,6 +169,7 @@ interface WorkbenchCommandPayloads {
   "translation.inspect-import": TranslationImportSetupCommandPayload;
   "translation.confirm-import-language": TranslationImportConsentCommandPayload;
   "translation.start-import": TranslationImportConsentCommandPayload;
+  "translation.check-import-start": TranslationImportStartPendingCommandPayload;
   "translation.retry-import-start": TranslationImportStartPendingCommandPayload;
   "translation.choose-import-row": TranslationImportRowCommandPayload;
   "translation.apply-import-row": TranslationImportRowCommandPayload;
@@ -258,6 +261,7 @@ interface WorkbenchCommandPayloads {
   "source.estimate": SourceBasisCommandPayload;
   "source.search-comparison": SourceComparisonCommandPayload;
   "source.refresh-comparison": SourceComparisonCommandPayload;
+  "source.check-start": SourcePendingCommandPayload;
   "source.retry-start": SourcePendingCommandPayload;
   "source.check-receipt": SourcePendingCommandPayload;
   "source.retry-apply": SourcePendingCommandPayload;
@@ -328,7 +332,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"project-metadata-reconcile", "project.metadata.reconcile">
   | ResourceCommand<"translation-import-setup", "translation.choose-import-folder" | "translation.inspect-import">
   | ResourceCommand<"translation-import-consent", "translation.confirm-import-language" | "translation.start-import">
-  | ResourceCommand<"translation-import-start-pending", "translation.retry-import-start">
+  | ResourceCommand<"translation-import-start-pending", "translation.check-import-start" | "translation.retry-import-start">
   | ResourceCommand<"translation-import-row", "translation.choose-import-row" | "translation.apply-import-row">
   | ResourceCommand<"translation-import-preview", "translation.capture-import-batch">
   | ResourceCommand<"translation-import-batch", "translation.apply-import-batch">
@@ -381,7 +385,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"source-capture", "source.preflight" | "source.start">
   | ResourceCommand<"source-basis", "source.apply" | "source.estimate">
   | ResourceCommand<"source-comparison", "source.search-comparison" | "source.refresh-comparison">
-  | ResourceCommand<"source-pending", "source.retry-start" | "source.check-receipt" | "source.retry-apply" | "source.keep-output">
+  | ResourceCommand<"source-pending", "source.check-start" | "source.retry-start" | "source.check-receipt" | "source.retry-apply" | "source.keep-output">
   | ResourceCommand<"source-task", "source.cancel-task">
   | ResourceCommand<"source-page", "source.read-page">
   | ResourceCommand<"source-history", "source.read-history">
@@ -684,7 +688,7 @@ function validSourcePayload(payload: CommandPayload | undefined): payload is Sou
     case "source-comparison": return validIdentity(payload.attemptId) && validIdentity(payload.resultId) && validIdentity(payload.revision)
       && nullableIdentity(payload.currentSnapshot) && validIdentity(payload.originalBase) && nullableIdentity(payload.base)
       && typeof payload.filter === "string" && editSequence(payload.after) && editSequence(payload.editSeq);
-    case "source-pending": return validIdentity(payload.attemptId) && (payload.pendingKind === "start" ? payload.actionId === null : payload.pendingKind === "apply" && validIdentity(payload.actionId));
+    case "source-pending": return validIdentity(payload.attemptId) && (payload.pendingKind === "start" ? payload.actionId === null && validateSourceStart(payload.request) && payload.request.attemptId === payload.attemptId : payload.pendingKind === "apply" && payload.request === null && validIdentity(payload.actionId));
     case "source-task": return validIdentity(payload.attemptId) && validIdentity(payload.taskId);
     case "source-page": return nullableIdentity(payload.snapshotId) && validIdentity(payload.attemptId) && validIdentity(payload.resultId) && editSequence(payload.after);
     case "source-history": return editSequence(payload.offset);

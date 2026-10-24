@@ -27,7 +27,9 @@ Files are read through authorized native directory handles. Windows denies ordin
 
 **Back** keeps an unstarted selection while the project stays open. Leaving the project asks before discarding it. Once import starts, its task and output remain available from **Tasks**. Closing a view does not cancel a persisted task. Active work participates in the existing stop-before-close or directory-move flow.
 
-If a start acknowledgement is lost, check or resume that same import. If applying is uncertain, query its saved receipt before retrying the same action. Repeated confirmed actions return the original receipt and identities. Cancelled output can only be applied with fresh explicit authorization. Unknown execution is never replayed automatically. Failed source files should be corrected and imported as a new task.
+If a start acknowledgement is lost, invalid or uncertain, the app automatically checks the original saved request once without repeating capture or execution. **Check saved import start** uses the same read-only check. Only a confirmed missing start enables **Retry the same import**, which explicitly resubmits the complete original request. A failed check or missing original-request evidence keeps the outcome uncertain and does not enable retry. Persisted tasks and captured bytes remain available in **Tasks** after reopening; an older task without that request binding cannot prove the original start.
+
+If applying is uncertain, query its saved receipt before retrying the same action. Repeated confirmed actions return the original receipt and identities. Cancelled output can only be applied with fresh explicit authorization. Unknown execution is never replayed automatically. Failed source files should be corrected and imported as a new task.
 
 After capture, the external Mod can be moved or removed: preview, adoption and reopening use project-owned bytes. Moving the closed project keeps content identities and receipts intact. Corrupt stored evidence and unsupported database schemas are rejected rather than repaired or shown as empty content.
 

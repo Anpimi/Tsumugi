@@ -19,6 +19,7 @@ export interface Responses {
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
   selectionAction: TranslationSelection | null;
+  startAction: TranslationImportStartRead | null;
 }
 export interface TranslationSelection {
   actionId: ExecutionId;
@@ -162,4 +163,19 @@ export interface TranslationEditBasis {
   selectionId: ExecutionId;
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
+}
+export interface TranslationImportStartRead {
+  inputDigest: string;
+  request: TranslationImportStart;
+  taskId: ExecutionId;
+}
+export interface TranslationImportStart {
+  attemptId: ExecutionId;
+  expectedFileDigest: string;
+  expectedSourceSnapshotId: ExecutionId;
+  fileName: string;
+  languageConfirmed: boolean;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  targetLocale: string;
 }

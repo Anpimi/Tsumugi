@@ -191,14 +191,32 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     );
     let attempt = ExecutionId::new();
     capture["attemptId"] = json!(attempt);
+    assert_eq!(call(&view, "read_source_import_start", capture.clone()).unwrap(), Value::Null);
+    let original: StartRequest = serde_json::from_value(capture.clone()).unwrap();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let host = sessions.active.as_mut().unwrap().execution_parts().unwrap().0;
+        host.source.job = Some(ExecutionId::new()); host.source.last_start = Some(original.original());
+    });
+    assert!(call(&view, "read_source_import_start", capture.clone()).is_err());
+    app.state::<AppState>().sessions.with(|sessions| {
+        sessions.active.as_mut().unwrap().execution_parts().unwrap().0.source.job = None;
+    });
     assert_eq!(
         call(&view, "start_source_import", capture.clone()).unwrap(),
         json!(attempt)
     );
     assert_eq!(
-        call(&view, "start_source_import", capture).unwrap(),
+        call(&view, "start_source_import", capture.clone()).unwrap(),
         json!(attempt)
     );
+    let source_start_read = call(&view, "read_source_import_start", capture.clone()).unwrap();
+    let mut expected_request = capture.clone(); expected_request.as_object_mut().unwrap().remove("sessionToken");
+    assert_eq!(source_start_read["request"], expected_request);
+    for (field, value) in [("selectionId",json!(ExecutionId::new())),("sourceLanguage",json!("fr")),
+        ("projectId",json!(ExecutionId::new())),("sessionToken",json!("retired-session"))] {
+        let mut wrong = capture.clone(); wrong[field] = value;
+        assert!(call(&view, "read_source_import_start", wrong).is_err());
+    }
     let deadline = Instant::now() + Duration::from_secs(10);
     let detail = loop {
         {
@@ -355,6 +373,17 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     changed_query["query"] = json!("changed");
     assert!(call(&view, "read_review_summary_page", changed_query).is_err());
     wait_for_execution_idle(&view, &context);
+    app.state::<AppState>().sessions.with(|sessions| {
+        sessions.active.as_mut().unwrap().execution_parts().unwrap().0.quiescing = true;
+    });
+    assert_eq!(call(&view, "read_source_import_start", capture.clone()).unwrap(), source_start_read);
+    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution = None; });
+    let sequence = app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.execution_sequence().unwrap());
+    assert_eq!(call(&view, "read_source_import_start", capture.clone()).unwrap(), source_start_read);
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_ref().unwrap(); assert!(active.execution.is_none());
+        assert_eq!(active.store.execution_sequence().unwrap(), sequence);
+    });
     call(
         &view,
         "close_project",
@@ -367,6 +396,10 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
         json!({"locator":temp.path().join("project")}),
     )
     .unwrap();
+    assert!(call(&view, "read_source_import_start", capture.clone()).is_err());
+    capture["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_source_import_start", capture).unwrap(), source_start_read);
+    app.state::<AppState>().sessions.with(|sessions| { assert!(sessions.active.as_ref().unwrap().execution.is_none()); });
     assert!(call(&view, "read_source_content", read.clone()).is_err());
     assert!(call(&view, "read_review_summary_page", summary_request.clone()).is_err());
     summary_request["sessionToken"] = reopened["sessionToken"].clone();
@@ -526,11 +559,21 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     translation["languageConfirmed"] = json!(false);
     assert!(call(&view, "start_translation_import", translation.clone()).is_err());
     translation["languageConfirmed"] = json!(true);
+    assert_eq!(call(&view, "read_translation_import_start", translation.clone()).unwrap(), Value::Null);
     call(&view, "start_translation_import", translation.clone()).unwrap();
     assert_eq!(
-        call(&view, "start_translation_import", translation).unwrap(),
+        call(&view, "start_translation_import", translation.clone()).unwrap(),
         json!(translation_attempt)
     );
+    let translation_start_read = call(&view, "read_translation_import_start", translation.clone()).unwrap();
+    let mut expected_request = translation.clone(); expected_request.as_object_mut().unwrap().remove("sessionToken");
+    assert_eq!(translation_start_read["request"], expected_request);
+    for (field, value) in [("selectionId",json!(ExecutionId::new())),("fileName",json!("zh-CN.json")),
+        ("targetLocale",json!("zh-TW")),("languageConfirmed",json!(false)),("expectedFileDigest",json!("0".repeat(64))),
+        ("expectedSourceSnapshotId",json!(ExecutionId::new())),("projectId",json!(ExecutionId::new())),("sessionToken",json!("retired-session"))] {
+        let mut wrong = translation.clone(); wrong[field] = value;
+        assert!(call(&view, "read_translation_import_start", wrong).is_err());
+    }
     wait(translation_attempt, 3);
     let mut read = context.clone();
     read["attemptId"] = json!(translation_attempt);
@@ -691,6 +734,7 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
         let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         host.quiescing = true;
     });
+    assert_eq!(call(&view, "read_translation_import_start", translation.clone()).unwrap(), translation_start_read);
     assert_eq!(call(&view, "read_translation_save_action", save.clone()).unwrap(), manual);
     assert_eq!(call(&view, "read_translation_selection_action", select.clone()).unwrap(), restored);
     app.state::<AppState>().sessions.with(|sessions| {
@@ -723,6 +767,10 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
         json!({"locator":temp.path().join("project")}),
     )
     .unwrap();
+    assert!(call(&view, "read_translation_import_start", translation.clone()).is_err());
+    translation["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_translation_import_start", translation).unwrap(), translation_start_read);
+    app.state::<AppState>().sessions.with(|sessions| { assert!(sessions.active.as_ref().unwrap().execution.is_none()); });
     assert!(call(&view, "read_translation_adoption_action", import_read.clone()).is_err());
     import_read["adoption"]["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&view, "read_translation_adoption_action", import_read).unwrap(), expected_import_read);

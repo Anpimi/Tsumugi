@@ -30,6 +30,14 @@ request!(
         attempt_id: ExecutionId,
     }
 );
+impl TranslationStartRequest {
+    fn original(&self) -> content::TranslationImportStart {
+        content::TranslationImportStart { project_id: self.project_id, attempt_id: self.attempt_id,
+            selection_id: self.selection_id, file_name: self.file_name.clone(), target_locale: self.target_locale.clone(),
+            language_confirmed: self.language_confirmed, expected_file_digest: self.expected_file_digest.clone(),
+            expected_source_snapshot_id: self.expected_source_snapshot_id }
+    }
+}
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationPreviewRequest {
     attempt_id: ExecutionId,
     after: u32,
@@ -290,6 +298,21 @@ pub async fn preflight_translation(
 }
 
 #[tauri::command]
+pub async fn read_translation_import_start(
+    state: State<'_, AppState>, request: TranslationStartRequest,
+) -> Result<Option<content::TranslationImportStartRead>, CommandError> {
+    state.sessions.run("read_translation_import_start", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let original = request.original();
+        let found = active.store.translation_import_start_action_read(&original).map_err(map_source)?;
+        if found.is_none() && active.execution.as_ref().is_some_and(|host|
+            host.source.job.is_some() && host.source.translation_last_start.as_ref() == Some(&original)) {
+            return Err(map_source(ExecutionError::new(ErrorCode::Busy, "input-busy")));
+        }
+        Ok(found)
+    }).await
+}
+#[tauri::command]
 pub async fn start_translation_import(
     state: State<'_, AppState>,
     request: TranslationStartRequest,
@@ -315,25 +338,12 @@ pub async fn start_translation_import(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
-                let identity = (
-                    initial.attempt_id,
-                    initial.selection_id,
-                    initial.file_name.clone(),
-                    initial.target_locale.clone(),
-                    initial.expected_file_digest.clone(),
-                    initial.expected_source_snapshot_id,
-                );
-                match store.execution_input(initial.attempt_id) {
-                    Ok(input) => {
-                        if host.source.translation_last_start.as_ref() != Some(&identity)
-                            || input.envelope().operation != content::TRANSLATION_OPERATION
-                        {
-                            return Err(stale());
-                        }
-                        return Ok(None);
-                    }
-                    Err(error) if error.code == ErrorCode::InvalidInput => {}
-                    Err(error) => return Err(map_source(error)),
+                let identity = initial.original();
+                if store.is_reconciling() {
+                    return Err(map_source(ExecutionError::new(ErrorCode::OutcomeUnknown, "session")));
+                }
+                if store.translation_import_start_action_read(&identity).map_err(map_source)?.is_some() {
+                    return Ok(None);
                 }
                 let pair = begin_translation(
                     sessions,
@@ -387,12 +397,7 @@ pub async fn start_translation_import(
                 let metadata = active.store.metadata().map_err(|error| {
                     map_persistence_error(error, CommandStage::ExecutionRecover)
                 })?;
-                let input = bundle
-                    .fixed_input(metadata.project_id())
-                    .map_err(map_source)?;
-                let mut envelope = input.envelope().clone();
-                envelope.attempt_id = request.attempt_id;
-                let input = FixedInput::capture(envelope).map_err(map_source)?;
+                let input = bundle.fixed_input_for_import_start(metadata.project_id(), &request.original()).map_err(map_source)?;
                 let (host, store) = active.execution_parts()?;
                 host.runtime.submit(store, &input).map_err(map_source)?;
                 Ok(request.attempt_id)

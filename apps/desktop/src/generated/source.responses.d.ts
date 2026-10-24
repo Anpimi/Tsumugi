@@ -22,6 +22,7 @@ export interface Responses {
   preflight: Preflight;
   scope: ContentScope;
   selection: SourceSelection | null;
+  startAction: SourceImportStartRead | null;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -228,4 +229,15 @@ export interface Preflight {
 export interface SourceSelection {
   folderName: string;
   selectionId: ExecutionId;
+}
+export interface SourceImportStartRead {
+  inputDigest: string;
+  request: SourceImportStart;
+  taskId: ExecutionId;
+}
+export interface SourceImportStart {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sourceLanguage: string;
 }

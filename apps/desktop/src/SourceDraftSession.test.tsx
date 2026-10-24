@@ -7,7 +7,7 @@ import { useSourceDraftSession } from "./SourceDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { useSessionReads } from "./SessionReadProvider";
 import { executionCommands, type AdoptionAction, type Receipt } from "./executionCommands";
-import { sourceCommands, type ContentScope, type SourceAdoptRequest, type SourceChangePage } from "./sourceCommands";
+import { sourceCommands, type StartRequest, type ContentScope, type SourceAdoptRequest, type SourceChangePage } from "./sourceCommands";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { sourceActionFixture, sourceAttemptFixture, sourcePageFixture, sourceRowFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
@@ -43,6 +43,7 @@ beforeEach(() => {
     if (command === "select_source") return sourceFixture.selection;
     if (command === "preflight_source") return sourceFixture.preflight;
     if (command === "start_source_import") return payload.request.attemptId;
+    if (command === "read_source_import_start") return null;
     if (command === "cancel_source_capture") return null;
     if (command === "read_execution_attempt") return sourceAttemptFixture(payload.request.attemptId as string, preview.resultId);
     if (command === "read_source_preview") return preview;
@@ -585,4 +586,65 @@ it("bridges Source cancellation to the shared original request without using Sou
   expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
   expect(tasks.current(fixtureIdentity(150))).toMatchObject({ phase: "recorded", revision: "3" });
+});
+
+function sourceStartProof(request: StartRequest) {
+  const { sessionToken: _session, ...original } = request;
+  return { request: original, taskId: fixtureIdentity(980), inputDigest: "a".repeat(64) };
+}
+it.each(["lost", "bad", "unknown"] as const)("checks one original Source start after %s ACK and keeps B while its consumer is hidden", async mode => {
+  const view = render(<Probe/>, project);
+  await act(async () => { await owner.select(); owner.declare(true); await owner.preflight(); });
+  const native = invoke.getMockImplementation()!, lookup = deferredAction<unknown>();
+  invoke.mockImplementation((command: string, payload) => command === "start_source_import"
+    ? mode === "bad" ? Promise.resolve(fixtureIdentity(777)) : Promise.reject(mode === "lost" ? new Error("Lost ACK") : lostSource)
+    : command === "read_source_import_start" ? lookup.promise : native(command, payload));
+  let work!: Promise<void>; act(() => { work = owner.start(); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_source_import_start")).toHaveLength(1));
+  const request = owner.current().pendingStart!;
+  expect(owner.current().checkingStart).toBe(true); expect(owner.current().busyMutation).toBe(true);
+  await act(async () => { await owner.start(); await owner.retryStart(); await owner.checkStart(); });
+  expect(invoke.mock.calls.filter(([name]) => name === "start_source_import")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+  act(() => { owner.edit("actor", "Newer B"); }); view.rerender(null);
+  await act(async () => { lookup.resolve(sourceStartProof(request)); await work; }); view.rerender(<Probe/>);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().attempt).toBe(request.attemptId);
+  expect(owner.current().actor).toBe("Newer B"); expect(owner.current().confirmed).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_import_start").map(([, args]) => args.request)).toEqual([request]);
+});
+it.each(["missing", "read-error", "wrong-proof"] as const)("keeps Source start %s recoverable using the same pure helper", async mode => {
+  render(<Probe/>, project); await act(async () => { await owner.select(); owner.declare(true); await owner.preflight(); });
+  const native = invoke.getMockImplementation()!; let checked = false;
+  invoke.mockImplementation((command: string, payload) => command === "start_source_import" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_source_import_start" ? checked ? Promise.resolve(sourceStartProof(payload.request))
+      : mode === "missing" ? Promise.resolve(null) : mode === "read-error" ? Promise.reject(new Error("Read unavailable"))
+      : Promise.resolve({ ...sourceStartProof(payload.request), request: { ...sourceStartProof(payload.request).request, selectionId: fixtureIdentity(777) } }) : native(command,payload));
+  await act(async () => { await owner.start(); }); const request = owner.current().pendingStart!;
+  expect(owner.current().startRetryAllowed).toBe(mode === "missing");
+  if (mode !== "missing") await act(async () => { await owner.retryStart(); });
+  expect(invoke.mock.calls.filter(([name]) => name === "start_source_import")).toHaveLength(1);
+  checked = true; await act(async () => { await owner.checkStart(); });
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().attempt).toBe(request.attemptId);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_import_start").map(([, args]) => args.request)).toEqual([request,request]);
+});
+it("keeps the original unknown Source start when its checked-missing exact retry is rejected", async () => {
+  render(<Probe/>, project); await act(async () => { await owner.select(); owner.declare(true); await owner.preflight(); });
+  const native = invoke.getMockImplementation()!; let writes = 0;
+  invoke.mockImplementation((command: string,payload) => command === "start_source_import" ? Promise.reject(++writes === 1 ? new Error("Lost ACK")
+    : { code: "permission-denied", stage: "execution-recover", outcome: "rejected", recoveryRequired: false }) : native(command,payload));
+  await act(async () => { await owner.start(); }); const request = owner.current().pendingStart!;
+  await act(async () => { await owner.retryStart(); await owner.retryStart(); });
+  expect(owner.current().pendingStart).toBe(request); expect(owner.current().startRetryAllowed).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "start_source_import").map(([, args]) => args.request)).toEqual([request,request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_import_start")).toHaveLength(1);
+});
+it("does not settle Source start after the session retires during its pure lookup", async () => {
+  render(<Probe/>, project); await act(async () => { await owner.select(); owner.declare(true); await owner.preflight(); });
+  const native = invoke.getMockImplementation()!, lookup = deferredAction<unknown>();
+  invoke.mockImplementation((command: string,payload) => command === "start_source_import" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_source_import_start" ? lookup.promise : native(command,payload));
+  let work!: Promise<void>; act(() => { work = owner.start(); });
+  await waitFor(() => expect(owner.current().checkingStart).toBe(true)); const request = owner.current().pendingStart!;
+  act(() => sessionReads.retire()); await act(async () => { lookup.resolve(sourceStartProof(request)); await work; });
+  expect(owner.current().pendingStart).toBe(request); expect(owner.current().attempt).toBeNull();
 });

@@ -75,6 +75,7 @@ struct SourceRequests {
     session: execution::SessionRequest,
     capture: execution::source::CaptureRequest,
     start: execution::source::StartRequest,
+    start_action: execution::source::StartRequest,
     preview: execution::source::PreviewRequest,
     content: execution::source::ContentRequest,
     comparison: execution::source::ComparisonRequest,
@@ -89,6 +90,7 @@ struct SourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct SourceResponses {
+    start_action: Option<tsumugi_core::content::SourceImportStartRead>,
     integration: tsumugi_core::content::IntegrationDescriptor,
     selection: Option<execution::source::SourceSelection>,
     preflight: execution::source::Preflight,
@@ -112,6 +114,7 @@ struct TranslationRequests {
     files: execution::source::translation::TranslationFilesRequest,
     capture: execution::source::translation::TranslationCaptureRequest,
     start: execution::source::translation::TranslationStartRequest,
+    start_action: execution::source::translation::TranslationStartRequest,
     preview: execution::source::translation::TranslationPreviewRequest,
     adopt: execution::source::translation::TranslationAdoptRequest,
     adoption_action: execution::source::translation::TranslationAdoptionActionRequest,
@@ -126,6 +129,7 @@ struct TranslationRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct TranslationResponses {
+    start_action: Option<tsumugi_core::content::TranslationImportStartRead>,
     files: Vec<String>,
     preflight: execution::source::translation::TranslationPreflight,
     attempt: tsumugi_core::execution::ExecutionId,

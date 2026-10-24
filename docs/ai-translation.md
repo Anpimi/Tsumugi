@@ -20,7 +20,7 @@ Requests contain text only: a fixed translation system instruction and a user me
 
 Results are saved per unit. **Save candidate** adds an immutable AI revision to the ordinary translation history without selecting it or approving it. **Compare and select in editor** lets you compare, select, edit and run the normal checks. Manual selections and other languages are preserved. Changed source or removed target languages prevent stale candidate adoption.
 
-Tasks retains input, recipe, model, output and adoption receipts after reopening a project. Reopening does not send requests. A prior AI attempt cannot use generic resume or retry actions to bypass its budget; create and confirm a new preview for additional generation. If a start or adoption response is lost, check the saved result or receipt before retrying the same action. Closing a project with running work uses the existing stop-and-preserve workflow.
+Tasks retains input, recipe, model, output and adoption receipts after reopening a project. Reopening does not send requests. A prior AI attempt cannot use generic resume or retry actions to bypass its budget; create and confirm a new preview for additional generation. If a start acknowledgement is lost, invalid or uncertain, the app automatically checks the original fixed request once; the manual start check uses the same read-only lookup without initializing execution or generating output. Only an explicit missing result permits retrying that same request. Read failure or missing proof keeps the outcome uncertain and does not enable retry. If an adoption response is lost, check its saved receipt before retrying the same action. Closing a project with running work uses the existing stop-and-preserve workflow.
 
 ## Arena comparison
 

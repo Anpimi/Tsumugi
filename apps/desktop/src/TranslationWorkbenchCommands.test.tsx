@@ -124,7 +124,7 @@ function selectionPending():TranslationSelectionPendingCommandPayload{const valu
 async function openImport(){const user=userEvent.setup(),view=render(<Harness/>,project);await user.click(screen.getByRole("button",{name:i18n.t("translation.title")}));
   await user.click(screen.getByRole("button",{name:i18n.t("translation.importTab")}));await user.click(screen.getByRole("button",{name:i18n.t("translation.chooseFolder")}));
   await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("translation.inspect")})).toBeEnabled());await user.click(screen.getByRole("button",{name:i18n.t("translation.inspect")}));
-  await screen.findByRole("checkbox",{name:/I confirm that/});return{user,view};}
+  await screen.findByRole("checkbox",{name:/I confirm that|我确认/});return{user,view};}
 async function readyImport(){const result=await openImport();await result.user.click(screen.getByRole("checkbox",{name:/I confirm that/}));
   await result.user.click(screen.getByRole("button",{name:i18n.t("translation.start")}));await screen.findByRole("heading",{name:i18n.t("translation.preview")});
   await waitFor(()=>expect(imports.current().preview).not.toBeNull());return result;}
@@ -162,10 +162,10 @@ it.each(["en-US", "zh-CN"])("shows only the real selection read phase and preser
   expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("read_translation_action")).toHaveLength(0);
 });
 
-it("registers fourteen scoped business entries and confirms an ordered complete multi-page batch through the UI",async()=>{
+it("registers fifteen scoped business entries and confirms an ordered complete multi-page batch through the UI",async()=>{
   preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);const {user}=await readyImport(),dispatch=vi.spyOn(registry,"dispatch");
   expect(registry.list(scope).filter(value=>value.payloadKind?.startsWith("translation-")).map(value=>value.id).sort()).toEqual([
-    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-import-receipt","translation.check-selection",
+    "translation.apply-import-batch","translation.apply-import-row","translation.capture-import-batch","translation.check-import-receipt","translation.check-import-start","translation.check-selection",
     "translation.choose-import-folder","translation.choose-import-row","translation.confirm-import-language","translation.inspect-import","translation.retry-import-action",
     "translation.retry-import-start","translation.retry-selection","translation.select-revision","translation.start-import",
   ]);
@@ -300,4 +300,23 @@ it("checks and retries only the original unknown history selection after consume
 it("refuses an original captured row dispatch after the real session is retired",async()=>{
   await readyRow();const payload=rowPayload();act(()=>reads.retire());
   expect(registry.dispatch("translation.apply-import-row",scope,payload)).toBe(false);expect(calls("prepare_translation_adoption")).toHaveLength(0);
+});
+
+it.each(["en-US","zh-CN"])("exposes pure import start recovery and exact retry through the real registry (%s)", async language => {
+  await i18n.changeLanguage(language); const original = invoke.getMockImplementation()!; let writes = 0, checks = 0;
+  invoke.mockImplementation((command: string,payload) => command === "start_translation_import"
+    ? ++writes === 1 ? Promise.reject(new Error("Lost ACK")) : Promise.resolve(payload.request.attemptId)
+    : command === "read_translation_import_start" ? ++checks === 1 ? Promise.reject(new Error("Read unavailable")) : Promise.resolve(null) : original(command,payload));
+  const {user} = await openImport(); await user.click(screen.getByRole("checkbox", {name:language === "en-US" ? /I confirm that/ : /我确认/}));
+  await user.click(screen.getByRole("button", { name: i18n.t("translation.start") }));
+  const check = await screen.findByRole("button", { name: i18n.t("translation.checkStart") });
+  await waitFor(() => expect(check).toBeEnabled()); expect(screen.queryByRole("button", {name:i18n.t("translation.retryStart")})).not.toBeInTheDocument();
+  const request = imports.current().pendingStart!, payload = {kind:"translation-import-start-pending" as const,request};
+  expect(registry.describe("translation.check-import-start",scope,payload)?.risk).toBe("reads-execution");
+  expect(registry.dispatch("translation.check-import-start",scope,{...payload,request:{...request,selectionId:fixtureIdentity(777)}})).toBe(false);
+  await user.click(check); const retry = await screen.findByRole("button",{name:i18n.t("translation.retryStart")});
+  await waitFor(() => expect(retry).toBeEnabled()); await user.click(retry);
+  await waitFor(() => expect(imports.current().pendingStart).toBeNull());
+  expect(originalRequests("start_translation_import")).toEqual([request,request]);
+  expect(originalRequests("read_translation_import_start")).toEqual([request,request]);
 });

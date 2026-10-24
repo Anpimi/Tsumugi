@@ -6,7 +6,7 @@ import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCo
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { sourceCommands, type SourceSelection } from "./sourceCommands";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
-import { translationCommands, confirmTranslationAction, confirmTranslationReceipt, type TranslationAdoptRequest, type TranslationDecision,
+import { translationCommands, confirmTranslationStart, confirmTranslationAction, confirmTranslationReceipt, type TranslationAdoptRequest, type TranslationDecision,
   type TranslationPreflight, type TranslationPreview, type TranslationPreviewRow, type TranslationStartRequest } from "./translationCommands";
 
 export interface TranslationImportPending {
@@ -30,6 +30,8 @@ export interface TranslationImportState {
   preflight: TranslationPreflight | null;
   confirmed: boolean;
   pendingStart: TranslationStartRequest | null;
+  checkingStart: boolean;
+  startRetryAllowed: boolean;
   attempt: string | null;
   preview: TranslationPreview | null;
   selectIfEmpty: boolean;
@@ -57,6 +59,7 @@ interface ImportSession {
   chooseFolder: () => Promise<void>;
   preflight: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   start: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
+  checkStart: () => Promise<void>;
   retryStart: () => Promise<void>;
   showAttempt: (id: string) => boolean;
   ready: (page: TranslationPreview) => void;
@@ -96,11 +99,12 @@ export function TranslationImportSession({ project, children }: { project: Proje
   const draftsRef = useRef(drafts); draftsRef.current = drafts;
   const [session] = useState(() => executionContext(project));
   const [state, setState] = useState<TranslationImportState>(() => ({ folder: null, fileName: "",
-    targetLocale: project.metadata.targetLocales[0] ?? "", preflight: null, confirmed: false, pendingStart: null,
+    targetLocale: project.metadata.targetLocales[0] ?? "", preflight: null, confirmed: false, pendingStart: null, checkingStart: false, startRetryAllowed: false,
     attempt: null, preview: null, selectIfEmpty: false, rowAction: null, batchCapture: null, batchProgress: null,
     batchOutcome: null, batchDetails: [], uncertain: [], receiptMessage: null, checkingAction: null, busy: false, stale: false,
     editSeq: 0, completionVersion: 0, failure: null }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(false);
+  const submittedStartSeq = useRef(0);
   const version = useRef(0), mutation = useRef<symbol | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
   const readCleanup = useRef<(() => void) | null>(null);
   function current() { return stateRef.current; }
@@ -187,17 +191,41 @@ export function TranslationImportSession({ project, children }: { project: Proje
       update(value => ({ ...value, preflight: checked, confirmed: false }));
     }));
   }
+  function settleStart(request: TranslationStartRequest) {
+    if (!live() || current().pendingStart !== request) return;
+    update(before => ({ ...before, attempt: request.attemptId, pendingStart: null, checkingStart: false, startRetryAllowed: false,
+      ...(before.editSeq === submittedStartSeq.current ? { preview: null, batchCapture: null, rowAction: null, batchOutcome: null, batchDetails: [] } : {}),
+      stale: before.stale || !available(request.targetLocale), confirmed: false, failure: null }));
+  }
+  async function lookupStart(request: TranslationStartRequest, originalFailure = current().failure) {
+    if (!live() || current().pendingStart !== request) return;
+    update(before => ({ ...before, checkingStart: true, startRetryAllowed: false, failure: null }));
+    try {
+      const result = await translationCommands.startAction(request);
+      if (!live() || current().pendingStart !== request) return;
+      if (confirmTranslationStart(request, result) !== null) { settleStart(request); return; }
+      update(before => ({ ...before, checkingStart: false, startRetryAllowed: true, failure: originalFailure }));
+    } catch (error) {
+      if (!live() || current().pendingStart !== request) return;
+      update(before => ({ ...before, checkingStart: false, startRetryAllowed: false, failure: commandFailure(error, "outcome-unknown") }));
+    }
+  }
+  async function checkStart() {
+    const request = current().pendingStart, failure = current().failure;
+    if (request) await run(() => lookupStart(request, failure), true);
+  }
   async function dispatchStart(request: TranslationStartRequest, recovering = false) {
     if (!live()) return;
-    update(before => ({ ...before, pendingStart: request }));
+    update(before => ({ ...before, pendingStart: request, checkingStart: false, startRetryAllowed: false }));
     try {
       const attempt = await translationCommands.start(request);
-      if (!live()) return;
+      if (!live() || current().pendingStart !== request) return;
       if (attempt !== request.attemptId) throw invalid();
-      update(before => before.pendingStart === request ? { ...before, attempt, pendingStart: null, preview: null,
-        batchCapture: null, rowAction: null, batchOutcome: null, batchDetails: [], stale: false, failure: null } : before);
+      settleStart(request);
     } catch (error) {
-      if (!recovering && !hasUnknownOutcome(error)) update(before => before.pendingStart === request ? { ...before, pendingStart: null } : before);
+      if (!live() || current().pendingStart !== request) return;
+      if (hasUnknownOutcome(error)) { await lookupStart(request, commandFailure(error, "outcome-unknown")); return; }
+      if (!recovering) update(before => ({ ...before, pendingStart: null }));
       throw error;
     }
   }
@@ -211,12 +239,13 @@ export function TranslationImportSession({ project, children }: { project: Proje
       if (!fresh(before, ticket, meta, proof)) return;
       const latest = await sourceCommands.scope(session);
       if (!fresh(before, ticket, meta, proof) || latest.currentSnapshot !== scope.currentSnapshot || latest.revision !== scope.revision) { revoke(); return; }
+      submittedStartSeq.current = before.editSeq;
       await dispatchStart({ ...session, attemptId, selectionId: before.folder!.selectionId, fileName: before.preflight!.fileName,
         targetLocale: before.preflight!.targetLocale, expectedFileDigest: before.preflight!.fileDigest,
         expectedSourceSnapshotId: before.preflight!.sourceSnapshotId, languageConfirmed: true });
     }));
   }
-  async function retryStart() { const request = current().pendingStart; if (request) await run(() => dispatchStart(request, true), true); }
+  async function retryStart() { const request = current().pendingStart; if (request && current().startRetryAllowed) await run(() => dispatchStart(request, true), true); }
   function showAttempt(attempt: string) {
     if (!editable()) return false;
     version.current++; update(before => ({ ...resetPreparation(before), attempt })); return true;
@@ -470,5 +499,5 @@ export function TranslationImportSession({ project, children }: { project: Proje
     if (pending?.receiptChecked) await run(async () => { await dispatch(pending, true); releaseMutation(); }, true);
   }
   return <ImportContext.Provider value={{ state, current, setTarget, setFile, confirmLanguage, setStrategy, chooseFolder,
-    preflight, start, retryStart, showAttempt, ready, page, chooseRow, cancelConfirmation, applyRow, captureBatch, applyBatch, checkReceipt, retryAction }}>{children}</ImportContext.Provider>;
+    preflight, start, checkStart, retryStart, showAttempt, ready, page, chooseRow, cancelConfirmation, applyRow, captureBatch, applyBatch, checkReceipt, retryAction }}>{children}</ImportContext.Provider>;
 }

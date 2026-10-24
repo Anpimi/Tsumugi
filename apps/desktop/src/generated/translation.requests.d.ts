@@ -17,6 +17,7 @@ export interface Requests {
   select: TranslationSelectRequest;
   selectionAction: TranslationSelectRequest;
   start: TranslationStartRequest;
+  startAction: TranslationStartRequest;
 }
 export interface TranslationActionRequest {
   actionId: ExecutionId;

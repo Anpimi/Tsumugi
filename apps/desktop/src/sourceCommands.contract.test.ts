@@ -164,3 +164,18 @@ it.each(unicodeFixture.cases)("keeps $profile ranges in original UTF-8 bytes acr
   }
   expect(JSON.parse(JSON.stringify(caseFixture)).raw).toBe(caseFixture.raw);
 });
+
+it("reads only the complete original native Source start request and rejects every mismatched proof", async () => {
+  const request = fixture.start; const { sessionToken: _session, ...original } = request;
+  const proof = { request: original, taskId: fixtureIdentity(980), inputDigest: "a".repeat(64) };
+  expect(validators.validateRequestStartAction(request)).toBe(true);
+  for (const value of [null,proof]) { invoke.mockResolvedValueOnce(value); expect(await sourceCommands.startAction(request)).toEqual(value); }
+  for (const changed of [{projectId:fixtureIdentity(777)},{attemptId:fixtureIdentity(777)},{selectionId:fixtureIdentity(777)},{sourceLanguage:"fr"}]) {
+    invoke.mockResolvedValueOnce({...proof,request:{...original,...changed}});
+    expect(hasUnknownOutcome(await sourceCommands.startAction(request).catch(error=>error))).toBe(true);
+  }
+  for (const value of [undefined,{}, {...proof,request:null}, {...proof,taskId:42}, {...proof,inputDigest:"invalid"}, {...proof,extra:true}]) {
+    invoke.mockResolvedValueOnce(value); expect(hasUnknownOutcome(await sourceCommands.startAction(request).catch(error=>error))).toBe(true);
+  }
+  expect(invoke.mock.calls.every(([name,args]) => name === "read_source_import_start" && JSON.stringify(args.request) === JSON.stringify(request))).toBe(true);
+});

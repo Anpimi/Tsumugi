@@ -2,7 +2,7 @@ import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommand
 import { checkedInvoke } from "./ipc";
 import type { CaptureRequest, StartRequest, SourceAdoptionActionRequest, SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest } from "./generated/source.requests";
 import type { Responses } from "./generated/source.responses";
-import { validateResponseAdoptionAction, validateRequestAdopt, validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction } from "./generated/source.validators";
+import { validateResponseAdoptionAction, validateResponseStartAction, validateRequestAdopt, validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction } from "./generated/source.validators";
 
 export type { CaptureRequest, StartRequest, SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
 export type { SourceSelection, IntegrationDescriptor, FileCoverage as Coverage, Preflight, ContentScope, LineageChoice, SourceOccurrence, ContentRow, ContentPage, SourceChange, SourceChangeKind, SourceChangePage, SourceHistoryEntry, SourceHistory, LineageEvidence, SourceImpactBasis, SourceImpactSummary, SourceImpactRow, SourceImpactStatus, SourceImpactPage } from "./generated/source.responses";
@@ -11,6 +11,7 @@ export const sourceCommands = {
   select: (request: SessionRequest, integrationId = "stardew-smapi") => checkedInvoke(integrationId === "webvtt" ? "select_webvtt_source" : "select_source", request, validateResponseSelection),
   preflight: (request: CaptureRequest) => checkedInvoke("preflight_source", request, validateResponsePreflight),
   start: (request: StartRequest) => checkedInvoke("start_source_import", request, validateResponseAttempt),
+  startAction: async (request: StartRequest) => confirmSourceStart(request, await checkedInvoke("read_source_import_start", request, validateResponseStartAction)),
   cancelCapture: (request: SessionRequest) => checkedInvoke("cancel_source_capture", request, validateResponseCancelled),
   scope: (request: SessionRequest) => checkedInvoke("read_content_scope", request, validateResponseScope),
   preview: (request: PreviewRequest) => checkedInvoke("read_source_preview", request, validateResponsePage),
@@ -60,4 +61,13 @@ export function confirmSourceReceipt(request: SourceAdoptRequest, unitId: string
     throw new Error("Invalid source adoption acknowledgement");
   }
   return change.id;
+}
+
+export function confirmSourceStart(request: StartRequest, value: unknown): Responses["startAction"] {
+  if (!validateResponseStartAction(value) || value !== null && (value.request.projectId !== request.projectId
+    || value.request.attemptId !== request.attemptId || value.request.selectionId !== request.selectionId
+    || value.request.sourceLanguage !== request.sourceLanguage || !/^[a-f0-9]{64}$/.test(value.inputDigest))) {
+    throw new Error("Invalid source start acknowledgement");
+  }
+  return value;
 }

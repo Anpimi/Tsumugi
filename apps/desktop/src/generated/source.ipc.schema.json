@@ -513,12 +513,16 @@
       },
       "start": {
         "$ref": "#/definitions/StartRequest"
+      },
+      "startAction": {
+        "$ref": "#/definitions/StartRequest"
       }
     },
     "required": [
       "session",
       "capture",
       "start",
+      "startAction",
       "preview",
       "content",
       "comparison",
@@ -1565,6 +1569,50 @@
         ],
         "type": "object"
       },
+      "SourceImportStart": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "selectionId",
+          "sourceLanguage"
+        ],
+        "type": "object"
+      },
+      "SourceImportStartRead": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/definitions/SourceImportStart"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "request",
+          "taskId",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "SourceOccurrence": {
         "additionalProperties": false,
         "properties": {
@@ -1705,9 +1753,20 @@
             "type": "null"
           }
         ]
+      },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/SourceImportStartRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
+      "startAction",
       "integration",
       "selection",
       "preflight",

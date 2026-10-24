@@ -208,3 +208,19 @@ it.each(["save", "selection"] as const)("keeps malformed or unrelated %s read ac
   }
   expect(invoke.mock.calls.every(([command]) => command === (kind === "save" ? "read_translation_save_action" : "read_translation_selection_action"))).toBe(true);
 });
+
+it("reads the full native translation start tuple without weakening digest or language evidence", async () => {
+  const request = fixture.start; const { sessionToken: _session, ...original } = request;
+  const proof = { request: original, taskId: fixtureIdentity(980), inputDigest: "b".repeat(64) };
+  expect(validators.validateRequestStartAction(request)).toBe(true);
+  for (const value of [null,proof]) { invoke.mockResolvedValueOnce(value); expect(await translationCommands.startAction(request)).toEqual(value); }
+  for (const changed of [{projectId:fixtureIdentity(777)},{attemptId:fixtureIdentity(777)},{selectionId:fixtureIdentity(777)},
+    {fileName:"zh-CN.json"},{targetLocale:"zh-TW"},{languageConfirmed:false},{expectedFileDigest:"f".repeat(64)},{expectedSourceSnapshotId:fixtureIdentity(777)}]) {
+    invoke.mockResolvedValueOnce({...proof,request:{...original,...changed}});
+    expect(hasUnknownOutcome(await translationCommands.startAction(request).catch(error=>error))).toBe(true);
+  }
+  for (const value of [undefined,{}, {...proof,request:null}, {...proof,taskId:42}, {...proof,inputDigest:"invalid"}, {...proof,extra:true}]) {
+    invoke.mockResolvedValueOnce(value); expect(hasUnknownOutcome(await translationCommands.startAction(request).catch(error=>error))).toBe(true);
+  }
+  expect(invoke.mock.calls.every(([name,args]) => name === "read_translation_import_start" && JSON.stringify(args.request) === JSON.stringify(request))).toBe(true);
+});

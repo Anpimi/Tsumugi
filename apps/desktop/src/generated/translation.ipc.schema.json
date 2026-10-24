@@ -435,12 +435,16 @@
       },
       "start": {
         "$ref": "#/definitions/TranslationStartRequest"
+      },
+      "startAction": {
+        "$ref": "#/definitions/TranslationStartRequest"
       }
     },
     "required": [
       "files",
       "capture",
       "start",
+      "startAction",
       "preview",
       "adopt",
       "adoptionAction",
@@ -712,6 +716,66 @@
           "currentText",
           "rows",
           "nextOrdinal"
+        ],
+        "type": "object"
+      },
+      "TranslationImportStart": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedFileDigest": {
+            "type": "string"
+          },
+          "expectedSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "languageConfirmed": {
+            "type": "boolean"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "selectionId",
+          "fileName",
+          "targetLocale",
+          "languageConfirmed",
+          "expectedFileDigest",
+          "expectedSourceSnapshotId"
+        ],
+        "type": "object"
+      },
+      "TranslationImportStartRead": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/definitions/TranslationImportStart"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "request",
+          "taskId",
+          "inputDigest"
         ],
         "type": "object"
       },
@@ -1232,9 +1296,20 @@
             "type": "null"
           }
         ]
+      },
+      "startAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationImportStartRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
+      "startAction",
       "files",
       "preflight",
       "attempt",

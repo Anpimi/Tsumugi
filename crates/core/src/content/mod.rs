@@ -1,9 +1,11 @@
 //! Immutable source bundles, native identity evidence and read-only projections.
 mod build;
+mod import_start;
 mod smapi;
 mod translation;
 pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
+pub use import_start::*;
 pub use build::{
     BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILD_OPERATION, BUILDER_VERSION, BuildEntry,
     BuildLocale, BuildManifest, BuildOutput, BuildRunner, BuildSourceFile, VALIDATOR_VERSION,
@@ -325,13 +327,13 @@ impl SourceBundle {
             || e.items.len() != 1
             || e.units.len() != 1
             || e.units[0].item_ids != vec![e.items[0].item_id]
-            || !e.settings.is_null()
             || !e.items[0].dependencies.is_empty()
         {
             return Err(invalid("unsupported-format"));
         }
         let b: Self = from_value(&e.items[0].payload)?;
         b.validate()?;
+        import_start::source_native_start(input, &b)?;
         if e.capability_id != b.capability() {
             return Err(invalid("unsupported-format"));
         }

@@ -1,9 +1,10 @@
 import { useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useSessionReads } from "./SessionReadProvider";
 import { useTranslationImportSession } from "./TranslationImportSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
-import { translationCommands, type TranslationAdoptRequest, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
+import { translationCommands, type TranslationStartRequest, type TranslationAdoptRequest, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
 import type { AdoptionAction, Receipt } from "./executionCommands";
 import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
@@ -15,10 +16,11 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "isolated-import", locator: "C:\\isolated\\import-owner", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(900), displayName: "Fixture", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let owner: ReturnType<typeof useTranslationImportSession>, drafts: ReturnType<typeof useTranslationDraftSession>;
+let importReads: ReturnType<typeof useSessionReads>;
 let preview: TranslationPreview, pageSize: number, nextIdentity: number, requests: Map<string, TranslationAdoptRequest>;
 function Probe() {
-  const value = useTranslationImportSession(), manual = useTranslationDraftSession();
-  useLayoutEffect(() => { owner = value; drafts = manual; });
+  const value = useTranslationImportSession(), manual = useTranslationDraftSession(), reads = useSessionReads();
+  useLayoutEffect(() => { owner = value; drafts = manual; importReads = reads; });
   return <><output aria-label="Import outcome">{value.state.uncertain.length ? "Unknown" : value.state.completionVersion ? "Applied" : "Ready"}</output>
     <output aria-label="Import basis">{value.state.preview?.basis}</output><output aria-label="Manual input">{manual.draft?.text}</output></>;
 }
@@ -43,6 +45,7 @@ beforeEach(() => {
     if (command === "preflight_translation") return { fileName: request.fileName, fileDigest: preview.fileDigest,
       sourceSnapshotId: preview.fixedSourceSnapshotId, targetLocale: request.targetLocale, declaredLocale: preview.declaredLocale, count: preview.total };
     if (command === "start_translation_import") return request.attemptId;
+    if (command === "read_translation_import_start") return null;
     if (command === "read_translation_preview") {
       const after = Number(request.after), rows = preview.rows.filter(row => row.entry.ordinal >= after).slice(0, Math.min(pageSize, Number(request.limit)));
       const next = rows.at(-1)?.entry.ordinal;
@@ -442,4 +445,61 @@ it("stops the next authorized batch item when the project session owner is destr
   view.unmount();
   await act(async () => { finish(receipt(request)); await pending; });
   expect(calls("prepare_translation_adoption")).toHaveLength(1); expect(calls("adopt_execution")).toHaveLength(1);
+});
+
+function importStartProof(request: TranslationStartRequest) {
+  const { sessionToken: _session, ...original } = request;
+  return { request: original, taskId: fixtureIdentity(980), inputDigest: "b".repeat(64) };
+}
+async function prepareImportStart() {
+  await act(async () => { await owner.chooseFolder(); owner.setFile("zh.json"); await owner.preflight(); });
+  act(() => owner.confirmLanguage(true));
+}
+it.each(["lost", "bad", "unknown"] as const)("checks one original translation start after %s ACK inside its reservation", async mode => {
+  const view = render(<Probe/>, project); await prepareImportStart();
+  const native = invoke.getMockImplementation()!; let finish!: (value: unknown) => void;
+  const lookup = new Promise(resolve => { finish = resolve; });
+  invoke.mockImplementation((command: string,payload) => command === "start_translation_import"
+    ? mode === "bad" ? Promise.resolve(fixtureIdentity(777)) : Promise.reject(mode === "lost" ? new Error("Lost ACK")
+      : {code:"outcome-unknown",stage:"execution-recover",outcome:"unknown",recoveryRequired:true})
+    : command === "read_translation_import_start" ? lookup : native(command,payload));
+  let work!: Promise<void>; act(() => { work = owner.start(); });
+  await waitFor(() => expect(calls("read_translation_import_start")).toHaveLength(1));
+  const request = owner.current().pendingStart!; expect(owner.current().busy).toBe(true); expect(owner.current().checkingStart).toBe(true);
+  await act(async () => { await owner.start(); await owner.retryStart(); await owner.checkStart(); });
+  expect(calls("start_translation_import")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
+  view.rerender(null, { ...project, metadata: { ...project.metadata, targetLocales: [], sourceLocale: "fr" } });
+  await act(async () => { finish(importStartProof(request)); await work; }); view.rerender(<Probe/>);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().attempt).toBe(request.attemptId);
+  expect(owner.current().confirmed).toBe(false); expect(owner.current().stale).toBe(true);
+  expect(calls("read_translation_import_start").map(([,args]) => args.request)).toEqual([request]);
+});
+it.each(["missing", "read-error", "wrong-proof"] as const)("keeps translation start %s until an exact manual read confirms it", async mode => {
+  render(<Probe/>, project); await prepareImportStart(); const native = invoke.getMockImplementation()!; let checked = false;
+  invoke.mockImplementation((command: string,payload) => command === "start_translation_import" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_translation_import_start" ? checked ? Promise.resolve(importStartProof(payload.request))
+      : mode === "missing" ? Promise.resolve(null) : mode === "read-error" ? Promise.reject(new Error("Read unavailable"))
+      : Promise.resolve({ ...importStartProof(payload.request), request: { ...importStartProof(payload.request).request, selectionId: fixtureIdentity(777) } }) : native(command,payload));
+  await act(async () => { await owner.start(); }); const request = owner.current().pendingStart!;
+  expect(owner.current().startRetryAllowed).toBe(mode === "missing");
+  if (mode !== "missing") await act(async () => { await owner.retryStart(); });
+  expect(calls("start_translation_import")).toHaveLength(1); checked = true;
+  await act(async () => { await owner.checkStart(); }); expect(owner.current().pendingStart).toBeNull();
+  expect(calls("read_translation_import_start").map(([,args]) => args.request)).toEqual([request,request]);
+});
+it("does not read after a definite translation start rejection", async () => {
+  render(<Probe/>, project); await prepareImportStart(); const native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string,payload) => command === "start_translation_import" ? Promise.reject(mutationRejection()) : native(command,payload));
+  await act(async () => { await owner.start(); }); expect(owner.current().pendingStart).toBeNull();
+  expect(calls("read_translation_import_start")).toHaveLength(0);
+});
+it("does not settle translation start after the session retires during its pure lookup", async () => {
+  render(<Probe/>, project); await prepareImportStart(); const native = invoke.getMockImplementation()!;
+  let finish!: (value: unknown) => void; const lookup = new Promise(resolve => { finish = resolve; });
+  invoke.mockImplementation((command: string,payload) => command === "start_translation_import" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_translation_import_start" ? lookup : native(command,payload));
+  let work!: Promise<void>; act(() => { work = owner.start(); }); await waitFor(() => expect(owner.current().checkingStart).toBe(true));
+  const request = owner.current().pendingStart!; act(() => importReads.retire());
+  await act(async () => { finish(importStartProof(request)); await work; });
+  expect(owner.current().pendingStart).toBe(request); expect(owner.current().attempt).toBeNull();
 });

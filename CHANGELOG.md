@@ -50,6 +50,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Source and translation-import starts now record the complete native request with their fixed input. Uncertain acknowledgements are checked without repeating capture or execution; retry remains explicit and requires a confirmed missing start. Inputs without the original request binding cannot confirm that request.
+
 - Arena start, comparison creation, candidate selection and manual merges can confirm their original saved requests after uncertain acknowledgements without replaying writes. Identity reveal checks the original target visibility, retaining newer edits and requiring an explicit retry only when supported by the read result.
 
 - Resolve uncertain source and translation-import adoption, saved AI/Arena candidates, Task cancellation and continuation through read-only checks of the original request. Automatic checks do not repeat writes; retry remains explicit and is available only after the original result is confirmed absent.

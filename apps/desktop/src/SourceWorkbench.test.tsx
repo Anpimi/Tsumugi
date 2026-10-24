@@ -273,7 +273,7 @@ it.each(["en-US", "zh-CN"])("automatically reads one lost acknowledgement and di
   expect(screen.getByRole("button", { name: i18n.t("execution.checkReceipt") })).toBeDisabled();
   expect(draft.current()).toMatchObject({ busyMutation: true, failure: null, checkingReceipt: true });
   const request = draft.current().pendingApply!, unitId = draft.current().pendingApplyUnitId!;
-  const pendingPayload = { kind: "source-pending" as const, pendingKind: "apply" as const, attemptId: request.attemptId, actionId: request.actionId };
+  const pendingPayload = { kind: "source-pending" as const, pendingKind: "apply" as const, attemptId: request.attemptId, actionId: request.actionId, request: null };
   expect(registry.describe("source.check-receipt", sourceScope, pendingPayload)?.risk).toBe("reads-source");
   await act(async () => { applied = true; finishRead({ action: sourceActionFixture(request, unitId), receipt: sourceReceiptFixture(request, unitId) }); });
   await screen.findByRole("heading", { name: i18n.t("source.imported") });
@@ -629,4 +629,26 @@ it("checks the original pending application even when current scope queries fail
   await screen.findByText("Source content was applied. If reading it fails, retry the read below.");
   expect(draft.current().pendingApply).toBeNull(); expect(draft.current().receipt?.actionId).toBe(request?.actionId);
   expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it("exposes a pure Source start check and permits only a checked-missing exact retry", async () => {
+  const original = invoke.getMockImplementation()!; let writes = 0, reads = 0;
+  invoke.mockImplementation((command: string,payload) => command === "start_source_import"
+    ? ++writes === 1 ? Promise.reject(new Error("Lost ACK")) : Promise.resolve(payload.request.attemptId)
+    : command === "read_source_import_start" ? ++reads === 1 ? Promise.reject(new Error("Read unavailable")) : Promise.resolve(null) : original(command,payload));
+  render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>, project);
+  const user = await select(); await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await user.click(await screen.findByRole("button", { name: "Import for preview" }));
+  const check = await screen.findByRole("button", { name: i18n.t("source.checkStart") });
+  await waitFor(() => expect(check).toBeEnabled()); expect(screen.queryByRole("button", { name: i18n.t("source.retryStart") })).not.toBeInTheDocument();
+  const request = draft.current().pendingStart!, payload = { kind: "source-pending" as const, pendingKind: "start" as const,
+    attemptId: request.attemptId, actionId: null, request };
+  expect(registry.describe("source.check-start", sourceScope, payload)?.risk).toBe("reads-source");
+  expect(registry.dispatch("source.check-start", sourceScope, { ...payload, request: { ...request, selectionId: fixtureIdentity(777) } })).toBe(false);
+  await user.click(check); const retry = await screen.findByRole("button", { name: i18n.t("source.retryStart") });
+  await waitFor(() => expect(retry).toBeEnabled()); await user.click(retry);
+  await waitFor(() => expect(draft.current().pendingStart).toBeNull());
+  expect(invoke.mock.calls.filter(([name]) => name === "start_source_import").map(([,args]) => args.request)).toEqual([request,request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_import_start").map(([,args]) => args.request)).toEqual([request,request]);
 });

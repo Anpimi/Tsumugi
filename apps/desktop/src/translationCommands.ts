@@ -4,7 +4,7 @@ import { sourceCommands } from "./sourceCommands";
 import type { TranslationFilesRequest, TranslationCaptureRequest, TranslationStartRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
 import type { Requests } from "./generated/translation.requests";
 import type { Responses, TranslationSaveReceipt } from "./generated/translation.responses";
-import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected, validateResponseSaveAction, validateResponseSelectionAction } from "./generated/translation.validators";
+import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseStartAction, validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected, validateResponseSaveAction, validateResponseSelectionAction } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
 
 export type { TranslationStartRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
@@ -20,6 +20,7 @@ export const translationCommands = {
   files: (request: TranslationFilesRequest) => checkedInvoke("list_translation_files", request, validateResponseFiles),
   preflight: (request: TranslationCaptureRequest) => checkedInvoke("preflight_translation", request, validateResponsePreflight),
   start: (request: TranslationStartRequest) => checkedInvoke("start_translation_import", request, validateResponseAttempt),
+  startAction: async (request: TranslationStartRequest) => confirmTranslationStart(request, await checkedInvoke("read_translation_import_start", request, validateResponseStartAction)),
   preview: (request: TranslationPreviewRequest) => checkedInvoke("read_translation_preview", request, validateResponsePreview),
   prepare: (request: TranslationAdoptRequest) => checkedInvoke("prepare_translation_adoption", request, validateResponsePrepared),
   adoptionAction: (request: Requests["adoptionAction"]): Promise<Responses["adoptionAction"]> => checkedInvoke("read_translation_adoption_action", request, validateResponseAdoptionAction),
@@ -100,5 +101,16 @@ export function validateSaveReceipt(value: unknown, request: TranslationSaveRequ
     || ![revision.attemptId, revision.resultId, revision.itemId, revision.artifactId,
       revision.logicalPath, revision.declaredLocale, revision.nativeKey, revision.fileDigest].every(field => field === null)
     || revision.contributors.length !== 0) throw invalidSaveReceipt();
+  return value;
+}
+
+export function confirmTranslationStart(request: TranslationStartRequest, value: unknown): Responses["startAction"] {
+  if (!validateResponseStartAction(value) || value !== null && (value.request.projectId !== request.projectId
+    || value.request.attemptId !== request.attemptId || value.request.selectionId !== request.selectionId
+    || value.request.fileName !== request.fileName || value.request.targetLocale !== request.targetLocale
+    || value.request.languageConfirmed !== request.languageConfirmed || value.request.expectedFileDigest !== request.expectedFileDigest
+    || value.request.expectedSourceSnapshotId !== request.expectedSourceSnapshotId || !/^[a-f0-9]{64}$/.test(value.inputDigest))) {
+    throw new Error("Invalid translation start acknowledgement");
+  }
   return value;
 }

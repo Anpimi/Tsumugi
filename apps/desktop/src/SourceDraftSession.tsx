@@ -4,7 +4,7 @@ import { executionCommands, executionContext, type AdoptionAction, type AttemptD
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { sourceCommands, confirmSourceAction, confirmSourceReceipt, sameSourceConfirmation, type ContentPage, type ContentScope, type LineageChoice,
+import { sourceCommands, confirmSourceStart, confirmSourceAction, confirmSourceReceipt, sameSourceConfirmation, type ContentPage, type ContentScope, type LineageChoice,
   type Preflight, type SourceAdoptRequest, type SourceChangePage, type SourceImpactSummary, type SourceSelection, type StartRequest } from "./sourceCommands";
 
 export interface SourceDraftState {
@@ -31,6 +31,8 @@ export interface SourceDraftState {
   stale: boolean;
   editSeq: number;
   pendingStart: StartRequest | null;
+  checkingStart: boolean;
+  startRetryAllowed: boolean;
   pendingApply: SourceAdoptRequest | null;
   pendingApplyUnitId: string | null;
   preparedAction: AdoptionAction | null;
@@ -54,6 +56,7 @@ interface SourceSession {
   select: () => Promise<void>;
   preflight: () => Promise<void>;
   start: (proof?: () => boolean) => Promise<void>;
+  checkStart: () => Promise<void>;
   retryStart: () => Promise<void>;
   apply: (proof?: () => boolean) => Promise<void>;
   checkReceipt: () => Promise<void>;
@@ -91,7 +94,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   const [state, setState] = useState<SourceDraftState>(() => ({ domain: "stardew-smapi", selection: null,
     sourceLanguage: project.metadata.sourceLocale, declared: false, preflight: null, attempt: null, preview: null,
     comparison: null, updating: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null,
-    historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null,
+    historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null, checkingStart: false, startRetryAllowed: false,
     pendingApply: null, pendingApplyUnitId: null, preparedAction: null, receiptChecked: false, checkingReceipt: false, busyMutation: false, failure: null, receipt: null, completionVersion: 0 }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(0);
   const captureFlight = useRef(0), pendingReceipt = useRef<{ request: SourceAdoptRequest; receipt: Receipt } | null>(null);
@@ -192,19 +195,43 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       && current().editSeq === start.editSeq && current().selection === start.selection && current().declared === start.declared
       && current().preview === start.preview && current().comparison === start.comparison && current().confirmed === start.confirmed;
   }
-  async function dispatchStart(request: StartRequest) {
+  function settleStart(request: StartRequest) {
+    if (!live() || current().pendingStart !== request) return;
+    identity.current = null;
+    update(before => ({ ...before, attempt: request.attemptId, pendingStart: null, checkingStart: false, startRetryAllowed: false,
+      ...(before.selection?.selectionId === request.selectionId ? { selection: null, preflight: null } : {}),
+      ...(before.editSeq === submittedSeq.current ? { preview: null, comparison: null, lineage: {}, filter: "", appliedFilter: "", manualOrdinal: null, estimate: null } : {}),
+      confirmed: false, stale: before.stale, receipt: null, failure: null, completionVersion: before.completionVersion + 1 }));
+  }
+  async function lookupStart(request: StartRequest, originalFailure = current().failure) {
+    if (!live() || current().pendingStart !== request) return;
+    update(before => ({ ...before, checkingStart: true, startRetryAllowed: false, failure: null }));
+    try {
+      const result = await sourceCommands.startAction(request);
+      if (!live() || current().pendingStart !== request) return;
+      if (confirmSourceStart(request, result) !== null) { settleStart(request); return; }
+      update(before => ({ ...before, checkingStart: false, startRetryAllowed: true, failure: originalFailure }));
+    } catch (error) {
+      if (!live() || current().pendingStart !== request) return;
+      update(before => ({ ...before, checkingStart: false, startRetryAllowed: false, failure: commandFailure(error, "outcome-unknown") }));
+    }
+  }
+  async function checkStart() {
+    const request = current().pendingStart, failure = current().failure;
+    if (request) await run(() => lookupStart(request, failure), true);
+  }
+  async function dispatchStart(request: StartRequest, recovering = false) {
     if (!live()) return;
-    update(before => ({ ...before, pendingStart: request }));
+    update(before => ({ ...before, pendingStart: request, checkingStart: false, startRetryAllowed: false }));
     try {
       const attempt = await sourceCommands.start(request);
-      if (!live()) return;
+      if (!live() || current().pendingStart !== request) return;
       if (attempt !== request.attemptId) invalidAcknowledgement();
-      identity.current = null;
-      update(before => before.pendingStart !== request ? before : ({ ...before, attempt, pendingStart: null, selection: null, preflight: null,
-        preview: null, comparison: null, ...(before.editSeq === submittedSeq.current ? { lineage: {}, filter: "", appliedFilter: "", manualOrdinal: null } : {}), estimate: null, confirmed: false,
-        stale: false, receipt: null, failure: null, completionVersion: before.completionVersion + 1 }));
+      settleStart(request);
     } catch (error) {
-      if (!hasUnknownOutcome(error)) update(before => before.pendingStart === request ? { ...before, pendingStart: null } : before);
+      if (!live() || current().pendingStart !== request) return;
+      if (hasUnknownOutcome(error)) { await lookupStart(request, commandFailure(error, "outcome-unknown")); return; }
+      if (!recovering) update(before => ({ ...before, pendingStart: null }));
       throw error;
     }
   }
@@ -419,6 +446,6 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     await tasks.cancel({ taskId, attemptId: current().attempt ?? "", origin: "source" }, () => live() && proof());
   }
   return <SourceContext.Provider value={{ state, current, inFlight: () => !!flight.current, setDomain, declare, edit, confirm,
-    select, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request) await run(() => dispatchStart(request), true); },
+    select, preflight, start, checkStart, retryStart: async () => { const request = current().pendingStart; if (request && current().startRetryAllowed) await run(() => dispatchStart(request, true), true); },
     apply, checkReceipt, retryApply, keepOutput, estimate, discard, showAttempt, beginUpdate, ready, page, pageIntent, historyIntent, showCurrent, cancelTask }}>{children}</SourceContext.Provider>;
 }

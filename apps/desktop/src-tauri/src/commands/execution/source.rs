@@ -15,15 +15,8 @@ pub(super) struct SourceSession {
     pub(super) resource_picker: Option<ExecutionId>,
     job: Option<ExecutionId>,
     cancel: Cancellation,
-    last_start: Option<(ExecutionId, ExecutionId, String)>,
-    translation_last_start: Option<(
-        ExecutionId,
-        ExecutionId,
-        String,
-        String,
-        String,
-        ExecutionId,
-    )>,
+    last_start: Option<content::SourceImportStart>,
+    translation_last_start: Option<content::TranslationImportStart>,
 }
 impl SourceSession {
     pub fn is_active(&self) -> bool {
@@ -63,6 +56,12 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Star
     source_language: String,
     attempt_id: ExecutionId
 });
+impl StartRequest {
+    fn original(&self) -> content::SourceImportStart {
+        content::SourceImportStart { project_id: self.project_id, attempt_id: self.attempt_id,
+            selection_id: self.selection_id, source_language: self.source_language.clone() }
+    }
+}
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PreviewRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId,
@@ -313,7 +312,7 @@ pub async fn preflight_source(
         )
         .await?;
     let id = job.id;
-    let language = request.source_language;
+    let language = request.source_language.clone();
     let result = state
         .io
         .run(CommandStage::ExecutionRead, move || {
@@ -343,6 +342,21 @@ pub async fn preflight_source(
         .await
 }
 #[tauri::command]
+pub async fn read_source_import_start(
+    state: State<'_, AppState>, request: StartRequest,
+) -> Result<Option<content::SourceImportStartRead>, CommandError> {
+    state.sessions.run("read_source_import_start", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let original = request.original();
+        let found = active.store.source_import_start_action_read(&original).map_err(map_source)?;
+        if found.is_none() && active.execution.as_ref().is_some_and(|host|
+            host.source.job.is_some() && host.source.last_start.as_ref() == Some(&original)) {
+            return Err(map_source(ExecutionError::new(ErrorCode::Busy, "input-busy")));
+        }
+        Ok(found)
+    }).await
+}
+#[tauri::command]
 pub async fn start_source_import(
     state: State<'_, AppState>,
     request: StartRequest,
@@ -362,22 +376,12 @@ pub async fn start_source_import(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
-                let identity = (
-                    initial.attempt_id,
-                    initial.selection_id,
-                    initial.source_language.clone(),
-                );
-                match store.execution_input(initial.attempt_id) {
-                    Ok(input) => {
-                        if host.source.last_start.as_ref() != Some(&identity)
-                            || input.envelope().operation != content::OPERATION
-                        {
-                            return Err(stale());
-                        }
-                        return Ok(None);
-                    }
-                    Err(error) if error.code == ErrorCode::InvalidInput => {}
-                    Err(error) => return Err(map_source(error)),
+                let identity = initial.original();
+                if store.is_reconciling() {
+                    return Err(map_source(ExecutionError::new(ErrorCode::OutcomeUnknown, "session")));
+                }
+                if store.source_import_start_action_read(&identity).map_err(map_source)?.is_some() {
+                    return Ok(None);
                 }
                 let job = begin(
                     sessions,
@@ -401,7 +405,7 @@ pub async fn start_source_import(
         return Ok(request.attempt_id);
     };
     let id = job.id;
-    let language = request.source_language;
+    let language = request.source_language.clone();
     let result = state
         .io
         .run(CommandStage::ExecutionRead, move || {
@@ -421,12 +425,7 @@ pub async fn start_source_import(
                     .store
                     .metadata()
                     .map_err(|e| map_persistence_error(e, CommandStage::ExecutionRecover))?;
-                let input = bundle
-                    .fixed_input(metadata.project_id())
-                    .map_err(map_source)?;
-                let mut envelope = input.envelope().clone();
-                envelope.attempt_id = request.attempt_id;
-                let input = FixedInput::capture(envelope).map_err(map_source)?;
+                let input = bundle.fixed_input_for_import_start(metadata.project_id(), &request.original()).map_err(map_source)?;
                 let (host, store) = active.execution_parts()?;
                 host.runtime.submit(store, &input).map_err(map_source)?;
                 Ok(request.attempt_id)

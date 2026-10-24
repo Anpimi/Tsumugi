@@ -13,6 +13,7 @@ export declare function validateRequestSaveAction(value: unknown): value is Requ
 export declare function validateRequestSelect(value: unknown): value is Requests["select"];
 export declare function validateRequestSelectionAction(value: unknown): value is Requests["selectionAction"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
+export declare function validateRequestStartAction(value: unknown): value is Requests["startAction"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAdoptionAction(value: unknown): value is Responses["adoptionAction"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
@@ -25,3 +26,4 @@ export declare function validateResponseSaveAction(value: unknown): value is Res
 export declare function validateResponseSaved(value: unknown): value is Responses["saved"];
 export declare function validateResponseSelected(value: unknown): value is Responses["selected"];
 export declare function validateResponseSelectionAction(value: unknown): value is Responses["selectionAction"];
+export declare function validateResponseStartAction(value: unknown): value is Responses["startAction"];

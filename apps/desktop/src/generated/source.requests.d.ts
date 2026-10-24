@@ -17,6 +17,7 @@ export interface Requests {
   preview: PreviewRequest;
   session: SessionRequest;
   start: StartRequest;
+  startAction: StartRequest;
 }
 export interface SourceAdoptRequest {
   actionId: ExecutionId;

@@ -13,6 +13,7 @@ export declare function validateRequestLineage(value: unknown): value is Request
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
+export declare function validateRequestStartAction(value: unknown): value is Requests["startAction"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAdoptionAction(value: unknown): value is Responses["adoptionAction"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
@@ -27,3 +28,4 @@ export declare function validateResponsePage(value: unknown): value is Responses
 export declare function validateResponsePreflight(value: unknown): value is Responses["preflight"];
 export declare function validateResponseScope(value: unknown): value is Responses["scope"];
 export declare function validateResponseSelection(value: unknown): value is Responses["selection"];
+export declare function validateResponseStartAction(value: unknown): value is Responses["startAction"];

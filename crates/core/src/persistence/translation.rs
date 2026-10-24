@@ -1,6 +1,7 @@
 //! Translation revision schema and checked project-local mutations.
 
 use super::ProjectStore;
+use crate::content::{TranslationBundle, TranslationImportStart, TranslationImportStartRead};
 use crate::execution::{
     AdoptionAction, AdoptionHandler, ChangeReference, ConflictEvidence, ErrorCode, ExecutionError,
     ExecutionId, FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
@@ -954,6 +955,30 @@ impl AdoptionHandler for TranslationAdoptionHandler {
 }
 
 impl ProjectStore {
+    pub fn translation_import_start_action_read(
+        &self, request: &TranslationImportStart,
+    ) -> Result<Option<TranslationImportStartRead>, ExecutionError> {
+        request.validate()?;
+        let found = super::review::read_snapshot(
+            self.connection().map_err(|_| error(ErrorCode::StorageFailed, "translation-start-read"))?, |connection| {
+            if super::read_metadata_from(connection).map_err(|_| error(ErrorCode::CorruptLedger, "translation-start-project"))?.project_id().to_string() != request.project_id.to_string() {
+                return Err(error(ErrorCode::Unauthorized, "translation-start-project"));
+            }
+            let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [request.attempt_id.to_string()], |row| row.get(0)).map_err(super::ledger::sql_error)?;
+            if !exists { return Ok(None); }
+            let input = super::ledger::load_input(connection, request.attempt_id)?;
+            let saved = TranslationImportStart::from_input(&input)?;
+            if saved != *request { return Err(error(ErrorCode::ResultMismatch, "translation-start-request")); }
+            let bundle = TranslationBundle::from_input(&input)?;
+            let owned: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM source_snapshots WHERE snapshot_id=?1 AND project_id=?2)",
+                params![bundle.source_snapshot_id.to_string(),request.project_id.to_string()], |row| row.get(0)).map_err(super::ledger::sql_error)?;
+            if !owned { return Err(error(ErrorCode::CorruptLedger, "translation-start-source")); }
+            Ok(Some(TranslationImportStartRead { request: saved, task_id: input.envelope().task_id, input_digest: input.digest().into() }))
+        })?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
     pub fn translation_preview(
         &self,
         attempt: ExecutionId,
@@ -2113,6 +2138,128 @@ mod tests {
                 .get(),
             0
         );
+    }
+
+    #[test]
+    fn native_source_start_reads_bind_full_request_and_preserve_continuation_origin() {
+        use crate::content::{SourceImportStart, SourceImportStartRead};
+        use crate::execution::{ContinuationAction, ContinuationKind};
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = ProjectStore::create(temp.path().join("project"), ProjectMetadata::create("Source start", "en", ["zh-CN"]).unwrap()).unwrap();
+        let small = |source: &str| SourceBundle::capture(br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#, source.as_bytes(), "en").unwrap();
+        let project = store.metadata().unwrap().project_id();
+        let request = SourceImportStart { project_id: ExecutionId::parse(&project.to_string()).unwrap(),
+            attempt_id: ExecutionId::new(), selection_id: ExecutionId::new(), source_language: "en".into() };
+        let captured = small(r#"{"first":"Original"}"#);
+        let sequence = store.execution_sequence().unwrap();
+        assert_eq!(store.source_import_start_action_read(&request).unwrap(), None);
+        assert_eq!(store.execution_sequence().unwrap(), sequence);
+        let input = captured.fixed_input_for_import_start(project, &request).unwrap();
+        assert_eq!(SourceBundle::from_input(&input).unwrap(), captured);
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let expected = Some(SourceImportStartRead { request: request.clone(), task_id: input.envelope().task_id, input_digest: input.digest().into() });
+        assert_eq!(store.source_import_start_action_read(&request).unwrap(), expected);
+        for wrong in [SourceImportStart { selection_id: ExecutionId::new(), ..request.clone() },
+            SourceImportStart { source_language: "fr".into(), ..request.clone() },
+            SourceImportStart { project_id: ExecutionId::new(), ..request.clone() }] {
+            store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+            assert!(store.source_import_start_action_read(&wrong).is_err());
+            assert!(store.is_reconciling());
+            assert_eq!(store.source_import_start_action_read(&request).unwrap(), expected);
+            assert!(!store.is_reconciling());
+        }
+        let action = ContinuationAction { action_id: ExecutionId::new(), project_id: request.project_id,
+            source_attempt_id: request.attempt_id, unit_id: input.envelope().units[0].unit_id,
+            kind: ContinuationKind::ResumeUndispatched, item_ids: vec![input.envelope().items[0].item_id],
+            expected_cancellation_revision: Revision::new(0).unwrap() };
+        let continued = runtime.resume(&mut store, &action).unwrap();
+        let next = store.execution_input(continued.attempt_id).unwrap();
+        assert_eq!(next.envelope().settings, input.envelope().settings);
+        assert_eq!(SourceBundle::from_input(&next).unwrap(), captured);
+        assert_eq!(store.source_import_start_action_read(&SourceImportStart { attempt_id: continued.attempt_id, ..request.clone() }).unwrap_err().code, ErrorCode::ResultMismatch);
+        assert_eq!(store.read_execution_continuation(action.action_id).unwrap(), Some(continued));
+        let direct = small(r#"{"unbound":"Same producer without Host origin"}"#).fixed_input(project).unwrap();
+        runtime.submit(&mut store, &direct).unwrap();
+        assert_eq!(store.source_import_start_action_read(&SourceImportStart { attempt_id: direct.envelope().attempt_id, ..request.clone() }).unwrap_err().code, ErrorCode::ResultMismatch);
+        let connection = store.connection().unwrap();
+        let digest: String = connection.query_row("SELECT digest FROM source_sets WHERE set_id=?1", [captured.set_id.to_string()], |row| row.get(0)).unwrap();
+        connection.execute("UPDATE source_sets SET digest=?2 WHERE set_id=?1", rusqlite::params![captured.set_id.to_string(), "0".repeat(64)]).unwrap();
+        store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.source_import_start_action_read(&request).unwrap_err().code, ErrorCode::CorruptLedger);
+        assert!(store.is_reconciling());
+        connection.execute("UPDATE source_sets SET digest=?2 WHERE set_id=?1", rusqlite::params![captured.set_id.to_string(), digest]).unwrap();
+        assert_eq!(store.source_import_start_action_read(&request).unwrap(), expected);
+        let writes = connection.total_changes(); let sequence = store.execution_sequence().unwrap();
+        assert_eq!(store.source_import_start_action_read(&request).unwrap(), expected);
+        assert_eq!(connection.total_changes(), writes); assert_eq!(store.execution_sequence().unwrap(), sequence);
+        store.close().unwrap();
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.source_import_start_action_read(&request).unwrap(), expected);
+    }
+
+    #[test]
+    fn native_translation_start_reads_bind_capture_tuple_and_reject_unbound_or_descendant_inputs() {
+        use crate::content::{TranslationImportStart, TranslationImportStartRead};
+        use crate::execution::{ContinuationAction, ContinuationKind};
+        let (temp, mut store, _) = project_with_source();
+        let project = store.metadata().unwrap().project_id();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        // An empty complete file has one consistency unit and exercises real continuation reconstruction.
+        let bundle = TranslationBundle::capture("i18n/zh.json", b"{}", "zh-CN", snapshot).unwrap();
+        let request = TranslationImportStart { project_id: ExecutionId::parse(&project.to_string()).unwrap(),
+            attempt_id: ExecutionId::new(), selection_id: ExecutionId::new(), file_name: "zh.json".into(),
+            target_locale: "zh-CN".into(), language_confirmed: true, expected_file_digest: bundle.file.sha256.clone(),
+            expected_source_snapshot_id: snapshot };
+        assert_eq!(store.translation_import_start_action_read(&request).unwrap(), None);
+        let input = bundle.fixed_input_for_import_start(project, &request).unwrap();
+        assert_eq!(TranslationBundle::from_input(&input).unwrap(), bundle);
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let expected = Some(TranslationImportStartRead { request: request.clone(), task_id: input.envelope().task_id, input_digest: input.digest().into() });
+        assert_eq!(store.translation_import_start_action_read(&request).unwrap(), expected);
+        for wrong in [TranslationImportStart { selection_id: ExecutionId::new(), ..request.clone() },
+            TranslationImportStart { file_name: "zh-CN.json".into(), ..request.clone() },
+            TranslationImportStart { target_locale: "zh-TW".into(), ..request.clone() },
+            TranslationImportStart { language_confirmed: false, ..request.clone() },
+            TranslationImportStart { expected_file_digest: "0".repeat(64), ..request.clone() },
+            TranslationImportStart { expected_source_snapshot_id: ExecutionId::new(), ..request.clone() },
+            TranslationImportStart { project_id: ExecutionId::new(), ..request.clone() }] {
+            store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+            assert!(store.translation_import_start_action_read(&wrong).is_err());
+            assert!(store.is_reconciling());
+            assert_eq!(store.translation_import_start_action_read(&request).unwrap(), expected);
+            assert!(!store.is_reconciling());
+        }
+        let continuation = ContinuationAction { action_id: ExecutionId::new(), project_id: request.project_id,
+            source_attempt_id: request.attempt_id, unit_id: input.envelope().units[0].unit_id,
+            kind: ContinuationKind::ResumeUndispatched, item_ids: vec![input.envelope().items[0].item_id],
+            expected_cancellation_revision: Revision::new(0).unwrap() };
+        let continued = runtime.resume(&mut store, &continuation).unwrap();
+        let next = store.execution_input(continued.attempt_id).unwrap();
+        assert_eq!(next.envelope().settings, input.envelope().settings);
+        assert_eq!(TranslationBundle::from_input(&next).unwrap(), bundle);
+        assert_eq!(store.translation_import_start_action_read(&TranslationImportStart { attempt_id: continued.attempt_id, ..request.clone() }).unwrap_err().code, ErrorCode::ResultMismatch);
+        assert_eq!(store.read_execution_continuation(continuation.action_id).unwrap(), Some(continued));
+        let direct = bundle.fixed_input(project).unwrap(); runtime.submit(&mut store, &direct).unwrap();
+        assert_eq!(store.translation_import_start_action_read(&TranslationImportStart { attempt_id: direct.envelope().attempt_id, ..request.clone() }).unwrap_err().code, ErrorCode::ResultMismatch);
+        let original_bytes = input.bytes().to_vec(); let original_digest = input.digest().to_owned();
+        let mut corrupt = input.envelope().clone(); corrupt.settings["nativeStart"]["unexpected"] = serde_json::json!(true);
+        let corrupt = FixedInput::capture(corrupt).unwrap();
+        store.connection().unwrap().execute("UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1", params![request.attempt_id.to_string(), corrupt.bytes(), corrupt.digest()]).unwrap();
+        store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+        assert!(store.translation_import_start_action_read(&request).is_err()); assert!(store.is_reconciling());
+        store.connection().unwrap().execute("UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1", params![request.attempt_id.to_string(), original_bytes, original_digest]).unwrap();
+        assert_eq!(store.translation_import_start_action_read(&request).unwrap(), expected);
+        adopt_source(&mut store, br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#, br#"{"first":"Updated"}"#);
+        let revision = store.metadata().unwrap().metadata_revision(); store.set_target_locales(revision, &["ja".into()]).unwrap();
+        let writes = store.connection().unwrap().total_changes(); let sequence = store.execution_sequence().unwrap();
+        assert_eq!(store.translation_import_start_action_read(&request).unwrap(), expected);
+        assert_eq!(store.connection().unwrap().total_changes(), writes); assert_eq!(store.execution_sequence().unwrap(), sequence);
+        store.close().unwrap(); let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.translation_import_start_action_read(&request).unwrap(), expected);
     }
 
     #[test]
