@@ -12,6 +12,24 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 beforeEach(() => invoke.mockReset());
+it("reads the complete frozen import request and recovery unit with a required nullable receipt", async () => {
+  const adoption: unknown = structuredClone(fixture.adopt),unitId = fixture.prepared.unitId;
+  if (!validators.validateRequestAdopt(adoption)) throw new Error("Invalid original import request fixture");
+  const request = {adoption,unitId},action = translationActionFixture(adoption,unitId),receipt = translationReceiptFixture(adoption,unitId,null);
+  expect(validators.validateRequestAdoptionAction(request)).toBe(true);
+  expect(validators.validateRequestAdoptionAction({...request,sessionToken:adoption.sessionToken,projectId:adoption.projectId})).toBe(false);
+  for (const value of [null,{action,receipt:null},{action,receipt}]) {
+    invoke.mockResolvedValueOnce(value);
+    expect(await translationCommands.adoptionAction(request)).toEqual(value);
+    expect(invoke).toHaveBeenLastCalledWith("read_translation_adoption_action",{request});
+  }
+  for (const value of [undefined,{action},{action,receipt:undefined},{action,receipt,extra:true}]) {
+    invoke.mockResolvedValueOnce(value);
+    const failure = await translationCommands.adoptionAction(request).catch(error=>error);
+    expect(hasUnknownOutcome(failure)).toBe(true);expect(validators.validateResponseAdoptionAction(value)).toBe(false);
+  }
+  expect(invoke.mock.calls.every(([name])=>name==="read_translation_adoption_action")).toBe(true);
+});
 
 it("sends the shared translation command fixture without changing field names or values", async () => {
   const start: TranslationStartRequest = fixture.start;

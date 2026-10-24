@@ -1067,6 +1067,39 @@ pub struct AdoptionReceipt {
     pub changes: Vec<ChangeReference>,
 }
 
+/// The durable original cancellation request, independently of worker shutdown.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct CancellationReceipt {
+    pub project_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub request_id: ExecutionId,
+    pub revision: Revision,
+}
+
+fn required_adoption_receipt<'de, D>(deserializer: D) -> Result<Option<AdoptionReceipt>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
+}
+
+#[cfg(feature = "wire-schema")]
+fn nullable_adoption_receipt(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    <Option<AdoptionReceipt> as schemars::JsonSchema>::json_schema(generator)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AdoptionActionRead {
+    pub action: AdoptionAction,
+    #[serde(deserialize_with = "required_adoption_receipt")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "nullable_adoption_receipt"))]
+    pub receipt: Option<AdoptionReceipt>,
+}
+
 fn label(value: &str) -> Result<(), ExecutionError> {
     if value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
         return Err(ExecutionError::new(ErrorCode::InvalidInput, "identifier"));

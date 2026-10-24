@@ -701,10 +701,27 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
     let source_receipt = store
         .adopt_execution(&source_action, &SourceAdoptionHandler)
         .unwrap();
+    let original_confirmation: crate::content::SourceConfirmation = serde_json::from_value(source_action.parameters.clone()).unwrap();
+    let project = source_input.envelope().project_id;
+    let attempt = source_input.envelope().attempt_id;
+    let unit = source_action.unit_id;
+    let expected_source_read = Some(AdoptionActionRead { action: source_action.clone(), receipt: Some(source_receipt.clone()) });
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.source_adoption_action_read(project, attempt, ExecutionId::new(), unit, source_result_id, &original_confirmation).unwrap(), None);
+    assert_eq!(store.source_adoption_action_read(project, attempt, source_action.action_id, unit, source_result_id, &original_confirmation).unwrap(), expected_source_read);
+    assert_eq!(store.source_adoption_action_read(project, attempt, source_action.action_id, ExecutionId::new(), source_result_id, &original_confirmation).unwrap_err().code, ErrorCode::ResultMismatch);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, source_action.action_id, unit, &[source_result_id]).unwrap_err().code, ErrorCode::ResultMismatch);
+    store.cancel_execution(source_input.envelope().task_id, ExecutionId::new()).unwrap();
+    let cancelled_sequence = store.changes_since(sequence).sequence;
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.source_adoption_action_read(project, attempt, source_action.action_id, unit, source_result_id, &original_confirmation).unwrap(), expected_source_read);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(cancelled_sequence).sequence, cancelled_sequence);
     let source_result_bytes = source_result.bytes().to_vec();
     store.close().unwrap();
 
     let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_adoption_action_read(project, attempt, source_action.action_id, unit, source_result_id, &original_confirmation).unwrap(), expected_source_read);
     let persisted = reopened
         .execution_result(input.envelope().attempt_id, result.envelope().result_id)
         .unwrap();
@@ -1541,4 +1558,118 @@ fn current_continuation_shape_and_relationship_corruption_are_rejected_without_r
         assert_eq!(ProjectStore::open(&path).unwrap_err().code(), PersistenceErrorCode::CorruptProject);
         assert_eq!(std::fs::read(&database).unwrap(), bytes);
     }
+}
+
+#[test]
+fn historical_adoption_action_reads_keep_original_proof_after_cancel_and_reopen() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    install_targets(&store);
+    let input = fixture_input(&store, true);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let mut results = Vec::new();
+    for item in &input.envelope().items {
+        let result = produce(&mut store, &input, item.item_id);
+        store.save_execution_result(&result).unwrap();
+        store.validate_execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap();
+        results.push(result.envelope().result_id);
+    }
+    let project = input.envelope().project_id;
+    let attempt = input.envelope().attempt_id;
+    let unit = input.envelope().units[0].unit_id;
+    let action_id = ExecutionId::new();
+    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), None);
+    assert_eq!(store.changes_since(before).sequence, before);
+    results.reverse();
+    let original = store.prepare_adoption_with_id(action_id, attempt, unit, results.clone(), serde_json::Value::Null).unwrap();
+    let prepared = Some(AdoptionActionRead { action: original.clone(), receipt: None });
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), prepared);
+    for (p, a, u, ids) in [
+        (ExecutionId::new(), attempt, unit, results.clone()),
+        (project, ExecutionId::new(), unit, results.clone()),
+        (project, attempt, ExecutionId::new(), results.clone()),
+        (project, attempt, unit, vec![ExecutionId::new()]),
+    ] {
+        assert_eq!(store.execution_adoption_action_read(p, a, action_id, u, &ids).unwrap_err().code, ErrorCode::ResultMismatch);
+    }
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &[results[0], results[0]]).unwrap_err().code, ErrorCode::InvalidInput);
+    let receipt = store.adopt_execution(&original, &Handler).unwrap();
+    store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
+    let expected = Some(AdoptionActionRead { action: original.clone(), receipt: Some(receipt.clone()) });
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get(0)).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get::<_, i64>(0)).unwrap(), count);
+
+    let connection = store.execution_connection().unwrap();
+    let (bytes, digest): (Vec<u8>, String) = connection.query_row("SELECT request,digest FROM execution_actions WHERE action_id=?1", [action_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), "0".repeat(64)]).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert!(store.is_reconciling());
+    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), &digest]).unwrap();
+    connection.pragma_update(None, "foreign_keys", "OFF").unwrap();
+    connection.execute("DELETE FROM execution_actions WHERE action_id=?1", [action_id.to_string()]).unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    connection.execute("INSERT INTO execution_actions(action_id,attempt_id,unit_id,request,digest) VALUES (?1,?2,?3,?4,?5)", params![action_id.to_string(), attempt.to_string(), unit.to_string(), bytes, digest]).unwrap();
+    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), ExecutionId::new().to_string()]).unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), unit.to_string()]).unwrap();
+    connection.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+}
+
+#[test]
+fn cancellation_action_reads_confirm_original_requests_without_writes() {
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let project = input.envelope().project_id;
+    let task = input.envelope().task_id;
+    let request = ExecutionId::new();
+    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), None);
+    assert_eq!(store.changes_since(before).sequence, before);
+    let first = store.cancel_execution(task, request).unwrap();
+    let next = store.cancel_execution(task, ExecutionId::new()).unwrap();
+    assert!(next > first);
+    let receipt = Some(CancellationReceipt { project_id: project, task_id: task, request_id: request, revision: first });
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
+    assert_eq!(store.cancellation_action_read(project, ExecutionId::new(), request).unwrap_err().code, ErrorCode::ResultMismatch);
+    assert_eq!(store.cancellation_action_read(ExecutionId::new(), task, request).unwrap_err().code, ErrorCode::ResultMismatch);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.cancel_execution(task, request).unwrap_err().code, ErrorCode::OutcomeUnknown);
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get(0)).unwrap();
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get::<_, i64>(0)).unwrap(), count);
+
+    let connection = store.execution_connection().unwrap();
+    connection.pragma_update(None, "ignore_check_constraints", "ON").unwrap();
+    connection.execute("UPDATE execution_cancellations SET revision=0 WHERE request_id=?1", [request.to_string()]).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert!(store.is_reconciling());
+    connection.execute("UPDATE execution_cancellations SET revision=?2 WHERE request_id=?1", params![request.to_string(), first.get() as i64]).unwrap();
+    connection.pragma_update(None, "ignore_check_constraints", "OFF").unwrap();
+    assert_eq!(store.cancellation_action_read(project, task, ExecutionId::new()).unwrap(), None);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert!(store.cancel_execution(task, ExecutionId::new()).unwrap() > next);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.cancellation_action_read(project, task, request).unwrap(), receipt);
 }

@@ -235,7 +235,7 @@ it("keeps an original import retry behind actual missing-receipt permission desp
   await act(async()=>{registry.dispatch("translation.apply-import-row",scope,rowPayload());});await waitFor(()=>expect(imports.current().uncertain).toHaveLength(1));const payload=importPending();
   expect(registry.dispatch("translation.retry-import-action",scope,payload)).toBe(false);
   expect(registry.dispatch("translation.check-import-receipt",scope,{...payload,request:{...payload.request,resultId:fixtureIdentity(999)}})).toBe(false);
-  invoke.mockImplementation((command:string,args)=>command==="read_execution_receipt"?Promise.resolve(null):command==="prepare_translation_adoption"?
+  invoke.mockImplementation((command:string,args)=>command==="read_translation_adoption_action"?Promise.resolve(null):command==="prepare_translation_adoption"?
     Promise.reject(rejected):original(command,args));
   const removed={...project,metadata:{...project.metadata,targetLocales:[]}};view.rerender(<Harness project={removed}/>,removed);
   act(()=>reads.client.clear());await act(async()=>{expect(registry.dispatch("translation.check-import-receipt",scope,payload)).toBe(true);});

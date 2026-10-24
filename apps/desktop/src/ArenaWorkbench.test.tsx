@@ -21,6 +21,7 @@ beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:aiAt
  invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
   if(command==="read_content_scope")return{revision:"2",currentSnapshot:fixtureIdentity(300)};if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302)},{key:"first",text:item.sourceText})]});
   if(command==="list_arena_comparisons")return[];
+  if(command==="read_execution_cancellation_action")return null;
   if(command==="preview_arena_translation"){prepared.preview.config=args.request.config as typeof prepared.preview.config;return prepared;}
   if(command==="start_arena_translation")return aiAttempt;
   if(command==="read_arena_translation")return arenaViewFixture(item,prepared.preview.config);

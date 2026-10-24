@@ -108,6 +108,14 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Sour
     action_id: ExecutionId,
     confirmation: SourceConfirmation
 });
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SourceAdoptionActionRequest {
+    pub adoption: SourceAdoptRequest,
+    pub unit_id: ExecutionId,
+}
+
 fn map_source(error: ExecutionError) -> CommandError {
     let mapped = map_execution(error, CommandStage::ExecutionRead);
     mapped
@@ -750,6 +758,38 @@ pub async fn read_source_impact(
                     &request.locale,
                     request.after,
                     request.limit,
+                )
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_source_adoption_action(
+    state: State<'_, AppState>,
+    request: SourceAdoptionActionRequest,
+) -> Result<Option<AdoptionActionRead>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_source_adoption_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let adoption = request.adoption;
+                authorized(
+                    sessions,
+                    &adoption.session_token,
+                    adoption.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_adoption_action_read(
+                    adoption.project_id,
+                    adoption.attempt_id,
+                    adoption.action_id,
+                    request.unit_id,
+                    adoption.result_id,
+                    &adoption.confirmation,
                 )
                 .map_err(map_source)
             },

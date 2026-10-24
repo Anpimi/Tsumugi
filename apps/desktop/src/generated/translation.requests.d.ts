@@ -7,6 +7,7 @@ export type Revision = string;
 export interface Requests {
   action: TranslationActionRequest;
   adopt: TranslationAdoptRequest;
+  adoptionAction: TranslationAdoptionActionRequest;
   capture: TranslationCaptureRequest;
   files: TranslationFilesRequest;
   history: TranslationHistoryRequest;
@@ -41,6 +42,10 @@ export interface TranslationAdoptionConfirmation {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   targetUnitId: ExecutionId;
+}
+export interface TranslationAdoptionActionRequest {
+  adoption: TranslationAdoptRequest;
+  unitId: ExecutionId;
 }
 export interface TranslationCaptureRequest {
   fileName: string;

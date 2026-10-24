@@ -9,6 +9,7 @@ export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
 
 export interface Responses {
   action: AdoptionAction;
+  adoptionAction: AdoptionActionRead | null;
   attempt: ExecutionId;
   cancelled: null;
   comparison: SourceChangePage;
@@ -31,6 +32,23 @@ export interface AdoptionAction {
   projectId: ExecutionId;
   resultIds: ExecutionId[];
   unitId: ExecutionId;
+}
+export interface AdoptionActionRead {
+  action: AdoptionAction;
+  receipt: AdoptionReceipt | null;
+}
+export interface AdoptionReceipt {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  changes: ChangeReference[];
+  projectId: ExecutionId;
+  requestDigest: string;
+  unitId: ExecutionId;
+}
+export interface ChangeReference {
+  id: string;
+  kind: string;
+  revision: Revision;
 }
 export interface SourceChangePage {
   added: number;

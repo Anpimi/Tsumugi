@@ -33,6 +33,7 @@ function mutationRejection(): CommandError {
 }
 beforeEach(() => {
   invoke.mockReset(); preview = translationPreviewFixture(); pageSize = 100; nextIdentity = 50; requests = new Map();
+  const checkedWrites = new Map<string,number>();
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
     const request = payload.request;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: preview.currentSourceSnapshotId };
@@ -55,6 +56,12 @@ beforeEach(() => {
       const original = request as unknown as TranslationAdoptRequest; requests.set(original.actionId, original); return action(original);
     }
     if (command === "adopt_execution" || command === "read_execution_receipt") return receipt(requests.get(String(request.actionId))!);
+    if (command === "read_translation_adoption_action") {
+      const original = request.adoption as TranslationAdoptRequest;
+      const writes = calls("prepare_translation_adoption").length + calls("adopt_execution").length;
+      if (checkedWrites.get(original.actionId) !== writes) { checkedWrites.set(original.actionId,writes); throw new Error("Automatic lookup unavailable"); }
+      return {action:action(original),receipt:receipt(original)};
+    }
     throw new Error(command);
   });
 });
@@ -75,7 +82,7 @@ it("retains the first unknown start after a definite rejection of the identical 
 it.each(["prepare_translation_adoption","adopt_execution"])("preserves an unknown import and its reservation after a checked-missing retry is rejected by %s",async boundary=>{
   render(<Probe/>,project);await ready();const original=invoke.getMockImplementation()!,rejected=mutationRejection();
   invoke.mockImplementation((command:string,payload)=>command==="adopt_execution" ? Promise.reject(new Error("Lost ACK"))
-    : command==="read_execution_receipt" ? Promise.resolve(null) : original(command,payload));
+    : command==="read_translation_adoption_action" ? Promise.resolve(null) : original(command,payload));
   await applyRow();const pending=structuredClone(owner.current().uncertain[0]);
   await act(async()=>{await owner.checkReceipt(pending.request.actionId);});expect(owner.current().uncertain[0].receiptChecked).toBe(true);
   invoke.mockImplementation((command:string,payload)=>command===boundary ? Promise.reject(rejected) : original(command,payload));
@@ -89,6 +96,7 @@ it("releases fresh definite rejection while preserving no invented unknown reque
   render(<Probe/>,project);await ready();const original=invoke.getMockImplementation()!,rejected=mutationRejection();
   invoke.mockImplementation((command:string,payload)=>command==="prepare_translation_adoption" ? Promise.reject(rejected) : original(command,payload));
   await applyRow();expect(owner.current().uncertain).toEqual([]);expect(drafts.mutationReserved).toBe(false);
+  expect(calls("read_translation_adoption_action")).toHaveLength(0);
 });
 
 it("disposes its captured read listener on owner destruction before a deferred identity returns",async()=>{
@@ -201,9 +209,9 @@ it("recovers the original unknown request after source, language and pure view r
 
 it("replays the exact original prepare and adoption after a missing receipt and revokes that permission on another unknown", async () => {
   const view = render(<Probe/>, project); await ready();
-  const original = invoke.getMockImplementation()!;
+  const original = invoke.getMockImplementation()!; let lookups = 0;
   invoke.mockImplementation((command: string, payload: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Lost ACK"))
-    : command === "read_execution_receipt" ? Promise.resolve(null) : original(command, payload));
+    : command === "read_translation_adoption_action" ? ++lookups <= 2 ? Promise.resolve(null) : Promise.reject(new Error("Lookup unavailable")) : original(command, payload));
   await applyRow(); const request = structuredClone(owner.current().uncertain[0].request);
   await act(async () => { await owner.checkReceipt(request.actionId); });
   expect(owner.current().uncertain[0].receiptChecked).toBe(true);
@@ -217,7 +225,7 @@ it("replays the exact original prepare and adoption after a missing receipt and 
 });
 
 it.each(["project", "attempt", "action", "unit", "operation", "result", "digest", "snapshot", "occurrence", "source revision", "target unit", "selection", "decision"])
-  ("keeps a typed-valid wrong prepare %s unknown and recovers by original preparation without another adoption", async field => {
+  ("keeps a typed-valid wrong prepare %s unknown and recovers by original action read without another adoption", async field => {
     render(<Probe/>, project); await ready();
     const original = invoke.getMockImplementation()!;
     invoke.mockImplementation((command: string, payload: { request: TranslationAdoptRequest }) => {
@@ -235,7 +243,7 @@ it.each(["project", "attempt", "action", "unit", "operation", "result", "digest"
     invoke.mockImplementation(original);
     await act(async () => { await owner.checkReceipt(pending.request.actionId); });
     expect(owner.current().uncertain).toHaveLength(0);
-    expect(calls("prepare_translation_adoption")).toHaveLength(2);
+    expect(calls("prepare_translation_adoption")).toHaveLength(1);
     expect(calls("adopt_execution")).toHaveLength(0);
   });
 
@@ -262,16 +270,20 @@ it("pins a legitimate receipt before recovering a missing prepare ACK and denies
   render(<Probe/>, project); await ready();
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: { request: TranslationAdoptRequest }) => {
+    if (command === "read_translation_adoption_action") {
+      const request = owner.current().uncertain[0].request;
+      return Promise.resolve({action:{...action(request),operation:"source-import"},receipt:receipt(request)});
+    }
     if (command !== "prepare_translation_adoption") return original(command, payload);
     requests.set(payload.request.actionId, payload.request); return Promise.resolve({ ...action(payload.request), operation: "source-import" });
   });
   await applyRow(); const request = owner.current().uncertain[0].request;
   await act(async () => { await owner.checkReceipt(request.actionId); });
   expect(owner.current().uncertain[0].receipt).toEqual(receipt(request));
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_receipt" ? Promise.resolve(null) : original(command, payload));
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_translation_adoption_action" ? Promise.resolve(null) : original(command, payload));
   await act(async () => { await owner.checkReceipt(request.actionId); await owner.retryAction(request.actionId); });
   expect(owner.current().uncertain[0].receiptChecked).toBe(false); expect(calls("adopt_execution")).toHaveLength(0);
-  invoke.mockImplementation((command: string, payload: unknown) => command === "read_execution_receipt" ? Promise.resolve({ ...receipt(request), requestDigest: "b".repeat(64) }) : original(command, payload));
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_translation_adoption_action" ? Promise.resolve({action:action(request),receipt:{ ...receipt(request), requestDigest: "b".repeat(64) }}) : original(command, payload));
   await act(async () => { await owner.checkReceipt(request.actionId); });
   expect(owner.current().completionVersion).toBe(0);
 });
@@ -313,6 +325,56 @@ it("keeps partial business results and their original unknown independently of a
   expect(owner.current().batchOutcome).toEqual({ applied: 2, conflicted: 1, failed: 0, unknown: 0 });
   expect(owner.current().completionVersion).toBe(2); expect(owner.current().uncertain).toHaveLength(0);
   expect(calls("adopt_execution")).toHaveLength(2);
+});
+
+it("counts automatic original reads in the actual batch and preserves partial results for later pure checking",async()=>{
+  preview=translationPreviewFixture([translationRowFixture(0),translationRowFixture(1),translationRowFixture(2)]);
+  render(<Probe/>,project);await ready();await act(async()=>{await owner.captureBatch();});
+  const original=invoke.getMockImplementation()!;let retryRead=false,rejectSecond!:(error:unknown)=>void;
+  invoke.mockImplementation((command:string,payload:{request:Record<string,unknown>})=>{
+    const request=payload.request;
+    if(command==="prepare_translation_adoption"&&request.itemId===preview.rows[1].itemId)return new Promise((_,reject)=>{rejectSecond=reject;});
+    if(command==="adopt_execution")return Promise.reject(new Error("Lost adoption ACK"));
+    if(command==="read_translation_adoption_action"){
+      const adoption=request.adoption as TranslationAdoptRequest;
+      if(adoption.itemId===preview.rows[2].itemId&&!retryRead)return Promise.reject(new Error("Lookup unavailable"));
+      return Promise.resolve({action:action(adoption),receipt:receipt(adoption)});
+    }
+    return original(command,payload);
+  });
+  let batch!:Promise<void>;act(()=>{batch=owner.applyBatch();});await waitFor(()=>expect(rejectSecond).toBeDefined());
+  expect(owner.current().batchOutcome).toEqual({applied:1,conflicted:0,failed:0,unknown:0});
+  expect(drafts.reserveMutation()).toBeNull();expect(owner.current().batchProgress).toEqual({done:1,total:3});
+  await act(async()=>{rejectSecond({code:"dependency-conflict",outcome:"rejected",stage:"execution-adopt",recoveryRequired:false,reason:"translation-selection"});await batch;});
+  expect(owner.current().batchOutcome).toEqual({applied:1,conflicted:1,failed:0,unknown:1});
+  expect(owner.current().batchDetails.map(row=>row.status)).toEqual(["applied","conflicted","unknown"]);
+  const pending=owner.current().uncertain[0];expect(pending.request.itemId).toBe(preview.rows[2].itemId);
+  expect(calls("read_translation_adoption_action").map(([,args])=>args.request)).toEqual([0,2].map(index=>{
+    const request=[...requests.values()].find(request=>request.itemId===preview.rows[index].itemId)!;
+    return {adoption:request,unitId:translationRecoveryUnit(preview.rows[index])};
+  }));
+  expect(drafts.mutationReserved).toBe(true);retryRead=true;
+  await act(async()=>{await owner.checkReceipt(pending.request.actionId);});
+  expect(owner.current().batchOutcome).toEqual({applied:2,conflicted:1,failed:0,unknown:0});
+  expect(owner.current().completionVersion).toBe(2);expect(drafts.mutationReserved).toBe(false);
+  expect(calls("adopt_execution")).toHaveLength(2);expect(calls("prepare_translation_adoption")).toHaveLength(3);expect(calls("create_execution_identity")).toHaveLength(3);
+});
+
+it("reads a frozen import unit after hidden consumer removal and preserves newer manual input",async()=>{
+  const view=render(<Probe/>,project);await ready();const original=invoke.getMockImplementation()!;
+  act(()=>{drafts.begin({unitId:fixtureIdentity(700),locale:"zh-CN",sourceRevisionId:fixtureIdentity(701),key:"manual",sourceText:"Source"},null,null);});
+  let finish!:(value:unknown)=>void;
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"?Promise.reject(new Error("Lost ACK"))
+    :command==="read_translation_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,payload));
+  act(()=>owner.chooseRow(owner.current().preview!.rows[0],"candidate-only"));
+  let work!:Promise<void>;act(()=>{work=owner.applyRow();});await waitFor(()=>expect(finish).toBeDefined());
+  const pending=owner.current().uncertain[0];expect(owner.current()).toMatchObject({busy:true,checkingAction:pending.request.actionId,failure:null});
+  act(()=>drafts.edit("Newer B"));view.rerender(null);
+  await act(async()=>{finish({action:action(pending.request),receipt:receipt(pending.request)});await work;});view.rerender(<Probe/>);
+  expect(owner.current()).toMatchObject({checkingAction:null,busy:false,uncertain:[],completionVersion:1,failure:null});
+  expect(drafts.current()?.text).toBe("Newer B");expect(calls("read_execution_attempt")).toHaveLength(1);
+  expect(calls("read_translation_adoption_action")[0][1].request).toEqual({adoption:pending.request,unitId:pending.recoveryUnitId});
+  expect(calls("adopt_execution")).toHaveLength(1);expect(calls("prepare_translation_adoption")).toHaveLength(1);
 });
 
 it.each(["basis", "eligibility", "count"])("does not silently shrink a confirmed batch when %s changes", async field => {

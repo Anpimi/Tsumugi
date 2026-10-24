@@ -118,7 +118,7 @@ beforeEach(async () => {
       if (!validateRequestSelect(args.request)) throw new Error("Invalid selection lookup request");
       return null;
     }
-    if (command === "read_execution_receipt") return null;
+    if (command === "read_translation_adoption_action") throw new Error("Automatic lookup unavailable");
     throw new Error(command);
   });
 });
@@ -621,6 +621,7 @@ it("checks an uncertain original save action after removal without replaying its
 
 it("keeps an in-flight import attempt and an uncertain adoption checkable after target removal", async () => {
   const originalInvoke = invoke.getMockImplementation()!;
+  let adoptionLookups = 0;
   let releaseStart!: () => void;
   let delayStart = true;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
@@ -628,8 +629,8 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
       delayStart = false;
       return new Promise(resolve => { releaseStart = () => resolve(args.request.attemptId); });
     }
-    if (command === "adopt_execution") return Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "adopt", recoveryRequired: true });
-    if (command === "read_execution_receipt") return null;
+    if (command === "adopt_execution") return Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true });
+    if (command === "read_translation_adoption_action") return ++adoptionLookups === 1 ? Promise.reject(new Error("Automatic lookup unavailable")) : null;
     return originalInvoke(command, args);
   });
   const user = userEvent.setup();
@@ -665,8 +666,8 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
   rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "4" } }} disabled={false} />);
   expect(screen.getByRole("button", { name: "Retry the same action" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Check the uncertain action's receipt" }));
-  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_execution_receipt")).toBe(true));
-  expect(invoke.mock.calls.find(([name]) => name === "read_execution_receipt")?.[1].request.actionId).toBe(originalAction);
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_translation_adoption_action")).toHaveLength(2));
+  expect(invoke.mock.calls.find(([name]) => name === "read_translation_adoption_action")?.[1].request.adoption.actionId).toBe(originalAction);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
 });
 

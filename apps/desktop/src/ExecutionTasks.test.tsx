@@ -32,6 +32,7 @@ it("retains the original cancellation after a complete Tasks remount and blocks 
     if (command === "read_execution_attempt") return detail();
     if (command === "create_execution_identity") return fixtureIdentity(201);
     if (command === "cancel_execution_task") { if (++cancelCount === 1) throw new Error("Disconnected"); return "4"; }
+    if (command === "read_execution_cancellation_action") return null;
     throw new Error(command);
   });
   const view = render(<ExecutionTasks ref={ref} project={project} disabled={false} />);
@@ -66,6 +67,7 @@ it("opens previously unvisited Tasks when another workspace has an unknown cance
     if (command === "list_execution_tasks") return [];
     if (command === "create_execution_identity") return fixtureIdentity(202);
     if (command === "cancel_execution_task") { if (++cancelCount === 1) throw new Error("Disconnected"); return "5"; }
+    if (command === "read_execution_cancellation_action") return null;
     throw new Error(command);
   });
   render(<UnvisitedTasks />, project);
@@ -103,7 +105,7 @@ async function openTasks(value = detail(), ref?: RefObject<TasksHandle | null>) 
 }
 function taskReplies(replies: Record<string, () => unknown>) {
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, payload: unknown) => replies[command] ? replies[command]() : original(command, payload));
+  invoke.mockImplementation((command: string, payload: unknown) => replies[command] ? replies[command]() : command === "read_execution_cancellation_action" ? Promise.resolve(null) : original(command, payload));
 }
 it("offers only evidence-backed actions for an unknown result and confirms the exact item", async () => {
   const user = await openTasks();
@@ -129,13 +131,13 @@ it("keeps an uncertain adoption recoverable inside the confirmation dialog witho
     adopt_execution: () => Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true }) });
   await user.click(within(screen.getByRole("dialog", { name: "Apply saved results" })).getByRole("button", { name: "Apply saved results" }));
   const check = await screen.findByRole("button", { name: "Check recorded outcome" });
-  taskReplies({ read_execution_receipt: () => fixture.receipt });
+  taskReplies({ read_execution_adoption_action: () => ({action:{...fixture.action,parameters:null},receipt:fixture.receipt}) });
   await user.click(check);
   await screen.findByRole("heading", { name: "Recorded changes" });
   expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
   expect(invoke.mock.calls.some(([command]) => command === "recover_execution")).toBe(false);
   const prepared = invoke.mock.calls.find(([command]) => command === "prepare_execution_adoption")![1].request;
-  expect(invoke).toHaveBeenCalledWith("read_execution_receipt", { request: { ...fixture.session, actionId: prepared.actionId } });
+  expect(invoke).toHaveBeenCalledWith("read_execution_adoption_action", { request: prepared });
 });
 it("discards a previous selection's late detail response", async () => {
   let resolveOld!: (value: AttemptDetail) => void;
@@ -183,7 +185,7 @@ it("retries uncertain preparation with the original request after checking its r
   let replay = false;
   taskReplies({ create_execution_identity: () => fixture.prepare.actionId,
     prepare_execution_adoption: () => replay ? { ...fixture.action, parameters: null } : Promise.reject(new Error("Lost preparation ACK")),
-    adopt_execution: () => fixture.receipt, read_execution_receipt: () => null });
+    adopt_execution: () => fixture.receipt, read_execution_adoption_action: () => null });
   await user.click(within(screen.getByRole("dialog", { name: "Apply saved results" })).getByRole("button", { name: "Apply saved results" }));
   const check = await screen.findByRole("button", { name: "Check recorded outcome" });
   await user.click(check);
@@ -281,7 +283,7 @@ it("settles actual TaskContent adoption after a complete consumer unmount during
 });
 
 it("keeps the original uncertain application after Keep output and a full remount", async () => {
-  const value = applicationDetail(), user = userEvent.setup(), ref = createRef<TasksHandle>();
+  const value = applicationDetail(), user = userEvent.setup(), ref = createRef<TasksHandle>(); let lookups=0;
   invoke.mockImplementation(async command => {
     if (command === "execution_status") return fixture.status;
     if (command === "read_execution_continuations") return Promise.resolve({ receipts: [], next: null });
@@ -291,7 +293,7 @@ it("keeps the original uncertain application after Keep output and a full remoun
     if (command === "create_execution_identity") return fixture.prepare.actionId;
     if (command === "prepare_execution_adoption") return { ...fixture.action, parameters: null };
     if (command === "adopt_execution") throw new Error("Lost adoption ACK");
-    if (command === "read_execution_receipt") return fixture.receipt;
+    if (command === "read_execution_adoption_action") {if(++lookups===1)throw new Error("Automatic lookup unavailable");return {action:{...fixture.action,parameters:null},receipt:fixture.receipt};}
     throw new Error(command);
   });
   const view = render(<ExecutionTasks ref={ref} project={project} disabled={false} />);
@@ -308,7 +310,7 @@ it("keeps the original uncertain application after Keep output and a full remoun
   await screen.findByRole("heading", { name: "Recorded changes" });
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([name]) => name === "read_execution_receipt").map(([, payload]) => payload.request)).toEqual([fixture.adopt]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_execution_adoption_action").map(([, payload]) => payload.request)).toEqual([fixture.prepare,fixture.prepare]);
 });
 
 it("opens unvisited Tasks for owner adoption recovery and retains its full original scope", async () => {
@@ -474,7 +476,7 @@ it("resets replay permission after a second unknown and keeps deferred request o
   await user.click(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" }));
   taskReplies({ read_execution_continuation: () => null });
   await user.click(await screen.findByRole("button", { name: "Check original recovery request" }));
-  taskReplies({ continue_execution: () => Promise.reject(new Error("second ACK lost")) });
+  taskReplies({ continue_execution: () => Promise.reject(new Error("second ACK lost")), read_execution_continuation: () => Promise.reject(new Error("Automatic lookup unavailable")) });
   await user.click(await screen.findByRole("button", { name: "Retry the same recovery request" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument());
   await user.click(screen.getByRole("button", { name: "Keep request and return" }));

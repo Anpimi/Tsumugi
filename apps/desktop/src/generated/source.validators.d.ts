@@ -2,6 +2,7 @@
 import type { Requests } from "./source.requests";
 import type { Responses } from "./source.responses";
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
+export declare function validateRequestAdoptionAction(value: unknown): value is Requests["adoptionAction"];
 export declare function validateRequestCapture(value: unknown): value is Requests["capture"];
 export declare function validateRequestComparison(value: unknown): value is Requests["comparison"];
 export declare function validateRequestContent(value: unknown): value is Requests["content"];
@@ -13,6 +14,7 @@ export declare function validateRequestPreview(value: unknown): value is Request
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
+export declare function validateResponseAdoptionAction(value: unknown): value is Responses["adoptionAction"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseCancelled(value: unknown): value is Responses["cancelled"];
 export declare function validateResponseComparison(value: unknown): value is Responses["comparison"];

@@ -1139,6 +1139,18 @@ impl ProjectStore {
     pub fn execution_continuation(&self, action_id: ExecutionId) -> Result<Option<ContinuationReceipt>, ExecutionError> {
         read_continuation(self.execution_connection()?, action_id)
     }
+    pub fn read_execution_continuation(
+        &self,
+        action_id: ExecutionId,
+    ) -> Result<Option<ContinuationReceipt>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            read_continuation(connection, action_id)
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub fn execution_continuation_page(&self, source: ExecutionId, after: Revision, limit: u32) -> Result<Vec<ContinuationReceipt>, ExecutionError> {
         if !(1..=50).contains(&limit) { return Err(error(ErrorCode::LimitExceeded, "continuation-page")); }
         let connection = self.execution_connection()?;
@@ -1492,6 +1504,40 @@ impl ProjectStore {
         tx.execute("UPDATE execution_items SET execution='unknown',diagnostic='result-missing' WHERE attempt_id=?1 AND execution='dispatched'",[attempt.to_string()]).map_err(sql_error)?;
         commit(tx)
     }
+    pub fn cancellation_action_read(
+        &self,
+        project: ExecutionId,
+        task: ExecutionId,
+        request: ExecutionId,
+    ) -> Result<Option<CancellationReceipt>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let row: Option<(String, i64, Option<String>)> = connection.query_row(
+                "SELECT c.task_id,c.revision,t.project_id FROM execution_cancellations c
+                 LEFT JOIN execution_tasks t ON t.task_id=c.task_id WHERE c.request_id=?1",
+                [request.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).optional().map_err(sql_error)?;
+            let Some((saved_task, revision, saved_project)) = row else { return Ok(None); };
+            let saved_project = saved_project.ok_or_else(|| error(ErrorCode::CorruptLedger, "cancellation-task"))?;
+            let saved_task = parse_id(saved_task)?;
+            let saved_project = parse_id(saved_project)?;
+            if revision <= 0 {
+                return Err(error(ErrorCode::CorruptLedger, "cancellation-revision"));
+            }
+            if saved_task != task || saved_project != project {
+                return Err(error(ErrorCode::ResultMismatch, "cancellation-request"));
+            }
+            let revision = Revision::new(revision as u64)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "cancellation-revision"))?;
+            Ok(Some(CancellationReceipt {
+                project_id: saved_project, task_id: saved_task, request_id: request, revision,
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub fn cancel_execution(
         &mut self,
         task: ExecutionId,
@@ -1565,6 +1611,107 @@ impl ProjectStore {
             )
             .map_err(sql_error)?;
         codec::decode(&bytes, MAX_INPUT_BYTES)
+    }
+    pub fn execution_adoption_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        action: ExecutionId,
+        unit: ExecutionId,
+        result_ids: &[ExecutionId],
+    ) -> Result<Option<AdoptionActionRead>, ExecutionError> {
+        let mut results = result_ids.to_vec();
+        results.sort();
+        if results.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(error(ErrorCode::InvalidInput, "adoption-action-results"));
+        }
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let Some((read, _)) = read_adoption_action_in(connection, action)? else {
+                return Ok(None);
+            };
+            let original = &read.action;
+            if original.project_id != project
+                || original.attempt_id != attempt
+                || original.unit_id != unit
+                || original.result_ids != results
+                || !original.parameters.is_null()
+            {
+                return Err(error(ErrorCode::ResultMismatch, "adoption-action-request"));
+            }
+            Ok(Some(read))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+    pub fn source_adoption_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        action: ExecutionId,
+        unit: ExecutionId,
+        result: ExecutionId,
+        confirmation: &crate::content::SourceConfirmation,
+    ) -> Result<Option<AdoptionActionRead>, ExecutionError> {
+        let parameters = serde_json::to_value(confirmation)
+            .map_err(|_| error(ErrorCode::InvalidInput, "source-action-confirmation"))?;
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let Some((read, _)) = read_adoption_action_in(connection, action)? else {
+                return Ok(None);
+            };
+            let original = &read.action;
+            if original.project_id != project
+                || original.attempt_id != attempt
+                || original.unit_id != unit
+                || original.operation != crate::content::OPERATION
+                || original.result_ids != [result]
+                || original.parameters != parameters
+            {
+                return Err(error(ErrorCode::ResultMismatch, "source-action-request"));
+            }
+            Ok(Some(read))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+    pub fn translation_adoption_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        action: ExecutionId,
+        unit: ExecutionId,
+        item: ExecutionId,
+        result: ExecutionId,
+        confirmation: &super::translation::TranslationAdoptionConfirmation,
+    ) -> Result<Option<AdoptionActionRead>, ExecutionError> {
+        let parameters = serde_json::to_value(confirmation)
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-action-confirmation"))?;
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            let Some((read, input)) = read_adoption_action_in(connection, action)? else {
+                return Ok(None);
+            };
+            let original = &read.action;
+            if original.project_id != project
+                || original.attempt_id != attempt
+                || original.unit_id != unit
+                || original.operation != crate::content::TRANSLATION_OPERATION
+                || original.result_ids != [result]
+                || original.parameters != parameters
+                || !input.envelope().units.iter().any(|value| {
+                    value.unit_id == unit && value.item_ids == [item]
+                })
+            {
+                return Err(error(ErrorCode::ResultMismatch, "translation-action-request"));
+            }
+            Ok(Some(read))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
     }
     pub fn prepare_adoption_with_id(
         &mut self,
@@ -1807,6 +1954,70 @@ fn capture_adoption_in(
         digest,
         receipt: None,
     })
+}
+
+/// Restore one historical action and optional receipt inside the caller's read snapshot.
+/// Stored bytes, frozen input and row associations are evidence, never new eligibility.
+fn read_adoption_action_in(
+    connection: &Connection,
+    action: ExecutionId,
+) -> Result<Option<(AdoptionActionRead, FixedInput)>, ExecutionError> {
+    let row: Option<(String, String, Vec<u8>, String)> = connection
+        .query_row(
+            "SELECT attempt_id,unit_id,CASE WHEN length(request)<=1048576 THEN request END,digest FROM execution_actions WHERE action_id=?1",
+            [action.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    let Some((saved_attempt, saved_unit, bytes, saved_digest)) = row else {
+        if read_receipt(connection, action)?.is_some() {
+            return Err(error(ErrorCode::CorruptLedger, "adoption-action-orphan"));
+        }
+        if connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_continuations WHERE action_id=?1)",
+            [action.to_string()], |row| row.get::<_, bool>(0),
+        ).map_err(sql_error)? {
+            return Err(error(ErrorCode::ResultMismatch, "adoption-action-kind"));
+        }
+        return Ok(None);
+    };
+    let original: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)
+        .map_err(|_| error(ErrorCode::CorruptLedger, "adoption-action-bytes"))?;
+    let input = load_input_cached(connection, original.attempt_id)?;
+    let digest = original.request_digest(&input)
+        .map_err(|_| error(ErrorCode::CorruptLedger, "adoption-action-digest"))?;
+    if original.action_id != action
+        || saved_attempt != original.attempt_id.to_string()
+        || saved_unit != original.unit_id.to_string()
+        || original.project_id != input.envelope().project_id
+        || original.operation != input.envelope().operation
+        || !input.envelope().units.iter().any(|unit| unit.unit_id == original.unit_id)
+        || original.result_ids.windows(2).any(|pair| pair[0] >= pair[1])
+        || saved_digest != digest
+    {
+        return Err(error(ErrorCode::CorruptLedger, "adoption-action-association"));
+    }
+    let receipt = read_receipt(connection, action)?;
+    if receipt.is_some() {
+        let (receipt_attempt, receipt_unit): (String, String) = connection.query_row(
+            "SELECT attempt_id,unit_id FROM adoption_receipts WHERE action_id=?1",
+            [action.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(sql_error)?;
+        if receipt_attempt != saved_attempt || receipt_unit != saved_unit {
+            return Err(error(ErrorCode::CorruptLedger, "adoption-receipt-association"));
+        }
+    }
+    if receipt.as_ref().is_some_and(|value| {
+        value.project_id != original.project_id
+            || value.attempt_id != original.attempt_id
+            || value.action_id != action
+            || value.unit_id != original.unit_id
+            || value.request_digest != digest
+    }) {
+        return Err(error(ErrorCode::CorruptLedger, "adoption-action-receipt"));
+    }
+    Ok(Some((AdoptionActionRead { action: original, receipt }, input)))
 }
 
 pub(super) fn read_receipt(

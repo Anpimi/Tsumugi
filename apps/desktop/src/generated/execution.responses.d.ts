@@ -121,9 +121,11 @@ export type CommandStage =
 export interface Responses {
   action: AdoptionAction;
   adoption: AdoptionReceipt;
+  adoptionAction: AdoptionActionRead | null;
   attempt: AttemptDetail;
   attempts: AttemptSummary[];
   cancellation: Revision;
+  cancellationAction: CancellationReceipt | null;
   continuation: ContinuationReceipt;
   continuationReceipt: ContinuationReceipt | null;
   continuations: ContinuationPage;
@@ -157,6 +159,10 @@ export interface ChangeReference {
   id: string;
   kind: string;
   revision: Revision;
+}
+export interface AdoptionActionRead {
+  action: AdoptionAction;
+  receipt: AdoptionReceipt | null;
 }
 export interface AttemptDetail {
   attemptId: ExecutionId;
@@ -213,6 +219,15 @@ export interface RecoveryUnit {
 export interface AttemptSummary {
   attemptId: ExecutionId;
   sequence: Revision;
+}
+/**
+ * The durable original cancellation request, independently of worker shutdown.
+ */
+export interface CancellationReceipt {
+  projectId: ExecutionId;
+  requestId: ExecutionId;
+  revision: Revision;
+  taskId: ExecutionId;
 }
 /**
  * Complete immutable evidence associating the original intent with one attempt.

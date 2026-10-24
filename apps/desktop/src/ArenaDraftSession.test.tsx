@@ -83,6 +83,7 @@ beforeEach(async()=>{
   if(!validateResponsePrepared(p)||!validateResponseComparison(c))throw new Error("Invalid Arena fixture");
   prepared=p;prepared.attemptId=aiAttempt;comparison=c;
   let identity=910;
+  let checkedWrites=-1;
   invoke.mockReset();invoke.mockImplementation(async(command:string,payload:{request:PrepareRequest & {config:ArenaConfig;unitIds:string[];locale:string;revisionIds:string[];blind:boolean;expectedSelectionId:string|null;revisionId:string}})=>{
     const request=payload.request;
     if(command==="create_execution_identity")return fixtureIdentity(identity++);
@@ -105,6 +106,11 @@ beforeEach(async()=>{
     if(command==="read_translation_action"||command==="read_execution_receipt")return null;
     if(command==="prepare_execution_adoption"){action=actionFor(request);return action;}
     if(command==="adopt_execution")return receiptFor(action);
+    if(command==="read_execution_adoption_action"){
+      const writes=calls("prepare_execution_adoption").length+calls("adopt_execution").length;
+      if(checkedWrites!==writes){checkedWrites=writes;throw new Error("Automatic lookup unavailable");}
+      return null;
+    }
     throw new Error(command);
   });
 });
@@ -210,6 +216,7 @@ it.each(operations)("releases a fresh definitively rejected %s without discardin
   render(<Harness/>,project);await setupOperation(kind);const original=invoke.getMockImplementation()!;
   invoke.mockImplementation((command:string,payload:unknown)=>command===commands[kind]?Promise.reject(rejected):original(command,payload));
   await act(async()=>{await execute(kind);});expect(owner.pending).toBeNull();
+  expect(calls("read_execution_adoption_action")).toHaveLength(0);
   if(kind==="start")expect(owner.prepared).not.toBeNull();if(kind==="merge")expect(owner.draft?.text).toBe(comparison.rows[0].text);
   const token=translations.reserveMutation();expect(token).not.toBeNull();act(()=>translations.releaseMutation(token!));
 });
@@ -263,16 +270,30 @@ it("requires an exact null reveal ACK, and a revealed read proves the target goa
 });
 
 it("settles the original adoption receipt after a lost prepare ACK without adopting again",async()=>{
-  render(<Harness/>,project);await start();const original=invoke.getMockImplementation()!;let lost=true;
+  render(<Harness/>,project);await start();const original=invoke.getMockImplementation()!;let lost=true,lookups=0;
   invoke.mockImplementation(async(command:string,payload:unknown)=>{
     if(command==="prepare_execution_adoption"){const result=await original(command,payload);if(lost){lost=false;throw new Error("Lost prepare ACK");}return result;}
-    if(command==="read_execution_receipt")return receiptFor(action);
+    if(command==="read_execution_adoption_action"){if(++lookups===1)throw new Error("Automatic lookup unavailable");return {action,receipt:receiptFor(action)};}
     return original(command,payload);
   });
   await act(async()=>{await execute("adopt");});expect(owner.pending?.uncertain).toBe(true);expect(calls("adopt_execution")).toHaveLength(0);
   const request=owner.pending!.request;await act(async()=>{await owner.checkPending();});
   expect(owner.pending).toBeNull();expect(Object.values(owner.saved)).toEqual([receiptFor(action)]);
-  expect(payloads("prepare_execution_adoption")).toEqual([request,request]);expect(calls("adopt_execution")).toHaveLength(0);
+  expect(payloads("prepare_execution_adoption")).toEqual([request]);expect(calls("adopt_execution")).toHaveLength(0);
+  expect(payloads("read_execution_adoption_action")).toEqual([request,request]);
+});
+
+it("automatically checks an invalid adoption acknowledgement once and preserves its shared reservation through the read",async()=>{
+  const rendered=render(<Harness/>,project);await start();const original=invoke.getMockImplementation()!,response=deferred<unknown>();
+  invoke.mockImplementation((command:string,payload:unknown)=>command==="adopt_execution"?Promise.resolve({...receiptFor(action),actionId:fixtureIdentity(999)})
+    :command==="read_execution_adoption_action"?response.promise:original(command,payload));
+  let work!:Promise<void>;act(()=>{work=execute("adopt");});await waitFor(()=>expect(calls("read_execution_adoption_action")).toHaveLength(1));
+  expect(owner.pending).toMatchObject({kind:"adopt",checking:true});expect(translations.reserveMutation()).toBeNull();
+  await act(async()=>{await owner.checkPending();await owner.retryPending();});expect(calls("read_execution_adoption_action")).toHaveLength(1);
+  rendered.rerender(<Harness mounted={false}/>);
+  await act(async()=>{response.resolve({action,receipt:receiptFor(action)});await work;});rendered.rerender(<Harness/>);
+  expect(owner.pending).toBeNull();expect(owner.saved[action.resultIds[0]]).toEqual(receiptFor(action));expect(owner.failure).toBeNull();
+  expect(calls("prepare_execution_adoption")).toHaveLength(1);expect(calls("adopt_execution")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(1);
 });
 
 it.each(["projectId","attemptId","actionId","unitId","operation","parameters","resultIds","cancellationRevision"] as const)("rejects unrelated adoption prepare field %s",async field=>{
@@ -295,14 +316,14 @@ it.each(["projectId","attemptId","actionId","unitId","requestDigest","changes"] 
   expect(translations.reserveMutation()).toBeNull();
 });
 
-it("pins a seen receipt through original preparation failure and refuses a later null or changed receipt",async()=>{
+it("pins a seen receipt through invalid action proof and refuses a later null or changed receipt",async()=>{
   render(<Harness/>,project);await start();const original=invoke.getMockImplementation()!;
   invoke.mockImplementation(async(command:string,payload:unknown)=>{if(command==="prepare_execution_adoption"){await original(command,payload);throw new Error("Prepare read unavailable");}
-    if(command==="read_execution_receipt")return receiptFor(action);return original(command,payload);});
+    if(command==="read_execution_adoption_action")return {action:{...action,parameters:{}},receipt:receiptFor(action)};return original(command,payload);});
   await act(async()=>{await execute("adopt");await owner.checkPending();});
   const seen=owner.pending;expect(seen?.kind).toBe("adopt");if(seen?.kind!=="adopt")throw new Error("Missing adoption");expect(seen.receipt).toEqual(receiptFor(action));
   for(const value of [null,{...receiptFor(action),changes:[{kind:"translation-revision",id:fixtureIdentity(999),revision:"2"}]}]){
-    invoke.mockImplementation((command:string,payload:unknown)=>command==="read_execution_receipt"?Promise.resolve(value):original(command,payload));
+    invoke.mockImplementation((command:string,payload:unknown)=>command==="read_execution_adoption_action"?Promise.resolve(value===null?null:{action,receipt:value}):original(command,payload));
     await act(async()=>{await owner.checkPending();});expect(owner.pending?.kind).toBe("adopt");
     if(owner.pending?.kind==="adopt")expect(owner.pending.receipt).toEqual(seen.receipt);
     expect(owner.pending?.retryAllowed).toBe(false);

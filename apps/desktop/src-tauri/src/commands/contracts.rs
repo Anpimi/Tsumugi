@@ -36,12 +36,14 @@ struct ExecutionRequests {
     attempt: execution::AttemptRequest,
     output: execution::OutputRequest,
     cancel: execution::CancelRequest,
+    cancellation_action: execution::CancelRequest,
     recovery: execution::RecoveryRequest,
     continuation: execution::ContinuationRequest,
     continuation_read: execution::ContinuationReadRequest,
     continuation_list: execution::ContinuationListRequest,
     task_view: execution::TaskViewRequest,
     prepare: execution::PrepareRequest,
+    adoption_action: execution::PrepareRequest,
     adopt: execution::AdoptRequest,
 }
 #[derive(JsonSchema)]
@@ -55,12 +57,14 @@ struct ExecutionResponses {
     attempt: execution::AttemptDetail,
     output: tsumugi_core::execution::ResultEnvelope,
     cancellation: tsumugi_core::execution::Revision,
+    cancellation_action: Option<tsumugi_core::execution::CancellationReceipt>,
     recovery: execution::RecoveryView,
     continuation: tsumugi_core::execution::ContinuationReceipt,
     continuation_receipt: Option<tsumugi_core::execution::ContinuationReceipt>,
     continuations: execution::ContinuationPage,
     task_view: tsumugi_core::TaskView,
     action: tsumugi_core::execution::AdoptionAction,
+    adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     adoption: tsumugi_core::execution::AdoptionReceipt,
     receipt: Option<tsumugi_core::execution::AdoptionReceipt>,
 }
@@ -79,6 +83,7 @@ struct SourceRequests {
     lineage: execution::source::LineageRequest,
     impact: execution::source::ImpactRequest,
     adopt: execution::source::SourceAdoptRequest,
+    adoption_action: execution::source::SourceAdoptionActionRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -97,6 +102,7 @@ struct SourceResponses {
     estimates: Vec<tsumugi_core::content::SourceImpactSummary>,
     impact: tsumugi_core::content::SourceImpactPage,
     action: tsumugi_core::execution::AdoptionAction,
+    adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
 }
 
 #[derive(JsonSchema)]
@@ -108,6 +114,7 @@ struct TranslationRequests {
     start: execution::source::translation::TranslationStartRequest,
     preview: execution::source::translation::TranslationPreviewRequest,
     adopt: execution::source::translation::TranslationAdoptRequest,
+    adoption_action: execution::source::translation::TranslationAdoptionActionRequest,
     history: execution::source::translation::TranslationHistoryRequest,
     save: execution::source::translation::TranslationSaveRequest,
     action: execution::source::translation::TranslationActionRequest,
@@ -124,6 +131,7 @@ struct TranslationResponses {
     attempt: tsumugi_core::execution::ExecutionId,
     preview: tsumugi_core::TranslationPreview,
     prepared: tsumugi_core::execution::AdoptionAction,
+    adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     history: tsumugi_core::TranslationHistory,
     action: Option<tsumugi_core::TranslationSelection>,
     saved: tsumugi_core::TranslationSaveReceipt,

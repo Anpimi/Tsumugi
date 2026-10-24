@@ -12,8 +12,10 @@ export type RecoveryAction =
 
 export interface Requests {
   adopt: AdoptRequest;
+  adoptionAction: PrepareRequest;
   attempt: AttemptRequest;
   cancel: CancelRequest;
+  cancellationAction: CancelRequest;
   continuation: ContinuationRequest;
   continuationList: ContinuationListRequest;
   continuationRead: ContinuationReadRequest;
@@ -29,6 +31,14 @@ export interface AdoptRequest {
   actionId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface PrepareRequest {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultIds: ExecutionId[];
+  sessionToken: string;
+  unitId: ExecutionId;
 }
 export interface AttemptRequest {
   attemptId: ExecutionId;
@@ -80,14 +90,6 @@ export interface OutputRequest {
   projectId: ExecutionId;
   resultId: ExecutionId;
   sessionToken: string;
-}
-export interface PrepareRequest {
-  actionId: ExecutionId;
-  attemptId: ExecutionId;
-  projectId: ExecutionId;
-  resultIds: ExecutionId[];
-  sessionToken: string;
-  unitId: ExecutionId;
 }
 export interface RecoveryRequest {
   action: RecoveryAction;

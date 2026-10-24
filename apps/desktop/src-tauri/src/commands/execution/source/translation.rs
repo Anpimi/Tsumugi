@@ -159,6 +159,14 @@ fn begin_translation(
     ))
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TranslationAdoptionActionRequest {
+    pub adoption: TranslationAdoptRequest,
+    pub unit_id: ExecutionId,
+}
+
 #[tauri::command]
 pub async fn list_translation_files(
     state: State<'_, AppState>,
@@ -423,6 +431,20 @@ pub async fn read_translation_preview(
         .await
 }
 
+#[tauri::command]
+pub async fn read_translation_adoption_action(
+    state: State<'_, AppState>,
+    request: TranslationAdoptionActionRequest,
+) -> Result<Option<AdoptionActionRead>, CommandError> {
+    state.sessions.run("read_translation_adoption_action", CommandStage::ExecutionRead, move |sessions| {
+        let adoption = request.adoption;
+        authorized(sessions, &adoption.session_token, adoption.project_id, CommandStage::ExecutionRead)?
+            .store.translation_adoption_action_read(
+                adoption.project_id, adoption.attempt_id, adoption.action_id,
+                request.unit_id, adoption.item_id, adoption.result_id, &adoption.confirmation,
+            ).map_err(map_source)
+    }).await
+}
 #[tauri::command]
 pub async fn prepare_translation_adoption(
     state: State<'_, AppState>,

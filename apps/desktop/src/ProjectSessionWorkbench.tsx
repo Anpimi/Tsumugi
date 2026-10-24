@@ -201,7 +201,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (area === "tasks") {
       memory.write("tasks", "showOwnerDialog", true);
       const activity = tasks.currentActivity();
-      const unresolved = Object.values(tasks.state).find(value => value.phase === "preparing" || value.phase === "pending" || value.phase === "unknown");
+      const unresolved = Object.values(tasks.state).find(value => value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown");
       const target = activity && (tasks.busy || activity.phase === "unknown") ? activity.intent : unresolved?.target;
       if (target) { memory.write("tasks", "taskId", target.taskId); memory.write("tasks", "attemptId", target.attemptId);
         memory.write("tasks", "attemptCursor", "0"); memory.write("tasks", "offset", 0); }
