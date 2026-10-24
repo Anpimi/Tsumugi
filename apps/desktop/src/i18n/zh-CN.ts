@@ -607,6 +607,8 @@ ai: {
       draftHelp: "保存会创建不可变修订并选中它。空文本有效。保存不表示批准或 QA 通过。",
       save: "保存修订",
       checkSavedAction: "核对保存结果",
+      checkingSavedAction: "正在核对保存结果…",
+      checkingSelectionAction: "正在核对选择结果…",
       savedActionFound: "已确认原保存请求。若您后来继续编辑，新草稿仍在此处。",
       savedActionMissing: "未找到原操作的已保存结果。原请求和草稿均已保留；请先恢复此目标语言，再重试同一次操作。",
       saveAndContinue: "保存后继续",

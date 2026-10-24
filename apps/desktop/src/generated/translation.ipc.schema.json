@@ -405,7 +405,13 @@
       "save": {
         "$ref": "#/definitions/TranslationSaveRequest"
       },
+      "saveAction": {
+        "$ref": "#/definitions/TranslationSaveRequest"
+      },
       "select": {
+        "$ref": "#/definitions/TranslationSelectRequest"
+      },
+      "selectionAction": {
         "$ref": "#/definitions/TranslationSelectRequest"
       },
       "start": {
@@ -421,7 +427,9 @@
       "history",
       "save",
       "action",
-      "select"
+      "select",
+      "saveAction",
+      "selectionAction"
     ],
     "title": "Requests",
     "type": "object",
@@ -1091,11 +1099,31 @@
       "preview": {
         "$ref": "#/definitions/TranslationPreview"
       },
+      "saveAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationSaveReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "saved": {
         "$ref": "#/definitions/TranslationSaveReceipt"
       },
       "selected": {
         "$ref": "#/definitions/TranslationSelection"
+      },
+      "selectionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationSelection"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
@@ -1107,7 +1135,9 @@
       "history",
       "action",
       "saved",
-      "selected"
+      "selected",
+      "saveAction",
+      "selectionAction"
     ],
     "title": "Responses",
     "type": "object",

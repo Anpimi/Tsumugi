@@ -4,7 +4,7 @@
 use super::*;
 use serde::de::DeserializeOwned;
 
-pub(super) fn read_snapshot<T>(
+pub(in crate::persistence) fn read_snapshot<T>(
     connection: &Connection,
     read: impl FnOnce(&Connection) -> Result<T, ExecutionError>,
 ) -> Result<T, ExecutionError> {

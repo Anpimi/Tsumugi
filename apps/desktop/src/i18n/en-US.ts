@@ -606,6 +606,8 @@ ai: {
       draftHelp: "Save creates a new immutable revision and selects it. Empty text is valid. Saving does not approve or QA the translation.",
       save: "Save revision",
       checkSavedAction: "Check saved result",
+      checkingSavedAction: "Checking the saved translation result…",
+      checkingSelectionAction: "Checking the saved selection result…",
       savedActionFound: "The original save was confirmed. Your newer draft, if any, is still here.",
       savedActionMissing: "No saved result was found for the original action. The request and draft are kept; restore this target language before retrying the same action.",
         saveAndContinue: "Save and continue",

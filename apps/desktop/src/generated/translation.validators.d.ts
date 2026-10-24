@@ -8,7 +8,9 @@ export declare function validateRequestFiles(value: unknown): value is Requests[
 export declare function validateRequestHistory(value: unknown): value is Requests["history"];
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestSave(value: unknown): value is Requests["save"];
+export declare function validateRequestSaveAction(value: unknown): value is Requests["saveAction"];
 export declare function validateRequestSelect(value: unknown): value is Requests["select"];
+export declare function validateRequestSelectionAction(value: unknown): value is Requests["selectionAction"];
 export declare function validateRequestStart(value: unknown): value is Requests["start"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
@@ -17,5 +19,7 @@ export declare function validateResponseHistory(value: unknown): value is Respon
 export declare function validateResponsePreflight(value: unknown): value is Responses["preflight"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
 export declare function validateResponsePreview(value: unknown): value is Responses["preview"];
+export declare function validateResponseSaveAction(value: unknown): value is Responses["saveAction"];
 export declare function validateResponseSaved(value: unknown): value is Responses["saved"];
 export declare function validateResponseSelected(value: unknown): value is Responses["selected"];
+export declare function validateResponseSelectionAction(value: unknown): value is Responses["selectionAction"];

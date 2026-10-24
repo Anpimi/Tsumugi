@@ -14,8 +14,10 @@ export interface Responses {
   preflight: TranslationPreflight;
   prepared: AdoptionAction;
   preview: TranslationPreview;
+  saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
+  selectionAction: TranslationSelection | null;
 }
 export interface TranslationSelection {
   actionId: ExecutionId;

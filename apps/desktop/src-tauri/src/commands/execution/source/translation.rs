@@ -530,6 +530,72 @@ pub async fn read_translation_action(
 }
 
 #[tauri::command]
+pub async fn read_translation_save_action(
+    state: State<'_, AppState>,
+    request: TranslationSaveRequest,
+) -> Result<Option<TranslationSaveReceipt>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_translation_save_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .translation_save_receipt_by_request(&SaveTranslationRevision {
+                    project_id: request.project_id,
+                    action_id: request.action_id,
+                    unit_id: request.unit_id,
+                    locale: request.locale,
+                    source_revision_id: request.source_revision_id,
+                    expected_selection_id: request.expected_selection_id,
+                    text: request.text,
+                })
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_translation_selection_action(
+    state: State<'_, AppState>,
+    request: TranslationSelectRequest,
+) -> Result<Option<TranslationSelection>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_translation_selection_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .translation_selection_by_request(&SelectTranslationRevision {
+                    project_id: request.project_id,
+                    action_id: request.action_id,
+                    unit_id: request.unit_id,
+                    locale: request.locale,
+                    source_revision_id: request.source_revision_id,
+                    expected_selection_id: request.expected_selection_id,
+                    revision_id: request.revision_id,
+                })
+                .map_err(map_source)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
 pub async fn save_translation_revision(
     state: State<'_, AppState>,
     request: TranslationSaveRequest,

@@ -3,7 +3,7 @@ import { checkedInvoke } from "./ipc";
 import { sourceCommands } from "./sourceCommands";
 import type { TranslationFilesRequest, TranslationCaptureRequest, TranslationStartRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
 import type { TranslationSaveReceipt } from "./generated/translation.responses";
-import { validateRequestAdopt, validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
+import { validateRequestAdopt, validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected, validateResponseSaveAction, validateResponseSelectionAction } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
 
 export type { TranslationStartRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
@@ -23,6 +23,14 @@ export const translationCommands = {
   prepare: (request: TranslationAdoptRequest) => checkedInvoke("prepare_translation_adoption", request, validateResponsePrepared),
   history: (request: TranslationHistoryRequest) => checkedInvoke("read_translation_history", request, validateResponseHistory),
   action: (request: TranslationActionRequest) => checkedInvoke("read_translation_action", request, validateResponseAction),
+  saveAction: async (request: TranslationSaveRequest) => {
+    const receipt = await checkedInvoke("read_translation_save_action", request, validateResponseSaveAction);
+    return receipt === null ? null : validateSaveReceipt(receipt, request);
+  },
+  selectionAction: async (request: TranslationSelectRequest) => {
+    const selection = await checkedInvoke("read_translation_selection_action", request, validateResponseSelectionAction);
+    return selection === null ? null : confirmTranslationSelection(request, selection);
+  },
   save: async (request: TranslationSaveRequest) => validateSaveReceipt(await checkedInvoke("save_translation_revision", request, validateResponseSaved), request),
   select: async (request: TranslationSelectRequest) => confirmTranslationSelection(request, await checkedInvoke("select_translation_revision", request, validateResponseSelected)),
 };

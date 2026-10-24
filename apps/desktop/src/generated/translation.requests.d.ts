@@ -12,7 +12,9 @@ export interface Requests {
   history: TranslationHistoryRequest;
   preview: TranslationPreviewRequest;
   save: TranslationSaveRequest;
+  saveAction: TranslationSaveRequest;
   select: TranslationSelectRequest;
+  selectionAction: TranslationSelectRequest;
   start: TranslationStartRequest;
 }
 export interface TranslationActionRequest {

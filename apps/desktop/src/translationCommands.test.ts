@@ -169,3 +169,24 @@ it("checks the exact original revision selection instead of accepting a truthy s
   expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, revisionId: fixtureIdentity(99) })).toThrow();
   expect(() => confirmTranslationSelection(fixture.select, { ...fixture.selected, previousEventId: null })).toThrow();
 });
+
+
+it.each(["save", "selection"] as const)("reads the complete original %s request without another mutation", async kind => {
+  const request = kind === "save" ? fixture.save : fixture.select;
+  const command = kind === "save" ? "read_translation_save_action" : "read_translation_selection_action";
+  const read = () => kind === "save" ? translationCommands.saveAction(fixture.save) : translationCommands.selectionAction(fixture.select);
+  const receipt = kind === "save" ? fixture.receipt : fixture.selected;
+  invoke.mockResolvedValueOnce(receipt).mockResolvedValueOnce(null);
+  expect(await read()).toEqual(receipt); expect(await read()).toBeNull();
+  expect(invoke.mock.calls).toEqual([[command, { request }], [command, { request }]]);
+});
+it.each(["save", "selection"] as const)("keeps malformed or unrelated %s read acknowledgements unknown", async kind => {
+  const read = () => kind === "save" ? translationCommands.saveAction(fixture.save) : translationCommands.selectionAction(fixture.select);
+  const wrong = kind === "save" ? { ...fixture.receipt, revision: { ...fixture.receipt.revision, text: "Another draft" } }
+    : { ...fixture.selected, revisionId: fixtureIdentity(999) };
+  for (const response of [undefined, {}, wrong]) {
+    invoke.mockResolvedValueOnce(response);
+    expect(hasUnknownOutcome(await read().catch(error => error))).toBe(true);
+  }
+  expect(invoke.mock.calls.every(([command]) => command === (kind === "save" ? "read_translation_save_action" : "read_translation_selection_action"))).toBe(true);
+});
