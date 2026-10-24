@@ -62,8 +62,10 @@ This lets different localization domains share a workflow and a single source of
 The [experimental plugin SDK](crates/plugin-sdk/README.md) provides independently
 buildable Rust data contracts, a conformance CLI, and generated JavaScript
 bindings. Its version and immutable source packages are separate from the desktop
-release. This checkout supplies the SDK without a plugin Host or desktop plugin
-loading workflow.
+release. The [standalone plugin Host](crates/plugin-host/README.md) adds captured
+package inspection, local trust/Store management and headless component channels.
+Core adapters, application members and desktop plugin loading remain separate
+integration work.
 
 ## AI
 
