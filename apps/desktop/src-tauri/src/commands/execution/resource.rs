@@ -3,10 +3,11 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::{
-    CaptureContext, ContextCapture, ContextRevision, GlossaryCapture, ImpactPage, ResourceDecision,
-    ResourceDecisionResult, ResourcePreview, SaveContext, SaveTerm, TermResolution, TermRevision,
+    CaptureContext, ContextCapture, ContextRevision, ResourceDecision,
+    SaveContext, SaveTerm, TermResolution, TermRevision,
     TmSuggestion,
 };
+use super::resource_wire::{GlossaryCapture, ImpactPage, ResourceDecisionActionRead, ResourceDecisionResult, ResourcePreview};
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -161,6 +162,7 @@ pub async fn choose_resource_file<R: tauri::Runtime>(
                     .map(|bytes| {
                         store
                             .capture_glossary(request.project_id, picker, &bytes)
+                            .and_then(TryInto::try_into)
                             .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
                     })
                     .transpose()
@@ -188,6 +190,7 @@ pub async fn list_resource_captures(
                 )?
                 .store
                 .list_glossary_captures(request.project_id, request.limit)
+                .and_then(|captures| captures.into_iter().map(TryInto::try_into).collect())
                 .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )
@@ -213,6 +216,7 @@ pub async fn read_resource_preview(
                 )?
                 .store
                 .glossary_preview(request.project_id, request.capture_id)
+                .and_then(TryInto::try_into)
                 .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )
@@ -240,6 +244,7 @@ pub async fn decide_resource_entry(
                 host.allow_mutation()?;
                 store
                     .decide_glossary_entry(&request.decision)
+                    .map(Into::into)
                     .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
             },
         )
@@ -509,6 +514,7 @@ pub async fn resource_impacts(
                     request.offset,
                     request.limit,
                 )
+                .and_then(TryInto::try_into)
                 .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )
@@ -599,6 +605,11 @@ mod contracts {
         let mut unknown = fixture["responses"]["contextCapture"].clone();
         unknown["included"][0]["extra"] = serde_json::json!(true);
         assert!(serde_json::from_value::<ContextCapture>(unknown).is_err());
+        assert_eq!(
+            super::super::resource_wire::ResourceImpactKind::try_from(tsumugi_core::ResourceImpactKind::ContextFact)
+                .unwrap_err().code,
+            ErrorCode::DependencyConflict
+        );
     }
 }
 
@@ -699,7 +710,7 @@ pub async fn read_context_capture_action(
 pub async fn read_resource_decision_action(
     state: State<'_, AppState>,
     request: DecisionRequest,
-) -> Result<Option<tsumugi_core::ResourceDecisionActionRead>, CommandError> {
+) -> Result<Option<ResourceDecisionActionRead>, CommandError> {
     state
         .sessions
         .run(
@@ -720,6 +731,7 @@ pub async fn read_resource_decision_action(
                 )?
                 .store
                 .resource_decision_action(&request.decision)
+                .map(|read| read.map(Into::into))
                 .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             },
         )

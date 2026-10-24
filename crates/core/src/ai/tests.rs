@@ -1,8 +1,14 @@
 use super::*;
+#[path = "member_tests.rs"]
+mod member_tests;
 #[path = "arena_tests.rs"]
 mod arena_tests;
 #[path = "provider_tests.rs"]
 mod provider_tests;
+#[path = "connection_tests.rs"]
+mod connection_tests;
+#[path = "usage_tests.rs"]
+mod usage_tests;
 use crate::{ProjectMetadata, ProjectStore, content::*};
 use std::{
     io::{Read, Write},
@@ -12,7 +18,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
     thread,
-    time::{Instant, Duration},
+    time::{Duration, Instant},
 };
 fn source_project() -> (tempfile::TempDir, ProjectStore, Vec<ContentRow>) {
     let temp = tempfile::tempdir().unwrap();
@@ -144,11 +150,11 @@ fn server(mode: &'static str) -> (String, Arc<AtomicUsize>, thread::JoinHandle<V
             if mode == "timeout" {
                 thread::sleep(Duration::from_millis(1300));
             }
-            let (status, mut response) = if (mode == "retry" || mode == "unavailable")
+            let (status, mut response) = if (mode == "retry" || mode == "unavailable" || mode == "usage-retry")
                 && number == 0
             {
                 (
-                    if mode == "retry" {
+                    if mode == "retry" || mode == "usage-retry" {
                         "429 Too Many Requests"
                     } else {
                         "503 Service Unavailable"
@@ -205,6 +211,10 @@ fn server(mode: &'static str) -> (String, Arc<AtomicUsize>, thread::JoinHandle<V
             }
             if mode == "no-usage" {
                 response.as_object_mut().unwrap().remove("usage");
+            }
+            if mode == "usage-retry" && number > 0 {
+                response["usage"]["prompt_tokens_details"] = json!({"cached_tokens":0,"cache_write_tokens":7});
+                response["usage"]["completion_tokens_details"] = json!({"reasoning_tokens":3});
             }
             let body = if mode == "malformed" {
                 "{broken".into()
@@ -296,8 +306,10 @@ fn direct_ai_current_manual_history_reopens_and_schema_nine_is_refused() {
     reopened.close().unwrap();
     let path = temp.path().join("project");
     let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-    connection.execute_batch("DROP TABLE execution_continuations;").unwrap();
-    crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
+    connection
+        .execute_batch("DROP TABLE execution_continuations;")
+        .unwrap();
+    crate::persistence::prepare_unsupported_translation_fixture(&connection).unwrap();
     connection.pragma_update(None, "user_version", 9).unwrap();
     drop(connection);
     assert_unsupported_snapshot_unchanged(&path, 9);
@@ -321,7 +333,12 @@ fn direct_ai_wire_partial_budget_candidates_and_reopen() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
@@ -378,12 +395,9 @@ fn direct_ai_wire_partial_budget_candidates_and_reopen() {
     assert_eq!(history.total, 1);
     assert!(history.current.is_none());
     assert_eq!(history.rows[0].origin_kind, crate::TranslationOrigin::Ai);
-    let continuation = crate::execution::test_continuation_action(&store, view.attempt_id, &[success.item_id]);
-    assert!(
-        runtime
-            .resume(&mut store, &continuation)
-            .is_err()
-    );
+    let continuation =
+        crate::execution::test_continuation_action(&store, view.attempt_id, &[success.item_id]);
+    assert!(runtime.resume(&mut store, &continuation).is_err());
     drop(runtime);
     store.close().unwrap();
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
@@ -434,7 +448,12 @@ fn direct_ai_retry_invalid_and_unknown_are_bounded() {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+        runtime
+            .register_with_policy(
+                Arc::new(AiRunner::default()),
+                RecoveryPolicy::ExternalUnknown,
+            )
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         drain(&mut runtime, &mut store, input.envelope().attempt_id);
         let view = runtime
@@ -505,7 +524,12 @@ fn direct_ai_rejects_bad_configuration_and_preserves_manual_selection() {
         })
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     let result = store
@@ -553,7 +577,12 @@ fn direct_ai_candidate_checks_source_locale_and_cancellation_at_commit() {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+        runtime
+            .register_with_policy(
+                Arc::new(AiRunner::default()),
+                RecoveryPolicy::ExternalUnknown,
+            )
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         drain(&mut runtime, &mut store, input.envelope().attempt_id);
         let result = store
@@ -614,7 +643,12 @@ fn direct_ai_missing_credential_dispatches_no_http() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     let view = runtime
@@ -665,7 +699,12 @@ fn direct_ai_concurrency_and_total_request_budget_are_shared() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     server.join().unwrap();
@@ -801,7 +840,12 @@ fn direct_ai_auth_child() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     let result = store

@@ -134,7 +134,7 @@ impl ProjectStore {
             }
             // The stored waiver names an issue and basis, not a changing latest run.
             let action: Option<String> = c.query_row("SELECT action_id FROM review_checks r
-                WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4
+                WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4 AND purpose='qa'
                 AND EXISTS(SELECT 1 FROM json_each(r.rules_json) rule, json_each(rule.value,'$.findings') finding
                     WHERE json_extract(finding.value,'$.issueId')=?5 AND json_extract(finding.value,'$.waivable')=1)
                 ORDER BY rowid DESC LIMIT 1",

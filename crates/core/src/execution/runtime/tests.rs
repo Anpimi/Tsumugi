@@ -2,6 +2,10 @@ use super::*;
 use crate::ProjectMetadata;
 use serde_json::json;
 use std::sync::mpsc;
+use tsumugi_plugin_sdk as sdk;
+mod application_lifecycle;
+mod dependency_slots;
+mod package_quiesce;
 
 struct Call {
     request: DispatchRequest,
@@ -38,6 +42,7 @@ impl Runner for Controlled {
         };
         let result = FixedResult::capture(
             ResultEnvelope {
+                plugin: None,
                 project_id: request.input.envelope().project_id,
                 attempt_id: request.input.envelope().attempt_id,
                 item_id: request.item_id,
@@ -233,6 +238,265 @@ fn runtime_restart_does_not_automatically_replay_queued_or_unknown_work() {
 }
 
 #[test]
+fn unsettled_attempt_reads_explicit_presence_and_raw_execution_states() {
+    let (_temp, mut store, runtime, _calls) = setup();
+    let fixed = input(&store);
+    let attempt = fixed.envelope().attempt_id;
+    let before = store.execution_sequence().unwrap();
+    assert!(runtime.input_if_present(&store, attempt).unwrap().is_none());
+    assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    assert_eq!(store.execution_sequence().unwrap(), before);
+
+    store.enqueue_execution(&fixed).unwrap();
+    assert_eq!(
+        runtime
+            .input_if_present(&store, attempt)
+            .unwrap()
+            .unwrap()
+            .bytes(),
+        fixed.bytes()
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    let request = store
+        .dispatch_execution_item(attempt, fixed.envelope().items[0].item_id)
+        .unwrap();
+    assert!(!runtime.is_active(attempt));
+    assert_eq!(
+        store
+            .execution_attempt(attempt, true)
+            .unwrap()
+            .progress
+            .running,
+        1
+    );
+    assert_eq!(
+        store
+            .execution_attempt(attempt, false)
+            .unwrap()
+            .progress
+            .unknown,
+        1
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    store
+        .cancel_execution(fixed.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    store
+        .note_execution_unknown(attempt, request.item_id, "synthetic-unknown")
+        .unwrap();
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    let result = FixedResult::capture(
+        ResultEnvelope {
+            plugin: None,
+            project_id: fixed.envelope().project_id,
+            attempt_id: attempt,
+            item_id: request.item_id,
+            result_id: ExecutionId::new(),
+            supersedes: None,
+            dispatch_token: request.dispatch_token,
+            capability_id: fixed.envelope().capability_id.clone(),
+            capability_version: fixed.envelope().capability_version.clone(),
+            outcome: ExecutionState::Failed,
+            output: None,
+            diagnostic: Some(Diagnostic {
+                code: "synthetic-known-failure".into(),
+                retry_safe: false,
+            }),
+        },
+        &fixed,
+        request.dispatch_token,
+    )
+    .unwrap();
+    store.save_execution_result(&result).unwrap();
+    let sequence = store.execution_sequence().unwrap();
+    assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    let status = store.execution_attempt(attempt, true).unwrap();
+    assert_eq!((status.progress.failed, status.progress.cancelled), (1, 2));
+}
+
+#[test]
+fn unsettled_attempt_does_not_turn_storage_errors_into_absence() {
+    let (temp, store, runtime, _calls) = setup();
+    let attempt = ExecutionId::new();
+    let connection =
+        rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    connection
+        .execute_batch("DROP TABLE execution_attempts;")
+        .unwrap();
+    assert_eq!(
+        runtime.input_if_present(&store, attempt).unwrap_err().code,
+        ErrorCode::StorageFailed
+    );
+    assert_eq!(
+        runtime
+            .has_unsettled_attempt(&store, attempt)
+            .unwrap_err()
+            .code,
+        ErrorCode::StorageFailed
+    );
+}
+
+#[test]
+fn unsettled_attempt_keeps_active_and_retired_producers_after_a_known_result() {
+    struct HeldAfterResult(mpsc::Sender<mpsc::Sender<()>>);
+    impl Runner for HeldAfterResult {
+        fn capability_id(&self) -> &str {
+            "held-after-result"
+        }
+        fn capability_version(&self) -> &str {
+            "1"
+        }
+        fn run(
+            &self,
+            request: DispatchRequest,
+            _: Cancellation,
+            results: ResultSender,
+        ) -> Result<(), ExecutionError> {
+            results.send(FixedResult::capture(
+                ResultEnvelope {
+                    plugin: None,
+                    project_id: request.input.envelope().project_id,
+                    attempt_id: request.input.envelope().attempt_id,
+                    item_id: request.item_id,
+                    result_id: ExecutionId::new(),
+                    supersedes: None,
+                    dispatch_token: request.dispatch_token,
+                    capability_id: self.capability_id().into(),
+                    capability_version: self.capability_version().into(),
+                    outcome: ExecutionState::Failed,
+                    output: None,
+                    diagnostic: Some(Diagnostic {
+                        code: "synthetic-known-failure".into(),
+                        retry_safe: false,
+                    }),
+                },
+                &request.input,
+                request.dispatch_token,
+            )?)?;
+            let (release, held) = mpsc::channel();
+            self.0.send(release).unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(())
+        }
+    }
+    let (_temp, mut store, mut runtime, _calls) = setup();
+    let (reached, ready) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(HeldAfterResult(reached)))
+        .unwrap();
+    let item = input(&store).envelope().items[0].clone();
+    let fixed = FixedInput::capture(
+        InputEnvelope::new(
+            store.metadata().unwrap().project_id(),
+            "fixture",
+            "held-after-result",
+            "1",
+            vec![item],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let attempt = fixed.envelope().attempt_id;
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let release = ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    runtime.tick(&mut store).unwrap();
+    assert_eq!(
+        store
+            .execution_attempt(attempt, true)
+            .unwrap()
+            .progress
+            .failed,
+        1
+    );
+    assert!(runtime.is_active(attempt));
+    assert!(runtime.has_owned_attempt_work(attempt));
+    assert!(!runtime.has_owned_attempt_work(ExecutionId::new()));
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    runtime
+        .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
+        .unwrap();
+    assert!(!runtime.is_active(attempt));
+    assert_eq!(runtime.retired.len(), 1);
+    assert!(runtime.has_owned_attempt_work(attempt));
+    assert_eq!(
+        store
+            .execution_attempt(attempt, true)
+            .unwrap()
+            .progress
+            .failed,
+        1
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    release.send(()).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        runtime.retired.is_empty()
+    });
+    assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    assert!(!runtime.has_owned_attempt_work(attempt));
+}
+
+#[test]
+fn artifact_workflow_owned_callbacks_distinguish_drained_unknown_from_live_producers() {
+    struct NoResult(mpsc::Sender<mpsc::Sender<()>>);
+    impl Runner for NoResult {
+        fn capability_id(&self) -> &str {
+            "no-workflow-result"
+        }
+        fn capability_version(&self) -> &str {
+            "1"
+        }
+        fn run(
+            &self,
+            _: DispatchRequest,
+            _: Cancellation,
+            _: ResultSender,
+        ) -> Result<(), ExecutionError> {
+            let (release, held) = mpsc::channel();
+            self.0.send(release).unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(())
+        }
+    }
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (entered, observed) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(NoResult(entered)))
+        .unwrap();
+    let fixed = FixedInput::capture(
+        InputEnvelope::new(
+            store.metadata().unwrap().project_id(),
+            "fixture",
+            "no-workflow-result",
+            "1",
+            vec![input(&store).envelope().items[0].clone()],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let attempt = fixed.envelope().attempt_id;
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let release = observed.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(runtime.has_owned_attempt_work(attempt));
+    runtime
+        .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
+        .unwrap();
+    assert!(runtime.has_owned_attempt_work(attempt));
+    assert!(!runtime.has_owned_attempt_work(ExecutionId::new()));
+    release.send(()).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.has_owned_attempt_work(attempt)
+    });
+    assert_eq!(
+        store.execution_attempt(attempt, false).unwrap().items[0].execution,
+        ExecutionState::Unknown
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+}
+
+#[test]
 fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
     let (temp, mut store, mut runtime, calls) = setup();
     let mut inputs = Vec::new();
@@ -251,10 +515,24 @@ fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
     assert_eq!(runtime.workers.len(), 2);
     let generation = runtime.generation();
     runtime.begin_quiesce(&mut store).unwrap();
-    runtime.finish_quiesce(&mut store).unwrap();
-    assert_ne!(generation, runtime.generation());
-    assert!(!runtime.has_active_work(&store).unwrap());
-    store.close().unwrap();
+    assert_eq!(
+        runtime.finish_quiesce(&mut store).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(generation, runtime.generation());
+    assert_eq!(runtime.retired.len(), 2);
+    assert!(runtime.has_active_work(&store).unwrap());
+    let rejected = input(&store);
+    assert_eq!(
+        runtime.submit(&mut store, &rejected).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert!(
+        store
+            .execution_input_if_present(rejected.envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
     first.release.send(ExecutionState::Succeeded).unwrap();
     second.release.send(ExecutionState::Succeeded).unwrap();
     assert!(!first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
@@ -264,6 +542,22 @@ fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
             .recv_timeout(Duration::from_secs(5))
             .unwrap()
     );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match runtime.finish_quiesce(&mut store) {
+            Ok(()) => break,
+            Err(error) => {
+                assert_eq!(error.code, ErrorCode::Busy);
+                assert_eq!(generation, runtime.generation());
+                assert!(Instant::now() < deadline, "owned workers did not drain");
+                std::thread::yield_now();
+            }
+        }
+    }
+    assert_ne!(generation, runtime.generation());
+    assert!(runtime.retired.is_empty());
+    assert!(!runtime.has_active_work(&store).unwrap());
+    store.close().unwrap();
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
     let adopted: u32 = inputs
         .iter()
@@ -327,6 +621,11 @@ fn timed_out_producer_remains_unknown_and_holds_its_concurrency_slot() {
         .unwrap();
     assert_eq!(runtime.retired.len(), 1);
     assert!(!runtime.is_active(fixed.envelope().attempt_id));
+    assert!(
+        runtime
+            .has_unsettled_attempt(&store, fixed.envelope().attempt_id)
+            .unwrap()
+    );
     let view = runtime
         .attempt(&store, fixed.envelope().attempt_id)
         .unwrap();
@@ -338,9 +637,19 @@ fn timed_out_producer_remains_unknown_and_holds_its_concurrency_slot() {
         .unwrap()
         .unwrap();
     assert!(matches!(query.run().unwrap(), QueryOutcome::Unavailable));
+    let generation = runtime.generation();
+    runtime.begin_quiesce(&mut store).unwrap();
+    assert_eq!(
+        runtime.finish_quiesce(&mut store).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(runtime.generation(), generation);
+    assert!(runtime.has_active_work(&store).unwrap());
     call.release.send(ExecutionState::Succeeded).unwrap();
     assert!(!call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
-    runtime.begin_quiesce(&mut store).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        runtime.retired.is_empty()
+    });
     runtime.finish_quiesce(&mut store).unwrap();
     assert_eq!(
         runtime
@@ -369,10 +678,15 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
         .cancel(&mut store, fixed.envelope().task_id, cancellation_id)
         .unwrap();
     let selected = fixed.envelope().items[0].item_id;
-    let continuation = crate::execution::test_continuation_action(&store, fixed.envelope().attempt_id, &[selected]);
+    let continuation = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[selected],
+    );
     let attempt = runtime
         .resume(&mut store, &continuation)
-        .unwrap().attempt_id;
+        .unwrap()
+        .attempt_id;
     runtime.tick(&mut store).unwrap();
     let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(call.request.input.envelope().attempt_id, attempt);
@@ -506,7 +820,10 @@ fn committed_cancellation_projection_failure_reconciles_the_original_request() {
         .unwrap()
         .item_id;
     let continuation = crate::execution::test_continuation_action(&store, attempt, &[selected]);
-    let resumed = runtime.resume(&mut store, &continuation).unwrap().attempt_id;
+    let resumed = runtime
+        .resume(&mut store, &continuation)
+        .unwrap()
+        .attempt_id;
     runtime.tick(&mut store).unwrap();
     let second = calls.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_ne!(resumed, attempt);
@@ -526,7 +843,12 @@ fn committed_cancellation_projection_failure_reconciles_the_original_request() {
             .all(|item| !item.cancellation_requested)
     );
     second.release.send(ExecutionState::Succeeded).unwrap();
-    assert!(second.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    assert!(
+        second
+            .finished
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+    );
     pump_until(&mut runtime, &mut store, |runtime, _| {
         !runtime.is_active(resumed)
     });
@@ -678,6 +1000,7 @@ fn historical_duplicate_does_not_replace_a_correction_or_block_worker_shutdown()
         ) -> Result<(), ExecutionError> {
             let first = FixedResult::capture(
                 ResultEnvelope {
+                    plugin: None,
                     project_id: request.input.envelope().project_id,
                     attempt_id: request.input.envelope().attempt_id,
                     item_id: request.item_id,
@@ -815,19 +1138,795 @@ fn runtime_effect_policy_is_host_owned_and_not_operation_name_based() {
             .iter()
             .all(|u| !u.actions.contains(&RecoveryAction::ResumeUndispatched))
     );
-    let continuation = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
-    assert!(
-        external
-            .resume(
-                &mut store,
-                &continuation
-            )
-            .is_err()
+    let continuation = crate::execution::test_continuation_action(
+        &store,
+        input.envelope().attempt_id,
+        &[input.envelope().items[0].item_id],
     );
+    assert!(external.resume(&mut store, &continuation).is_err());
     assert_eq!(
         store.enqueue_read_only_execution(&input).unwrap_err().code,
         ErrorCode::ResultMismatch
     );
+}
+
+fn plugin_binding(host_digest: &str) -> PluginExecutionBinding {
+    let contract = |id: &str| sdk::ContractRef {
+        id: id.into(),
+        schema_version: 1,
+        behavior_version: 1,
+    };
+    PluginExecutionBinding {
+        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
+        application_scope: None,
+        capability: sdk::CapabilityBinding {
+            provider: sdk::ProviderSelectionBinding {
+                plugin: sdk::PluginIdentity {
+                    publisher: "example".into(),
+                    id: "example.plugin".into(),
+                    version: "0.1.0".into(),
+                },
+                component_id: "worker".into(),
+                contribution_id: "call".into(),
+                package_digest: "a".repeat(64),
+            },
+            declaration: sdk::CapabilityDeclaration {
+                contract: contract("example.call"),
+                input_schema: contract("example.input"),
+                output_schema: contract("example.output"),
+                error_schema: contract("example.error"),
+                profiles: vec![],
+                effect: sdk::EffectKind::ReadOnly,
+                permissions: vec![sdk::PermissionRequest::CapturedInput],
+                limits: sdk::CapabilityLimits {
+                    max_input_bytes: 4096,
+                    max_output_bytes: 4096,
+                    concurrency: 1,
+                    timeout_ms: 1000,
+                },
+            },
+        },
+        profile: None,
+        environment: sdk::RuntimeEnvironmentDescriptor {
+            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+            platform: sdk::RuntimePlatform {
+                operating_system: sdk::RuntimeOperatingSystem::Macos,
+                architecture: sdk::RuntimeArchitecture::Aarch64,
+            },
+            sdk_version: "0.1.0-alpha.1".into(),
+            process_protocol: sdk::PROCESS_PROTOCOL,
+            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+            tool_version: "26.10.0".into(),
+            tool: sdk::RuntimeArtifactBinding {
+                tree_digest: "a".repeat(64),
+                entrypoint: "bin/node".into(),
+            },
+            host: sdk::RuntimeArtifactBinding {
+                tree_digest: host_digest.repeat(64),
+                entrypoint: "dist/main.js".into(),
+            },
+        }
+        .into(),
+    }
+}
+
+fn plugin_input(store: &ProjectStore, binding: PluginExecutionBinding) -> FixedInput {
+    let mut envelope = InputEnvelope::new(
+        store.metadata().unwrap().project_id(),
+        "fixture",
+        &binding.capability.declaration.contract.id,
+        &binding.capability_version(),
+        vec![InputItem::new(
+            Scope {
+                kind: "fixture".into(),
+                id: "a".into(),
+                locale: None,
+            },
+            json!("captured"),
+            vec![],
+        )],
+    )
+    .unwrap();
+    envelope.plugin = Some(binding);
+    FixedInput::capture(envelope).unwrap()
+}
+
+#[test]
+fn plugin_request_preserves_payload_bytes_context_and_exact_input_limit() {
+    let (_temp, store, _runtime, _calls) = setup();
+    let expected = concat!(
+        r#"{"nested":{"escape":"\r\n\u0001","values":[null,true,-7,42,1.5]},"text":"世界 👩🏽‍💻 cafe"#,
+        "\u{301}",
+        r#"\n\"{playerName}\"\\route\t"}"#,
+    );
+    assert!(expected.len() > expected.chars().count());
+    let mut binding = plugin_binding("b");
+    binding.capability.declaration.limits.max_input_bytes = expected.len() as u32;
+    let mut envelope = plugin_input(&store, binding.clone()).envelope().clone();
+    envelope.items[0].payload = json!({
+        "nested": { "escape": "\r\n\u{1}", "values": [null, true, -7, 42, 1.5] },
+        "text": "世界 👩🏽‍💻 cafe\u{301}\n\"{playerName}\"\\route\t",
+    });
+    envelope.items[0].scope.id = "captured-scope".into();
+    envelope.items[0].scope.locale = Some("zh-CN".into());
+    envelope.settings = json!({ "mode": "fixed", "text": "中文" });
+    let fixed = FixedInput::capture(envelope).unwrap();
+    let item = fixed.envelope().items[0].item_id;
+    let dispatch = ExecutionId::new();
+    let selected = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: selected.plugin.clone(),
+        component_id: selected.component_id.clone(),
+        contribution_id: selected.contribution_id.clone(),
+        package_digest: selected.package_digest.clone(),
+        instance_id: "fixture-instance".into(),
+        activation_generation: 1,
+    };
+    let request = fixed.plugin_request(item, dispatch, &channel).unwrap();
+    assert_eq!(request.input.utf8.as_bytes(), expected.as_bytes());
+    assert_eq!(request.input.sha256, sdk::payload_digest(expected));
+    assert_eq!(request.context.input_digest, request.input.sha256);
+    assert_eq!(
+        request.input.schema,
+        binding.capability.declaration.input_schema
+    );
+    assert_eq!(request.provider, channel);
+    assert_eq!(request.capability, binding.capability.declaration.contract);
+    assert_eq!(request.profile, binding.profile);
+    assert_eq!(
+        request.context.project_id,
+        fixed.envelope().project_id.to_string()
+    );
+    assert_eq!(
+        request.context.scope_id,
+        fixed.envelope().project_id.to_string()
+    );
+    assert_eq!(
+        request.context.operation_id,
+        fixed.envelope().task_id.to_string()
+    );
+    assert_eq!(
+        request.context.attempt_id,
+        fixed.envelope().attempt_id.to_string()
+    );
+    assert_eq!(request.context.item_id, item.to_string());
+    assert_eq!(request.context.dispatch_id, dispatch.to_string());
+    assert_eq!(
+        request.context.scope_digest,
+        sdk::payload_digest(r#"[{"kind":"fixture","id":"captured-scope","locale":"zh-CN"},[]]"#,)
+    );
+    assert_eq!(
+        request.context.configuration_digest,
+        sdk::payload_digest(r#"{"mode":"fixed","text":"中文"}"#,)
+    );
+    assert_eq!(
+        request.context.environment_digest,
+        binding.environment.digest().unwrap()
+    );
+    request.validate().unwrap();
+
+    let mut foreign_channel = channel.clone();
+    foreign_channel.package_digest = "f".repeat(64);
+    let error = fixed
+        .plugin_request(item, dispatch, &foreign_channel)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ResultMismatch);
+    assert_eq!(error.stage, "plugin-provider");
+
+    let mut bounded = fixed.envelope().clone();
+    bounded
+        .plugin
+        .as_mut()
+        .unwrap()
+        .capability
+        .declaration
+        .limits
+        .max_input_bytes -= 1;
+    let bounded = FixedInput::capture(bounded).unwrap();
+    let error = bounded
+        .plugin_request(item, dispatch, &channel)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert_eq!(error.stage, "limit-exceeded");
+}
+
+#[test]
+fn plugin_request_translation_check_rejects_unexpanded_ordinary_payload() {
+    let (_temp, store, _runtime, _calls) = setup();
+    let binding = plugin_binding("b");
+    let mut envelope = plugin_input(&store, binding.clone()).envelope().clone();
+    envelope.operation = TRANSLATION_CHECK_OPERATION.into();
+    let fixed = FixedInput::capture(envelope).unwrap();
+    let selected = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: selected.plugin.clone(),
+        component_id: selected.component_id.clone(),
+        contribution_id: selected.contribution_id.clone(),
+        package_digest: selected.package_digest.clone(),
+        instance_id: "fixture-instance".into(),
+        activation_generation: 1,
+    };
+    let error = fixed
+        .plugin_request(
+            fixed.envelope().items[0].item_id,
+            ExecutionId::new(),
+            &channel,
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OutputInvalid);
+}
+
+#[test]
+fn generation_receipt_budget_keeps_payload_and_complete_frame_limits_distinct() {
+    let (_temp, store, _runtime, _calls) = setup();
+    let mut binding = plugin_binding("b");
+    let declaration = &mut binding.capability.declaration;
+    declaration.input_schema = sdk::generation_service_input_contract();
+    declaration.output_schema = sdk::generation_service_receipt_contract();
+    declaration.error_schema = sdk::generation_service_error_contract();
+    declaration.limits.max_output_bytes = sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES as u32;
+    let mut envelope = plugin_input(&store, binding.clone()).envelope().clone();
+    envelope.limits.max_result_bytes = 64 * 1024 + 3 * 1024;
+    let fixed = FixedInput::capture(envelope.clone()).unwrap();
+    let provider = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: provider.plugin.clone(),
+        component_id: provider.component_id.clone(),
+        contribution_id: provider.contribution_id.clone(),
+        package_digest: provider.package_digest.clone(),
+        instance_id: "instance".repeat(16),
+        activation_generation: 1,
+    };
+    let item = envelope.items[0].item_id;
+    let dispatch = ExecutionId::new();
+    let request = fixed.plugin_request(item, dispatch, &channel).unwrap();
+    let receipt = sdk::GenerationServiceReceipt {
+        task_id: "t".repeat(128),
+        attempt_id: "a".repeat(128),
+        input_digest: "d".repeat(64),
+    };
+    receipt.validate().unwrap();
+    let output = sdk::EncodedPayload::capture(
+        request.output_schema.clone(),
+        serde_json::to_string(&receipt).unwrap(),
+    )
+    .unwrap();
+    assert!(output.utf8.len() <= binding.capability.declaration.limits.max_output_bytes as usize);
+    let result = sdk::InvocationResult {
+        context: request.context.clone(),
+        provider: channel.clone(),
+        capability: request.capability.clone(),
+        profile: request.profile.clone(),
+        result_id: "result".repeat(20),
+        outcome: sdk::InvocationOutcome::Succeeded { output },
+    };
+    let frame = sdk::ProcessFrame::new(sdk::ProcessBody::Result(result.clone()))
+        .encode()
+        .unwrap();
+    assert!(frame.len() > sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES);
+    assert!(frame.len() <= request.max_result_bytes as usize);
+    let evidence = PluginResultEvidence {
+        authorization_id: ExecutionId::new(),
+        channel,
+        result,
+    };
+    let captured = FixedResult::capture_plugin(&fixed, item, dispatch, evidence.clone()).unwrap();
+    assert!(captured.bytes().len() <= envelope.limits.max_result_bytes as usize);
+
+    let oversized = format!("\"{}\"", "x".repeat(1023));
+    assert_eq!(
+        oversized.len(),
+        sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES + 1
+    );
+    let output =
+        sdk::EncodedPayload::capture(request.output_schema.clone(), oversized.clone()).unwrap();
+    let error = sdk::EncodedPayload::capture(request.error_schema.clone(), oversized).unwrap();
+    for outcome in [
+        sdk::InvocationOutcome::Succeeded { output },
+        sdk::InvocationOutcome::Failed {
+            error: error.clone(),
+        },
+        sdk::InvocationOutcome::Unknown { error },
+    ] {
+        let mut oversized_evidence = evidence.clone();
+        oversized_evidence.result.outcome = outcome;
+        let result_frame =
+            sdk::ProcessFrame::new(sdk::ProcessBody::Result(oversized_evidence.result.clone()))
+                .encode()
+                .unwrap();
+        assert!(result_frame.len() <= request.max_result_bytes as usize);
+        let rejected =
+            FixedResult::capture_plugin(&fixed, item, dispatch, oversized_evidence).unwrap_err();
+        assert_eq!(rejected.code, ErrorCode::LimitExceeded);
+        assert_eq!(rejected.stage, "plugin-output-budget");
+    }
+
+    // Only the exact canonical references use this bounded JSON allowance.
+    envelope
+        .plugin
+        .as_mut()
+        .unwrap()
+        .capability
+        .declaration
+        .error_schema
+        .behavior_version = 2;
+    let changed = FixedInput::capture(envelope).unwrap();
+    assert_eq!(
+        changed
+            .plugin_request(item, dispatch, &request.provider)
+            .unwrap()
+            .max_result_bytes,
+        sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES as u32
+    );
+}
+
+struct PluginCall {
+    request: DispatchRequest,
+    environment_digest: String,
+    query: bool,
+}
+struct SelectedPlugin {
+    provider: Option<sdk::ProviderSelectionBinding>,
+    environment: Option<sdk::ExecutionEnvironmentDescriptor>,
+    calls: mpsc::Sender<PluginCall>,
+    application: Option<ApplicationScopeBasis>,
+}
+impl SelectedPlugin {
+    fn new(binding: &PluginExecutionBinding, calls: mpsc::Sender<PluginCall>) -> Self {
+        Self {
+            provider: Some(binding.capability.provider.clone()),
+            environment: Some(binding.environment.clone()),
+            calls,
+            application: binding.application_scope.clone(),
+        }
+    }
+    fn record(&self, request: &DispatchRequest, query: bool) {
+        self.calls
+            .send(PluginCall {
+                request: request.clone(),
+                environment_digest: self.environment.as_ref().unwrap().digest().unwrap(),
+                query,
+            })
+            .unwrap();
+    }
+}
+impl Runner for SelectedPlugin {
+    fn capability_id(&self) -> &str {
+        "example.call"
+    }
+    fn capability_version(&self) -> &str {
+        "1:1"
+    }
+    fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
+        self.provider.as_ref()
+    }
+    fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
+        self.environment.as_ref()
+    }
+    fn plugin_application_scope(&self) -> Option<&ApplicationScopeBasis> {
+        self.application.as_ref()
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        _cancellation: Cancellation,
+        _results: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        self.record(&request, false);
+        // A missing outcome exercises the real scheduler's Unknown/query path.
+        Ok(())
+    }
+    fn query(&self, request: &DispatchRequest) -> Result<QueryOutcome, ExecutionError> {
+        self.record(request, true);
+        Ok(QueryOutcome::Unavailable)
+    }
+}
+
+fn authorize(runtime: &ExecutionRuntime, store: &mut ProjectStore, input: &FixedInput) {
+    runtime
+        .authorize_plugin(
+            store,
+            ExecutionId::new(),
+            input,
+            plugin_authority::plugin_now_ms().unwrap() + 60_000,
+            PluginConsent {
+                unsandboxed_execution: true,
+                application_execution: false,
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn fresh_plugin_continuation_keeps_environment_epoch_package_and_grant_boundaries() {
+    let (_temp, mut store, mut original_runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let fixed = plugin_input(&store, binding.clone());
+    let (calls, observed) = mpsc::channel();
+    original_runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, calls.clone())))
+        .unwrap();
+    authorize(&original_runtime, &mut store, &fixed);
+    original_runtime.submit(&mut store, &fixed).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    let mut current = ExecutionRuntime::new(&store).unwrap();
+    assert_eq!(
+        original_runtime
+            .resume(&mut store, &action)
+            .unwrap_err()
+            .stage,
+        "plugin-runtime"
+    );
+    let other_environment = plugin_binding("c");
+    current
+        .register(Arc::new(SelectedPlugin::new(
+            &other_environment,
+            calls.clone(),
+        )))
+        .unwrap();
+    assert_eq!(
+        current.resume(&mut store, &action).unwrap_err().stage,
+        "capability"
+    );
+    current
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, calls)))
+        .unwrap();
+    assert_eq!(
+        current.resume(&mut store, &action).unwrap_err().stage,
+        "plugin-grant"
+    );
+    assert_eq!(
+        store
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap(),
+        vec![fixed.envelope().attempt_id]
+    );
+    assert!(
+        store
+            .execution_continuation(action.action_id)
+            .unwrap()
+            .is_none()
+    );
+    let connection = rusqlite::Connection::open_with_flags(
+        store.directory().join("project.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let grant_count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM plugin_execution_grants", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        grant_count, 1,
+        "continuation must not copy or create an execution grant"
+    );
+    current
+        .begin_package_quiesce(
+            &mut store,
+            ExecutionId::new(),
+            &binding.capability.provider.plugin,
+            &binding.capability.provider.package_digest,
+        )
+        .unwrap();
+    let fresh = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    assert_eq!(
+        current.resume(&mut store, &fresh).unwrap_err().stage,
+        "quiescing"
+    );
+    assert!(
+        store
+            .execution_continuation(fresh.action_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap(),
+        vec![fixed.envelope().attempt_id]
+    );
+    assert!(observed.try_recv().is_err());
+}
+
+#[test]
+fn recorded_plugin_continuation_replays_without_live_grants_runners_or_fresh_admission() {
+    let (temp, mut store, mut runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let fixed = plugin_input(&store, binding.clone());
+    let (calls, observed) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, calls)))
+        .unwrap();
+    authorize(&runtime, &mut store, &fixed);
+    runtime.submit(&mut store, &fixed).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    // A synthetic caller explicitly grants this exact new frame; continuation
+    // registration itself never creates, copies or refreshes this authorization.
+    authorize(&runtime, &mut store, &next);
+    let receipt = store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
+    drop(runtime);
+    assert!(store.plugin_permit(&next).is_err());
+    assert_eq!(
+        store.execution_continuation(action.action_id).unwrap(),
+        Some(receipt.clone())
+    );
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+    assert!(reopened.plugin_permit(&next).is_err());
+    let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
+    runtime.accepting = false;
+    assert_eq!(runtime.resume(&mut reopened, &action).unwrap(), receipt);
+    assert_eq!(
+        reopened
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .execution_input(receipt.attempt_id)
+            .unwrap()
+            .bytes(),
+        next.bytes()
+    );
+    assert!(runtime.runners.is_empty());
+    assert!(runtime.workers.is_empty());
+    assert!(observed.try_recv().is_err());
+}
+
+#[test]
+fn same_plugin_provider_retains_both_environments_and_their_host_policies() {
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (tx, calls) = mpsc::channel();
+    let binding_a = plugin_binding("b");
+    let binding_b = plugin_binding("c");
+    assert_eq!(binding_a.capability, binding_b.capability);
+    let input_a = plugin_input(&store, binding_a.clone());
+    let input_b = plugin_input(&store, binding_b.clone());
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding_a, tx.clone())))
+        .unwrap();
+    authorize(&runtime, &mut store, &input_a);
+    runtime.submit(&mut store, &input_a).unwrap();
+    // Registering a later environment cannot replace an already queued choice.
+    runtime
+        .register(Arc::new(SelectedPlugin::new(&binding_b, tx.clone())))
+        .unwrap();
+    authorize(&runtime, &mut store, &input_b);
+    runtime.submit(&mut store, &input_b).unwrap();
+    assert_eq!(
+        store
+            .execution_recovery_policy(input_a.envelope().attempt_id)
+            .unwrap(),
+        RecoveryPolicy::ReadOnly
+    );
+    assert_eq!(
+        store
+            .execution_recovery_policy(input_b.envelope().attempt_id)
+            .unwrap(),
+        RecoveryPolicy::ExternalUnknown
+    );
+    let unregistered = plugin_input(&store, plugin_binding("d"));
+    assert_eq!(
+        runtime
+            .authorize_plugin(
+                &mut store,
+                ExecutionId::new(),
+                &unregistered,
+                plugin_authority::plugin_now_ms().unwrap() + 60_000,
+                PluginConsent {
+                    unsandboxed_execution: true,
+                    application_execution: false
+                },
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        runtime.submit(&mut store, &unregistered).unwrap_err().stage,
+        "capability"
+    );
+    assert!(store.plugin_permit(&unregistered).is_err());
+    assert!(
+        store
+            .execution_input(unregistered.envelope().attempt_id)
+            .is_err()
+    );
+    pump_until(&mut runtime, &mut store, |runtime, store| {
+        [input_a.envelope().attempt_id, input_b.envelope().attempt_id]
+            .into_iter()
+            .all(|attempt| {
+                !runtime.is_active(attempt)
+                    && store
+                        .execution_attempt(attempt, true)
+                        .unwrap()
+                        .progress
+                        .unknown
+                        == 1
+            })
+    });
+    let observed: BTreeMap<_, _> = (0..2)
+        .map(|_| {
+            let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(!call.query);
+            assert!(
+                call.request
+                    .plugin_permit()
+                    .unwrap()
+                    .matches(&call.request.input)
+            );
+            (call.request.input.envelope().attempt_id, call)
+        })
+        .collect();
+    for fixed in [&input_a, &input_b] {
+        let binding = fixed.envelope().plugin.as_ref().unwrap();
+        let call = &observed[&fixed.envelope().attempt_id];
+        assert_eq!(
+            call.environment_digest,
+            binding.environment_digest().unwrap()
+        );
+        assert_eq!(call.request.input.bytes(), fixed.bytes());
+        let query = runtime
+            .outcome_query(
+                &store,
+                fixed.envelope().attempt_id,
+                fixed.envelope().items[0].item_id,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(matches!(query.run().unwrap(), QueryOutcome::Unavailable));
+        let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(call.query);
+        assert_eq!(
+            call.request.input.envelope().attempt_id,
+            fixed.envelope().attempt_id
+        );
+        assert_eq!(
+            call.environment_digest,
+            binding.environment_digest().unwrap()
+        );
+    }
+    assert!(calls.try_recv().is_err());
+}
+
+#[test]
+fn registration_rejects_unpaired_or_invalid_plugin_environment_choices() {
+    let (_temp, _store, mut runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let (tx, _calls) = mpsc::channel();
+    let mut missing_environment = SelectedPlugin::new(&binding, tx.clone());
+    missing_environment.environment = None;
+    let mut missing_provider = SelectedPlugin::new(&binding, tx.clone());
+    missing_provider.provider = None;
+    for runner in [missing_environment, missing_provider] {
+        assert_eq!(
+            runtime.register(Arc::new(runner)).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+    }
+    let mut bad_protocol = binding.clone();
+    let sdk::ExecutionEnvironmentDescriptor::Captured(value) = &mut bad_protocol.environment else {
+        panic!("Node fixture");
+    };
+    value.process_protocol += 1;
+    let mut bad_path = binding.clone();
+    let sdk::ExecutionEnvironmentDescriptor::Captured(value) = &mut bad_path.environment else {
+        panic!("Node fixture");
+    };
+    value.host.entrypoint = "../outside.js".into();
+    for bad in [bad_protocol, bad_path] {
+        assert!(bad.environment_digest().is_err());
+        assert_eq!(bad.validate().unwrap_err().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            runtime
+                .register(Arc::new(SelectedPlugin::new(&bad, tx.clone())))
+                .unwrap_err()
+                .stage,
+            "plugin-environment"
+        );
+    }
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, tx.clone())))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .register(Arc::new(SelectedPlugin::new(&binding, tx)))
+            .unwrap_err()
+            .stage,
+        "runner-registration"
+    );
+}
+
+#[test]
+fn plugin_environment_restore_retry_and_current_store_reopen_remain_exact() {
+    let (temp, mut store, mut runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let fixed = plugin_input(&store, binding.clone());
+    let mut changed = fixed.envelope().clone();
+    changed.plugin.as_mut().unwrap().environment = plugin_binding("c").environment;
+    assert_ne!(
+        FixedInput::capture(changed).unwrap().digest(),
+        fixed.digest()
+    );
+    let restored = FixedInput::restore(fixed.bytes(), fixed.digest()).unwrap();
+    assert_eq!(restored.bytes(), fixed.bytes());
+    assert_eq!(restored.envelope().plugin.as_ref().unwrap(), &binding);
+    let item = fixed.envelope().items[0].item_id;
+    let retry = fixed.retry(&[item]).unwrap();
+    assert_eq!(retry.envelope().plugin.as_ref().unwrap(), &binding);
+    let provider = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: provider.plugin.clone(),
+        component_id: provider.component_id.clone(),
+        contribution_id: provider.contribution_id.clone(),
+        package_digest: provider.package_digest.clone(),
+        instance_id: "fixture-instance".into(),
+        activation_generation: 1,
+    };
+    assert_eq!(
+        fixed
+            .plugin_request(item, ExecutionId::new(), &channel)
+            .unwrap()
+            .context
+            .environment_digest,
+        binding.environment.digest().unwrap()
+    );
+    let encoded: serde_json::Value = serde_json::from_slice(fixed.bytes()).unwrap();
+    assert!(encoded["plugin"].get("environment").is_some());
+    assert!(encoded["plugin"].get("environmentDigest").is_none());
+    let mut missing = encoded.clone();
+    missing["plugin"]
+        .as_object_mut()
+        .unwrap()
+        .remove("environment");
+    let mut legacy = missing.clone();
+    legacy["plugin"]["environmentDigest"] = json!(binding.environment_digest().unwrap());
+    let mut conflicting = encoded.clone();
+    conflicting["plugin"]["environmentDigest"] = json!("d".repeat(64));
+    let mut invalid = encoded;
+    invalid["plugin"]["environment"]["protocolVersion"] =
+        json!(sdk::RUNTIME_ENVIRONMENT_PROTOCOL + 1);
+    for value in [missing, legacy, conflicting, invalid] {
+        let bytes = serde_json::to_vec(&value).unwrap();
+        assert!(FixedInput::restore(&bytes, &codec::digest(&bytes)).is_err());
+    }
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, mpsc::channel().0)))
+        .unwrap();
+    authorize(&runtime, &mut store, &fixed);
+    runtime.submit(&mut store, &fixed).unwrap();
+    drop(runtime);
+    store.close().unwrap();
+    let path = temp.path().join("project");
+    let reopened = ProjectStore::open(&path).unwrap();
+    let loaded = reopened
+        .execution_input(fixed.envelope().attempt_id)
+        .unwrap();
+    assert_eq!(loaded.bytes(), fixed.bytes());
+    assert_eq!(loaded.envelope().plugin.as_ref().unwrap(), &binding);
+    assert!(reopened.plugin_permit(&loaded).is_err());
+    reopened.close().unwrap();
 }
 
 #[test]
@@ -837,8 +1936,14 @@ fn continuation_lost_ack_replays_original_intent_without_dispatch_after_reopen()
     let source = input.envelope().attempt_id;
     let task = input.envelope().task_id;
     runtime.submit(&mut store, &input).unwrap();
-    runtime.cancel(&mut store, task, ExecutionId::new()).unwrap();
-    let action = crate::execution::test_continuation_action(&store, source, &[input.envelope().items[0].item_id]);
+    runtime
+        .cancel(&mut store, task, ExecutionId::new())
+        .unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        source,
+        &[input.envelope().items[0].item_id],
+    );
     let receipt = runtime.resume(&mut store, &action).unwrap();
     assert_eq!(runtime.resume(&mut store, &action).unwrap(), receipt);
     assert_eq!(store.execution_attempt_ids(task).unwrap().len(), 2);
@@ -846,18 +1951,35 @@ fn continuation_lost_ack_replays_original_intent_without_dispatch_after_reopen()
     // Only the selected cancelled unit receives a new dispatch.
     let mut dispatched = Vec::new();
     while let Ok(call) = calls.recv_timeout(Duration::from_millis(100)) {
-        dispatched.push((call.request.input.envelope().attempt_id, call.request.item_id));
+        dispatched.push((
+            call.request.input.envelope().attempt_id,
+            call.request.item_id,
+        ));
         call.release.send(ExecutionState::Succeeded).unwrap();
         assert!(call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
         runtime.tick(&mut store).unwrap();
     }
-    pump_until(&mut runtime, &mut store, |runtime, store| !runtime.has_active_work(store).unwrap());
-    assert_eq!(dispatched.iter().filter(|(id,_)|*id == receipt.attempt_id).count(), 1);
-    runtime.cancel(&mut store, task, ExecutionId::new()).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, store| {
+        !runtime.has_active_work(store).unwrap()
+    });
+    assert_eq!(
+        dispatched
+            .iter()
+            .filter(|(id, _)| *id == receipt.attempt_id)
+            .count(),
+        1
+    );
+    runtime
+        .cancel(&mut store, task, ExecutionId::new())
+        .unwrap();
     assert_eq!(runtime.resume(&mut store, &action).unwrap(), receipt);
     let mut different = action.clone();
-    different.expected_cancellation_revision = different.expected_cancellation_revision.next().unwrap();
-    assert_eq!(runtime.resume(&mut store, &different).unwrap_err().code, ErrorCode::ResultMismatch);
+    different.expected_cancellation_revision =
+        different.expected_cancellation_revision.next().unwrap();
+    assert_eq!(
+        runtime.resume(&mut store, &different).unwrap_err().code,
+        ErrorCode::ResultMismatch
+    );
     drop(runtime);
     let path = store.directory().to_path_buf();
     store.close().unwrap();
@@ -871,26 +1993,112 @@ fn continuation_lost_ack_replays_original_intent_without_dispatch_after_reopen()
 }
 
 #[test]
+fn fresh_plugin_continuation_cannot_inherit_the_original_attempt_grant() {
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (sent, calls) = mpsc::channel();
+    let binding = plugin_binding("b");
+    let original = plugin_input(&store, binding.clone());
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, sent)))
+        .unwrap();
+    authorize(&runtime, &mut store, &original);
+    runtime.submit(&mut store, &original).unwrap();
+    let source = original.envelope().attempt_id;
+    let task = original.envelope().task_id;
+    let action = crate::execution::test_continuation_action(
+        &store,
+        source,
+        &[original.envelope().items[0].item_id],
+    );
+
+    for _ in 0..2 {
+        let error = runtime.resume(&mut store, &action).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert_eq!(error.stage, "plugin-grant");
+        assert!(
+            store
+                .execution_continuation(action.action_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.execution_attempt_ids(task).unwrap(), vec![source]);
+        assert_eq!(
+            store.execution_input(source).unwrap().bytes(),
+            original.bytes()
+        );
+        assert_eq!(
+            store
+                .execution_attempt(source, false)
+                .unwrap()
+                .progress
+                .queued,
+            1
+        );
+        assert!(store.plugin_permit(&original).unwrap().matches(&original));
+        assert!(calls.try_recv().is_err());
+    }
+}
+
+#[test]
 fn fresh_continuation_rejects_stale_cancel_and_scope_inside_writer_transaction() {
     let (_temp, mut store, mut runtime, _calls) = setup();
     let input = input(&store);
     runtime.submit(&mut store, &input).unwrap();
-    let action = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
-    let next = store.execution_retry_input(action.source_attempt_id, &action.item_ids).unwrap();
-    runtime.cancel(&mut store, input.envelope().task_id, ExecutionId::new()).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        input.envelope().attempt_id,
+        &[input.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    runtime
+        .cancel(&mut store, input.envelope().task_id, ExecutionId::new())
+        .unwrap();
     for _ in 0..2 {
-        assert_eq!(store.enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly).unwrap_err().code, ErrorCode::Cancelled);
-        assert!(store.execution_continuation(action.action_id).unwrap().is_none());
-        assert_eq!(store.execution_attempt_ids(input.envelope().task_id).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert!(
+            store
+                .execution_continuation(action.action_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap()
+                .len(),
+            1
+        );
     }
     let mut fresh = action.clone();
     fresh.action_id = ExecutionId::new();
-    fresh.expected_cancellation_revision = store.execution_task(input.envelope().task_id).unwrap().cancellation_revision;
+    fresh.expected_cancellation_revision = store
+        .execution_task(input.envelope().task_id)
+        .unwrap()
+        .cancellation_revision;
     let mut changed = next.envelope().clone();
     changed.items[0].payload = json!("changed");
     let changed = FixedInput::capture(changed).unwrap();
-    assert_eq!(store.enqueue_continuation(&fresh, &changed, RecoveryPolicy::ReadOnly).unwrap_err().code, ErrorCode::ResultMismatch);
-    assert!(store.execution_continuation(fresh.action_id).unwrap().is_none());
+    assert_eq!(
+        store
+            .enqueue_continuation(&fresh, &changed, RecoveryPolicy::ReadOnly)
+            .unwrap_err()
+            .code,
+        ErrorCode::ResultMismatch
+    );
+    assert!(
+        store
+            .execution_continuation(fresh.action_id)
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -898,8 +2106,14 @@ fn replay_of_recorded_queued_continuation_never_renews_authority_on_reopen() {
     let (_temp, mut store, mut runtime, calls) = setup();
     let fixed = input(&store);
     runtime.submit(&mut store, &fixed).unwrap();
-    runtime.cancel(&mut store, fixed.envelope().task_id, ExecutionId::new()).unwrap();
-    let action = crate::execution::test_continuation_action(&store, fixed.envelope().attempt_id, &[fixed.envelope().items[0].item_id]);
+    runtime
+        .cancel(&mut store, fixed.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
     let receipt = runtime.resume(&mut store, &action).unwrap();
     let path = store.directory().to_path_buf();
     drop(runtime);
@@ -907,12 +2121,27 @@ fn replay_of_recorded_queued_continuation_never_renews_authority_on_reopen() {
     let mut reopened = ProjectStore::open(&path).unwrap();
     let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
     let (new_calls, observed) = mpsc::channel();
-    runtime.register_read_only(Arc::new(Controlled { calls: new_calls })).unwrap();
+    runtime
+        .register_read_only(Arc::new(Controlled { calls: new_calls }))
+        .unwrap();
     assert_eq!(runtime.resume(&mut reopened, &action).unwrap(), receipt);
     runtime.tick(&mut reopened).unwrap();
-    assert_eq!(reopened.execution_attempt(receipt.attempt_id, false).unwrap().progress.queued, 1);
+    assert_eq!(
+        reopened
+            .execution_attempt(receipt.attempt_id, false)
+            .unwrap()
+            .progress
+            .queued,
+        1
+    );
     assert!(!runtime.has_active_work(&reopened).unwrap());
     assert!(observed.try_recv().is_err());
     assert!(calls.try_recv().is_err());
-    assert_eq!(reopened.execution_attempt_ids(fixed.envelope().task_id).unwrap().len(), 2);
+    assert_eq!(
+        reopened
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap()
+            .len(),
+        2
+    );
 }

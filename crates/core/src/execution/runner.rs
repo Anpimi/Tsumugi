@@ -6,7 +6,7 @@ use std::sync::{
 
 use super::*;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Cancellation(Arc<AtomicBool>);
 impl Cancellation {
     pub fn request(&self) {
@@ -20,9 +20,56 @@ impl Cancellation {
 #[derive(Clone, Debug)]
 pub struct DispatchRequest {
     pub(crate) provider: Option<crate::ai::provider::BudgetPort>,
+    pub(crate) plugin_permit: Option<PluginPermit>,
+    pub(crate) service_origin: Option<Arc<plugin_authority::ServiceOriginGuard>>,
+    pub(crate) original_deadline: Option<DispatchDeadline>,
     pub input: FixedInput,
     pub item_id: ExecutionId,
     pub dispatch_token: ExecutionId,
+}
+impl DispatchRequest {
+    pub fn plugin_permit(&self) -> Option<&PluginPermit> {
+        self.plugin_permit.as_ref()
+    }
+    /// The sealed original caller's package is lifetime attribution only.
+    /// It remains readable after revocation and never grants execution.
+    pub fn originating_service_package(
+        &self,
+    ) -> Option<(&tsumugi_plugin_sdk::PluginIdentity, &str)> {
+        self.service_origin.as_ref().map(|origin| {
+            let package = origin.permit.original_package();
+            (package.plugin(), package.digest())
+        })
+    }
+    /// The original dispatch limit, never reconstructed by an outcome query.
+    pub fn deadline(&self) -> Option<std::time::Instant> {
+        self.original_deadline.as_ref().map(|value| {
+            self.service_origin
+                .as_ref()
+                .map_or(value.instant, |origin| value.instant.min(origin.deadline))
+        })
+    }
+    /// Check the original caller immediately before dispatch or a service use.
+    /// This reads the original live guard; it cannot renew or restore authority.
+    pub fn check_service_dispatch(&self) -> Result<(), ExecutionError> {
+        if self
+            .service_origin
+            .as_ref()
+            .is_some_and(|origin| !origin.live())
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "service-origin-dispatch",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DispatchDeadline {
+    pub(crate) instant: std::time::Instant,
+    pub(crate) expires_at_ms: u64,
 }
 
 /// Chosen by the trusted host, never by a producer's manifest or result.
@@ -51,6 +98,17 @@ pub enum QueryOutcome {
 pub trait Runner: Send + Sync + 'static {
     fn capability_id(&self) -> &str;
     fn capability_version(&self) -> &str;
+    fn plugin_provider(&self) -> Option<&tsumugi_plugin_sdk::ProviderSelectionBinding> {
+        None
+    }
+    /// The exact approved environment paired with `plugin_provider`. Registration
+    /// requires both values together; these descriptions do not grant execution.
+    fn plugin_environment(&self) -> Option<&tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor> {
+        None
+    }
+    fn plugin_application_scope(&self) -> Option<&ApplicationScopeBasis> {
+        None
+    }
     fn concurrency_limit(&self, _input: &FixedInput) -> usize {
         1
     }
@@ -66,28 +124,67 @@ pub trait Runner: Send + Sync + 'static {
 }
 
 #[derive(Clone)]
-pub struct ResultSender(SyncSender<FixedResult>);
+pub struct ResultSender {
+    sender: SyncSender<FixedResult>,
+    validator: Option<(FixedInput, Arc<dyn ResultValidator>)>,
+}
 impl ResultSender {
-    pub fn send(&self, result: FixedResult) -> Result<(), ExecutionError> {
-        self.0
+    pub(crate) fn with_validator(
+        mut self,
+        input: FixedInput,
+        validator: Arc<dyn ResultValidator>,
+    ) -> Self {
+        self.validator = Some((input, validator));
+        self
+    }
+    pub fn send(&self, mut result: FixedResult) -> Result<(), ExecutionError> {
+        if result.envelope().outcome == ExecutionState::Succeeded {
+            if let Some((input, validator)) = &self.validator {
+                let checked =
+                    FixedResult::receive(result.bytes(), input, result.envelope().dispatch_token)?;
+                let prepared = ResultValidationCapture {
+                    input: input.clone(),
+                    result: checked,
+                }
+                .prepare(validator.as_ref())?;
+                result.semantic_validation = Some(prepared.proof);
+            }
+        }
+        self.sender
             .send(result)
             .map_err(|_| ExecutionError::new(ErrorCode::Cancelled, "result-channel"))
     }
 }
 pub fn result_channel() -> (ResultSender, Receiver<FixedResult>) {
     let (sender, receiver) = sync_channel(8);
-    (ResultSender(sender), receiver)
+    (
+        ResultSender {
+            sender,
+            validator: None,
+        },
+        receiver,
+    )
 }
 
 /// A trusted Core operation can query and update domain tables in the owning
 /// adoption transaction. It must not run transaction-control SQL or external IO.
-/// The wrapper deliberately provides no commit, connection or nested transaction.
+/// The public wrapper deliberately provides no commit, connection or nested transaction.
 pub struct AdoptionTransaction<'a> {
     transaction: &'a rusqlite::Transaction<'a>,
+    store_epoch: &'a str,
 }
 impl<'a> AdoptionTransaction<'a> {
-    pub(crate) fn new(transaction: &'a rusqlite::Transaction<'a>) -> Self {
-        Self { transaction }
+    pub(crate) fn new(transaction: &'a rusqlite::Transaction<'a>, store_epoch: &'a str) -> Self {
+        Self {
+            transaction,
+            store_epoch,
+        }
+    }
+    pub(crate) fn store_epoch(&self) -> &str {
+        self.store_epoch
+    }
+    pub(crate) fn connection(&self) -> &rusqlite::Connection {
+        self.transaction
     }
     pub fn query_row<
         T,

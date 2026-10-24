@@ -12,6 +12,67 @@ const MAX_RESOURCE_BYTES: usize = 128 * 1024;
 const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
+mod context_facts;
+mod correction;
+pub(crate) mod mcp;
+pub(crate) mod strategy;
+pub use correction::{
+    CaptureCorrectionTerm, CorrectionTermBasis, CorrectionTermEvidence, CorrectionTermPreview,
+    CorrectionTermReceipt, GlossaryCaptureOrigin, RevisionSelectionRef,
+};
+pub use mcp::McpTermQueryAdoptionHandler;
+mod exchange_xml;
+pub(super) use context_facts::current_in as current_fact_decisions_in;
+pub use context_facts::{
+    ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
+    ContextFactWrite, ManualContextFact, ProjectFactCapture, SourceFactBasis,
+};
+pub(super) fn verify_input_fact_decisions(
+    c: &Connection,
+    input: &crate::execution::FixedInput,
+) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::ai::semantic_review::OPERATION {
+        super::ai_semantic_review::verify_input_records(c, input)?;
+    }
+    context_facts::verify_input_records(c, input)?;
+    strategy::verify_input_binding(c, input)
+}
+mod source_context;
+mod source_context_blocks;
+mod source_context_page;
+mod source_context_selection;
+mod tbx_exchange;
+mod tmx_exchange;
+pub(super) use source_context::SourceContextReader;
+pub use source_context::{
+    SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
+    SourceContextOccurrence, SourceContextRequest, SourceContextView,
+};
+pub use source_context_blocks::{
+    MAX_SOURCE_CONTEXT_BLOCK_DETAIL_BYTES, SourceContextBlockBasis, SourceContextBlockDescriptor,
+    SourceContextBlockDetail, SourceContextBlockRead,
+};
+pub use source_context_page::{
+    MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry,
+};
+pub use source_context_selection::{
+    SelectedSourceContext, SelectedSourceFact, SourceContextCapture, SourceContextObservations,
+    SourceContextOmissionReason, SourceContextOmissionSample, SourceContextOmissions,
+    SourceContextProviderFact, SourceContextProviderNeighbor, SourceContextProviderOrigin,
+    SourceContextProviderProjection, SourceContextSelection, UnknownSourceBlockSample,
+    select_source_context,
+};
+pub use tbx_exchange::{
+    MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, TbxExchangePreview, TbxExchangeRow,
+    TbxLicenseStatus, TbxLossEntry, TbxLossKind, TbxLossSample, TbxRowReason, TbxRowStatus,
+    TbxTermPreview, TbxTermReason, preview_tbx_exchange,
+};
+pub use tmx_exchange::{
+    MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tmx_exchange,
+};
+
 fn change_targets_source(
     unit: &str,
     text: &str,
@@ -105,9 +166,7 @@ pub struct GlossaryEntry {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlossaryCapture {
     pub capture_id: ExecutionId,
-    pub resource_id: String,
-    pub revision: String,
-    pub license: String,
+    pub origin: GlossaryCaptureOrigin,
     pub source_locale: String,
     pub target_locale: String,
     pub digest: String,
@@ -142,6 +201,7 @@ pub enum TmMatchKind {
 pub enum ResourceImpactKind {
     Term,
     Context,
+    ContextFact,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -206,6 +266,18 @@ pub struct ResourcePreview {
     pub capture: GlossaryCapture,
     pub rows: Vec<ResourcePreviewRow>,
     pub removed: Vec<TermRevision>,
+    #[serde(deserialize_with = "correction::required_preview")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "correction::preview_schema")
+    )]
+    pub correction: Option<CorrectionTermPreview>,
+    #[serde(deserialize_with = "crate::application::mcp_retrieval::required_capture_preview")]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "crate::application::mcp_retrieval::capture_preview_schema")
+    )]
+    pub mcp: Option<crate::application::McpTermCapturePreview>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -259,6 +331,7 @@ pub struct ResourceDecision {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceDecisionResult {
+    pub request: ResourceDecision,
     pub action_id: ExecutionId,
     pub decision: ResourceDecisionKind,
     pub revision: Option<TermRevision>,
@@ -534,19 +607,25 @@ fn validate_identifier(value: &str) -> Result<(), ExecutionError> {
 }
 
 const TABLES: &[(&str, &str)] = &[
+    context_facts::TABLE,
     ("resource_captures", "CREATE TABLE resource_captures (
         capture_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        resource_id TEXT NOT NULL,
-        resource_revision TEXT NOT NULL,
+        capture_kind TEXT NOT NULL CHECK(capture_kind IN ('file','correction','mcp')),
+        correction_key TEXT UNIQUE,
+        resource_id TEXT,
+        resource_revision TEXT,
         source_locale TEXT NOT NULL,
         target_locale TEXT NOT NULL,
-        license TEXT NOT NULL,
+        license TEXT,
         digest TEXT NOT NULL CHECK(length(digest)=64),
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 131072),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144),
         action_id TEXT NOT NULL UNIQUE,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
-        UNIQUE(project_id,resource_id,resource_revision))"),
+        UNIQUE(project_id,resource_id,resource_revision),
+        CHECK((capture_kind='file' AND correction_key IS NULL AND resource_id IS NOT NULL AND resource_revision IS NOT NULL AND license IS NOT NULL)
+           OR (capture_kind='correction' AND correction_key IS NOT NULL AND length(correction_key)=64 AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)
+           OR (capture_kind='mcp' AND correction_key IS NULL AND resource_id IS NULL AND resource_revision IS NULL AND license IS NULL)))"),
     ("term_revisions", "CREATE TABLE term_revisions (
         revision_id TEXT PRIMARY KEY NOT NULL,
         term_id TEXT NOT NULL,
@@ -565,7 +644,7 @@ const TABLES: &[(&str, &str)] = &[
         removed INTEGER NOT NULL CHECK(removed IN (0,1)),
         action_id TEXT NOT NULL UNIQUE,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
-        CHECK((origin_kind='manual' AND capture_id IS NULL AND external_entry_id IS NULL)
+        CHECK((origin_kind='manual' AND external_entry_id IS NULL)
            OR (origin_kind='external' AND capture_id IS NOT NULL AND external_entry_id IS NOT NULL)))"),
     ("term_current", "CREATE TABLE term_current (
         term_id TEXT NOT NULL,
@@ -608,7 +687,7 @@ const TABLES: &[(&str, &str)] = &[
     ("resource_changes", "CREATE TABLE resource_changes (
         change_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('term','context')),
+        kind TEXT NOT NULL CHECK(kind IN ('term','context','context-fact')),
         locale TEXT NOT NULL,
         scope_unit_id TEXT REFERENCES source_units(unit_id),
         old_scope_unit_id TEXT REFERENCES source_units(unit_id),
@@ -623,35 +702,24 @@ const TABLES: &[(&str, &str)] = &[
 ];
 
 pub(super) fn table_names() -> impl Iterator<Item = String> {
-    TABLES.iter().map(|(name, _)| (*name).to_owned())
+    TABLES
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .chain(strategy::table_names())
 }
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (_, sql) in TABLES {
         connection.execute_batch(sql)?;
     }
-    Ok(())
-}
-
-pub(super) fn migrate_v5(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    transaction.pragma_update(None, "user_version", 6)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-resource-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-resource-migration-commit");
+    context_facts::initialize(connection)?;
+    strategy::initialize(connection)?;
     Ok(())
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+    context_facts::validate(connection)?;
+    strategy::validate(connection)?;
     for (name, _) in TABLES {
         let columns: i64 = connection.query_row(
             "SELECT COUNT(*) FROM pragma_table_info(?1)",
@@ -689,6 +757,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             WHERE (x.kind='term' AND NOT EXISTS(
                 SELECT 1 FROM term_revisions r WHERE r.revision_id=x.new_revision_id
                   AND r.project_id=x.project_id AND r.locale=x.locale))
+               OR (x.kind='context-fact' AND NOT EXISTS(SELECT 1 FROM context_fact_decisions d WHERE d.action_id=x.new_revision_id AND d.project_id=x.project_id AND d.locale=x.locale))
                OR (x.kind='context' AND NOT EXISTS(
                 SELECT 1 FROM context_revisions r WHERE r.revision_id=x.new_revision_id
                   AND r.project_id=x.project_id AND r.locale=x.locale))
@@ -723,14 +792,8 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         serde_json::from_str::<ContextCapture>(&json?)
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn drop_for_legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        connection.execute(&format!("DROP TABLE {name}"), [])?;
-    }
+    correction::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    mcp::validate_captures(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
 }
 
@@ -800,7 +863,7 @@ fn unit_for_native_key(
 ) -> Result<ExecutionId, ExecutionError> {
     let mut statement = connection
         .prepare(
-            "SELECT o.unit_id FROM source_occurrences o
+            "SELECT DISTINCT o.unit_id FROM source_occurrences o
              JOIN source_units u ON u.unit_id=o.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
              WHERE o.native_key=?1 AND u.project_id=?2 LIMIT 2",
@@ -933,54 +996,119 @@ fn capture_by_id(
     connection: &Connection,
     project_id: ExecutionId,
     capture_id: ExecutionId,
-) -> Result<(GlossaryCapture, GlossaryFile), ExecutionError> {
-    let row: Option<(String, String, String, String, String, String, Vec<u8>)> = connection
-        .query_row(
-            "SELECT resource_id,resource_revision,source_locale,target_locale,license,digest,bytes
-             FROM resource_captures WHERE capture_id=?1 AND project_id=?2",
-            params![capture_id.to_string(), project_id.to_string()],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(sql)?;
-    let Some((resource_id, revision, source_locale, target_locale, license, file_digest, bytes)) =
-        row
-    else {
-        return Err(failure(ErrorCode::DependencyConflict, "resource-capture"));
-    };
+) -> Result<(GlossaryCapture, correction::CapturedGlossary), ExecutionError> {
+    let row = connection.query_row(
+        "SELECT capture_kind,resource_id,resource_revision,source_locale,target_locale,license,digest,bytes,action_id,request_digest
+         FROM resource_captures WHERE capture_id=?1 AND project_id=?2",
+        params![capture_id.to_string(), project_id.to_string()],
+        |row| Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?,row.get::<_,Option<String>>(2)?,
+            row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,String>(6)?,
+            row.get::<_,Vec<u8>>(7)?,row.get::<_,String>(8)?,row.get::<_,String>(9)?)),
+    ).optional().map_err(sql)?.ok_or_else(||failure(ErrorCode::DependencyConflict,"resource-capture"))?;
+    let (
+        kind,
+        resource_id,
+        revision,
+        source_locale,
+        target_locale,
+        license,
+        file_digest,
+        bytes,
+        action,
+        request_digest,
+    ) = row;
     if codec::digest(&bytes) != file_digest {
         return Err(failure(ErrorCode::CorruptLedger, "resource-capture"));
     }
-    let file = GlossaryFile::parse(&bytes)?;
-    if file.resource_id != resource_id
-        || file.revision != revision
-        || file.source_locale != source_locale
-        || file.target_locale != target_locale
-        || file.license != license
-    {
-        return Err(failure(ErrorCode::CorruptLedger, "resource-capture"));
-    }
-    let view = GlossaryCapture {
-        capture_id,
-        resource_id,
-        revision,
-        license,
-        source_locale,
-        target_locale,
-        digest: file_digest,
-        count: file.entries.len() as u32,
+    let action = id(action)?;
+    let (origin, count, data) = match kind.as_str() {
+        "file" => {
+            let file = GlossaryFile::parse(&bytes)?;
+            if Some(&file.resource_id) != resource_id.as_ref()
+                || Some(&file.revision) != revision.as_ref()
+                || Some(&file.license) != license.as_ref()
+                || file.source_locale != source_locale
+                || file.target_locale != target_locale
+                || digest(&(project_id, action, &file_digest))? != request_digest
+            {
+                return Err(failure(ErrorCode::CorruptLedger, "resource-capture"));
+            }
+            (
+                GlossaryCaptureOrigin::File {
+                    resource_id: file.resource_id.clone(),
+                    revision: file.revision.clone(),
+                    license: file.license.clone(),
+                },
+                file.entries.len() as u32,
+                correction::CapturedGlossary::File(file),
+            )
+        }
+        "correction" => {
+            let request: CaptureCorrectionTerm = codec::decode(&bytes, MAX_RESOURCE_BYTES)
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "correction-capture"))?;
+            if resource_id.is_some()
+                || revision.is_some()
+                || license.is_some()
+                || request.action_id != action
+                || request.basis.project_id != project_id
+                || request.basis.locale != target_locale
+                || digest(&request)? != request_digest
+                || codec::encode(&request, MAX_RESOURCE_BYTES)? != bytes
+            {
+                return Err(failure(ErrorCode::CorruptLedger, "correction-capture"));
+            }
+            let metadata = super::read_metadata_from(connection)
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "resource-project"))?;
+            if metadata.source_locale().as_str() != source_locale {
+                return Err(failure(ErrorCode::CorruptLedger, "correction-capture"));
+            }
+            correction::validate_request(connection, &request)?;
+            (
+                GlossaryCaptureOrigin::Correction {
+                    basis: request.basis.clone(),
+                },
+                1,
+                correction::CapturedGlossary::Correction(request),
+            )
+        }
+        "mcp" => {
+            let captured: mcp::CapturedMcpTerms =
+                codec::decode(&bytes, crate::application::MAX_MCP_CAPTURE_BYTES)?;
+            if resource_id.is_some()
+                || revision.is_some()
+                || license.is_some()
+                || captured.action.action_id != action
+                || captured.action.project_id != project_id
+                || captured.provenance.basis.project_id != project_id
+                || captured.provenance.basis.source_locale != source_locale
+                || captured.provenance.basis.locale != target_locale
+                || request_digest != file_digest
+                || codec::encode(&captured, crate::application::MAX_MCP_CAPTURE_BYTES)? != bytes
+            {
+                return Err(failure(ErrorCode::CorruptLedger, "mcp-query-capture"));
+            }
+            mcp::validate_capture(connection, &captured)?;
+            (
+                GlossaryCaptureOrigin::Mcp {
+                    provenance: captured.provenance.clone(),
+                },
+                captured.output.entries.len() as u32,
+                correction::CapturedGlossary::Mcp(captured),
+            )
+        }
+        _ => return Err(failure(ErrorCode::CorruptLedger, "resource-capture")),
     };
-    Ok((view, file))
+    Ok((
+        GlossaryCapture {
+            capture_id,
+            origin,
+            source_locale,
+            target_locale,
+            digest: file_digest,
+            count,
+        },
+        data,
+    ))
 }
 
 fn external_term_id(resource_id: &str, entry_id: &str) -> String {
@@ -1106,7 +1234,7 @@ fn source_fact(
              FROM source_occurrences o
              JOIN source_revisions r ON r.revision_id=o.revision_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-             WHERE o.unit_id=?1",
+             WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
             [unit_id.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -1264,62 +1392,73 @@ impl ProjectStore {
                         })
                     })
                     .transpose()?;
-                let (_, file) = capture_by_id(c, request.project_id, request.capture_id)?;
-                let term_id = external_term_id(&file.resource_id, &request.entry_id);
-                if revision.as_ref().is_some_and(|value| {
-                    value.term_id != term_id || value.locale != file.target_locale
-                }) {
-                    return Err(failure(
-                        ErrorCode::CorruptLedger,
-                        "resource-decision-revision",
-                    ));
-                }
-                if matches!(
-                    request.decision,
-                    ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
-                ) {
-                    if revision.as_ref().map(|value| value.revision_id)
-                        != request.expected_revision_id
-                    {
-                        return Err(failure(
-                            ErrorCode::CorruptLedger,
-                            "resource-decision-revision",
-                        ));
+                let receipt = ResourceDecisionResult {
+                    request: stored.clone(), action_id: request.action_id,
+                    decision: request.decision.clone(), revision,
+                };
+                let (_, data) = capture_by_id(c, request.project_id, request.capture_id)?;
+                match data {
+                    correction::CapturedGlossary::File(file) => {
+                        let revision = &receipt.revision;
+                        let term_id = external_term_id(&file.resource_id, &request.entry_id);
+                        if revision.as_ref().is_some_and(|value| {
+                            value.term_id != term_id || value.locale != file.target_locale
+                        }) {
+                            return Err(failure(
+                                ErrorCode::CorruptLedger,
+                                "resource-decision-revision",
+                            ));
+                        }
+                        if matches!(
+                            request.decision,
+                            ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
+                        ) {
+                            if revision.as_ref().map(|value| value.revision_id)
+                                != request.expected_revision_id
+                            {
+                                return Err(failure(
+                                    ErrorCode::CorruptLedger,
+                                    "resource-decision-revision",
+                                ));
+                            }
+                        } else {
+                            let value = revision.as_ref().ok_or_else(|| {
+                                failure(ErrorCode::CorruptLedger, "resource-decision-revision")
+                            })?;
+                            let incoming = file
+                                .entries
+                                .iter()
+                                .find(|entry| entry.id == request.entry_id);
+                            if value.origin_kind != TermOrigin::External
+                                || value.capture_id != Some(request.capture_id)
+                                || value.external_entry_id.as_deref() != Some(request.entry_id.as_str())
+                                || value.previous_revision_id != request.expected_revision_id
+                                || value.removed != incoming.is_none()
+                                || incoming.is_some_and(|entry| {
+                                    value.source != entry.source
+                                        || value.aliases != entry.aliases
+                                        || value.target != entry.target
+                                        || value.reason != entry.reason
+                                        || value.protected != entry.protected
+                                })
+                            {
+                                return Err(failure(
+                                    ErrorCode::CorruptLedger,
+                                    "resource-decision-revision",
+                                ));
+                            }
+                        }
                     }
-                } else {
-                    let value = revision.as_ref().ok_or_else(|| {
-                        failure(ErrorCode::CorruptLedger, "resource-decision-revision")
-                    })?;
-                    let incoming = file
-                        .entries
-                        .iter()
-                        .find(|entry| entry.id == request.entry_id);
-                    if value.origin_kind != TermOrigin::External
-                        || value.capture_id != Some(request.capture_id)
-                        || value.external_entry_id.as_deref() != Some(request.entry_id.as_str())
-                        || value.previous_revision_id != request.expected_revision_id
-                        || value.removed != incoming.is_none()
-                        || incoming.is_some_and(|entry| {
-                            value.source != entry.source
-                                || value.aliases != entry.aliases
-                                || value.target != entry.target
-                                || value.reason != entry.reason
-                                || value.protected != entry.protected
-                        })
-                    {
-                        return Err(failure(
-                            ErrorCode::CorruptLedger,
-                            "resource-decision-revision",
-                        ));
+                    correction::CapturedGlossary::Correction(capture) => {
+                        correction::validate_decision(c, &receipt, &capture)?;
+                    }
+                    correction::CapturedGlossary::Mcp(capture) => {
+                        mcp::validate_decision(c, &receipt, &capture)?;
                     }
                 }
                 Ok(Some(ResourceDecisionActionRead {
                     request: stored,
-                    receipt: ResourceDecisionResult {
-                        action_id: request.action_id,
-                        decision: request.decision.clone(),
-                        revision,
-                    },
+                    receipt,
                 }))
             },
         )?;
@@ -1553,6 +1692,36 @@ impl ProjectStore {
         if limit == 0 || limit > 100 || offset > 2_000 {
             return Err(failure(ErrorCode::InvalidInput, "impact-page"));
         }
+        let items = self
+            .capture_resource_impacts(project_id, locale, None)?
+            .evaluate()?;
+        let total_affected = items.len() as u32;
+        Ok(ImpactPage {
+            items: items
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .collect(),
+            total_affected,
+            next_offset: (offset.saturating_add(limit) < total_affected).then_some(offset + limit),
+            coverage: "current-snapshot; explicit unit and literal possible matches".into(),
+        })
+    }
+    pub(in crate::persistence) fn capture_resource_impacts(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        units: Option<&[ExecutionId]>,
+    ) -> Result<CapturedResourceImpacts, ExecutionError> {
+        if units
+            .is_some_and(|u| u.len() > 100 || u.iter().collect::<BTreeSet<_>>().len() != u.len())
+        {
+            return Err(failure(ErrorCode::InvalidInput, "impact-units"));
+        }
+        let wanted = units
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|_| failure(ErrorCode::InvalidInput, "impact-units"))?;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "impact-read"))?;
@@ -1563,18 +1732,21 @@ impl ProjectStore {
                         old_revision_id,new_revision_id,
                         CASE kind WHEN 'term' THEN
                             (SELECT target FROM term_revisions WHERE revision_id=old_revision_id)
+                          WHEN 'context-fact' THEN (SELECT CASE json_extract(CAST(request AS TEXT),'$.disposition.kind') WHEN 'replace' THEN json_extract(CAST(request AS TEXT),'$.disposition.text') WHEN 'restore' THEN json_extract(CAST(request AS TEXT),'$.basis.fact.fact.text') ELSE NULL END FROM context_fact_decisions WHERE action_id=old_revision_id)
                           ELSE (SELECT text FROM context_revisions WHERE revision_id=old_revision_id) END,
                         CASE kind WHEN 'term' THEN
                             (SELECT target FROM term_revisions WHERE revision_id=new_revision_id)
+                          WHEN 'context-fact' THEN (SELECT CASE json_extract(CAST(request AS TEXT),'$.disposition.kind') WHEN 'replace' THEN json_extract(CAST(request AS TEXT),'$.disposition.text') ELSE json_extract(CAST(request AS TEXT),'$.basis.fact.fact.text') END FROM context_fact_decisions WHERE action_id=new_revision_id)
                           ELSE (SELECT text FROM context_revisions WHERE revision_id=new_revision_id) END,
                         CASE kind WHEN 'term' THEN
                             (SELECT removed FROM term_revisions WHERE revision_id=new_revision_id)
+                          WHEN 'context-fact' THEN (SELECT json_extract(CAST(request AS TEXT),'$.disposition.kind')='reject-inference' FROM context_fact_decisions WHERE action_id=new_revision_id)
                           ELSE 0 END
                  FROM resource_changes WHERE project_id=?1 AND locale=?2
                  ORDER BY rowid LIMIT 10001",
             )
             .map_err(sql)?;
-        let changes = changes_statement
+        let change_rows = changes_statement
             .query_map(params![project_id.to_string(), locale], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
@@ -1591,9 +1763,19 @@ impl ProjectStore {
                     row.get::<_, bool>(11)?,
                 ))
             })
-            .map_err(sql)?
-            .collect::<Result<Vec<_>, _>>()
             .map_err(sql)?;
+        let mut changes = Vec::new();
+        let mut captured_bytes = 0usize;
+        for row in change_rows {
+            let row = row.map_err(sql)?;
+            if units.is_some() {
+                captured_bytes = captured_bytes
+                    .checked_add(codec::encode(&row, MAX_INPUT_BYTES)?.len())
+                    .filter(|v| *v <= MAX_INPUT_BYTES)
+                    .ok_or_else(|| failure(ErrorCode::LimitExceeded, "impact-capture-bytes"))?;
+            }
+            changes.push(row);
+        }
         if changes.len() > 10_000 {
             return Err(failure(ErrorCode::LimitExceeded, "impact-history-budget"));
         }
@@ -1608,13 +1790,16 @@ impl ProjectStore {
                  JOIN translation_selections s ON s.unit_id=o.unit_id
                  LEFT JOIN translation_resource_baselines b ON b.revision_id=s.revision_id
                  WHERE u.project_id=?1 AND s.locale=?2
+                   AND (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
+                   AND o.ordinal=(SELECT MIN(first.ordinal) FROM source_occurrences first
+                                  WHERE first.snapshot_id=o.snapshot_id AND first.unit_id=o.unit_id)
                  ORDER BY o.unit_id LIMIT 2001",
             )
             .map_err(sql)?;
         let selections = selected_statement
-            .query_map(params![project_id.to_string(), locale], |row| {
+            .query_map(params![project_id.to_string(), locale, wanted], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -1631,6 +1816,41 @@ impl ProjectStore {
         if selections.len() > 2_000 {
             return Err(failure(ErrorCode::LimitExceeded, "impact-unit-budget"));
         }
+        Ok(CapturedResourceImpacts {
+            locale: locale.into(),
+            changes,
+            selections,
+        })
+    }
+}
+type ImpactChange = (
+    i64,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    bool,
+);
+type ImpactSelection = (String, String, String, String, String, String, i64);
+#[derive(Clone, Debug, Serialize)]
+pub(in crate::persistence) struct CapturedResourceImpacts {
+    locale: String,
+    changes: Vec<ImpactChange>,
+    selections: Vec<ImpactSelection>,
+}
+impl CapturedResourceImpacts {
+    pub(in crate::persistence) fn evaluate(self) -> Result<Vec<ImpactItem>, ExecutionError> {
+        let Self {
+            locale,
+            changes,
+            selections,
+        } = self;
         let mut items = Vec::new();
         for (
             unit,
@@ -1679,6 +1899,7 @@ impl ProjectStore {
                     kind: match kind.as_str() {
                         "term" => ResourceImpactKind::Term,
                         "context" => ResourceImpactKind::Context,
+                        "context-fact" => ResourceImpactKind::ContextFact,
                         _ => return Err(failure(ErrorCode::CorruptLedger, "resource-change-kind")),
                     },
                     old_revision_id: old_revision.clone().map(id).transpose()?,
@@ -1696,7 +1917,7 @@ impl ProjectStore {
             if !reasons.is_empty() {
                 items.push(ImpactItem {
                     unit_id: id(unit)?,
-                    locale: locale.to_owned(),
+                    locale: locale.clone(),
                     source_revision_id: id(source_revision)?,
                     native_key,
                     source_text,
@@ -1711,21 +1932,10 @@ impl ProjectStore {
                 });
             }
         }
-        let total_affected = items.len() as u32;
-        let next_offset =
-            ((offset as usize) + (limit as usize) < items.len()).then_some(offset + limit);
-        Ok(ImpactPage {
-            items: items
-                .into_iter()
-                .skip(offset as usize)
-                .take(limit as usize)
-                .collect(),
-            total_affected,
-            next_offset,
-            coverage: "current-snapshot; explicit unit and literal possible matches".into(),
-        })
+        Ok(items)
     }
-
+}
+impl ProjectStore {
     pub fn tm_suggestions(
         &self,
         project_id: ExecutionId,
@@ -1787,6 +1997,10 @@ impl ProjectStore {
             is_current_selection,
         ) in rows
         {
+            let translation_revision = id(translation_revision)?;
+            if super::translation::candidate_rejected(connection, translation_revision)? {
+                continue;
+            }
             let score = fuzzy_score(&current_text, &source_text);
             if score < 70 {
                 continue;
@@ -1795,7 +2009,7 @@ impl ProjectStore {
                 unit_id: id(unit)?,
                 source_revision_id: id(source_revision)?,
                 source_text,
-                translation_revision_id: id(translation_revision)?,
+                translation_revision_id: translation_revision,
                 translation_text,
                 target_locale: locale.to_owned(),
                 origin_kind: TranslationOrigin::from_stored(&origin_kind)?,
@@ -2206,9 +2420,9 @@ impl ProjectStore {
         let request_digest = digest(&(project_id, action_id, &file_digest))?;
         tx.execute(
             "INSERT INTO resource_captures
-             (capture_id,project_id,resource_id,resource_revision,source_locale,target_locale,
+             (capture_id,project_id,capture_kind,resource_id,resource_revision,source_locale,target_locale,
               license,digest,bytes,action_id,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+             VALUES (?1,?2,'file',?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             params![
                 capture_id.to_string(),
                 project_id.to_string(),
@@ -2230,9 +2444,11 @@ impl ProjectStore {
         })?;
         Ok(GlossaryCapture {
             capture_id,
-            resource_id: file.resource_id,
-            revision: file.revision,
-            license: file.license,
+            origin: GlossaryCaptureOrigin::File {
+                resource_id: file.resource_id,
+                revision: file.revision,
+                license: file.license,
+            },
             source_locale: file.source_locale,
             target_locale: file.target_locale,
             digest: file_digest,
@@ -2262,50 +2478,16 @@ impl ProjectStore {
         if project.is_none() {
             return Err(failure(ErrorCode::DependencyConflict, "resource-project"));
         }
-        let mut statement = connection
-            .prepare(
-                "SELECT capture_id,resource_id,resource_revision,license,source_locale,
-                    target_locale,digest,bytes
-             FROM resource_captures WHERE project_id=?1 ORDER BY rowid DESC LIMIT ?2",
-            )
-            .map_err(sql)?;
-        statement
-            .query_map(params![project_id.to_string(), i64::from(limit)], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, Vec<u8>>(7)?,
-                ))
+        let mut statement=connection.prepare("SELECT capture_id FROM resource_captures WHERE project_id=?1 ORDER BY rowid DESC LIMIT ?2").map_err(sql)?;
+        let ids = statement
+            .query_map(params![project_id.to_string(), i64::from(limit)], |r| {
+                r.get::<_, String>(0)
             })
             .map_err(sql)?
-            .map(|result| {
-                let (
-                    capture_id,
-                    resource_id,
-                    revision,
-                    license,
-                    source_locale,
-                    target_locale,
-                    digest,
-                    bytes,
-                ) = result.map_err(sql)?;
-                let count = GlossaryFile::parse(&bytes)?.entries.len() as u32;
-                Ok(GlossaryCapture {
-                    capture_id: id(capture_id)?,
-                    resource_id,
-                    revision,
-                    license,
-                    source_locale,
-                    target_locale,
-                    digest,
-                    count,
-                })
-            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        ids.into_iter()
+            .map(|raw| Ok(capture_by_id(connection, project_id, id(raw)?)?.0))
             .collect()
     }
 
@@ -2317,7 +2499,16 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
-        let (capture, file) = capture_by_id(connection, project_id, capture_id)?;
+        let (capture, data) = capture_by_id(connection, project_id, capture_id)?;
+        let file = match data {
+            correction::CapturedGlossary::Mcp(value) => {
+                return mcp::preview(connection, capture, value);
+            }
+            correction::CapturedGlossary::Correction(request) => {
+                return correction::preview(connection, capture, request);
+            }
+            correction::CapturedGlossary::File(file) => file,
+        };
         check_project(connection, project_id, &file.target_locale)?;
         current_snapshot(connection)?;
         let mut incoming = BTreeSet::new();
@@ -2384,6 +2575,8 @@ impl ProjectStore {
             capture,
             rows,
             removed,
+            correction: None,
+            mcp: None,
         })
     }
 
@@ -2505,6 +2698,18 @@ impl ProjectStore {
         &mut self,
         request: &ResourceDecision,
     ) -> Result<ResourceDecisionResult, ExecutionError> {
+        if let Some(prior) = correction::decision_action_in(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
+            request.project_id,
+            request.action_id,
+        )? {
+            return if &prior.request == request {
+                Ok(prior)
+            } else {
+                Err(failure(ErrorCode::ResultMismatch, "resource-action"))
+            };
+        }
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "resource-session"));
         }
@@ -2517,140 +2722,129 @@ impl ProjectStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
         let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
-        let prior: Option<(String, Option<String>)> = tx
-            .query_row(
-                "SELECT request_digest,result_revision_id FROM resource_decisions
-                 WHERE action_id=?1 AND project_id=?2",
-                params![
-                    request.action_id.to_string(),
-                    request.project_id.to_string()
-                ],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(sql)?;
-        if let Some((saved_digest, revision_id)) = prior {
-            if saved_digest != request_digest {
-                return Err(failure(ErrorCode::ResultMismatch, "resource-action"));
-            }
-            let revision = revision_id
-                .map(id)
-                .transpose()?
-                .map(|revision_id| term_by_revision(&tx, request.project_id, revision_id))
-                .transpose()?
-                .flatten();
-            return Ok(ResourceDecisionResult {
-                action_id: request.action_id,
-                decision: request.decision.clone(),
-                revision,
-            });
-        }
-        let (_, file) = capture_by_id(&tx, request.project_id, request.capture_id)?;
-        check_project(&tx, request.project_id, &file.target_locale)?;
-        current_snapshot(&tx)?;
-        let term_id = external_term_id(&file.resource_id, &request.entry_id);
-        let current = current_term(&tx, request.project_id, &term_id)?;
-        if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(
-                failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
-                    ConflictEvidence::TermRevision {
-                        expected: request.expected_revision_id,
-                        current: current.as_ref().map(|value| value.revision_id),
-                    },
-                ),
-            );
-        }
-        let incoming = file
-            .entries
-            .iter()
-            .find(|entry| entry.id == request.entry_id);
-        if incoming.is_none() && current.is_none() {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-entry"));
-        }
-        if current
-            .as_ref()
-            .is_some_and(|value| value.origin_kind == TermOrigin::Manual)
-            && matches!(request.decision, ResourceDecisionKind::Adopt)
+        if let Some(prior) =
+            correction::decision_action_in(&tx, request.project_id, request.action_id)?
         {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-override"));
-        }
-        let revision = if matches!(
-            request.decision,
-            ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
-        ) {
-            current
-        } else {
-            let scope = if let Some(entry) = incoming {
-                entry
-                    .native_key
-                    .as_deref()
-                    .map(|key| unit_for_native_key(&tx, request.project_id, key))
-                    .transpose()?
+            return if &prior.request == request {
+                Ok(prior)
             } else {
-                current.as_ref().and_then(|value| value.scope_unit_id)
+                Err(failure(ErrorCode::ResultMismatch, "resource-action"))
             };
-            let source = incoming
-                .map(|entry| entry.source.as_str())
-                .or_else(|| current.as_ref().map(|value| value.source.as_str()))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let target = incoming
-                .map(|entry| entry.target.as_str())
-                .or_else(|| current.as_ref().map(|value| value.target.as_str()))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let aliases = incoming
-                .map(|entry| entry.aliases.as_slice())
-                .or_else(|| current.as_ref().map(|value| value.aliases.as_slice()))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let reason = incoming
-                .map(|entry| entry.reason.as_str())
-                .unwrap_or("Removed from external resource");
-            let protected = incoming
-                .map(|entry| entry.protected)
-                .or_else(|| current.as_ref().map(|value| value.protected))
-                .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
-            let changed = current.as_ref().is_none_or(|value| {
-                value.source != source
-                    || value.target != target
-                    || value.aliases != aliases
-                    || value.protected != protected
-                    || value.scope_unit_id != scope
-                    || value.removed != incoming.is_none()
-            });
-            let revision = insert_term(
-                &tx,
-                request.project_id,
-                &term_id,
-                &file.target_locale,
-                source,
-                aliases,
-                target,
-                protected,
-                scope,
-                reason,
-                "external",
-                Some(request.capture_id),
-                Some(&request.entry_id),
-                request.expected_revision_id,
-                incoming.is_none(),
-                request.action_id,
-                &request_digest,
-            )?;
-            if changed {
-                write_change(
-                    &tx,
-                    request.project_id,
-                    "term",
-                    &file.target_locale,
-                    scope,
-                    current.as_ref().and_then(|value| value.scope_unit_id),
-                    Some(source),
-                    current.as_ref().map(|value| value.source.as_str()),
-                    request.expected_revision_id,
-                    revision.revision_id,
-                    request.action_id,
-                )?;
+        }
+        let (_, data) = capture_by_id(&tx, request.project_id, request.capture_id)?;
+        let revision = match data {
+            correction::CapturedGlossary::Mcp(capture) => {
+                mcp::decide(&tx, request, &capture, &request_digest)?
             }
-            Some(revision)
+            correction::CapturedGlossary::Correction(capture) => {
+                correction::decide(&tx, request, &capture, &request_digest)?
+            }
+            correction::CapturedGlossary::File(file) => {
+                check_project(&tx, request.project_id, &file.target_locale)?;
+                current_snapshot(&tx)?;
+                let term_id = external_term_id(&file.resource_id, &request.entry_id);
+                let current = current_term(&tx, request.project_id, &term_id)?;
+                if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
+                    return Err(failure(ErrorCode::DependencyConflict, "resource-current")
+                        .with_conflict(ConflictEvidence::TermRevision {
+                            expected: request.expected_revision_id,
+                            current: current.as_ref().map(|value| value.revision_id),
+                        }));
+                }
+                let incoming = file
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == request.entry_id);
+                if incoming.is_none() && current.is_none() {
+                    return Err(failure(ErrorCode::DependencyConflict, "resource-entry"));
+                }
+                if current
+                    .as_ref()
+                    .is_some_and(|value| value.origin_kind == TermOrigin::Manual)
+                    && matches!(request.decision, ResourceDecisionKind::Adopt)
+                {
+                    return Err(failure(ErrorCode::DependencyConflict, "resource-override"));
+                }
+                let revision = if matches!(
+                    request.decision,
+                    ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
+                ) {
+                    current
+                } else {
+                    let scope = if let Some(entry) = incoming {
+                        entry
+                            .native_key
+                            .as_deref()
+                            .map(|key| unit_for_native_key(&tx, request.project_id, key))
+                            .transpose()?
+                    } else {
+                        current.as_ref().and_then(|value| value.scope_unit_id)
+                    };
+                    let source = incoming
+                        .map(|entry| entry.source.as_str())
+                        .or_else(|| current.as_ref().map(|value| value.source.as_str()))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let target = incoming
+                        .map(|entry| entry.target.as_str())
+                        .or_else(|| current.as_ref().map(|value| value.target.as_str()))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let aliases = incoming
+                        .map(|entry| entry.aliases.as_slice())
+                        .or_else(|| current.as_ref().map(|value| value.aliases.as_slice()))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let reason = incoming
+                        .map(|entry| entry.reason.as_str())
+                        .unwrap_or("Removed from external resource");
+                    let protected = incoming
+                        .map(|entry| entry.protected)
+                        .or_else(|| current.as_ref().map(|value| value.protected))
+                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "resource-entry"))?;
+                    let changed = current.as_ref().is_none_or(|value| {
+                        value.source != source
+                            || value.target != target
+                            || value.aliases != aliases
+                            || value.protected != protected
+                            || value.scope_unit_id != scope
+                            || value.removed != incoming.is_none()
+                    });
+                    let revision = insert_term(
+                        &tx,
+                        request.project_id,
+                        &term_id,
+                        &file.target_locale,
+                        source,
+                        aliases,
+                        target,
+                        protected,
+                        scope,
+                        reason,
+                        "external",
+                        Some(request.capture_id),
+                        Some(&request.entry_id),
+                        request.expected_revision_id,
+                        incoming.is_none(),
+                        request.action_id,
+                        &request_digest,
+                    )?;
+                    if changed {
+                        write_change(
+                            &tx,
+                            request.project_id,
+                            "term",
+                            &file.target_locale,
+                            scope,
+                            current.as_ref().and_then(|value| value.scope_unit_id),
+                            Some(source),
+                            current.as_ref().map(|value| value.source.as_str()),
+                            request.expected_revision_id,
+                            revision.revision_id,
+                            request.action_id,
+                        )?;
+                    }
+                    Some(revision)
+                };
+                revision
+            }
         };
         tx.execute(
             "INSERT INTO resource_decisions
@@ -2683,6 +2877,7 @@ impl ProjectStore {
         #[cfg(test)]
         super::migration_crash_hook("after-resource-decision-commit");
         Ok(ResourceDecisionResult {
+            request: request.clone(),
             action_id: request.action_id,
             decision: request.decision.clone(),
             revision,
@@ -2791,7 +2986,7 @@ pub(super) fn resolve_terms_in(
             "SELECT o.revision_id,r.text FROM source_occurrences o
                  JOIN source_revisions r ON r.revision_id=o.revision_id
                  JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-                 WHERE o.unit_id=?1",
+                 WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
             [unit_id.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -3002,6 +3197,203 @@ mod tests {
                 expected_selection_id: None,
                 text: text.into(),
             })
+            .unwrap();
+    }
+
+    #[test]
+    fn correction_action_read_reconciles_lost_ack_without_a_resource_write() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let before = store
+            .save_translation_edit(&SaveTranslationRevision {
+                project_id,
+                action_id: ExecutionId::new(),
+                unit_id,
+                locale: "zh-CN".into(),
+                source_revision_id,
+                expected_selection_id: None,
+                text: "原译文".into(),
+            })
+            .unwrap();
+        let after = store
+            .save_translation_edit(&SaveTranslationRevision {
+                project_id,
+                action_id: ExecutionId::new(),
+                unit_id,
+                locale: "zh-CN".into(),
+                source_revision_id,
+                expected_selection_id: Some(before.selection.event_id),
+                text: "甲乙".into(),
+            })
+            .unwrap();
+        let evidence = store
+            .correction_term_basis(project_id, unit_id, "zh-CN", after.selection.event_id)
+            .unwrap();
+        let request = CaptureCorrectionTerm {
+            action_id: ExecutionId::new(),
+            basis: evidence.basis,
+            source: evidence.source_text,
+            target: "甲".into(),
+            protected: false,
+            reason: "Explicit correction".into(),
+        };
+        let receipt = store.capture_correction_term(&request).unwrap();
+        let fresh = CaptureCorrectionTerm {
+            action_id: ExecutionId::new(),
+            target: "乙".into(),
+            ..request.clone()
+        };
+        // The original commit is durable, but its acknowledgement was lost.
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.capture_correction_term(&request).unwrap(), receipt);
+        assert!(store.is_reconciling(), "idempotent replay is not a fresh admission");
+        assert_eq!(
+            store.capture_correction_term(&fresh).unwrap_err().code,
+            ErrorCode::OutcomeUnknown
+        );
+        let changes = store.changes_since(crate::execution::Revision::new(0).unwrap()).sequence;
+        let count = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM resource_captures", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .correction_term_capture_action(project_id, request.action_id)
+                .unwrap(),
+            Some(receipt)
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(store.changes_since(changes).sequence, changes);
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM resource_captures", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            count
+        );
+        assert_eq!(store.capture_correction_term(&fresh).unwrap().request, fresh);
+    }
+
+    #[test]
+    fn resource_decision_action_read_reconciles_lost_ack_without_a_resource_write() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let capture = store
+            .capture_glossary(
+                project_id,
+                ExecutionId::new(),
+                include_bytes!("../../tests/fixtures/resource-updates/g1.json"),
+            )
+            .unwrap();
+        let request = ResourceDecision {
+            project_id,
+            action_id: ExecutionId::new(),
+            capture_id: capture.capture_id,
+            entry_id: "barrel".into(),
+            expected_revision_id: None,
+            decision: ResourceDecisionKind::Adopt,
+        };
+        let receipt = store.decide_glossary_entry(&request).unwrap();
+        let fresh = ResourceDecision {
+            action_id: ExecutionId::new(),
+            entry_id: "box".into(),
+            ..request.clone()
+        };
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.decide_glossary_entry(&request).unwrap(), receipt);
+        assert!(store.is_reconciling());
+        assert_eq!(
+            store.decide_glossary_entry(&fresh).unwrap_err().code,
+            ErrorCode::OutcomeUnknown
+        );
+        let changes = store.changes_since(crate::execution::Revision::new(0).unwrap()).sequence;
+        let counts = {
+            let c = store.connection().unwrap();
+            (
+                c.query_row("SELECT COUNT(*) FROM resource_decisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                c.query_row("SELECT COUNT(*) FROM term_revisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            )
+        };
+        assert_eq!(
+            store
+                .resource_decision_action(&request)
+                .unwrap(),
+            Some(ResourceDecisionActionRead { request: request.clone(), receipt })
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(store.changes_since(changes).sequence, changes);
+        let c = store.connection().unwrap();
+        assert_eq!(
+            (
+                c.query_row("SELECT COUNT(*) FROM resource_decisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                c.query_row("SELECT COUNT(*) FROM term_revisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            ),
+            counts
+        );
+        assert_eq!(store.decide_glossary_entry(&fresh).unwrap().request, fresh);
+    }
+
+    #[test]
+    fn missing_context_fact_action_read_reconciles_without_a_resource_write() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let action_id = ExecutionId::new();
+        let glossary = include_bytes!("../../tests/fixtures/resource-updates/g1.json");
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            store
+                .capture_glossary(project_id, ExecutionId::new(), glossary)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutcomeUnknown
+        );
+        let changes = store.changes_since(crate::execution::Revision::new(0).unwrap()).sequence;
+        let count = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM context_fact_decisions", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(store.context_fact_action(project_id, action_id).unwrap(), None);
+        assert!(!store.is_reconciling());
+        assert_eq!(store.changes_since(changes).sequence, changes);
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM context_fact_decisions", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            count
+        );
+        store
+            .capture_glossary(project_id, ExecutionId::new(), glossary)
             .unwrap();
     }
 
@@ -3399,6 +3791,304 @@ mod tests {
     }
 
     #[test]
+    fn manual_resource_action_reads_bind_requests_and_preserve_historical_receipts() {
+        let (temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let term = SaveTerm {
+            project_id,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Barrel".into(),
+            aliases: vec!["Cask".into()],
+            target: "木桶".into(),
+            protected: true,
+            scope_unit_id: Some(unit_id),
+            expected_revision_id: None,
+            reason: "Reviewed".into(),
+        };
+        let context = SaveContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            expected_revision_id: None,
+            text: "".into(),
+            reason: "Reviewed".into(),
+        };
+        let capture = CaptureContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            budget_bytes: 16 * 1024,
+        };
+        let initial_sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        assert_eq!(store.term_save_action(&term).unwrap(), None);
+        assert_eq!(store.context_save_action(&context).unwrap(), None);
+        assert_eq!(store.context_capture_action(&capture).unwrap(), None);
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            initial_sequence
+        );
+
+        let saved_term = store.save_term(&term).unwrap();
+        let saved_context = store.save_context(&context).unwrap();
+        let saved_capture = store.capture_context(&capture).unwrap();
+        let term_read = Some(TermSaveActionRead {
+            request: term.clone(),
+            receipt: saved_term.clone(),
+        });
+        let context_read = Some(ContextSaveActionRead {
+            request: context.clone(),
+            receipt: saved_context.clone(),
+        });
+        let capture_read = Some(ContextCaptureActionRead {
+            request: capture.clone(),
+            receipt: saved_capture.clone(),
+        });
+        let saved_sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        assert_eq!(store.term_save_action(&term).unwrap(), term_read);
+        assert_eq!(store.context_save_action(&context).unwrap(), context_read);
+        assert_eq!(store.context_capture_action(&capture).unwrap(), capture_read);
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            saved_sequence
+        );
+
+        let mut wrong_term = term.clone();
+        wrong_term.target = "酒桶".into();
+        assert_eq!(
+            store.term_save_action(&wrong_term).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        wrong_term = term.clone();
+        wrong_term.expected_revision_id = Some(ExecutionId::new());
+        assert_eq!(
+            store.term_save_action(&wrong_term).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        let mut wrong_context = context.clone();
+        wrong_context.source_revision_id = ExecutionId::new();
+        assert_eq!(
+            store.context_save_action(&wrong_context).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        wrong_context = context.clone();
+        wrong_context.action_id = term.action_id;
+        assert_eq!(
+            store.context_save_action(&wrong_context).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        let mut wrong_capture = capture.clone();
+        wrong_capture.budget_bytes -= 1;
+        assert_eq!(
+            store.context_capture_action(&wrong_capture).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        wrong_capture = capture.clone();
+        wrong_capture.action_id = context.action_id;
+        assert_eq!(
+            store.context_capture_action(&wrong_capture).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE term_revisions SET target='forged' WHERE action_id=?1",
+                [term.action_id.to_string()],
+            )
+            .unwrap();
+        assert_eq!(
+            store.term_save_action(&term).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE term_revisions SET target=?2 WHERE action_id=?1",
+                params![term.action_id.to_string(), &term.target],
+            )
+            .unwrap();
+        let mut forged_capture = saved_capture.clone();
+        forged_capture.unit_id = ExecutionId::new();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE context_captures SET input_json=?2 WHERE action_id=?1",
+                params![
+                    capture.action_id.to_string(),
+                    serde_json::to_string(&forged_capture).unwrap()
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            store.context_capture_action(&capture).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE context_captures SET input_json='{}' WHERE action_id=?1",
+                [capture.action_id.to_string()],
+            )
+            .unwrap();
+        assert_eq!(
+            store.context_capture_action(&capture).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE context_captures SET input_json=?2 WHERE action_id=?1",
+                params![
+                    capture.action_id.to_string(),
+                    serde_json::to_string(&saved_capture).unwrap()
+                ],
+            )
+            .unwrap();
+
+        store
+            .save_term(&SaveTerm {
+                action_id: ExecutionId::new(),
+                term_id: Some(saved_term.term_id.clone()),
+                expected_revision_id: Some(saved_term.revision_id),
+                target: "大木桶".into(),
+                ..term.clone()
+            })
+            .unwrap();
+        store
+            .save_context(&SaveContext {
+                action_id: ExecutionId::new(),
+                expected_revision_id: Some(saved_context.revision_id),
+                text: "Updated".into(),
+                ..context.clone()
+            })
+            .unwrap();
+        assert_eq!(store.term_save_action(&term).unwrap(), term_read);
+        assert_eq!(store.context_save_action(&context).unwrap(), context_read);
+        assert_eq!(store.context_capture_action(&capture).unwrap(), capture_read);
+
+        store.close().unwrap();
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.term_save_action(&term).unwrap(), term_read);
+        assert_eq!(reopened.context_save_action(&context).unwrap(), context_read);
+        assert_eq!(reopened.context_capture_action(&capture).unwrap(), capture_read);
+    }
+
+    #[test]
+    fn context_capture_action_read_reconciles_unknown_without_writing_resources() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let capture = CaptureContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            budget_bytes: 16 * 1024,
+        };
+        let receipt = store.capture_context(&capture).unwrap();
+        let fresh = SaveTerm {
+            project_id,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Barrel".into(),
+            aliases: vec![],
+            target: "木桶".into(),
+            protected: false,
+            scope_unit_id: Some(unit_id),
+            expected_revision_id: None,
+            reason: "Reviewed".into(),
+        };
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.save_term(&fresh).unwrap_err().code, ErrorCode::OutcomeUnknown);
+        let sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let counts: (i64, i64, i64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM term_revisions),
+                        (SELECT COUNT(*) FROM context_captures),
+                        (SELECT COUNT(*) FROM resource_changes)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            store.context_capture_action(&capture).unwrap(),
+            Some(ContextCaptureActionRead {
+                request: capture.clone(),
+                receipt,
+            })
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            sequence
+        );
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT (SELECT COUNT(*) FROM term_revisions),
+                            (SELECT COUNT(*) FROM context_captures),
+                            (SELECT COUNT(*) FROM resource_changes)",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap(),
+            counts
+        );
+        store.save_term(&fresh).unwrap();
+
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut missing = capture;
+        missing.action_id = ExecutionId::new();
+        let sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        assert_eq!(store.context_capture_action(&missing).unwrap(), None);
+        assert!(!store.is_reconciling());
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            sequence
+        );
+    }
+
+    #[test]
     fn equal_authority_conflicts_require_explicit_unit_scope_and_stale_writes_fail() {
         let (_temp, mut store, project_id) = fixture_project();
         let barrel = unit(&store, project_id, "data.item.barrel.name");
@@ -3732,303 +4422,6 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn manual_resource_action_reads_bind_requests_and_preserve_historical_receipts() {
-        let (temp, mut store, project_id) = fixture_project();
-        let unit_id = unit(&store, project_id, "data.item.barrel.name");
-        let (source_revision_id, _, _, _) =
-            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
-        let term = SaveTerm {
-            project_id,
-            action_id: ExecutionId::new(),
-            term_id: None,
-            locale: "zh-CN".into(),
-            source: "Barrel".into(),
-            aliases: vec!["Cask".into()],
-            target: "木桶".into(),
-            protected: true,
-            scope_unit_id: Some(unit_id),
-            expected_revision_id: None,
-            reason: "Reviewed".into(),
-        };
-        let context = SaveContext {
-            project_id,
-            action_id: ExecutionId::new(),
-            unit_id,
-            locale: "zh-CN".into(),
-            source_revision_id,
-            expected_revision_id: None,
-            text: "".into(),
-            reason: "Reviewed".into(),
-        };
-        let capture = CaptureContext {
-            project_id,
-            action_id: ExecutionId::new(),
-            unit_id,
-            locale: "zh-CN".into(),
-            source_revision_id,
-            budget_bytes: 16 * 1024,
-        };
-        let initial_sequence = store
-            .changes_since(crate::execution::Revision::new(0).unwrap())
-            .sequence;
-        assert_eq!(store.term_save_action(&term).unwrap(), None);
-        assert_eq!(store.context_save_action(&context).unwrap(), None);
-        assert_eq!(store.context_capture_action(&capture).unwrap(), None);
-        assert_eq!(
-            store
-                .changes_since(crate::execution::Revision::new(0).unwrap())
-                .sequence,
-            initial_sequence
-        );
-
-        let saved_term = store.save_term(&term).unwrap();
-        let saved_context = store.save_context(&context).unwrap();
-        let saved_capture = store.capture_context(&capture).unwrap();
-        let term_read = Some(TermSaveActionRead {
-            request: term.clone(),
-            receipt: saved_term.clone(),
-        });
-        let context_read = Some(ContextSaveActionRead {
-            request: context.clone(),
-            receipt: saved_context.clone(),
-        });
-        let capture_read = Some(ContextCaptureActionRead {
-            request: capture.clone(),
-            receipt: saved_capture.clone(),
-        });
-        let saved_sequence = store
-            .changes_since(crate::execution::Revision::new(0).unwrap())
-            .sequence;
-        assert_eq!(store.term_save_action(&term).unwrap(), term_read);
-        assert_eq!(store.context_save_action(&context).unwrap(), context_read);
-        assert_eq!(store.context_capture_action(&capture).unwrap(), capture_read);
-        assert_eq!(
-            store
-                .changes_since(crate::execution::Revision::new(0).unwrap())
-                .sequence,
-            saved_sequence
-        );
-
-        let mut wrong_term = term.clone();
-        wrong_term.target = "酒桶".into();
-        assert_eq!(
-            store.term_save_action(&wrong_term).unwrap_err().code,
-            ErrorCode::ResultMismatch
-        );
-        wrong_term = term.clone();
-        wrong_term.expected_revision_id = Some(ExecutionId::new());
-        assert_eq!(
-            store.term_save_action(&wrong_term).unwrap_err().code,
-            ErrorCode::ResultMismatch
-        );
-        let mut wrong_context = context.clone();
-        wrong_context.source_revision_id = ExecutionId::new();
-        assert_eq!(
-            store.context_save_action(&wrong_context).unwrap_err().code,
-            ErrorCode::ResultMismatch
-        );
-        wrong_context = context.clone();
-        wrong_context.action_id = term.action_id;
-        assert_eq!(
-            store.context_save_action(&wrong_context).unwrap_err().code,
-            ErrorCode::ResultMismatch
-        );
-        let mut wrong_capture = capture.clone();
-        wrong_capture.budget_bytes -= 1;
-        assert_eq!(
-            store.context_capture_action(&wrong_capture).unwrap_err().code,
-            ErrorCode::ResultMismatch
-        );
-        wrong_capture = capture.clone();
-        wrong_capture.action_id = context.action_id;
-        assert_eq!(
-            store.context_capture_action(&wrong_capture).unwrap_err().code,
-            ErrorCode::ResultMismatch
-        );
-
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE term_revisions SET target='forged' WHERE action_id=?1",
-                [term.action_id.to_string()],
-            )
-            .unwrap();
-        assert_eq!(
-            store.term_save_action(&term).unwrap_err().code,
-            ErrorCode::CorruptLedger
-        );
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE term_revisions SET target=?2 WHERE action_id=?1",
-                params![term.action_id.to_string(), &term.target],
-            )
-            .unwrap();
-        let mut forged_capture = saved_capture.clone();
-        forged_capture.unit_id = ExecutionId::new();
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE context_captures SET input_json=?2 WHERE action_id=?1",
-                params![
-                    capture.action_id.to_string(),
-                    serde_json::to_string(&forged_capture).unwrap()
-                ],
-            )
-            .unwrap();
-        assert_eq!(
-            store.context_capture_action(&capture).unwrap_err().code,
-            ErrorCode::CorruptLedger
-        );
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE context_captures SET input_json='{}' WHERE action_id=?1",
-                [capture.action_id.to_string()],
-            )
-            .unwrap();
-        assert_eq!(
-            store.context_capture_action(&capture).unwrap_err().code,
-            ErrorCode::CorruptLedger
-        );
-        store
-            .connection()
-            .unwrap()
-            .execute(
-                "UPDATE context_captures SET input_json=?2 WHERE action_id=?1",
-                params![
-                    capture.action_id.to_string(),
-                    serde_json::to_string(&saved_capture).unwrap()
-                ],
-            )
-            .unwrap();
-
-        store
-            .save_term(&SaveTerm {
-                action_id: ExecutionId::new(),
-                term_id: Some(saved_term.term_id.clone()),
-                expected_revision_id: Some(saved_term.revision_id),
-                target: "大木桶".into(),
-                ..term.clone()
-            })
-            .unwrap();
-        store
-            .save_context(&SaveContext {
-                action_id: ExecutionId::new(),
-                expected_revision_id: Some(saved_context.revision_id),
-                text: "Updated".into(),
-                ..context.clone()
-            })
-            .unwrap();
-        assert_eq!(store.term_save_action(&term).unwrap(), term_read);
-        assert_eq!(store.context_save_action(&context).unwrap(), context_read);
-        assert_eq!(store.context_capture_action(&capture).unwrap(), capture_read);
-
-        store.close().unwrap();
-        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
-        assert_eq!(reopened.term_save_action(&term).unwrap(), term_read);
-        assert_eq!(reopened.context_save_action(&context).unwrap(), context_read);
-        assert_eq!(reopened.context_capture_action(&capture).unwrap(), capture_read);
-    }
-    #[test]
-    fn context_capture_action_read_reconciles_unknown_without_writing_resources() {
-        let (_temp, mut store, project_id) = fixture_project();
-        let unit_id = unit(&store, project_id, "data.item.barrel.name");
-        let (source_revision_id, _, _, _) =
-            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
-        let capture = CaptureContext {
-            project_id,
-            action_id: ExecutionId::new(),
-            unit_id,
-            locale: "zh-CN".into(),
-            source_revision_id,
-            budget_bytes: 16 * 1024,
-        };
-        let receipt = store.capture_context(&capture).unwrap();
-        let fresh = SaveTerm {
-            project_id,
-            action_id: ExecutionId::new(),
-            term_id: None,
-            locale: "zh-CN".into(),
-            source: "Barrel".into(),
-            aliases: vec![],
-            target: "木桶".into(),
-            protected: false,
-            scope_unit_id: Some(unit_id),
-            expected_revision_id: None,
-            reason: "Reviewed".into(),
-        };
-        store
-            .execution_unknown
-            .store(true, std::sync::atomic::Ordering::Release);
-        assert_eq!(store.save_term(&fresh).unwrap_err().code, ErrorCode::OutcomeUnknown);
-        let sequence = store
-            .changes_since(crate::execution::Revision::new(0).unwrap())
-            .sequence;
-        let counts: (i64, i64, i64) = store
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT (SELECT COUNT(*) FROM term_revisions),
-                        (SELECT COUNT(*) FROM context_captures),
-                        (SELECT COUNT(*) FROM resource_changes)",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            store.context_capture_action(&capture).unwrap(),
-            Some(ContextCaptureActionRead {
-                request: capture.clone(),
-                receipt,
-            })
-        );
-        assert!(!store.is_reconciling());
-        assert_eq!(
-            store
-                .changes_since(crate::execution::Revision::new(0).unwrap())
-                .sequence,
-            sequence
-        );
-        assert_eq!(
-            store
-                .connection()
-                .unwrap()
-                .query_row(
-                    "SELECT (SELECT COUNT(*) FROM term_revisions),
-                            (SELECT COUNT(*) FROM context_captures),
-                            (SELECT COUNT(*) FROM resource_changes)",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .unwrap(),
-            counts
-        );
-        store.save_term(&fresh).unwrap();
-
-        store
-            .execution_unknown
-            .store(true, std::sync::atomic::Ordering::Release);
-        let mut missing = capture;
-        missing.action_id = ExecutionId::new();
-        let sequence = store
-            .changes_since(crate::execution::Revision::new(0).unwrap())
-            .sequence;
-        assert_eq!(store.context_capture_action(&missing).unwrap(), None);
-        assert!(!store.is_reconciling());
-        assert_eq!(
-            store
-                .changes_since(crate::execution::Revision::new(0).unwrap())
-                .sequence,
-            sequence
-        );
-    }
-
     #[test]
     fn file_decision_action_reads_bind_complete_requests_without_mutating_history() {
         let (temp, mut store, project) = fixture_project();

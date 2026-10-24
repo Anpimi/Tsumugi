@@ -1,0 +1,32 @@
+{
+  "status": "DRILL-ONLY",
+  "recordKind": "illustrative-not-observed",
+  "notice": "This authored example demonstrates separate observations and an edit. No independent reviewer, elapsed time or edit count was measured.",
+  "packetId": "drill-1",
+  "reviewer": null,
+  "revealStatus": "NOT-RUN",
+  "observations": [
+    {
+      "label": "Q",
+      "structure": "No structural result is recorded by this drill.",
+      "terminology": "No approved term applies to this case.",
+      "contextAndMeaning": "The financial-institution reading conflicts with the supplied river-landing context."
+    },
+    {
+      "label": "R",
+      "structure": "No structural result is recorded by this drill.",
+      "terminology": "No approved term applies to this case.",
+      "contextAndMeaning": "The river-edge reading preserves the intended sense. Other faithful wording may also be acceptable."
+    }
+  ],
+  "exampleEdit": {
+    "label": "R",
+    "before": "在河岸边等候。",
+    "after": "请在河岸边等候。",
+    "reason": "Illustrative politeness edit, not an observed reviewer preference.",
+    "elapsedSeconds": null,
+    "modifiedCharacters": null,
+    "measurementStatus": "NOT-RUN"
+  },
+  "maintenanceReuse": "NOT-RUN"
+}

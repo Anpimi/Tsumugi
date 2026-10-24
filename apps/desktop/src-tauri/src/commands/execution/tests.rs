@@ -391,7 +391,7 @@ fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
         "preview_ai_translation",
         request(
             &context,
-            json!({"config":config,"locale":"zh-CN","unitIds":units}),
+            json!({"config":super::ai_wire::AiConfig::from(config.clone()),"locale":"zh-CN","unitIds":units}),
         ),
     )
     .unwrap();
@@ -574,7 +574,7 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
         "preview_arena_translation",
         request(
             &context,
-            json!({"config":config,"locale":"zh-CN","unitIds":[unit]}),
+            json!({"config":super::ai_wire::ArenaConfig::from(config.clone()),"locale":"zh-CN","unitIds":[unit]}),
         ),
     )
     .unwrap();
@@ -585,7 +585,7 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
         "preview_arena_translation",
         request(
             &context,
-            json!({"config":config,"locale":"zh-CN","unitIds":[unit]}),
+            json!({"config":super::ai_wire::ArenaConfig::from(config.clone()),"locale":"zh-CN","unitIds":[unit]}),
         ),
     )
     .unwrap();
@@ -646,7 +646,7 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
         "preview_arena_translation",
         request(
             &context,
-            json!({"config":config,"locale":"zh-CN","unitIds":[unit]}),
+            json!({"config":super::ai_wire::ArenaConfig::from(config.clone()),"locale":"zh-CN","unitIds":[unit]}),
         ),
     )
     .unwrap();
@@ -916,7 +916,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     let cancelled = tauri::async_runtime::block_on(check).unwrap();
     assert_eq!(
         cancelled.outcome,
-        tsumugi_core::ReviewCheckOutcome::Cancelled
+        super::review_wire::ReviewCheckOutcome::Cancelled
     );
     assert!(
         cancelled
@@ -1507,6 +1507,9 @@ fn arena_receipt_source(
 
 fn arena_receipt_config() -> tsumugi_core::ai::arena::ArenaConfig {
     let variant = tsumugi_core::ai::AiConfig {
+        connection_profile: None,
+        context_strategy: None,
+        source_context: Default::default(),
         endpoint: "http://127.0.0.1:9".into(),
         model: "arena-receipt-model".into(),
         credential_env: "TSUMUGI_NONEXISTENT_ARENA_RECEIPT_FIXTURE".into(),

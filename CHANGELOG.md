@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Core application execution, captured plugin grants, team coordination records, context strategies and detailed provider usage now share the project authority and its checked reopen path. This source integration provides their Core owners; desktop plugin loading and the Pi member runtime require their separate adapters.
+
 - Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Core adapters, application members and desktop plugin loading are not included; frozen runtime and plugin pins remain unchanged.
 
 - Experimental standalone plugin SDK source with Rust data contracts, a conformance CLI, synthetic examples, and self-contained JavaScript bindings and generation tooling. SDK integration does not add a plugin Host or desktop plugin loading; existing immutable SDK archives remain unchanged.
@@ -41,10 +43,12 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
+- Default Core domain execution requires captured SDK plugin evidence. The current desktop explicitly selects a temporary `legacy-desktop-domain` profile for its existing built-in imports, QA and builds; both profiles use the same Store, runtime, ledger and receipt validation. Plugin-bound inputs retain their strict checks.
+
 - Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization. Reopening preserves durable request reservations and uncertain exposure without replaying old queued work.
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
-- Project storage now uses schema 13, with exact recovery-intent associations committed atomically with their new execution attempt. Other development schemas are unsupported and are refused before schema changes; preserve their directories and create a new project to reimport the original source files. Current projects reopen with full integrity checks. Unsupported or corrupt databases are never reset.
+- Project storage now uses schema 61, with exact recovery-intent associations committed atomically with their new execution attempt. Other development schemas are unsupported and are refused before schema changes; preserve their directories and create a new project to reimport the original source files. Current projects reopen with full integrity checks. Unsupported or corrupt databases are never reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 

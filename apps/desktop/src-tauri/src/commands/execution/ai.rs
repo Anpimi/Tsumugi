@@ -1,6 +1,6 @@
-use super::ai_wire::{AiItemView, AiOutputView, AiPreviewView};
+use super::ai_wire::{AiConfig, AiItemView, AiOutputView, AiPreviewView, ProviderBudget};
 use super::*;
-use tsumugi_core::ai::{AiConfig, AiPreview};
+use tsumugi_core::ai::AiPreview;
 #[derive(Default)]
 pub(super) struct AiSession {
     preview: Option<(AiPreview, FixedInput)>,
@@ -40,7 +40,7 @@ pub struct AiRow {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiView {
-    budget: Option<tsumugi_core::ProviderBudget>,
+    budget: Option<ProviderBudget>,
     config: AiConfig,
     recipe: String,
     detail: AttemptDetail,
@@ -105,7 +105,7 @@ pub async fn preview_ai_translation(
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 let preview = store
-                    .preview_ai(request.config, &request.locale, &request.unit_ids)
+                    .preview_ai(request.config.into(), &request.locale, &request.unit_ids)
                     .map_err(map_ai)?;
                 let input = preview
                     .fixed_input(
@@ -269,8 +269,8 @@ pub async fn read_ai_translation(
                     .collect::<Result<Vec<_>, ExecutionError>>()
                     .map_err(map_ai)?;
                 Ok(AiView {
-                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?,
-                    config: settings.config,
+                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?.map(Into::into),
+                    config: settings.config.into(),
                     recipe: settings.recipe,
                     detail,
                     rows,

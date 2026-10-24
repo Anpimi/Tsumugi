@@ -27,6 +27,8 @@ impl ChangeScope {
             "source-snapshot" => Self::Source,
             "translation-revision" | "translation-selection" => Self::Translation,
             "release" => Self::Release,
+            "resource-capture" => Self::Resources,
+            "review" => Self::Review,
             // An extension can affect facts the desktop does not yet understand.
             _ => Self::Project,
         }
@@ -37,7 +39,10 @@ impl ChangeScope {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChangeSnapshot {
-    #[cfg_attr(feature = "wire-schema", schemars(with = "crate::execution::ExecutionId"))]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(with = "crate::execution::ExecutionId")
+    )]
     pub epoch: String,
     pub sequence: Revision,
     pub progress_sequence: Revision,

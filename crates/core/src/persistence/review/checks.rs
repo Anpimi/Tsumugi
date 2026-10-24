@@ -1,35 +1,115 @@
 //! Capture and commit adapters for database-independent review computation.
 use super::*;
-mod reads;
-pub use reads::{ReviewCheckActionRequest, ReviewCheckActionRead};
-use crate::review::{CheckInput, check_rules, interrupted_rules};
+use crate::review::CheckInput;
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+use crate::review::{check_rules, interrupted_rules};
 
-#[derive(Debug)]
+mod adoption;
+mod choices;
+mod reads;
+pub use reads::{ReviewCheckActionRequest, ReviewCheckActionSelection, ReviewCheckActionRead};
+pub(super) use choices::request_digest;
+pub(crate) use choices::validate_choices;
+pub use choices::{AdvisoryReviewCheck, ReviewChecker, ReviewCheckerKey, ReviewCheckerKind};
+mod capture;
+mod execution;
+pub(in crate::persistence) use adoption::CHECK_VERSION as CURRENT_CHECK_VERSION;
+pub use adoption::ReviewCheckEvidence;
+pub(in crate::persistence) use adoption::candidate_checks_clean;
+pub(super) use adoption::coverage_complete;
+pub(in crate::persistence) use adoption::validator_version;
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub(super) use adoption::validate_legacy_source;
+pub(in crate::persistence) use adoption::{PreparedReviewAdoption, validate_candidate_evidence};
+pub(super) use adoption::{validate_projection, validate_saved, validate_saved_frames};
+pub use capture::ReviewCheckPlan;
+pub(super) use capture::ReviewMaterial;
+pub use execution::{
+    CapturedReviewCheckExecution, ComputedReviewEvidence, ReviewCheckOrigin,
+    ReviewCheckOriginEvidence, ReviewInvocationOutcome,
+};
+
+/// Capture candidate QA without selecting it. Only an action that may actually
+/// select reserves an event; check-only material retains no selection identity.
+pub(in crate::persistence) fn prepare_candidate_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    current: &ReviewTarget,
+    selection_id: Option<ExecutionId>,
+    revision_id: ExecutionId,
+    text: &str,
+    terms: &resources::TermResolution,
+    advisory_checks: &[AdvisoryReviewCheck],
+) -> Result<PreparedReviewCheck, ExecutionError> {
+    let mut target = current.clone();
+    target.selection_id = selection_id;
+    target.revision_id = Some(revision_id);
+    target.translation_text = Some(text.into());
+    target.basis_evidence.selection_id = selection_id;
+    target.basis_evidence.revision_id = Some(revision_id);
+    target.basis = basis_digest(&target.basis_evidence)?;
+    target.current_decision = None;
+    target.current_check = None;
+    target.current_fallback = None;
+    target.current_waivers.clear();
+    let request_digest = choices::request_digest(
+        project_id,
+        target.unit_id,
+        &target.locale,
+        &target.basis,
+        action_id,
+        advisory_checks,
+    )?;
+    let plan = capture::capture_in(connection, project_id, &target, terms, advisory_checks)?;
+    let mut capture = Capture {
+        project_id,
+        action_id,
+        request_digest,
+        target,
+        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+        terms: terms.clone(),
+        plan,
+        inputs: Vec::new(),
+    };
+    capture.inputs = execution::execution_inputs(&capture)?;
+    Ok(PreparedReviewCheck {
+        state: PreparedState::Pending(capture),
+    })
+}
+
+#[derive(Clone, Debug)]
 struct Capture {
     project_id: ExecutionId,
     action_id: ExecutionId,
     request_digest: String,
     target: ReviewTarget,
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     terms: resources::TermResolution,
+    plan: Option<ReviewCheckPlan>,
+    inputs: Vec<crate::execution::FixedInput>,
 }
 
 /// An immutable, store-created input. Callers cannot substitute its scope or basis.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PreparedReviewCheck {
     state: PreparedState,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum PreparedState {
     Pending(Capture),
     Recorded {
+        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
         project_id: ExecutionId,
+        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
         request_digest: String,
         run: CheckRun,
     },
 }
 
 /// Computation carries its original authority; it cannot be deserialized from IPC.
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 #[derive(Debug)]
 pub struct ComputedReviewCheck {
     prepared: PreparedReviewCheck,
@@ -37,6 +117,23 @@ pub struct ComputedReviewCheck {
 }
 
 impl PreparedReviewCheck {
+    /// A durable retry needs neither a new worker nor renewed execution consent.
+    pub fn recorded_run(&self) -> Option<&CheckRun> {
+        match &self.state {
+            PreparedState::Recorded { run, .. } => Some(run),
+            PreparedState::Pending(_) => None,
+        }
+    }
+
+    /// Original policy/domain capture; recorded retries create no new plan.
+    pub fn plan(&self) -> Option<&ReviewCheckPlan> {
+        match &self.state {
+            PreparedState::Pending(capture) => capture.plan.as_ref(),
+            PreparedState::Recorded { .. } => None,
+        }
+    }
+
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     /// Runs with owned values only, without holding a connection or transaction.
     pub fn compute(self, cancellation: &Cancellation) -> ComputedReviewCheck {
         let rules = match &self.state {
@@ -87,11 +184,19 @@ impl ProjectStore {
         locale: &str,
         expected_basis: &str,
         action_id: ExecutionId,
+        advisory_checks: &[AdvisoryReviewCheck],
     ) -> Result<PreparedReviewCheck, ExecutionError> {
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "review-session"));
         }
-        let request_digest = digest(&(project_id, unit_id, locale, expected_basis, action_id))?;
+        let request_digest = choices::request_digest(
+            project_id,
+            unit_id,
+            locale,
+            expected_basis,
+            action_id,
+            advisory_checks,
+        )?;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?;
@@ -103,7 +208,9 @@ impl ProjectStore {
                 return if prior_digest == request_digest {
                     Ok(PreparedReviewCheck {
                         state: PreparedState::Recorded {
+                            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
                             project_id,
+                            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
                             request_digest,
                             run,
                         },
@@ -121,18 +228,26 @@ impl ProjectStore {
                     }));
             }
             let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
+            let plan =
+                capture::capture_in(connection, project_id, &target, &terms, advisory_checks)?;
+            let mut capture = Capture {
+                project_id,
+                action_id,
+                request_digest,
+                target,
+                #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+                terms,
+                plan,
+                inputs: Vec::new(),
+            };
+            capture.inputs = execution::execution_inputs(&capture)?;
             Ok(PreparedReviewCheck {
-                state: PreparedState::Pending(Capture {
-                    project_id,
-                    action_id,
-                    request_digest,
-                    target,
-                    terms,
-                }),
+                state: PreparedState::Pending(capture),
             })
         })
     }
 
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     pub fn commit_review_check(
         &mut self,
         computed: ComputedReviewCheck,
@@ -162,6 +277,12 @@ impl ProjectStore {
                 };
             }
         };
+        if capture.plan.is_some() {
+            return Err(failure(
+                ErrorCode::InvalidInput,
+                "review-plugin-evidence-required",
+            ));
+        }
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
@@ -211,29 +332,15 @@ impl ProjectStore {
         if cancellation.is_requested() {
             rules = interrupted_rules("cancelled", "Cancelled before completion");
         }
-        let mut rules_json = serde_json::to_string(&rules)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        if rules_json.len() > 65_536 {
-            rules_json = serde_json::to_string(&interrupted_rules("failed", "limit-exceeded"))
-                .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        }
-        let basis_json = serde_json::to_string(&target.basis_evidence)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-basis"))?;
-        if cancellation.is_requested() {
-            rules_json = serde_json::to_string(&interrupted_rules(
-                "cancelled",
-                "Cancelled before completion",
-            ))
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        }
-        transaction.execute(
-            "INSERT INTO review_checks
-             (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![ExecutionId::new().to_string(), capture.action_id.to_string(),
-                capture.project_id.to_string(), target.unit_id.to_string(), target.locale,
-                target.basis, basis_json, CHECK_VERSION, rules_json, capture.request_digest],
-        ).map_err(sql)?;
+        record_check_in(
+            &transaction,
+            capture.project_id,
+            capture.action_id,
+            &capture.request_digest,
+            &target,
+            &rules,
+            cancellation,
+        )?;
         commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-check-commit")
@@ -247,6 +354,46 @@ impl ProjectStore {
         .map(|item| item.0)
         .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-receipt"))
     }
+}
+
+/// Record computed rules against an already rechecked target inside the caller's
+/// transaction. Both manual checks and automatic selection use this authority.
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub(in crate::persistence) fn record_check_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    request_digest: &str,
+    target: &ReviewTarget,
+    rules: &[CheckRuleResult],
+    cancellation: &Cancellation,
+) -> Result<CheckRun, ExecutionError> {
+    let mut rules_json = serde_json::to_string(rules)
+        .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+    if rules_json.len() > 65_536 {
+        rules_json = serde_json::to_string(&interrupted_rules("failed", "limit-exceeded"))
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+    }
+    let basis_json = serde_json::to_string(&target.basis_evidence)
+        .map_err(|_| failure(ErrorCode::StorageFailed, "review-basis"))?;
+    if cancellation.is_requested() {
+        rules_json = serde_json::to_string(&interrupted_rules(
+            "cancelled",
+            "Cancelled before completion",
+        ))
+        .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+    }
+    connection.execute(
+        "INSERT INTO review_checks
+         (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest,purpose)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'qa')",
+        params![ExecutionId::new().to_string(), action_id.to_string(), project_id.to_string(),
+            target.unit_id.to_string(), target.locale, target.basis, basis_json,
+            CHECK_VERSION, rules_json, request_digest],
+    ).map_err(sql)?;
+    check_by_action(connection, project_id, action_id)?
+        .map(|item| item.0)
+        .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-receipt"))
 }
 
 #[cfg(test)]
@@ -303,7 +450,7 @@ mod tests {
             let basis = store.review_target(project, unit, "zh-CN").unwrap().basis;
             let action = ExecutionId::new();
             let prepared = store
-                .prepare_review_check(project, unit, "zh-CN", &basis, action)
+                .prepare_review_check(project, unit, "zh-CN", &basis, action, &[])
                 .unwrap();
             let computed = prepared.compute(&Cancellation::default());
             if change_terms {
@@ -355,10 +502,10 @@ mod tests {
         let basis = store.review_target(project, unit, "zh-CN").unwrap().basis;
         let action = ExecutionId::new();
         let first = store
-            .prepare_review_check(project, unit, "zh-CN", &basis, action)
+            .prepare_review_check(project, unit, "zh-CN", &basis, action, &[])
             .unwrap();
         let second = store
-            .prepare_review_check(project, unit, "zh-CN", &basis, action)
+            .prepare_review_check(project, unit, "zh-CN", &basis, action, &[])
             .unwrap();
         let signal = Cancellation::default();
         let computed = first.compute(&signal);
@@ -383,13 +530,13 @@ mod tests {
         );
         assert_eq!(
             store
-                .prepare_review_check(project, unit, "fr-FR", &basis, action)
+                .prepare_review_check(project, unit, "fr-FR", &basis, action, &[])
                 .unwrap_err()
                 .code,
             ErrorCode::ResultMismatch
         );
         let replay = store
-            .prepare_review_check(project, unit, "zh-CN", &basis, action)
+            .prepare_review_check(project, unit, "zh-CN", &basis, action, &[])
             .unwrap();
         let (_other_directory, mut other_store, _, _) = fixture();
         assert_eq!(
@@ -411,7 +558,7 @@ mod tests {
         let basis = store.review_target(project, unit, "zh-CN").unwrap().basis;
         let late_action = ExecutionId::new();
         let late = store
-            .prepare_review_check(project, unit, "zh-CN", &basis, late_action)
+            .prepare_review_check(project, unit, "zh-CN", &basis, late_action, &[])
             .unwrap();
         let current = store
             .run_review_checks(project, unit, "zh-CN", &basis, ExecutionId::new())

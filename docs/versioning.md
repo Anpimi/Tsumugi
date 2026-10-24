@@ -73,3 +73,35 @@ New local conformance runtimes are explicit test inputs, never replacements for
 old approved artifacts. A future distribution must select and verify the complete
 application/SDK/Host/plugin combination and advance the appropriate prerelease;
 this source integration does not designate or publish that snapshot.
+
+## Core storage and desktop transition profile
+
+The source-only Core integration uses current-only project schema **61**. Older
+development schemas are refused without an application migration or directory
+reset. Keep those project directories intact and create a fresh project to
+reimport the original source files. The format includes the complete execution,
+provider, grant, application, strategy and domain owners; reopening verifies their
+original associations in one consistent snapshot. Persisted facts do not restore
+live execution permissions.
+
+Default Core requires captured SDK plugin evidence for domain execution. The
+current desktop dependency explicitly enables `legacy-desktop-domain` while its
+existing built-in source/translation imports, QA and build consumers await the
+SDK adapter integration. This profile uses the same Store, execution runtime,
+ledger and immutable receipts. It accepts only the existing known built-in
+capabilities and policies when no plugin is bound; plugin-bound inputs cannot
+fall back to built-in validation. It does not enable `execution-test-host`, crash
+hooks or synthetic task menus.
+
+Remove the production profile when those actual desktop domain consumers use
+the captured SDK adapters and their full workflows pass. Historical receipt and
+result decoding must remain valid for supported current projects, or be covered
+by an explicit current-only format transition; UI migration alone is not grounds
+to remove it. Core's required-nullable strategy provenance and its admission and
+reopen checks apply to both profiles. The desktop projects its existing IPC shape
+at its boundary without weakening the Core contracts.
+
+This changes source storage/API compatibility within the unreleased development
+batch. It does not replace the frozen application alpha.1 distribution, SDK,
+plugins or runtime assets. The next distributed application must advance its
+prerelease and reassess the complete combination under the rules above.

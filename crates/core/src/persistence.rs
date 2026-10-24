@@ -14,59 +14,187 @@ use rusqlite::{Connection, OpenFlags, params};
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ai;
+mod ai_semantic_review;
+mod application;
+pub(crate) use application::team::{
+    validate_team_provider_view_in, validate_team_provider_view_history_in,
+};
+pub(crate) use application::maintenance::CapturedMaintenanceAssessment;
 mod changes;
 #[cfg(test)]
 mod current_tests;
+mod disclosure;
 pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
 pub(crate) mod ledger;
+pub mod model_connections;
+mod plugin_execution;
 mod release;
 mod resources;
 mod review;
 mod translation;
-pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
+pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler, TeamTranslationAdoptionHandler};
+pub use application::{
+    CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
+    PreparedWorkPlanServiceGeneration, PreparedWorkPlanServiceTool, WorkPlanServiceCall,
+    WorkPlanServiceCallIdentity, WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+    WorkPlanToolServiceReceipt,
+};
 pub use arena::{
     ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
-pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
+pub use ledger::{
+    AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, ReportedTokenTotal, TaskActivity,
+    TaskActivityPhase, TaskActivityRow, TaskView,
+};
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub use release::{BuildLocaleChoice, LocaleBuildStartReceipt};
 pub use release::{
-    BuildLocaleChoice, LocaleBuildStartReceipt, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
-    ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind, ReleaseView, ReleasedArtifact,
+    DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, PluginBuildLocaleChoice,
+    ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException, ReleaseExceptionKind,
+    ReleasePlan, ReleaseView, ReleasedArtifact, SavedArtifactCheckProof, SavedBuildArtifact,
+    SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
+};
+pub use resources::McpTermQueryAdoptionHandler;
+pub(crate) use resources::mcp;
+pub use resources::mcp::{validate_mcp_term_query_result, validate_mcp_term_query_preview};
+pub use resources::strategy::*;
+pub use resources::{
+    CaptureContext, CaptureCorrectionTerm, ContextCapture, ContextCaptureActionRead, ContextItem,
+    ContextOmission, ContextRevision, ContextSaveActionRead, CorrectionTermBasis,
+    CorrectionTermEvidence, CorrectionTermPreview,
+    CorrectionTermReceipt, GlossaryCapture, GlossaryCaptureOrigin, GlossaryEntry, GlossaryFile,
+    ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind, ResourceDecision,
+    ResourceDecisionKind, ResourceDecisionResult, ResourceDecisionActionRead, ResourceImpactConfidence, ResourceImpactKind,
+    ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, RevisionSelectionRef, SaveContext,
+    SaveTerm, SelectedSourceContext, SelectedSourceFact, SourceContextAdjacency,
+    SourceContextBlock, SourceContextCapture, SourceContextDirection, SourceContextNeighbor,
+    SourceContextObservations, SourceContextOccurrence, SourceContextOmissionReason,
+    SourceContextOmissionSample, SourceContextOmissions, SourceContextProviderFact,
+    SourceContextProviderNeighbor, SourceContextProviderOrigin, SourceContextProviderProjection,
+    SourceContextRequest, SourceContextSelection, SourceContextView, TermOrigin, TermResolution,
+    TermResolutionEntry, TermRevision, TermSaveActionRead, TmMatchKind, TmSuggestion, UnknownSourceBlockSample,
+    select_source_context,
 };
 pub use resources::{
-    CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,
-    GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
-    ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
-    ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
-    TermSaveActionRead, ContextSaveActionRead, ContextCaptureActionRead, ResourceDecisionActionRead, SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
-    TmSuggestion,
+    MAX_SOURCE_CONTEXT_BLOCK_DETAIL_BYTES, SourceContextBlockBasis, SourceContextBlockDescriptor,
+    SourceContextBlockDetail, SourceContextBlockRead,
 };
+pub use resources::{MAX_SOURCE_CONTEXT_PAGE_BYTES, SourceContextPage, SourceContextPageEntry};
+pub use resources::{
+    MAX_TBX_INPUT_BYTES, MAX_TBX_REPORT_BYTES, MAX_TMX_INPUT_BYTES, MAX_TMX_REPORT_BYTES,
+    TbxExchangePreview, TbxExchangeRow, TbxLicenseStatus, TbxLossEntry, TbxLossKind, TbxLossSample,
+    TbxRowReason, TbxRowStatus, TbxTermPreview, TbxTermReason, TmxExchangePreview, TmxExchangeRow,
+    TmxLicenseStatus, TmxLossEntry, TmxLossKind, TmxLossSample, TmxProvenance, TmxRowReason,
+    TmxRowStatus, preview_tbx_exchange, preview_tmx_exchange,
+};
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub use review::ComputedReviewCheck;
+pub(crate) use review::validate_choices;
 pub use review::{
-    CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck, Eligibility, EligibilityLocale,
+    AdvisoryFinding, AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding,
+    CheckRuleResult, CheckRun, ComputedReviewEvidence, Eligibility, EligibilityLocale,
     EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
-    ReviewCheckActionRequest, ReviewCheckActionRead, ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead, ReviewCheckOutcome, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
-    ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewScopeUnit,
-    ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget,
-    ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
+    ReviewCheckActionRequest, ReviewCheckActionSelection, ReviewCheckActionRead,
+    ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckOutcome,
+    ReviewCheckPlan, ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewDecision,
+    ReviewDecisionKind, ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead, ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewFindingDecision,
+    ReviewFindingDisposition, ReviewFindingRepair, ReviewFindingView, ReviewFindingWrite,
+    ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus,
+    ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,
+    ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
-    ArenaMergeActionRead,
-    SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
-    TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
-    TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
-    TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision,
+    ArenaMergeActionRead, CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,
+    SelectTranslationRevision, TranslationAdoptionConfirmation, TranslationAdoptionHandler,
+    TranslationEditBasis, TranslationHistory, TranslationMatch, TranslationOrigin,
+    TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
+    TranslationSelection, TranslationSelectionDecision, TranslationSourceContext,
 };
 
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 13;
+pub(crate) const SCHEMA_VERSION: i64 = 61;
 #[cfg(test)]
-pub(crate) fn restore_legacy_translation_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    arena::drop_for_legacy_fixture(connection)?;
-    ledger::provider::drop_for_legacy_fixture(connection)?;
-    translation::legacy_fixture(connection)
+pub(crate) enum UnsupportedFixtureDomain {
+    Arena,
+    Provider,
+    Release,
+    Review,
+    Resources,
+}
+
+/// Remove an absent domain from an owned rejection fixture. These deliberately
+/// reduced snapshots exercise refusal before DDL, not historical compatibility.
+#[cfg(test)]
+pub(crate) fn remove_unsupported_fixture_domain(
+    connection: &Connection,
+    domain: UnsupportedFixtureDomain,
+) -> rusqlite::Result<()> {
+    let tables: Vec<String> = match domain {
+        UnsupportedFixtureDomain::Arena => arena::table_names().collect(),
+        UnsupportedFixtureDomain::Provider => ledger::provider::table_names().collect(),
+        UnsupportedFixtureDomain::Release => release::table_names().collect(),
+        UnsupportedFixtureDomain::Review => review::table_names().collect(),
+        UnsupportedFixtureDomain::Resources => resources::table_names().collect(),
+    };
+    for table in tables.into_iter().rev() {
+        connection.execute_batch(&format!("DROP TABLE {table}"))?;
+    }
+    Ok(())
+}
+
+/// A real pre-AI origin constraint for an isolated unsupported snapshot. Only
+/// fixture construction can call this; project opening has no upgrade path.
+#[cfg(test)]
+pub(crate) fn prepare_unsupported_translation_fixture(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    const HISTORICAL_REVISIONS: &str = "CREATE TABLE translation_revisions (
+            revision_id TEXT PRIMARY KEY NOT NULL,
+            project_id TEXT NOT NULL,
+            unit_id TEXT NOT NULL REFERENCES source_units(unit_id),
+            locale TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+            text TEXT NOT NULL CHECK(length(CAST(text AS BLOB)) <= 16384),
+            source_snapshot_id TEXT NOT NULL REFERENCES source_snapshots(snapshot_id),
+            source_revision_id TEXT NOT NULL,
+            origin_kind TEXT NOT NULL CHECK(origin_kind IN ('import','manual')),
+            action_id TEXT NOT NULL UNIQUE,
+            request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
+            attempt_id TEXT REFERENCES execution_attempts(attempt_id),
+            result_id TEXT REFERENCES execution_results(result_id),
+            item_id TEXT,
+            artifact_id TEXT,
+            logical_path TEXT,
+            declared_locale TEXT,
+            native_key TEXT,
+            file_digest TEXT,
+            UNIQUE(unit_id,locale,ordinal),
+            UNIQUE(unit_id,locale,revision_id),
+            FOREIGN KEY(unit_id,source_revision_id) REFERENCES source_revisions(unit_id,revision_id),
+            CHECK((origin_kind='manual' AND attempt_id IS NULL AND result_id IS NULL AND item_id IS NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)
+               OR (origin_kind='import' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NOT NULL AND logical_path IS NOT NULL AND declared_locale IS NOT NULL AND native_key IS NOT NULL AND file_digest IS NOT NULL)))";
+    const COLUMNS: &str = "revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,item_id,artifact_id,logical_path,declared_locale,native_key,file_digest";
+    remove_unsupported_fixture_domain(connection, UnsupportedFixtureDomain::Arena)?;
+    remove_unsupported_fixture_domain(connection, UnsupportedFixtureDomain::Provider)?;
+    let foreign_keys: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    connection.pragma_update(None, "foreign_keys", false)?;
+    let outcome = (|| {
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        transaction.execute_batch(&format!("CREATE TEMP TABLE unsupported_translation_fixture AS SELECT {COLUMNS} FROM translation_revisions; DROP TABLE translation_revisions;"))?;
+        transaction.execute_batch(HISTORICAL_REVISIONS)?;
+        transaction.execute_batch(&format!("INSERT INTO translation_revisions ({COLUMNS}) SELECT {COLUMNS} FROM unsupported_translation_fixture; DROP TABLE unsupported_translation_fixture;"))?;
+        transaction.commit()
+    })();
+    connection.pragma_update(None, "foreign_keys", foreign_keys)?;
+    outcome
 }
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
@@ -245,13 +373,17 @@ struct PendingChange {
 /// An owned, writable project session backed by SQLite and an OS file lock.
 #[derive(Debug)]
 pub struct ProjectStore {
+    mcp_query_liveness: std::sync::Arc<std::sync::atomic::AtomicBool>,
     directory: PathBuf,
     connection: Option<Connection>,
     lock: Option<File>,
     pending: Option<PendingChange>,
     execution_unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    plugin_authority: std::sync::Arc<crate::execution::plugin_authority::PluginAuthority>,
     review_scopes: review::ReadScopes,
     changes: std::sync::Arc<changes::ChangeClock>,
+    source_hook_deadlines:
+        std::collections::BTreeMap<crate::execution::ExecutionId, std::time::Instant>,
     #[cfg(test)]
     fault: Option<StorageFault>,
     #[cfg(test)]
@@ -288,13 +420,16 @@ impl ProjectStore {
         initialize_schema(&connection, &metadata)?;
 
         Ok(Self {
+            mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             directory,
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
             execution_unknown: Default::default(),
+            plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
+            source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -338,16 +473,18 @@ impl ProjectStore {
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         validate_existing_connection(&mut connection, &directory)?;
-        let _ = read_metadata_from(&connection)?;
 
         Ok(Self {
+            mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             directory,
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
             execution_unknown: Default::default(),
+            plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
+            source_hook_deadlines: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -435,6 +572,9 @@ impl ProjectStore {
 
     /// Release the database connection and ownership marker lock.
     pub fn close(mut self) -> Result<(), PersistenceError> {
+        self.mcp_query_liveness
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.plugin_authority.revoke_all();
         if self.is_reconciling() {
             return Err(PersistenceError::OutcomeUnknown {
                 stage: PersistenceStage::Close,
@@ -560,6 +700,9 @@ impl ProjectStore {
 
 impl Drop for ProjectStore {
     fn drop(&mut self) {
+        self.mcp_query_liveness
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.plugin_authority.revoke_all();
         self.connection.take();
         self.lock.take();
     }
@@ -589,6 +732,8 @@ fn initialize_schema(
         .execute(CREATE_METADATA_TABLE, [])
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     insert_metadata(&transaction, metadata)?;
+    plugin_execution::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     ledger::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     content::initialize(&transaction)
@@ -604,6 +749,8 @@ fn initialize_schema(
     ledger::provider::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     arena::initialize(&transaction).map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    application::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -769,6 +916,8 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
     connection
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    ledger::register_input_reader(connection)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     Ok(())
 }
 
@@ -794,8 +943,13 @@ fn validate_existing_connection(
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     if user_version != SCHEMA_VERSION {
-        return Err(PersistenceError::UnsupportedSchema { found_version: user_version, stage: PersistenceStage::Open });
+        return Err(PersistenceError::UnsupportedSchema {
+            found_version: user_version,
+            stage: PersistenceStage::Open,
+        });
     }
+    ledger::register_input_reader(connection)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     let journal_mode: String = connection
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -812,7 +966,17 @@ fn validate_existing_connection(
             stage: PersistenceStage::Open,
         });
     }
-    validate_schema_shape(connection, false, true, true, true, true, true)
+    // Every open-time association check must see the same database snapshot.
+    // A deferred transaction keeps validation read-only while excluding
+    // changes between the ledger scan, grant scan, and final metadata read.
+    let snapshot = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    validate_schema_shape(&snapshot)?;
+    let _ = read_metadata_from(&snapshot)?;
+    snapshot
+        .commit()
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))
 }
 
 #[cfg(test)]
@@ -821,10 +985,12 @@ fn backup_current_schema(
     directory: &Path,
 ) -> Result<(), PersistenceError> {
     // VACUUM INTO uses SQLite's consistent database snapshot rather than a raw
-    // copy of a possibly active rollback-journal database. Keep the backup for
-    // explicit recovery; never replace a previous one.
+    // copy of a possibly active rollback-journal database. This test helper
+    // checks a current snapshot; it is not an older-schema opening route.
+    // Never replace a previous snapshot.
+    let version = SCHEMA_VERSION;
     let filename = format!(
-        "{DATABASE_FILENAME}.snapshot-{}.backup",
+        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
         uuid::Uuid::new_v4()
     );
     let path = directory.join(filename);
@@ -839,7 +1005,7 @@ fn backup_current_schema(
     let check: String = backup
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if backup_version != SCHEMA_VERSION || check != "ok" {
+    if backup_version != version || check != "ok" {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });
@@ -847,15 +1013,7 @@ fn backup_current_schema(
     Ok(())
 }
 
-fn validate_schema_shape(
-    connection: &Connection,
-    legacy_result_limit: bool,
-    has_translation: bool,
-    has_resources: bool,
-    has_review: bool,
-    has_release: bool,
-    has_maintenance: bool,
-) -> Result<(), PersistenceError> {
+fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -864,37 +1022,20 @@ fn validate_schema_shape(
         .collect::<Result<_, _>>()
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     let mut expected_tables = ledger::table_names(connection);
-    if has_translation {
-        expected_tables.extend(translation::table_names());
-        expected_tables.sort();
-    }
-    if has_resources {
-        expected_tables.extend(resources::table_names());
-        expected_tables.sort();
-    }
-    if has_review {
-        expected_tables.extend(review::table_names());
-        expected_tables.sort();
-    }
-    if has_release {
-        expected_tables.extend(release::table_names());
-        expected_tables.sort();
-    }
-    if has_maintenance {
-        expected_tables.extend(content::maintenance_table_names());
-        expected_tables.sort();
-    }
-    let version: i64 = connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|e| map_sqlite(e, PersistenceStage::Open))?;
-    if version >= 11 {
-        expected_tables.extend(arena::table_names());
-        expected_tables.sort();
-    }
-    if version >= 12 {
-        expected_tables.extend(ledger::provider::table_names());
-        expected_tables.sort();
-    }
+    expected_tables.extend(translation::table_names());
+    expected_tables.extend(resources::table_names());
+    expected_tables.extend(review::table_names());
+    expected_tables.extend(release::table_names());
+    expected_tables.extend(content::maintenance_table_names());
+    expected_tables.extend(arena::table_names());
+    expected_tables.extend(ledger::provider::table_names());
+    expected_tables.extend(application::table_names());
+    expected_tables.extend(
+        plugin_execution::TABLES
+            .iter()
+            .map(|(name, _)| name.to_string()),
+    );
+    expected_tables.sort();
     if table_names != expected_tables {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
@@ -922,47 +1063,52 @@ fn validate_schema_shape(
             stage: PersistenceStage::Open,
         });
     }
-    if version >= 12 {
-        ledger::provider::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        })?;
-    }
-    let ledger_validation = if legacy_result_limit {
-        ledger::validate_v3(connection)
-    } else {
-        ledger::validate(connection)
-    };
-    ledger_validation.map_err(|_| PersistenceError::CorruptProject {
+    ledger::provider::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
+    let mut review_open =
+        review::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    let mut application_open =
+        application::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    ledger::validate_for_open(connection, |connection, input, results| {
+        review_open.validate_input(connection, input, results)?;
+        application_open.validate_input(input)
+    })
+    .map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    review_open
+        .finish()
+        .map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
     content::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    if has_translation {
-        translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    release::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    arena::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    plugin_execution::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    application::validate_after_open(connection, application_open).map_err(|_| {
+        PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
-        })?;
-    }
-    if has_resources {
-        resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        })?;
-    }
-    if has_review {
-        review::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        })?;
-    }
-    if has_release {
-        release::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        })?;
-    }
-    if version >= 11 {
-        arena::validate(connection).map_err(|_| PersistenceError::CorruptProject {
-            stage: PersistenceStage::Open,
-        })?;
-    }
+        }
+    })?;
     Ok(())
 }
 
@@ -1086,10 +1232,6 @@ mod tests {
             .unwrap()
     }
 
-
-
-
-
     fn run_crash_child(project_path: &Path, hook_path: &Path, mode: &str) {
         let executable = std::env::current_exe().unwrap();
         let output = Command::new(executable)
@@ -1113,6 +1255,14 @@ mod tests {
         let project_path = parent.path().join("project");
         let mut store = ProjectStore::create(&project_path, metadata()).unwrap();
 
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
         assert_eq!(store.metadata().unwrap().metadata_revision(), 1);
         let renamed = store.rename(1, "Demo 2").unwrap();
         assert_eq!(renamed.outcome(), ChangeOutcome::Changed);
@@ -1128,6 +1278,14 @@ mod tests {
         store.close().unwrap();
 
         let reopened = ProjectStore::open(&project_path).unwrap();
+        assert_eq!(
+            reopened
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
         let current = reopened.metadata().unwrap();
         assert_eq!(current.display_name(), "Demo 2");
         assert_eq!(current.metadata_revision(), 3);
@@ -1219,33 +1377,34 @@ mod tests {
 
     #[test]
     fn open_refuses_unsupported_schema_without_repair() {
-        let parent = temporary_directory("schema");
-        let project_path = parent.path().join("project");
-        let store = ProjectStore::create(&project_path, metadata()).unwrap();
-        store.close().unwrap();
-        let database = project_path.join(DATABASE_FILENAME);
-        let connection = Connection::open(&database).unwrap();
-        connection
-            .pragma_update(None, "user_version", 99i64)
-            .unwrap();
-        drop(connection);
-        let before = fs::read(&database).unwrap();
-        let error = ProjectStore::open(&project_path).unwrap_err();
-        assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
-        assert_eq!(fs::read(&database).unwrap(), before);
+        for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1, 99]) {
+            let parent = temporary_directory("schema");
+            let project_path = parent.path().join("project");
+            let store = ProjectStore::create(&project_path, metadata()).unwrap();
+            store.close().unwrap();
+            let database = project_path.join(DATABASE_FILENAME);
+            let connection = Connection::open(&database).unwrap();
+            connection
+                .pragma_update(None, "user_version", version)
+                .unwrap();
+            drop(connection);
+            let original_files = || {
+                fs::read_dir(&project_path)
+                    .unwrap()
+                    .map(|entry| {
+                        let entry = entry.unwrap();
+                        (entry.file_name(), fs::read(entry.path()).unwrap())
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            };
+            let before = original_files();
+            let error = ProjectStore::open(&project_path).unwrap_err();
+            assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
+            assert_eq!(error.found_schema_version(), Some(version));
+            assert_eq!(error.stage(), PersistenceStage::Open);
+            assert_eq!(original_files(), before);
+        }
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     #[test]
     fn malformed_arena_schema_and_future_version_are_rejected_without_repair() {
@@ -1259,7 +1418,9 @@ mod tests {
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             if future {
-                connection.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
+                connection
+                    .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                    .unwrap();
             } else {
                 connection
                     .execute_batch(
@@ -1275,14 +1436,28 @@ mod tests {
                 )
                 .unwrap();
             drop(connection);
-            assert!(ProjectStore::open(&path).is_err());
+            let before = fs::read(&database).unwrap();
+            let error = ProjectStore::open(&path).unwrap_err();
+            assert_eq!(
+                error.code(),
+                if future {
+                    PersistenceErrorCode::UnsupportedSchema
+                } else {
+                    PersistenceErrorCode::CorruptProject
+                }
+            );
+            assert_eq!(fs::read(&database).unwrap(), before);
             let connection =
                 Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
             assert_eq!(
                 connection
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                if future { SCHEMA_VERSION + 1 } else { SCHEMA_VERSION }
+                if future {
+                    SCHEMA_VERSION + 1
+                } else {
+                    SCHEMA_VERSION
+                }
             );
             assert_eq!(
                 connection
@@ -1303,12 +1478,6 @@ mod tests {
             }));
         }
     }
-
-
-
-
-
-
 
     #[test]
     fn open_refuses_corrupt_metadata_without_repair() {
@@ -1441,3 +1610,9 @@ mod tests {
         reopened.close().unwrap();
     }
 }
+
+
+pub use resources::{
+    ContextFactDecision, ContextFactDisposition, ContextFactHistory, ContextFactPosition,
+    ContextFactWrite, ManualContextFact, ProjectFactCapture, SourceFactBasis,
+};

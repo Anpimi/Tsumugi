@@ -1,11 +1,13 @@
 //! Fixed build inputs, verified locale artifacts and immutable local releases.
 
 use super::ProjectStore;
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+use crate::content::{
+    BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput, VALIDATOR_VERSION,
+    validate_build_output,
+};
 use crate::{
-    content::{
-        BUILD_OPERATION, BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput,
-        BuildSourceFile, VALIDATOR_VERSION, validate_build_output,
-    },
+    content::{BUILD_OPERATION, BuildSourceFile},
     execution::{
         AdoptionAction, AdoptionHandler, ChangeReference, ErrorCode, ExecutionError, ExecutionId,
         FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
@@ -15,13 +17,23 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod plan;
+mod record;
+mod saved;
+pub use plan::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
+pub(super) use plan::{VerifiedBuildInput, prepare_input, verify_prepared_input};
+pub use saved::{
+    SavedArtifactCheckProof, SavedBuildArtifact, SavedBuildLocale, SavedBuildResult,
+    SavedPluginBuildView,
+};
+
 const TABLES: &[(&str, &str)] = &[
     (
         "release_records",
         "CREATE TABLE release_records (
         release_id TEXT PRIMARY KEY NOT NULL, action_id TEXT NOT NULL UNIQUE,
         project_id TEXT NOT NULL, attempt_id TEXT NOT NULL REFERENCES execution_attempts(attempt_id),
-        manifest BLOB NOT NULL CHECK(length(manifest) BETWEEN 1 AND 1048576),
+        manifest BLOB NOT NULL CHECK(length(manifest) BETWEEN 1 AND 4194304),
         manifest_digest TEXT NOT NULL CHECK(length(manifest_digest)=64),
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))",
     ),
@@ -29,11 +41,11 @@ const TABLES: &[(&str, &str)] = &[
         "release_artifacts",
         "CREATE TABLE release_artifacts (
         release_id TEXT NOT NULL REFERENCES release_records(release_id),
-        locale TEXT NOT NULL, file_name TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 1048576),
+        locale TEXT NOT NULL, artifact_id TEXT NOT NULL, role TEXT NOT NULL, file_name TEXT NOT NULL,
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 0 AND 2097152),
         sha256 TEXT NOT NULL CHECK(length(sha256)=64),
         validator_version TEXT NOT NULL, entry_count INTEGER NOT NULL CHECK(entry_count>0),
-        PRIMARY KEY(release_id,locale), UNIQUE(release_id,file_name))",
+        PRIMARY KEY(release_id,locale,artifact_id), UNIQUE(release_id,file_name))",
     ),
     (
         "release_deliveries",
@@ -53,19 +65,37 @@ pub(super) fn table_names() -> impl Iterator<Item = String> {
 pub(super) fn record_input(
     connection: &Connection,
     input: &FixedInput,
+    verified: Option<&VerifiedBuildInput>,
 ) -> Result<(), ExecutionError> {
     if input.envelope().operation != BUILD_OPERATION {
         return Ok(());
     }
+    if input.envelope().plugin.is_some() {
+        return plan::record_input(input, verified);
+    }
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    {
+        record_builtin_input(connection, input)
+    }
+    #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+    {
+        let _ = connection;
+        Err(failure(ErrorCode::InvalidInput, "build-plugin-required"))
+    }
+}
+
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+fn record_builtin_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
     let manifest = BuildManifest::from_input(input)?;
-    let (set, project): (String, String) = connection
+    let (attempt, project): (String, String) = connection
         .query_row(
-            "SELECT set_id,project_id FROM source_snapshots WHERE snapshot_id=?1",
+            "SELECT attempt_id,project_id FROM source_snapshots WHERE snapshot_id=?1",
             [manifest.source_snapshot_id.to_string()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(sql)?;
-    let bundle = super::content::read_bundle(connection, ExecutionId::parse(&set)?)?;
+    let source_input = super::ledger::load_input(connection, ExecutionId::parse(&attempt)?)?;
+    let bundle = crate::content::SourceBundle::from_input(&source_input)?;
     if project != manifest.project_id.to_string()
         || bundle.plugin_id != manifest.plugin_id
         || bundle.plugin_version != manifest.plugin_version
@@ -94,30 +124,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-#[cfg(test)]
-pub(super) fn drop_for_legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(
-        "DROP TABLE release_deliveries; DROP TABLE release_artifacts; DROP TABLE release_records;",
-    )
-}
-pub(super) fn migrate_v7(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction =
-        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    transaction.pragma_update(None, "user_version", 8)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-release-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-release-migration-commit");
-    Ok(())
-}
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
@@ -132,82 +138,13 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let mut records = connection.prepare(
-        "SELECT release_id,project_id,attempt_id,manifest,manifest_digest FROM release_records",
-    )?;
-    let rows = records.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, Vec<u8>>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
-    for row in rows {
-        let (release, project, attempt, manifest_bytes, digest) = row?;
-        if codec::digest(&manifest_bytes) != digest {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        let manifest: BuildManifest = codec::decode(&manifest_bytes, MAX_INPUT_BYTES)
-            .map_err(|_| rusqlite::Error::InvalidQuery)?;
-        manifest
-            .validate()
-            .map_err(|_| rusqlite::Error::InvalidQuery)?;
-        if manifest.project_id.to_string() != project {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        let associated: (String, String) = connection.query_row(
-            "SELECT a.project_id,t.operation FROM execution_attempts a
-             JOIN execution_tasks t ON t.task_id=a.task_id WHERE a.attempt_id=?1",
-            [&attempt],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        if associated.0 != project || associated.1 != BUILD_OPERATION {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        let mut artifacts = connection.prepare(
-            "SELECT locale,file_name,bytes,sha256,validator_version,entry_count
-             FROM release_artifacts WHERE release_id=?1 ORDER BY locale",
-        )?;
-        let artifacts = artifacts.query_map([&release], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, u32>(5)?,
-            ))
-        })?;
-        let mut seen = BTreeSet::new();
-        for artifact in artifacts {
-            let (locale, file_name, bytes, sha256, validator, count) = artifact?;
-            let expected = manifest
-                .locales
-                .iter()
-                .find(|item| item.locale == locale)
-                .ok_or(rusqlite::Error::InvalidQuery)?;
-            let utf8 = String::from_utf8(bytes).map_err(|_| rusqlite::Error::InvalidQuery)?;
-            let output = BuildOutput {
-                version: 1,
-                locale: locale.clone(),
-                file_name,
-                utf8,
-                sha256,
-                entry_count: count,
-                builder_version: manifest.builder_version.clone(),
-            };
-            if validator != manifest.validator_version
-                || !seen.insert(locale)
-                || validate_build_output(expected, &output).is_err()
-            {
-                return Err(rusqlite::Error::InvalidQuery);
-            }
-        }
-        if seen.len() != manifest.locales.len() {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
+    let mut records = connection.prepare("SELECT release_id FROM release_records")?;
+    let ids = records
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for id in ids {
+        let id = parse_id(id).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        record::load(connection, id).map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
     let mut deliveries = connection.prepare(
         "SELECT release_id,directory,state,expected_json,results_json FROM release_deliveries",
@@ -229,7 +166,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         let expected: Vec<DeliveryFile> =
             serde_json::from_str(&expected).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut statement = connection.prepare(
-            "SELECT locale,file_name,sha256 FROM release_artifacts WHERE release_id=?1 ORDER BY locale",
+            "SELECT locale,file_name,sha256 FROM release_artifacts WHERE release_id=?1 ORDER BY locale,file_name",
         )?;
         let artifacts = statement
             .query_map([&release], |row| {
@@ -351,6 +288,7 @@ impl DeliveryState {
     }
 }
 
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -426,6 +364,7 @@ pub struct DeliveryView {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub struct LocaleBuildStartReceipt {
     pub project_id: ExecutionId,
     pub task_id: ExecutionId,
@@ -710,6 +649,7 @@ impl ProjectStore {
             .collect()
     }
 
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     /// Resolve the original accepted input without recapturing current choices.
     pub fn find_locale_build(
         &self,
@@ -749,6 +689,7 @@ impl ProjectStore {
         Ok(Some(input))
     }
 
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     /// Read the original fixed input, never mutable progress or current eligibility.
     pub fn locale_build_start_receipt(
         &self,
@@ -781,6 +722,7 @@ impl ProjectStore {
         Ok(receipt)
     }
 
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     pub fn prepare_locale_build(
         &self,
         project_id: ExecutionId,
@@ -802,11 +744,9 @@ impl ProjectStore {
             .unchecked_transaction()
             .map_err(sql)?;
         let locales: Vec<_> = choices.iter().map(|choice| choice.locale.clone()).collect();
-        let eligibility =
-            self.review_eligibility_if_basis(project_id, &locales, expected_eligibility_basis)?;
-        if !eligibility.ready {
-            return Err(failure(ErrorCode::DependencyConflict, "build-ineligible"));
-        }
+        let qualified =
+            self.capture_qualified_release(project_id, &locales, expected_eligibility_basis)?;
+        let eligibility = qualified.eligibility;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?;
@@ -831,50 +771,31 @@ impl ProjectStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql)?;
         let mut manifest_locales = Vec::with_capacity(choices.len());
-        for choice in choices {
-            let mut after = 0;
+        for (choice, targets) in choices.iter().zip(qualified.locales) {
             let mut entries = Vec::new();
-            loop {
-                let page = self.review_page(project_id, &choice.locale, after, 100)?;
-                for (ordinal, target) in page.rows.into_iter().enumerate() {
-                    let ordinal = after + ordinal as u32;
-                    let current_check = target
-                        .current_check
-                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "build-check"))?;
-                    let selected = target.selection_id.is_some();
-                    let source_text = target.source_text.clone();
-                    let value = if selected {
-                        target
-                            .translation_text
-                            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "build-translation"))?
-                    } else if target.current_fallback.is_some() {
-                        target.source_text
-                    } else {
-                        return Err(failure(ErrorCode::DependencyConflict, "build-value"));
-                    };
-                    entries.push(BuildEntry {
-                        ordinal,
-                        unit_id: target.unit_id,
-                        source_revision_id: target.source_revision_id,
-                        native_key: target.native_key,
-                        source_text,
-                        value,
-                        selection_id: target.selection_id,
-                        revision_id: target.revision_id,
-                        fallback_id: target.current_fallback.map(|item| item.fallback_id),
-                        decision_id: target.current_decision.map(|item| item.decision_id),
-                        check_id: current_check.run_id,
-                        waiver_ids: target
-                            .current_waivers
-                            .into_iter()
-                            .map(|item| item.waiver_id)
-                            .collect(),
-                    });
-                }
-                match page.next_ordinal {
-                    Some(next) => after = next,
-                    None => break,
-                }
+            for (ordinal, target) in targets {
+                let value = plan::decided_text(&target)?.to_owned();
+                let current_check = target
+                    .current_check
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "build-check"))?;
+                entries.push(BuildEntry {
+                    ordinal,
+                    unit_id: target.unit_id,
+                    source_revision_id: target.source_revision_id,
+                    native_key: target.native_key,
+                    source_text: target.source_text,
+                    value,
+                    selection_id: target.selection_id,
+                    revision_id: target.revision_id,
+                    fallback_id: target.current_fallback.map(|item| item.fallback_id),
+                    decision_id: target.current_decision.map(|item| item.decision_id),
+                    check_id: current_check.run_id,
+                    waiver_ids: target
+                        .current_waivers
+                        .into_iter()
+                        .map(|item| item.waiver_id)
+                        .collect(),
+                });
             }
             manifest_locales.push(BuildLocale {
                 locale: choice.locale.clone(),
@@ -915,149 +836,61 @@ impl ProjectStore {
     }
 
     pub fn release_view(&self, release_id: ExecutionId) -> Result<ReleaseView, ExecutionError> {
-        let connection = self
+        let snapshot = self
             .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?;
-        let (action, attempt, manifest_bytes, digest, created): (
-            String,
-            String,
-            Vec<u8>,
-            String,
-            String,
-        ) = connection
-            .query_row(
-                "SELECT action_id,attempt_id,manifest,manifest_digest,created_at
-                 FROM release_records WHERE release_id=?1",
-                [release_id.to_string()],
-                |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                },
-            )
+            .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
+            .unchecked_transaction()
             .map_err(sql)?;
-        if codec::digest(&manifest_bytes) != digest {
-            return Err(failure(ErrorCode::CorruptLedger, "release-manifest"));
-        }
-        let manifest: BuildManifest = codec::decode(&manifest_bytes, MAX_INPUT_BYTES)?;
-        manifest.validate()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT locale,file_name,sha256,entry_count FROM release_artifacts
-             WHERE release_id=?1 ORDER BY locale",
-            )
-            .map_err(sql)?;
-        let artifacts = statement
-            .query_map([release_id.to_string()], |row| {
-                Ok(ReleasedArtifact {
-                    locale: row.get(0)?,
-                    file_name: row.get(1)?,
-                    sha256: row.get(2)?,
-                    entry_count: row.get(3)?,
-                })
-            })
-            .map_err(sql)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(sql)?;
-        if artifacts.len() != manifest.locales.len() {
-            return Err(failure(ErrorCode::CorruptLedger, "release-artifacts"));
-        }
-        let exceptions = manifest
-            .locales
-            .iter()
-            .flat_map(|locale| {
-                locale.entries.iter().flat_map(|entry| {
-                    let mut rows = Vec::new();
-                    if entry.fallback_id.is_some() {
-                        rows.push(ReleaseException {
-                            locale: locale.locale.clone(),
-                            native_key: entry.native_key.clone(),
-                            kind: ReleaseExceptionKind::SourceFallback,
-                        });
-                    }
-                    if !entry.waiver_ids.is_empty() {
-                        rows.push(ReleaseException {
-                            locale: locale.locale.clone(),
-                            native_key: entry.native_key.clone(),
-                            kind: ReleaseExceptionKind::QaWaiver,
-                        });
-                    }
-                    rows
-                })
-            })
-            .collect();
-        Ok(ReleaseView {
-            release_id,
-            action_id: parse_id(action)?,
-            attempt_id: parse_id(attempt)?,
-            source_snapshot_id: manifest.source_snapshot_id,
-            policy_version: manifest.policy_version,
-            eligibility_basis: manifest.eligibility_basis,
-            manifest_sha256: digest,
-            builder_version: manifest.builder_version,
-            validator_version: manifest.validator_version,
-            source_files: manifest.source_files,
-            exceptions,
-            artifacts,
-            created_at: created,
-        })
+        let record = record::load(&snapshot, release_id)?;
+        snapshot.commit().map_err(sql)?;
+        Ok(record.view)
     }
 
+    /// Select a locale only when it has exactly one artifact. Callers exporting
+    /// a complete ArtifactSet must use its exact saved logical paths instead.
     pub fn release_artifact(
         &self,
         release_id: ExecutionId,
         locale: &str,
     ) -> Result<(ReleasedArtifact, Vec<u8>), ExecutionError> {
-        let view = self.release_view(release_id)?;
-        let summary = view
-            .artifacts
-            .into_iter()
-            .find(|item| item.locale == locale)
-            .ok_or_else(|| failure(ErrorCode::InvalidInput, "release-locale"))?;
-        let (bytes, validator): (Vec<u8>, String) = self.connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
-            .query_row(
-                "SELECT bytes,validator_version FROM release_artifacts WHERE release_id=?1 AND locale=?2",
-                params![release_id.to_string(), locale],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            ).map_err(sql)?;
-        let manifest_bytes: Vec<u8> = self
+        self.read_release_artifact(release_id, locale, None)
+    }
+
+    pub fn release_artifact_by_path(
+        &self,
+        release_id: ExecutionId,
+        locale: &str,
+        logical_path: &str,
+    ) -> Result<(ReleasedArtifact, Vec<u8>), ExecutionError> {
+        self.read_release_artifact(release_id, locale, Some(logical_path))
+    }
+
+    fn read_release_artifact(
+        &self,
+        release_id: ExecutionId,
+        locale: &str,
+        logical_path: Option<&str>,
+    ) -> Result<(ReleasedArtifact, Vec<u8>), ExecutionError> {
+        let snapshot = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "release-read"))?
-            .query_row(
-                "SELECT manifest FROM release_records WHERE release_id=?1",
-                [release_id.to_string()],
-                |row| row.get(0),
-            )
+            .unchecked_transaction()
             .map_err(sql)?;
-        let manifest: BuildManifest = codec::decode(&manifest_bytes, MAX_INPUT_BYTES)?;
-        let expected = manifest
-            .locales
-            .iter()
-            .find(|item| item.locale == locale)
-            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "release-artifact"))?;
-        let utf8 = String::from_utf8(bytes.clone())
-            .map_err(|_| failure(ErrorCode::CorruptLedger, "release-artifact"))?;
-        let output = BuildOutput {
-            version: 1,
-            locale: locale.into(),
-            file_name: summary.file_name.clone(),
-            utf8,
-            sha256: summary.sha256.clone(),
-            entry_count: summary.entry_count,
-            builder_version: manifest.builder_version,
-        };
-        if validator != manifest.validator_version
-            || codec::digest(&bytes) != summary.sha256
-            || validate_build_output(expected, &output).is_err()
-        {
-            return Err(failure(ErrorCode::CorruptLedger, "release-artifact"));
+        let record = record::load(&snapshot, release_id)?;
+        let mut artifacts = record.artifacts.into_iter().filter(|a| {
+            a.summary.locale == locale && logical_path.is_none_or(|p| a.summary.file_name == p)
+        });
+        let artifact = artifacts
+            .next()
+            .ok_or_else(|| failure(ErrorCode::InvalidInput, "release-artifact-path"))?;
+        if artifacts.next().is_some() {
+            return Err(failure(
+                ErrorCode::InvalidInput,
+                "release-artifact-ambiguous",
+            ));
         }
-        Ok((summary, bytes))
+        snapshot.commit().map_err(sql)?;
+        Ok((artifact.summary, artifact.bytes))
     }
 }
 
@@ -1073,73 +906,7 @@ impl AdoptionHandler for ReleaseAdoptionHandler {
         action: &AdoptionAction,
         results: &[FixedResult],
     ) -> Result<PreparedMutation, ExecutionError> {
-        let manifest = BuildManifest::from_input(input)?;
-        let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
-        let mut seen = BTreeSet::new();
-        let mut outputs = Vec::with_capacity(results.len());
-        for result in results {
-            let item = input.item(result.envelope().item_id)?;
-            let index: usize = serde_json::from_value(item.payload.clone())
-                .map_err(|_| failure(ErrorCode::OutputInvalid, "build-item"))?;
-            let locale = manifest
-                .locales
-                .get(index)
-                .ok_or_else(|| failure(ErrorCode::OutputInvalid, "build-item"))?;
-            let output: BuildOutput = serde_json::from_value(
-                result
-                    .envelope()
-                    .output
-                    .clone()
-                    .ok_or_else(|| failure(ErrorCode::OutputInvalid, "build-output"))?,
-            )
-            .map_err(|_| failure(ErrorCode::OutputInvalid, "build-output"))?;
-            validate_build_output(locale, &output)?;
-            if !seen.insert(index) {
-                return Err(failure(ErrorCode::ResultMismatch, "build-duplicate"));
-            }
-            outputs.push(output);
-        }
-        if seen.len() != manifest.locales.len() {
-            return Err(failure(ErrorCode::ResultMismatch, "build-coverage"));
-        }
-        let action = action.clone();
-        Ok(Box::new(move |transaction| {
-            let release_id = ExecutionId::new();
-            transaction.execute(
-                "INSERT INTO release_records
-                 (release_id,action_id,project_id,attempt_id,manifest,manifest_digest)
-                 VALUES (?1,?2,?3,?4,?5,?6)",
-                params![
-                    release_id.to_string(),
-                    action.action_id.to_string(),
-                    manifest.project_id.to_string(),
-                    action.attempt_id.to_string(),
-                    &manifest_bytes,
-                    codec::digest(&manifest_bytes)
-                ],
-            )?;
-            for output in outputs {
-                transaction.execute(
-                    "INSERT INTO release_artifacts
-                     (release_id,locale,file_name,bytes,sha256,validator_version,entry_count)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                    params![
-                        release_id.to_string(),
-                        &output.locale,
-                        &output.file_name,
-                        output.utf8.as_bytes(),
-                        &output.sha256,
-                        manifest.validator_version,
-                        output.entry_count
-                    ],
-                )?;
-            }
-            Ok(vec![ChangeReference {
-                kind: "release".into(),
-                id: release_id.to_string(),
-                revision: Revision::new(1)?,
-            }])
-        }))
+        record::prepare(input, action, results)
     }
 }
 

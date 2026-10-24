@@ -126,6 +126,14 @@ fn seed(store: &mut ProjectStore) -> Vec<(&'static str, &'static str, Value, Val
     };
     let capture_result = store.capture_context(&capture).unwrap();
     let glossary=store.capture_glossary(project,ExecutionId::new(),br#"{"format":"tsumugi-glossary-v1","resourceId":"receipt","revision":"1","license":"MIT","sourceLocale":"en","targetLocale":"zh-CN","entries":[{"id":"other","source":"Other","aliases":[],"target":"Other translation","protected":false,"nativeKey":null,"reason":"Fixture"}]}"#).unwrap();
+    let old_capture = super::resource_wire::GlossaryCapture::try_from(glossary.clone()).unwrap();
+    assert_eq!(old_capture.resource_id, "receipt");
+    assert_eq!(old_capture.revision, "1");
+    assert_eq!(old_capture.license, "MIT");
+    let old_preview = super::resource_wire::ResourcePreview::try_from(
+        store.glossary_preview(project, glossary.capture_id).unwrap(),
+    ).unwrap();
+    assert_eq!(old_preview.capture, old_capture);
     let file = ResourceDecision {
         project_id: project,
         action_id: ExecutionId::new(),
@@ -137,6 +145,7 @@ fn seed(store: &mut ProjectStore) -> Vec<(&'static str, &'static str, Value, Val
     let file_result = store.decide_glossary_entry(&file).unwrap();
     let target = store.review_target(project, unit, "zh-CN").unwrap();
     let qa = ReviewCheckActionRequest {
+        advisory_checks: Vec::new(),
         project_id: project,
         action_id: ExecutionId::new(),
         unit_id: unit,
@@ -222,7 +231,7 @@ fn seed(store: &mut ProjectStore) -> Vec<(&'static str, &'static str, Value, Val
             "read_resource_decision_action",
             "decision",
             json!(file),
-            json!(file_result),
+            json!(super::resource_wire::ResourceDecisionResult::from(file_result)),
         ),
         (
             "read_review_decision_action",
@@ -242,7 +251,9 @@ fn seed(store: &mut ProjectStore) -> Vec<(&'static str, &'static str, Value, Val
             json!(fallback),
             json!(fallback_result),
         ),
-        ("read_review_check_action", "", json!(qa), json!(qa_result)),
+        ("read_review_check_action", "",
+            json!(super::review_wire::ReviewCheckActionRequest::from(qa)),
+            json!(super::review_wire::CheckRun::try_from(qa_result).unwrap())),
     ]
 }
 #[test]

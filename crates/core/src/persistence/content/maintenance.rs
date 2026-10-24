@@ -215,7 +215,7 @@ impl ProjectStore {
                 preserved: 0,
                 reassess: 0,
                 unresolved: 0,
-                total: output.occurrences.len() as u32,
+                total: output.exchange.units.len() as u32,
             };
             let mut pending = std::collections::BTreeSet::new();
             let mut offset = 0;
@@ -232,26 +232,51 @@ impl ProjectStore {
                     None => break,
                 }
             }
-            for new in &output.occurrences {
-                let explicit = confirmation
-                    .lineage
+            for unit in &output.exchange.units {
+                let occurrences: Vec<_> = output
+                    .occurrences
                     .iter()
-                    .find(|choice| choice.new_ordinal == new.ordinal);
-                let old = if let Some(choice) = explicit {
-                    if choice.decision == LineageDecision::Continue {
-                        base_rows
-                            .iter()
-                            .find(|row| row.occurrence_id == Some(choice.old_occurrence_id))
+                    .filter(|row| row.operation_unit_id == unit.id)
+                    .collect();
+                let new = *occurrences
+                    .first()
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "source-unit"))?;
+                let mut candidates = std::collections::BTreeMap::new();
+                for occurrence in occurrences {
+                    let explicit = confirmation
+                        .lineage
+                        .iter()
+                        .find(|choice| choice.new_ordinal == occurrence.ordinal);
+                    let old = if let Some(choice) = explicit {
+                        (choice.decision == LineageDecision::Continue)
+                            .then(|| {
+                                base_rows
+                                    .iter()
+                                    .find(|row| row.occurrence_id == Some(choice.old_occurrence_id))
+                            })
+                            .flatten()
                     } else {
-                        None
+                        let matches: Vec<_> = current_rows
+                            .iter()
+                            .filter(|row| {
+                                row.occurrence.same_identity(occurrence)
+                                    && row.occurrence.text == occurrence.text
+                                    && row.occurrence.identity_basis == occurrence.identity_basis
+                            })
+                            .collect();
+                        (matches
+                            .iter()
+                            .map(|row| row.unit_id)
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            == 1)
+                            .then(|| matches[0])
+                    };
+                    if let Some(old) = old {
+                        candidates.insert(old.unit_id, old);
                     }
-                } else {
-                    current_rows.iter().find(|row| {
-                        row.occurrence.key.eq_ignore_ascii_case(&new.key)
-                            && row.occurrence.text == new.text
-                            && row.occurrence.identity_basis == new.identity_basis
-                    })
-                };
+                }
+                let old = (candidates.len() == 1).then(|| *candidates.values().next().unwrap());
                 let Some(old) = old else {
                     summary.unresolved += 1;
                     continue;
@@ -278,6 +303,7 @@ impl ProjectStore {
                     && target.as_ref().is_some_and(|target| {
                         target.source_revision_id == old.source_revision_id.unwrap()
                             && !pending.contains(&target.unit_id)
+                            && self.current_check_survives_new_source_snapshot(target)
                     })
                 {
                     summary.preserved += 1;
@@ -297,6 +323,46 @@ impl ProjectStore {
         after: u32,
         limit: u32,
     ) -> Result<SourceImpactPage, ExecutionError> {
+        let (rows, summary, next_ordinal, _) =
+            self.source_impact_projection(snapshot, locale, after, limit, true)?;
+        let page = SourceImpactPage {
+            snapshot_id: snapshot,
+            rows,
+            summary: summary.ok_or_else(corrupt)?,
+            next_ordinal,
+        };
+        codec::encode(&page, MAX_CONTENT_PAGE_BYTES)?;
+        Ok(page)
+    }
+    pub(in crate::persistence) fn source_impact_window(
+        &self,
+        snapshot: ExecutionId,
+        locale: &str,
+        after: u32,
+        limit: u32,
+    ) -> Result<(Vec<SourceImpactRow>, Option<u32>, Vec<crate::ReviewTarget>), ExecutionError> {
+        let (rows, _, next, targets) =
+            self.source_impact_projection(snapshot, locale, after, limit, false)?;
+        codec::encode(&rows, MAX_CONTENT_PAGE_BYTES)?;
+        codec::encode(&targets, MAX_INPUT_BYTES)?;
+        Ok((rows, next, targets))
+    }
+    fn source_impact_projection(
+        &self,
+        snapshot: ExecutionId,
+        locale: &str,
+        after: u32,
+        limit: u32,
+        global: bool,
+    ) -> Result<
+        (
+            Vec<SourceImpactRow>,
+            Option<SourceImpactSummary>,
+            Option<u32>,
+            Vec<crate::ReviewTarget>,
+        ),
+        ExecutionError,
+    > {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
@@ -316,7 +382,25 @@ impl ProjectStore {
         let content = self.source_content(snapshot, after, limit)?;
         let mut work: BTreeMap<ExecutionId, Vec<String>> = BTreeMap::new();
         let mut targets = BTreeMap::new();
-        for (target, reasons) in self.review_work_set(project, locale)? {
+        let units = content
+            .rows
+            .iter()
+            .filter_map(|row| row.unit_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let wanted = if global {
+            self.review_work_set(project, locale)?
+        } else {
+            super::super::review::targets_in(connection, project, &units, locale)?
+                .into_iter()
+                .map(|target| {
+                    let reasons = super::super::review::assess(&target, false).0;
+                    (target, reasons)
+                })
+                .collect()
+        };
+        for (target, reasons) in wanted {
             if !reasons.is_empty() {
                 work.insert(target.unit_id, reasons);
             }
@@ -345,7 +429,7 @@ impl ProjectStore {
             let target = targets
                 .get(&row.unit_id.unwrap())
                 .ok_or_else(|| failure(ErrorCode::CorruptLedger, "source-impact-unit"))?;
-            let mut reasons = work.get(&row.unit_id.unwrap()).cloned().unwrap_or_default();
+            let reasons = work.get(&row.unit_id.unwrap()).cloned().unwrap_or_default();
             let lineage = lineage_evidence_in(connection, &row, &mut lineage_snapshots)?;
             let predecessor: Option<String> = connection
                 .query_row(
@@ -408,46 +492,54 @@ impl ProjectStore {
                     }
                 }
             }
-            if !reasons.is_empty() {
-                if previous
-                    .as_ref()
-                    .is_some_and(|old| old.source_revision_id != row.source_revision_id)
-                {
-                    reasons.push("source-changed".into());
-                }
-                if target.selection_id.is_none() && !lineage.is_empty() {
-                    reasons.push("correspondence-unresolved".into());
-                }
-            }
-            reasons.sort();
-            reasons.dedup();
-            let status = if reasons.is_empty() {
-                SourceImpactStatus::Preserved
-            } else if target.selection_id.is_none() {
-                SourceImpactStatus::Unresolved
-            } else {
-                SourceImpactStatus::Reassess
-            };
-            rows.push(SourceImpactRow {
+            let mut projected = SourceImpactRow {
                 current: row,
                 previous,
                 previous_bases,
                 locale: locale.into(),
-                status,
-                reasons,
+                status: SourceImpactStatus::Preserved,
+                reasons: Vec::new(),
                 selection_id: target.selection_id,
                 translation_revision_id: target.revision_id,
                 review_basis: target.basis.clone(),
                 lineage,
-            });
+            };
+            apply_impact_reasons(&mut projected, reasons);
+            rows.push(projected);
         }
-        let page = SourceImpactPage {
-            snapshot_id: snapshot,
-            summary,
-            next_ordinal: content.next_ordinal,
+        Ok((
             rows,
-        };
-        codec::encode(&page, MAX_CONTENT_PAGE_BYTES)?;
-        Ok(page)
+            global.then_some(summary),
+            content.next_ordinal,
+            targets.into_values().collect(),
+        ))
     }
+}
+
+pub(in crate::persistence) fn apply_impact_reasons(
+    row: &mut SourceImpactRow,
+    mut reasons: Vec<String>,
+) {
+    if !reasons.is_empty() {
+        if row
+            .previous
+            .as_ref()
+            .is_some_and(|old| old.source_revision_id != row.current.source_revision_id)
+        {
+            reasons.push("source-changed".into());
+        }
+        if row.selection_id.is_none() && !row.lineage.is_empty() {
+            reasons.push("correspondence-unresolved".into());
+        }
+    }
+    reasons.sort();
+    reasons.dedup();
+    row.status = if reasons.is_empty() {
+        SourceImpactStatus::Preserved
+    } else if row.selection_id.is_none() {
+        SourceImpactStatus::Unresolved
+    } else {
+        SourceImpactStatus::Reassess
+    };
+    row.reasons = reasons;
 }

@@ -93,7 +93,11 @@ fn cfg(url: &str) -> ArenaConfig {
 }
 fn runtime(store: &ProjectStore) -> ExecutionRuntime {
     let mut r = ExecutionRuntime::new(store).unwrap();
-    r.register_with_policy(Arc::new(ArenaRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    r.register_with_policy(
+        Arc::new(ArenaRunner::default()),
+        RecoveryPolicy::ExternalUnknown,
+    )
+    .unwrap();
     r
 }
 fn adopt(store: &mut ProjectStore, input: &FixedInput, item: ExecutionId) -> ExecutionId {
@@ -352,14 +356,12 @@ fn arena_retry_uses_one_budget_and_invalid_unknown_outputs_never_become_candidat
                 );
             }
         }
-        let continuation = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
-        assert!(
-            rt.resume(
-                &mut store,
-                &continuation
-            )
-            .is_err()
+        let continuation = crate::execution::test_continuation_action(
+            &store,
+            input.envelope().attempt_id,
+            &[input.envelope().items[0].item_id],
         );
+        assert!(rt.resume(&mut store, &continuation).is_err());
     }
 }
 
@@ -738,7 +740,12 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
         .unwrap();
     assert_eq!(persisted.current, Some(merged.clone()));
     assert_eq!(
-        persisted.rows.iter().find(|row| row.revision_id == merged.revision_id).unwrap().contributors,
+        persisted
+            .rows
+            .iter()
+            .find(|row| row.revision_id == merged.revision_id)
+            .unwrap()
+            .contributors,
         fresh_basis.contributors
     );
     reopened.close().unwrap();
@@ -751,9 +758,19 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
         .unwrap(),
         2
     );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM translation_revisions", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
     // Remove the new relations from this owned legacy fixture before testing refusal.
     conn.execute_batch("DROP TABLE execution_continuations; DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
-    crate::persistence::ledger::provider::drop_for_legacy_fixture(&conn).unwrap();
+    crate::persistence::remove_unsupported_fixture_domain(
+        &conn,
+        crate::persistence::UnsupportedFixtureDomain::Provider,
+    )
+    .unwrap();
     conn.pragma_update(None, "user_version", 10).unwrap();
     drop(conn);
     assert_unsupported_snapshot_unchanged(&path, 10);
@@ -764,8 +781,10 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
     .unwrap();
     assert_eq!(
         unchanged
-            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |r| r
-                .get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
             .unwrap(),
         4
     );
@@ -1069,9 +1088,13 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
             .unwrap();
         let mut source_rt = ExecutionRuntime::new(&store).unwrap();
         if vtt {
-            source_rt.register_read_only(Arc::new(WebvttSourceRunner)).unwrap();
+            source_rt
+                .register_read_only(Arc::new(WebvttSourceRunner))
+                .unwrap();
         } else {
-            source_rt.register_read_only(Arc::new(SourceRunner)).unwrap();
+            source_rt
+                .register_read_only(Arc::new(SourceRunner))
+                .unwrap();
         }
         source_rt.submit(&mut store, &source).unwrap();
         drain(&mut source_rt, &mut store, source.envelope().attempt_id);
@@ -1109,8 +1132,8 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
             .remove(0);
         let unit = row.unit_id.unwrap();
         let project = source.envelope().project_id;
-        // Populate the current fixture with a genuine single-model candidate, manual selection,
-        // QA, approval and release. The two new requests use the same real HTTP transport.
+        // Capture a genuine single-model candidate, manual selection, QA,
+        // approval and release. The two new requests use the same real HTTP transport.
         let wire = controlled_for("success", 10);
         let ai = store
             .preview_ai(cfg(&wire.url).variants[0].clone(), "zh-CN", &[unit])
@@ -1118,7 +1141,11 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut rt = ExecutionRuntime::new(&store).unwrap();
-        rt.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+        rt.register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
         rt.submit(&mut store, &ai).unwrap();
         drain(&mut rt, &mut store, ai.envelope().attempt_id);
         let ai_result = store
@@ -1199,7 +1226,7 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            13
+            crate::persistence::SCHEMA_VERSION
         );
         drop(c);
         let arena = store
@@ -1337,7 +1364,11 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
         let legacy = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
         let complete = facts(&legacy);
         legacy.execute_batch("DROP TABLE execution_continuations; DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
-        crate::persistence::ledger::provider::drop_for_legacy_fixture(&legacy).unwrap();
+        crate::persistence::remove_unsupported_fixture_domain(
+            &legacy,
+            crate::persistence::UnsupportedFixtureDomain::Provider,
+        )
+        .unwrap();
         legacy.pragma_update(None, "user_version", 10).unwrap();
         drop(legacy);
         assert_unsupported_snapshot_unchanged(&path, 10);

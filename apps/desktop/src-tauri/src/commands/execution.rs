@@ -365,10 +365,13 @@ pub(super) mod ai_wire;
 pub(super) mod arena;
 pub(super) mod release;
 pub(super) mod resource;
+pub(super) mod resource_wire;
 pub(super) mod review;
+pub(super) mod review_wire;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;
+pub(super) mod source_wire;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     SessionRequest {}

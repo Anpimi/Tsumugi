@@ -35,6 +35,7 @@ pub struct ReviewSummaryCheck {
     pub basis: String,
     pub outcome: ReviewCheckOutcome,
     pub has_findings: bool,
+    pub has_incomplete: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -82,6 +83,12 @@ impl From<ReviewTarget> for ReviewSummary {
                 basis: check.basis,
                 outcome: check.outcome,
                 has_findings: check.rules.iter().any(|rule| rule.status == "findings"),
+                has_incomplete: check.rules.iter().any(|rule| {
+                    !matches!(
+                        rule.status.as_str(),
+                        "passed" | "findings" | "not-applicable"
+                    )
+                }),
             }),
         }
     }
@@ -108,6 +115,19 @@ pub struct ReviewEditorSnapshot {
     pub terms: resources::TermResolution,
     pub context: Option<resources::ContextRevision>,
     pub read_version: String,
+}
+
+/// Read-only coordinates for one exact diagnostic in the current saved QA run.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewDiagnosticLocation {
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub run_id: ExecutionId,
+    pub basis: String,
+    pub basis_evidence: ReviewBasis,
+    pub location: tsumugi_plugin_sdk::TextReviewLocation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -171,6 +191,83 @@ fn view_version(targets: &[ReviewTarget]) -> Result<String, ExecutionError> {
 }
 
 impl ProjectStore {
+    /// Converts only original current saved evidence, never caller-supplied text.
+    pub fn review_diagnostic_location(
+        &self,
+        project_id: ExecutionId,
+        unit_id: ExecutionId,
+        locale: &str,
+        run_id: ExecutionId,
+        diagnostic: &tsumugi_plugin_sdk::TextReviewDiagnostic,
+    ) -> Result<ReviewDiagnosticLocation, ExecutionError> {
+        use tsumugi_plugin_sdk::{
+            TextEncoding, TextReviewField, TextReviewLocation, convert_text_range,
+        };
+
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        read_snapshot(connection, |connection| {
+            // This owner validates original ledger frames and the complete QA
+            // material basis, which is distinct from the manual review basis.
+            let target = target_in(connection, project_id, unit_id, locale)?;
+            let qa = target
+                .current_check
+                .as_ref()
+                .filter(|run| {
+                    run.run_id == run_id
+                        && run.unit_id == unit_id
+                        && run.locale == locale
+                        && run.basis == target.basis
+                        && run.basis_evidence == target.basis_evidence
+                });
+            if let Some(run) = qa {
+                let evidence = run.evidence.as_ref()
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
+                if !evidence.diagnostics.contains(diagnostic)
+                    || !evidence.required_checks.requirements.iter().any(|requirement| {
+                        requirement.key == diagnostic.key
+                            && requirement.targets.contains(&diagnostic.target)
+                    }) {
+                    return Err(failure(ErrorCode::InvalidInput, "review-diagnostic-evidence"));
+                }
+            } else {
+                let run = super::super::ai_semantic_review::current_run(connection,project_id,unit_id,locale,&target.basis)?
+                    .filter(|run|run.run_id==run_id)
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?;
+                if !run.diagnostics.contains(diagnostic)
+                    || diagnostic.target != unit_id.to_string()
+                    || !run.rules.iter().any(|rule|rule.key==diagnostic.key) {
+                    return Err(failure(ErrorCode::InvalidInput, "review-diagnostic-evidence"));
+                }
+            }
+            let original = diagnostic
+                .location
+                .as_ref()
+                .ok_or_else(|| failure(ErrorCode::InvalidInput, "review-diagnostic-location"))?;
+            let text = match original.field {
+                TextReviewField::Source => &target.source_text,
+                TextReviewField::Translation => target
+                    .translation_text
+                    .as_ref()
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-diagnostic-current"))?,
+            };
+            let range = convert_text_range(text, original.range, TextEncoding::Utf16)
+                .map_err(|_| failure(ErrorCode::InvalidInput, "review-diagnostic-range"))?;
+            Ok(ReviewDiagnosticLocation {
+                unit_id,
+                locale: target.locale,
+                run_id,
+                basis: target.basis,
+                basis_evidence: target.basis_evidence,
+                location: TextReviewLocation {
+                    field: original.field,
+                    range,
+                },
+            })
+        })
+    }
+
     fn retained_review_scope(
         &self,
         connection: &Connection,
@@ -231,9 +328,9 @@ impl ProjectStore {
             // Fix identity/order across pages without reading every unit's text.
             let mut statement = connection
                 .prepare(
-                    "SELECT o.unit_id,o.ordinal FROM source_occurrences o
+                    "SELECT o.unit_id,MIN(o.ordinal) FROM source_occurrences o
                  JOIN source_units u ON u.unit_id=o.unit_id
-                 WHERE o.snapshot_id=?1 AND u.project_id=?2 ORDER BY o.ordinal LIMIT 10001",
+                 WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001",
                 )
                 .map_err(sql)?;
             statement
@@ -250,7 +347,7 @@ impl ProjectStore {
         } else {
             let mut statement = connection
                 .prepare(
-                    "SELECT o.unit_id,o.ordinal,o.native_key,r.text,tr.text
+                    "SELECT o.unit_id,MIN(o.ordinal) OVER(PARTITION BY o.unit_id),o.native_key,r.text,tr.text
              FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
              JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?3
              LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
@@ -280,6 +377,7 @@ impl ProjectStore {
             if rows.len() > MAX_SCOPE {
                 return Err(failure(ErrorCode::LimitExceeded, "review-scope"));
             }
+            let mut matched_units = BTreeSet::new();
             rows.into_iter()
                 .filter(|(_, _, key, source, translation)| {
                     needle.is_empty()
@@ -289,6 +387,7 @@ impl ProjectStore {
                             .as_ref()
                             .is_some_and(|text| text.to_lowercase().contains(&needle))
                 })
+                .filter(|(unit, _, _, _, _)| matched_units.insert(unit.clone()))
                 .map(|(unit, ordinal, _, _, _)| Ok((parse_id(unit)?, ordinal)))
                 .collect::<Result<Vec<_>, ExecutionError>>()?
         };

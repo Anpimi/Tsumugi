@@ -44,12 +44,7 @@ pub struct TranslationImportStartRead {
     pub input_digest: String,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SourceSettings {
-    native_start: SourceImportStart,
-}
-
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranslationSettings {
@@ -74,6 +69,7 @@ impl SourceImportStart {
     }
 }
 
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 impl TranslationImportStart {
     pub fn validate(&self) -> Result<(), ExecutionError> {
         let declared = declared_locale(&format!("i18n/{}", self.file_name))?;
@@ -114,17 +110,22 @@ fn check_origin(input: &FixedInput, project: ExecutionId, attempt: ExecutionId) 
 }
 
 pub(crate) fn source_native_start(input: &FixedInput, bundle: &SourceBundle) -> Result<Option<SourceImportStart>, ExecutionError> {
-    if input.envelope().settings.is_null() { return Ok(None); }
-    let settings: SourceSettings = from_value(&input.envelope().settings)?;
-    let request = settings.native_start;
-    request.validate()?;
-    check_origin(input, request.project_id, request.attempt_id)?;
-    if request.source_language != bundle.source_language {
-        return Err(failure(ErrorCode::ResultMismatch, "source-start-language"));
-    }
+    let settings = super::SourceSettings::from_input(input)?;
+    let Some(request) = settings.native_start else { return Ok(None); };
+    validate_source_start(input, &bundle.source_language, &request)?;
     Ok(Some(request))
 }
 
+pub(crate) fn validate_source_start(input: &FixedInput, source_language: &str, request: &SourceImportStart) -> Result<(), ExecutionError> {
+    request.validate()?;
+    check_origin(input, request.project_id, request.attempt_id)?;
+    if request.source_language != source_language {
+        return Err(failure(ErrorCode::ResultMismatch, "source-start-language"));
+    }
+    Ok(())
+}
+
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub(crate) fn translation_settings(settings: &serde_json::Value) -> Result<(TranslationBundle, Option<TranslationImportStart>), ExecutionError> {
     // These are two current producer forms, not a fallback for malformed native input.
     if settings.get("nativeStart").is_some() || settings.get("bundle").is_some() {
@@ -135,6 +136,7 @@ pub(crate) fn translation_settings(settings: &serde_json::Value) -> Result<(Tran
     }
 }
 
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub(crate) fn validate_translation_start(input: &FixedInput, bundle: &TranslationBundle, request: &TranslationImportStart) -> Result<(), ExecutionError> {
     request.validate()?;
     check_origin(input, request.project_id, request.attempt_id)?;
@@ -146,16 +148,20 @@ pub(crate) fn validate_translation_start(input: &FixedInput, bundle: &Translatio
 }
 
 impl SourceBundle {
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     pub fn fixed_input_for_import_start(&self, project: ProjectId, request: &SourceImportStart) -> Result<FixedInput, ExecutionError> {
         let mut envelope = self.fixed_input(project)?.envelope().clone();
+        let mut settings: super::SourceSettings = from_value(&envelope.settings)?;
+        settings.native_start = Some(request.clone());
         envelope.attempt_id = request.attempt_id;
-        envelope.settings = value(&SourceSettings { native_start: request.clone() })?;
+        envelope.settings = value(&settings)?;
         let input = FixedInput::capture(envelope)?;
         SourceImportStart::from_input(&input)?;
         Ok(input)
     }
 }
 
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 impl TranslationBundle {
     pub fn fixed_input_for_import_start(&self, project: ProjectId, request: &TranslationImportStart) -> Result<FixedInput, ExecutionError> {
         let mut envelope = self.fixed_input(project)?.envelope().clone();

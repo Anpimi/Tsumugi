@@ -197,7 +197,7 @@ pub fn extract(
     bundle: &SourceBundle,
     cancel: &Cancellation,
 ) -> Result<SourceOutput, ExecutionError> {
-    bundle.validate()?;
+    bundle.validate_builtin_capture()?;
     let source = &bundle.files[0];
     let raw = &source.utf8;
     let all = lines(raw);
@@ -288,48 +288,37 @@ pub fn extract(
         if occurrences.len() >= MAX_OCCURRENCES {
             return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
         }
-        occurrences.push(SourceOccurrence {
+        occurrences.push(BuiltinOccurrence {
             ordinal: occurrences.len() as u32,
             artifact_id: source.artifact_id,
             namespace: "webvtt:source".into(),
             key: id.into(),
+            canonical_key: id.to_ascii_lowercase(),
             text: text.replace("\r\n", "\n").replace('\r', "\n"),
             key_byte_range: [block[0].start as u32, block[0].end as u32],
             value_byte_range: range.map(|n| n as u32),
-            identity_basis: serde_json::to_string(&CueBasis {
-                policy: POLICY.into(),
-                timing: block[1].text.into(),
-                native_id: id.into(),
-                layout_digest: codec::digest(layout.as_bytes()),
-            })
-            .map_err(|_| invalid("vtt-basis"))?,
+            policy: contract_ref("webvtt-cue"),
+            basis: Some((
+                contract_ref("webvtt.cue-basis"),
+                serde_json::to_string(&CueBasis {
+                    policy: POLICY.into(),
+                    timing: block[1].text.into(),
+                    native_id: id.into(),
+                    layout_digest: codec::digest(layout.as_bytes()),
+                })
+                .map_err(|_| invalid("vtt-basis"))?,
+            )),
         });
     }
     if occurrences.is_empty() {
         return Err(invalid("empty-source"));
     }
-    let output = SourceOutput {
-        version: 1,
-        set_id: bundle.set_id,
-        manifest_digest: bundle.manifest_digest.clone(),
-        format_id: PROFILE.into(),
-        format_version: 1,
-        identity_policy: POLICY.into(),
-        namespace: "webvtt:source".into(),
-        source_language: bundle.source_language.clone(),
-        coverage: vec![FileCoverage {
-            artifact_id: source.artifact_id,
-            logical_path: PATH.into(),
-            role: "source".into(),
-            sha256: source.sha256.clone(),
-        }],
-        occurrences,
-        diagnostics: vec![],
-    };
+    let output = project_builtin(bundle, occurrences, vec![])?;
     codec::encode(&output, MAX_SOURCE_RESULT_BYTES)?;
     Ok(output)
 }
 
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub fn file_name(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(".vtt") else {
         return false;
@@ -345,6 +334,7 @@ pub fn file_name(name: &str) -> bool {
             && (lower.starts_with("com") || lower.starts_with("lpt"))
             && lower.as_bytes()[3].is_ascii_digit())
 }
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub fn build(locale: &BuildLocale, cancel: &Cancellation) -> Result<BuildOutput, ExecutionError> {
     let template = locale
         .source_template
@@ -400,6 +390,7 @@ pub fn build(locale: &BuildLocale, cancel: &Cancellation) -> Result<BuildOutput,
         builder_version: BUILDER.into(),
     })
 }
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub fn check(locale: &BuildLocale, output: &BuildOutput) -> Result<(), ExecutionError> {
     if output.version != 1
         || output.locale != locale.locale

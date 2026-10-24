@@ -1,8 +1,10 @@
 use super::*;
 use tsumugi_core::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
-    TranslationHistory, TranslationPreview, TranslationSaveReceipt, TranslationSelection,
+    TranslationSelection,
 };
+
+use super::super::source_wire::{TranslationHistory, TranslationPreview, TranslationSaveReceipt};
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -430,6 +432,7 @@ pub async fn read_translation_preview(
                     request.limit,
                     request.basis.as_deref(),
                 )
+                .and_then(TryInto::try_into)
                 .map_err(map_source)
             },
         )
@@ -520,6 +523,7 @@ pub async fn read_translation_history(
                     request.after_ordinal.get(),
                     request.limit,
                 )
+                .map(Into::into)
                 .map_err(map_source)
             },
         )
@@ -583,6 +587,7 @@ pub async fn read_translation_save_action(
                     expected_selection_id: request.expected_selection_id,
                     text: request.text,
                 })
+                .map(|receipt| receipt.map(Into::into))
                 .map_err(map_source)
             },
         )
@@ -651,6 +656,7 @@ pub async fn save_translation_revision(
                         expected_selection_id: request.expected_selection_id,
                         text: request.text,
                     })
+                    .map(Into::into)
                     .map_err(map_adopt)
             },
         )

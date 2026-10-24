@@ -12,6 +12,19 @@ export type RecoveryAction =
  * action reads its original receipt; it never refreshes this cancellation basis.
  */
 export type ContinuationKind = "resume-undispatched" | "retry-safe-failure";
+export type InvocationOutcome =
+  | {
+      kind: "succeeded";
+      output: EncodedPayload;
+    }
+  | {
+      error: EncodedPayload;
+      kind: "failed";
+    }
+  | {
+      error: EncodedPayload;
+      kind: "unknown";
+    };
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -264,6 +277,7 @@ export interface ResultEnvelope {
   itemId: ExecutionId;
   outcome: ExecutionState;
   output: unknown;
+  plugin?: PluginResultEvidence | null;
   projectId: ExecutionId;
   resultId: ExecutionId;
   supersedes: ExecutionId | null;
@@ -271,6 +285,73 @@ export interface ResultEnvelope {
 export interface Diagnostic {
   code: string;
   retrySafe: boolean;
+}
+/**
+ * The complete received SDK result retains exact payload bytes and identity.
+ * `channel` is supplied independently by the trusted Host, not read from output.
+ */
+export interface PluginResultEvidence {
+  authorizationId: ExecutionId;
+  channel: ProviderBinding;
+  result: InvocationResult;
+}
+/**
+ * A claimed wire binding. Only the trusted host can compare it to the actual
+ * verified package and channel; constructing this value proves no authority.
+ */
+export interface ProviderBinding {
+  activationGeneration: number;
+  componentId: string;
+  contributionId: string;
+  instanceId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+export interface InvocationResult {
+  capability: ContractRef;
+  context: InvocationContext;
+  outcome: InvocationOutcome;
+  profile: ContractRef | null;
+  provider: ProviderBinding;
+  resultId: string;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface InvocationContext {
+  attemptId: string;
+  configurationDigest: string;
+  dispatchId: string;
+  environmentDigest: string;
+  inputDigest: string;
+  itemId: string;
+  operationId: string;
+  projectId: string;
+  scopeDigest: string;
+  scopeId: string;
+}
+/**
+ * Exact UTF-8 schema payload. The SDK verifies its byte digest but does not
+ * substitute a generic parser for that schema's actual semantic validator.
+ */
+export interface EncodedPayload {
+  schema: ContractRef;
+  sha256: string;
+  utf8: string;
 }
 export interface RecoveryView {
   attemptId: ExecutionId;

@@ -54,6 +54,254 @@ fn large_fixture(count: usize) -> (tempfile::TempDir, ProjectStore, ExecutionId)
 }
 
 #[test]
+fn ai_and_arena_previews_share_one_checked_read_with_independent_resource_policies() {
+    use crate::ai::{AiConfig, arena::ArenaConfig};
+
+    let (directory, mut store, project) = large_fixture(120);
+    let rows = store
+        .source_content(
+            store.content_scope().unwrap().current_snapshot.unwrap(),
+            0,
+            100,
+        )
+        .unwrap()
+        .rows;
+    let units = rows
+        .iter()
+        .map(|row| row.unit_id.unwrap())
+        .collect::<Vec<_>>();
+    let term = store
+        .save_term(&crate::SaveTerm {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Source".into(),
+            aliases: vec![],
+            target: "来源".into(),
+            protected: false,
+            scope_unit_id: None,
+            expected_revision_id: None,
+            reason: "Synthetic shared term".into(),
+        })
+        .unwrap();
+    let context = store
+        .save_context(&crate::SaveContext {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: units[0],
+            locale: "zh-CN".into(),
+            source_revision_id: rows[0].source_revision_id.unwrap(),
+            expected_revision_id: None,
+            text: "Synthetic human note".into(),
+            reason: "Synthetic context".into(),
+        })
+        .unwrap();
+    let config = AiConfig {
+        endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
+        model: "synthetic".into(),
+        credential_env: String::new(),
+        max_items: 100,
+        max_requests: 100,
+        ..Default::default()
+    };
+    let (plain, statements, _) = measure(&store, || {
+        store.preview_ai(config.clone(), "zh-CN", &units).unwrap()
+    });
+    let assert_one_read = |statements: &[String]| {
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|sql| sql.starts_with("SELECT project_id,set_id,attempt_id,result_id,source_language,identity_policy FROM source_snapshots WHERE snapshot_id="))
+                .count(),
+            1
+        );
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|sql| sql.starts_with("BEGIN"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            statements
+                .iter()
+                .filter(|sql| sql.starts_with("COMMIT"))
+                .count(),
+            1
+        );
+        assert!(statements.iter().all(|sql| {
+            !["INSERT", "UPDATE", "DELETE", "REPLACE"]
+                .iter()
+                .any(|verb| sql.starts_with(verb))
+        }));
+    };
+    assert_one_read(&statements);
+    assert!(
+        !statements
+            .iter()
+            .any(|sql| sql.contains("FROM term_current") || sql.contains("FROM context_current"))
+    );
+    assert_eq!(plain.items.len(), 100);
+    for (item, row) in plain.items.iter().zip(&rows) {
+        assert_eq!(item.unit_id, row.unit_id.unwrap());
+        assert_eq!(item.source_text, row.occurrence.text);
+        assert_eq!(item.source_revision_id, row.source_revision_id.unwrap());
+        assert!(item.terms.is_empty() && item.context.is_none());
+    }
+    let mut terms = config.clone();
+    terms.share_terms = true;
+    let mut manual = config;
+    manual.share_context = true;
+    let arena_config = ArenaConfig {
+        variants: vec![terms, manual],
+        max_items: 50,
+        max_requests: 100,
+        concurrency: 1,
+        blind: true,
+        parent_attempt_id: None,
+    };
+    let (arena, statements, _) = measure(&store, || {
+        store
+            .preview_arena(arena_config, "zh-CN", &units[..50])
+            .unwrap()
+    });
+    assert_one_read(&statements);
+    assert_eq!(
+        statements
+            .iter()
+            .filter(|sql| sql.contains("FROM term_current c JOIN term_revisions r"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        statements
+            .iter()
+            .filter(|sql| sql.contains("FROM context_current c JOIN context_revisions r"))
+            .count(),
+        50
+    );
+    assert_eq!(arena.items.len(), 100);
+    for pair in arena.items.chunks_exact(2) {
+        assert_eq!(pair[0].item.unit_id, pair[1].item.unit_id);
+        assert_eq!(
+            pair[0].item.source_revision_id,
+            pair[1].item.source_revision_id
+        );
+        assert_eq!(
+            pair[0].item.resource_baseline,
+            pair[1].item.resource_baseline
+        );
+        assert_eq!(pair[0].item.terms[0].revision_id, term.revision_id);
+        assert!(pair[0].item.context.is_none());
+        assert!(pair[1].item.terms.is_empty());
+        assert_eq!(pair[0].item.omissions, ["context-not-shared"]);
+        if pair[1].item.unit_id == units[0] {
+            assert_eq!(pair[1].item.context.as_ref(), Some(&context));
+            assert_eq!(pair[1].item.omissions, ["terms-not-shared"]);
+        } else {
+            assert!(pair[1].item.context.is_none());
+            assert_eq!(
+                pair[1].item.omissions,
+                ["context-missing", "terms-not-shared"]
+            );
+        }
+    }
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_eq!(
+        reopened
+            .preview_arena(arena.config.clone(), "zh-CN", &units[..50])
+            .unwrap()
+            .items,
+        arena.items
+    );
+    for source in ["世界", "日本語"] {
+        reopened
+            .save_term(&crate::SaveTerm {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                term_id: None,
+                locale: "zh-CN".into(),
+                source: source.into(),
+                aliases: vec![],
+                target: "x".repeat(16 * 1024),
+                protected: false,
+                scope_unit_id: None,
+                expected_revision_id: None,
+                reason: "Synthetic prompt budget boundary".into(),
+            })
+            .unwrap();
+    }
+    let mut oversized = arena.config.variants[0].clone();
+    oversized.share_context = true;
+    let (failure, statements, _) = measure(&reopened, || {
+        reopened.preview_ai(oversized, "zh-CN", &units).unwrap_err()
+    });
+    assert_eq!(failure.code, ErrorCode::LimitExceeded);
+    // Two complete 16 KiB terms already consume the 32 KiB prompt allowance.
+    // Refuse the first real item before reading the other 99 manual contexts.
+    assert_eq!(
+        statements
+            .iter()
+            .filter(|sql| sql.contains("FROM context_current c JOIN context_revisions r"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        statements
+            .iter()
+            .filter(|sql| sql.starts_with("ROLLBACK"))
+            .count(),
+        1
+    );
+    assert!(reopened.preview_ai(plain.config, "zh-CN", &units).is_ok());
+}
+
+#[test]
+fn ai_previews_keep_missing_source_and_locale_recovery_stages() {
+    use crate::ai::{AiConfig, arena::ArenaConfig};
+    let directory = tempfile::tempdir().unwrap();
+    let store = ProjectStore::create(
+        directory.path().join("project"),
+        crate::ProjectMetadata::create("Empty preview", "en", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    let config = AiConfig {
+        endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
+        model: "synthetic".into(),
+        credential_env: String::new(),
+        ..Default::default()
+    };
+    let arena = ArenaConfig {
+        variants: vec![config.clone(), config.clone()],
+        max_items: 20,
+        max_requests: 40,
+        concurrency: 1,
+        blind: true,
+        parent_attempt_id: None,
+    };
+    for (locale, stage) in [
+        ("zh-CN", "ai-source"),
+        ("ja", "ai-locale"),
+        ("zh-cn", "ai-locale"),
+    ] {
+        let units = [ExecutionId::new()];
+        for failure in [
+            store
+                .preview_ai(config.clone(), locale, &units)
+                .unwrap_err(),
+            store
+                .preview_arena(arena.clone(), locale, &units)
+                .unwrap_err(),
+        ] {
+            assert_eq!(failure.code, ErrorCode::DependencyConflict);
+            assert_eq!(failure.stage, stage);
+        }
+    }
+}
+
+#[test]
 fn summary_pages_batch_current_evidence_and_bound_payloads() {
     let (_directory, mut store, project) = large_fixture(120);
     let first = store
@@ -377,6 +625,93 @@ fn source_impact_reads_one_work_set_for_two_thousand_units() {
             elapsed.as_micros()
         );
     }
+}
+
+#[test]
+fn maintenance_reads_only_window_targets_while_preserving_original_impact_reasons() {
+    let (_directory, mut store, project) = large_fixture(120);
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let first = store.source_content(snapshot, 0, 1).unwrap().rows.remove(0);
+    let saved = store
+        .save_translation_edit(&crate::SaveTranslationRevision {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: first.unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: first.source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "Synthetic translation".into(),
+        })
+        .unwrap();
+    store
+        .save_term(&crate::SaveTerm {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Source".into(),
+            aliases: vec![],
+            target: "Terminology".into(),
+            protected: false,
+            scope_unit_id: None,
+            expected_revision_id: None,
+            reason: "Synthetic literal impact".into(),
+        })
+        .unwrap();
+    let protection = store
+        .work_protection(first.unit_id.unwrap(), "zh-CN")
+        .unwrap();
+    store
+        .set_work_protection(&crate::application::SetWorkProtection {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: first.unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: first.source_revision_id.unwrap(),
+            selection_id: Some(saved.selection.event_id),
+            expected_revision: protection.revision,
+            protected: true,
+            confirmed_release: false,
+        })
+        .unwrap();
+    let original = store.source_impact(snapshot, "zh-CN", 0, 100).unwrap();
+    let (assessment, statements, _) = measure(&store, || {
+        store
+            .maintenance_assessment(project, snapshot, "zh-CN", 0, 100)
+            .unwrap()
+    });
+    assert_eq!(assessment.rows.len(), 100);
+    assert_eq!(assessment.next_ordinal, Some(100));
+    assert!(assessment.rows[0].protection.protected);
+    assert!(
+        assessment.rows[0]
+            .reasons
+            .iter()
+            .any(|r| r.starts_with("resource-change:"))
+    );
+    for row in &assessment.rows {
+        let old = original
+            .rows
+            .iter()
+            .find(|r| r.current.unit_id == Some(row.unit_id))
+            .unwrap();
+        assert_eq!(row.reasons, old.reasons);
+        assert_eq!(row.review_basis, old.review_basis);
+    }
+    assert!(
+        !statements
+            .iter()
+            .any(|sql| sql.contains("GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001")),
+        "maintenance must not build the complete project unit set"
+    );
+    let selection = statements
+        .iter()
+        .find(|sql| sql.contains("COALESCE(b.last_change_rowid,0)"))
+        .unwrap();
+    assert!(
+        selection.contains("o.unit_id IN (SELECT value FROM json_each(?3))"),
+        "resource selection must use the same wanted window"
+    );
 }
 
 #[test]

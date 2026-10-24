@@ -1,0 +1,18 @@
+{
+  "status": "DRILL-ONLY",
+  "notice": "Keep this separate from the reviewer packet until the review record is fixed. Neither candidate came from a model.",
+  "packetId": "drill-1",
+  "corpus": {
+    "edition": 1,
+    "domain": "stardew-smapi",
+    "generation": "s1",
+    "key": "river-bank"
+  },
+  "requests": 0,
+  "provider": null,
+  "model": null,
+  "candidates": [
+    { "label": "Q", "origin": "Self-authored financial-bank reading, deliberately unsuitable for the supplied river context." },
+    { "label": "R", "origin": "Self-authored river-bank reading for the supplied context." }
+  ]
+}

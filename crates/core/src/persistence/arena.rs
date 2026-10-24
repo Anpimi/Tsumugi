@@ -35,27 +35,6 @@ pub(super) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(super) fn migrate(c: &mut Connection) -> rusqlite::Result<()> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&tx)?;
-    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    tx.pragma_update(None, "user_version", 11)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-arena-migration-commit");
-    tx.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-arena-migration-commit");
-    Ok(())
-}
-#[cfg(test)]
-pub(super) fn drop_for_legacy_fixture(c: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        c.execute_batch(&format!("DROP TABLE IF EXISTS {name}"))?;
-    }
-    Ok(())
-}
 pub(super) fn validate(c: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String =
@@ -136,6 +115,7 @@ pub struct ComparisonEntry {
     pub model: Option<String>,
     pub recipe: Option<String>,
     pub basis_current: bool,
+    pub candidate_disposition: Option<crate::CandidateDisposition>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -341,12 +321,10 @@ impl ProjectStore {
                 return Err(error(ErrorCode::Busy, "arena-parent"));
             }
         }
-        let previews = config
-            .variants
-            .iter()
-            .enumerate()
-            .map(|(slot, _)| self.preview_ai(config.request_config(slot)?, locale, units))
+        let configs = (0..config.variants.len())
+            .map(|slot| config.request_config(slot))
             .collect::<Result<Vec<_>, _>>()?;
+        let previews = self.preview_ai_configs(configs, locale, units)?;
         let mut items = Vec::new();
         for (order, _) in units.iter().enumerate() {
             for (slot, p) in previews.iter().enumerate() {
@@ -502,6 +480,10 @@ impl ProjectStore {
                 model,
                 recipe,
                 basis_current: source_id == target.source_revision_id && !changed,
+                // Reuse the verified append-only decision owner. Only status is
+                // projected, so a human reason cannot disclose a blind model.
+                candidate_disposition: self.translation_candidate_decision(project, *revision)?
+                    .map(|value| value.request.disposition),
             });
         }
         Ok(ComparisonView {

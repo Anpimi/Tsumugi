@@ -1,6 +1,6 @@
 use super::ProjectStore;
 use crate::{ai::*, execution::*};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 impl ProjectStore {
     pub fn ai_start_action_read(
@@ -37,105 +37,256 @@ impl ProjectStore {
         if self.is_reconciling() { self.reconcile_execution()?; }
         Ok(found)
     }
+    /// Resolve the ordinary saved candidate for this attempt's current result.
+    /// Reading it never adopts, selects or resumes an execution.
+    pub fn saved_ai_candidate(
+        &self,
+        attempt: ExecutionId,
+        item_id: ExecutionId,
+    ) -> Result<Option<ExecutionId>, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        let item = item_payload(&input, item_id)?;
+        let Some(result) = self.execution_current_result(attempt, item_id)? else {
+            return Ok(None);
+        };
+        if input.envelope().operation == crate::ai::team::OPERATION {
+            let stored = self.execution_result(attempt, result)?;
+            if stored.envelope().outcome != ExecutionState::Succeeded {
+                return Ok(None);
+            }
+            if !matches!(crate::ai::team::validate_output(&input, &stored)?.outcome,
+                crate::application::TeamWorkOutcome::Translation { .. }) {
+                return Ok(None);
+            }
+        }
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "ai-candidate-read"))?;
+        let revision: Option<String> = connection.query_row(
+            "SELECT revision_id FROM translation_revisions WHERE project_id=?1 AND attempt_id=?2 AND item_id=?3 AND result_id=?4 AND unit_id=?5 AND locale=?6 AND origin_kind='ai' ORDER BY ordinal LIMIT 1",
+            params![input.envelope().project_id.to_string(), attempt.to_string(), item_id.to_string(), result.to_string(), item.unit_id.to_string(), item.target_locale],
+            |row|row.get(0),
+        ).optional().map_err(super::ledger::sql_error)?;
+        revision.map(|id| ExecutionId::parse(&id)).transpose()
+    }
+
     pub fn preview_ai(
         &self,
         config: AiConfig,
         locale: &str,
         units: &[ExecutionId],
     ) -> Result<AiPreview, ExecutionError> {
-        config.validate()?;
-        let metadata = self
-            .metadata()
-            .map_err(|_| error(ErrorCode::StorageFailed, "ai-project"))?;
-        if !metadata
-            .target_locales()
-            .iter()
-            .any(|l| l.as_str() == locale)
-        {
-            return Err(error(ErrorCode::DependencyConflict, "ai-locale"));
+        self.preview_ai_configs(vec![config], locale, units)?
+            .pop()
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "ai-configurations"))
+    }
+
+    /// Prepare all variants from one current read snapshot. Source evidence is
+    /// validated once; shared resources are observed once before each variant's
+    /// independent sharing policy is applied. Nothing is dispatched or saved.
+    pub(super) fn preview_ai_configs(
+        &self,
+        configs: Vec<AiConfig>,
+        locale: &str,
+        units: &[ExecutionId],
+    ) -> Result<Vec<AiPreview>, ExecutionError> {
+        if !(1..=4).contains(&configs.len()) {
+            return Err(error(ErrorCode::LimitExceeded, "ai-configurations"));
         }
-        if units.is_empty()
-            || units.len() > config.max_items as usize
-            || units
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                != units.len()
-        {
-            return Err(error(ErrorCode::LimitExceeded, "ai-scope"));
+        for config in &configs {
+            config.validate()?;
+            super::resources::strategy::verify_config(self, config, locale)?;
+            if units.is_empty()
+                || units.len() > config.max_items as usize
+                || units
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != units.len()
+            {
+                return Err(error(ErrorCode::LimitExceeded, "ai-scope"));
+            }
         }
-        let snapshot = self
-            .content_scope()?
-            .current_snapshot
-            .ok_or_else(|| error(ErrorCode::DependencyConflict, "ai-source"))?;
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "ai-project"))?;
-        let project = ExecutionId::parse(&metadata.project_id().to_string())?;
-        let baseline: i64 = connection
-            .query_row(
-                "SELECT COALESCE(MAX(rowid),0) FROM resource_changes",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(super::ledger::sql_error)?;
-        let mut items = Vec::new();
-        for unit in units {
-            let (revision,key,text):(String,String,String)=connection.query_row("SELECT o.revision_id,o.native_key,r.text FROM source_occurrences o JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id WHERE o.snapshot_id=?1 AND o.unit_id=?2",params![snapshot.to_string(),unit.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(super::ledger::sql_error)?;
-            let mut terms = Vec::new();
-            let mut omissions = Vec::new();
-            if config.share_terms {
-                for entry in self.resolve_terms(project, *unit, locale)?.entries {
-                    if let Some(t) = entry.selected {
-                        terms.push(SharedTerm {
-                            revision_id: t.revision_id,
-                            source: t.source,
-                            target: t.target,
-                            protected: t.protected,
-                        });
-                    } else {
-                        omissions.push(format!("term-conflict:{}", entry.source));
-                    }
-                }
-            }
-            let context = if config.share_context {
-                self.context_revision(project, *unit, locale)?
-            } else {
-                None
-            };
-            if config.share_context && context.is_none() {
-                omissions.push("context-missing".into());
-            }
-            if !config.share_terms {
-                omissions.push("terms-not-shared".into());
-            }
-            if !config.share_context {
-                omissions.push("context-not-shared".into());
-            }
-            let item = AiItem {
-                unit_id: *unit,
-                source_revision_id: ExecutionId::parse(&revision)?,
-                source_snapshot_id: snapshot,
-                native_key: key,
-                source_locale: metadata.source_locale().as_str().into(),
-                source_text: text,
-                target_locale: locale.into(),
-                terms,
-                context,
-                omissions,
-                resource_baseline: baseline as u64,
-            };
-            request_body(&config, &item)?;
-            items.push(item);
-        }
-        let digest = preview_digest(&config, &items)?;
-        Ok(AiPreview {
-            config,
-            recipe: RECIPE.into(),
-            items,
-            digest,
+        super::review::read_snapshot(connection, |connection| {
+            preview_ai_configs_in(connection, configs, locale, units)
         })
     }
+}
+
+pub(super) fn preview_ai_configs_in(
+    connection: &rusqlite::Connection,
+    configs: Vec<AiConfig>,
+    locale: &str,
+    units: &[ExecutionId],
+) -> Result<Vec<AiPreview>, ExecutionError> {
+            let metadata = super::read_metadata_from(connection)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "ai-project"))?;
+            if !metadata
+                .target_locales()
+                .iter()
+                .any(|target| target.as_str() == locale)
+            {
+                return Err(error(ErrorCode::DependencyConflict, "ai-locale"));
+            }
+            let project = ExecutionId::parse(&metadata.project_id().to_string())?;
+            let source =
+                super::resources::SourceContextReader::read_in(connection, project, locale)
+                    .map_err(|failure| {
+                        if failure.code == ErrorCode::DependencyConflict
+                            && failure.stage == "source-context-snapshot"
+                        {
+                            error(ErrorCode::DependencyConflict, "ai-source")
+                        } else {
+                            failure
+                        }
+                    })?;
+            let baseline: i64 = connection
+                .query_row(
+                    "SELECT COALESCE(MAX(rowid),0) FROM resource_changes",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(super::ledger::sql_error)?;
+            let share_terms = configs.iter().any(|config| config.share_terms);
+            let share_context = configs.iter().any(|config| config.share_context);
+            let share_decisions = configs.iter().any(|config| {
+                config.share_context
+                    || config.source_context.extracted
+                    || config.source_context.inferred
+            });
+            let share_source = configs
+                .iter()
+                .any(|config| config.source_context.is_enabled() || config.share_context);
+            let current_terms = if share_terms {
+                super::resources::current_terms_in(connection, project, locale)?
+            } else {
+                Vec::new()
+            };
+            let mut prepared = configs
+                .into_iter()
+                .map(|config| (config, Vec::with_capacity(units.len())))
+                .collect::<Vec<_>>();
+            for unit in units {
+                let row = source.source_for_unit(*unit)?;
+                let revision = row
+                    .source_revision_id
+                    .ok_or_else(|| error(ErrorCode::CorruptLedger, "ai-source"))?;
+                let mut terms = Vec::new();
+                let mut omissions = Vec::new();
+                if share_terms {
+                    for entry in super::resources::resolve_terms_from(
+                        *unit,
+                        locale,
+                        revision,
+                        &row.occurrence.text,
+                        &current_terms,
+                    )
+                    .entries
+                    {
+                        if let Some(term) = entry.selected {
+                            terms.push(SharedTerm {
+                                revision_id: term.revision_id,
+                                source: term.source,
+                                target: term.target,
+                                protected: term.protected,
+                            });
+                        } else {
+                            omissions.push(format!("term-conflict:{}", entry.source));
+                        }
+                    }
+                }
+                let context = if share_context {
+                    super::resources::current_context(connection, project, *unit, locale)?
+                } else {
+                    None
+                };
+                let source_view = if share_source {
+                    Some(source.project(&crate::SourceContextRequest {
+                        project_id: project,
+                        source_snapshot_id: source.snapshot_id,
+                        unit_id: *unit,
+                        source_revision_id: revision,
+                        locale: locale.into(),
+                    })?)
+                } else {
+                    None
+                };
+                let decisions = if share_decisions {
+                    super::resources::current_fact_decisions_in(
+                        connection,
+                        source_view
+                            .as_ref()
+                            .ok_or_else(|| error(ErrorCode::CorruptLedger, "context-fact-view"))?,
+                    )?
+                } else {
+                    Vec::new()
+                };
+                for (config, items) in &mut prepared {
+                    let (project_context, source_context) = if let Some(view) = &source_view {
+                        crate::ProjectFactCapture::capture(view, &decisions, config)?
+                    } else {
+                        (
+                            crate::ProjectFactCapture::NotSelected,
+                            crate::SourceContextCapture::NotSelected,
+                        )
+                    };
+                    let mut item = AiItem {
+                        unit_id: *unit,
+                        source_revision_id: revision,
+                        source_snapshot_id: source.snapshot_id,
+                        native_key: row.occurrence.key.clone(),
+                        source_locale: source.source_locale.clone(),
+                        source_text: row.occurrence.text.clone(),
+                        target_locale: locale.into(),
+                        terms: if config.share_terms {
+                            terms.clone()
+                        } else {
+                            Vec::new()
+                        },
+                        context: if config.share_context {
+                            context.clone()
+                        } else {
+                            None
+                        },
+                        source_context,
+                        project_context,
+                        omissions: if config.share_terms {
+                            omissions.clone()
+                        } else {
+                            Vec::new()
+                        },
+                        resource_baseline: baseline as u64,
+                    };
+                    if config.share_context && item.context.is_none() {
+                        item.omissions.push("context-missing".into());
+                    }
+                    if !config.share_terms {
+                        item.omissions.push("terms-not-shared".into());
+                    }
+                    if !config.share_context {
+                        item.omissions.push("context-not-shared".into());
+                    }
+                    // Enforce each real prompt budget before retaining another
+                    // item, including resources shared by only one variant.
+                    request_body(config, &item)?;
+                    items.push(item);
+                }
+            }
+            prepared
+                .into_iter()
+                .map(|(config, items)| {
+                    let digest = preview_digest(&config, &items)?;
+                    Ok(AiPreview {
+                        config,
+                        recipe: RECIPE.into(),
+                        items,
+                        digest,
+                    })
+                })
+                .collect()
 }
 impl AiPreview {
     pub fn fixed_input(&self, project: crate::ProjectId) -> Result<FixedInput, ExecutionError> {
@@ -159,6 +310,7 @@ impl AiPreview {
         e.settings = serde_json::to_value(AiSettings {
             recipe: RECIPE.into(),
             config: self.config.clone(),
+            agent: None,
         })
         .map_err(|_| error(ErrorCode::InvalidInput, "ai-input"))?;
         // Allow bounded retries inside the producer without the generic runtime
@@ -172,6 +324,36 @@ impl AiPreview {
 
 pub struct AiAdoptionHandler;
 pub struct ArenaAdoptionHandler;
+pub struct TeamTranslationAdoptionHandler;
+impl AdoptionHandler for TeamTranslationAdoptionHandler {
+    fn operation(&self) -> &str {
+        crate::ai::team::OPERATION
+    }
+    fn prepare(
+        &self,
+        input: &FixedInput,
+        action: &AdoptionAction,
+        results: &[FixedResult],
+    ) -> Result<PreparedMutation, ExecutionError> {
+        prepare_ai(input, action, results, false)
+    }
+}
+
+/// Only a real typed translation can enter the ordinary AI candidate mutation.
+/// Advisory reviews, evidence and waiting never masquerade as translated text.
+pub(crate) fn team_translation_output(
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<AiOutput, ExecutionError> {
+    let output = crate::ai::team::validate_output(input, result)?;
+    let crate::application::TeamWorkOutcome::Translation { unit_id, target_locale, text } = output.outcome else {
+        return Err(error(ErrorCode::OutputInvalid, "team-translation-required"));
+    };
+    Ok(AiOutput {
+        unit_id, target_locale, text, usage: output.usage,
+        requests: output.requests, usage_incomplete: output.usage_incomplete,
+    })
+}
 impl AdoptionHandler for ArenaAdoptionHandler {
     fn operation(&self) -> &str {
         crate::ai::arena::OPERATION
@@ -212,6 +394,11 @@ fn prepare_ai(
         (
             crate::ai::arena::validate_output(input, result)?,
             crate::ai::arena::item_payload(input, result.envelope().item_id)?.item,
+        )
+    } else if input.envelope().operation == crate::ai::team::OPERATION {
+        (
+            team_translation_output(input, result)?,
+            item_payload(input, result.envelope().item_id)?,
         )
     } else {
         (

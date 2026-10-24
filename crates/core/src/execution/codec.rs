@@ -9,6 +9,9 @@ use sha2::{Digest, Sha256};
 
 use super::{ErrorCode, ExecutionError, MAX_DEPTH};
 
+mod depth;
+pub(crate) use depth::validate_serialized_depth;
+
 pub(crate) fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

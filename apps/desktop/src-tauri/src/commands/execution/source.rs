@@ -1,8 +1,9 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::content::{
-    self, ContentPage, ContentScope, SourceBundle, SourceChangePage, SourceConfirmation,
+    self, ContentScope, SourceBundle,
 };
+use super::source_wire::{ContentPage, SourceChangePage, SourceConfirmation};
 pub(super) mod capture;
 #[cfg(test)]
 mod tests;
@@ -565,6 +566,7 @@ pub async fn read_source_preview(
                     request.after,
                     request.limit,
                 )
+                .and_then(TryInto::try_into)
                 .map_err(map_source)
             },
         )
@@ -589,6 +591,7 @@ pub async fn read_source_content(
                 )?
                 .store
                 .source_content(request.snapshot_id, request.after, request.limit)
+                .and_then(TryInto::try_into)
                 .map_err(map_source)
             },
         )
@@ -620,6 +623,7 @@ pub async fn read_source_comparison(
                     request.after,
                     request.limit,
                 )
+                .and_then(TryInto::try_into)
                 .map_err(map_source)
             },
         )
@@ -673,6 +677,7 @@ pub async fn read_source_history_content(
                     request.after,
                     request.limit,
                 )
+                .and_then(TryInto::try_into)
                 .map_err(map_source)
             },
         )
@@ -682,7 +687,7 @@ pub async fn read_source_history_content(
 pub async fn read_source_lineage(
     state: State<'_, AppState>,
     request: LineageRequest,
-) -> Result<Vec<content::LineageEvidence>, CommandError> {
+) -> Result<Vec<super::source_wire::LineageEvidence>, CommandError> {
     state
         .sessions
         .run(
@@ -697,6 +702,7 @@ pub async fn read_source_lineage(
                 )?
                 .store
                 .source_lineage_evidence(request.snapshot_id, request.ordinal)
+                .and_then(|rows| rows.into_iter().map(TryInto::try_into).collect())
                 .map_err(map_source)
             },
         )
@@ -727,7 +733,7 @@ pub async fn estimate_source_update(
                     .source_update_estimate(
                         request.attempt_id,
                         request.result_id,
-                        &request.confirmation,
+                        &request.confirmation.into(),
                     )
                     .map_err(map_source)
             },
@@ -738,7 +744,7 @@ pub async fn estimate_source_update(
 pub async fn read_source_impact(
     state: State<'_, AppState>,
     request: ImpactRequest,
-) -> Result<content::SourceImpactPage, CommandError> {
+) -> Result<super::source_wire::SourceImpactPage, CommandError> {
     state
         .sessions
         .run(
@@ -758,6 +764,7 @@ pub async fn read_source_impact(
                     request.after,
                     request.limit,
                 )
+                .and_then(TryInto::try_into)
                 .map_err(map_source)
             },
         )
@@ -788,8 +795,9 @@ pub async fn read_source_adoption_action(
                     adoption.action_id,
                     request.unit_id,
                     adoption.result_id,
-                    &adoption.confirmation,
+                    &adoption.confirmation.into(),
                 )
+                .and_then(|value| value.map(super::source_wire::project_source_action_read).transpose())
                 .map_err(map_source)
             },
         )
@@ -819,11 +827,11 @@ pub async fn prepare_source_adoption(
                 let input = store
                     .execution_input(request.attempt_id)
                     .map_err(map_source)?;
-                if input.envelope().operation != content::OPERATION {
+                if input.envelope().operation != content::OPERATION || input.envelope().plugin.is_some() {
                     return Err(stale());
                 }
                 let parameters =
-                    serde_json::to_value(&request.confirmation).map_err(|_| stale())?;
+                    serde_json::to_value(tsumugi_core::content::SourceConfirmation::from(request.confirmation)).map_err(|_| stale())?;
                 store
                     .prepare_adoption_with_id(
                         request.action_id,
@@ -832,6 +840,7 @@ pub async fn prepare_source_adoption(
                         vec![request.result_id],
                         parameters,
                     )
+                    .and_then(super::source_wire::project_source_action)
                     .map_err(map_source)
             },
         )

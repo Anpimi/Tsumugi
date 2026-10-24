@@ -41,13 +41,37 @@ const WANTED: &str = "WITH wanted AS MATERIALIZED (
     SELECT json_extract(value,'$[0]') AS unit_id,
            json_extract(value,'$[1]') AS basis FROM json_each(?3))";
 
+pub(super) fn check_read_cancel(cancellation: &Cancellation) -> Result<(), ExecutionError> {
+    if cancellation.is_requested() {
+        return Err(failure(ErrorCode::Cancelled, "review-read-cancelled"));
+    }
+    Ok(())
+}
+
 /// A constant number of statements for any bounded number of current units.
-pub(super) fn targets_in(
+pub(in crate::persistence) fn targets_in(
     connection: &Connection,
     project_id: ExecutionId,
     units: &[ExecutionId],
     locale: &str,
 ) -> Result<Vec<ReviewTarget>, ExecutionError> {
+    targets_in_with_cancel(
+        connection,
+        project_id,
+        units,
+        locale,
+        &Cancellation::default(),
+    )
+}
+
+pub(super) fn targets_in_with_cancel(
+    connection: &Connection,
+    project_id: ExecutionId,
+    units: &[ExecutionId],
+    locale: &str,
+    cancellation: &Cancellation,
+) -> Result<Vec<ReviewTarget>, ExecutionError> {
+    check_read_cancel(cancellation)?;
     check_project(connection, project_id, locale)?;
     if units.len() > MAX_SCOPE || units.iter().collect::<BTreeSet<_>>().len() != units.len() {
         return Err(failure(ErrorCode::InvalidInput, "review-units"));
@@ -61,11 +85,16 @@ pub(super) fn targets_in(
     let terms = resources::current_terms_in(connection, project_id, locale)?;
     let mut statement = connection
         .prepare(
-            "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2))
+            "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2)),
+         first_occurrences AS MATERIALIZED (
+           SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
+           FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+           JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY o.snapshot_id,o.unit_id)
          SELECT o.unit_id,o.snapshot_id,o.revision_id,o.native_key,r.text,
                 s.event_id,s.revision_id,tr.text,cc.revision_id
-         FROM wanted
-         JOIN source_occurrences o ON o.unit_id=wanted.unit_id
+         FROM first_occurrences first
+         JOIN source_occurrences o ON o.snapshot_id=first.snapshot_id
+           AND o.unit_id=first.unit_id AND o.ordinal=first.ordinal
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
          JOIN source_revisions r ON r.revision_id=o.revision_id
          JOIN content_scope c ON c.current_snapshot=o.snapshot_id
@@ -94,7 +123,9 @@ pub(super) fn targets_in(
         .collect::<Result<Vec<_>, _>>()
         .map_err(sql)?;
     let mut targets = BTreeMap::new();
+    let mut resolutions = BTreeMap::new();
     for (unit, snapshot, source_revision, key, source, selection, revision, text, context) in raw {
+        check_read_cancel(cancellation)?;
         let unit_id = parse_id(unit)?;
         let source_revision_id = parse_id(source_revision)?;
         let source_snapshot_id = parse_id(snapshot)?;
@@ -132,6 +163,7 @@ pub(super) fn targets_in(
             context_revision_id: context.map(parse_id).transpose()?,
             term_revision_ids,
         };
+        resolutions.insert(unit_id, resolved);
         targets.insert(
             unit_id,
             ReviewTarget {
@@ -177,6 +209,7 @@ pub(super) fn targets_in(
             'kind',kind,'reason',reason,'createdAt',created_at) FROM latest WHERE position=1"
     ), arguments)?;
     for decision in decisions {
+        check_read_cancel(cancellation)?;
         if basis_digest(&decision.basis_evidence)? != decision.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
         }
@@ -191,23 +224,120 @@ pub(super) fn targets_in(
             "{WANTED}, latest AS (
          SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id ORDER BY r.rowid DESC) position
          FROM review_checks r JOIN wanted w ON w.unit_id=r.unit_id AND w.basis=r.basis
-         WHERE r.project_id=?1 AND r.locale=?2 AND r.validator_version=?4)
+         WHERE r.project_id=?1 AND r.locale=?2 AND r.purpose='qa')
          SELECT json_object('runId',run_id,'actionId',action_id,'unitId',unit_id,
             'locale',locale,'basis',basis,'basisEvidence',json(basis_json),
             'validatorVersion',validator_version,'outcome','completed','rules',json(rules_json),
-            'createdAt',created_at) FROM latest WHERE position=1"
+            'evidence',json(evidence_json),'createdAt',created_at) FROM latest WHERE position=1"
         ),
-        &[&project, &locale, &bases, &CHECK_VERSION],
+        &[&project, &locale, &bases],
     )?;
+    // Keep only the small saved QA projections. The ledger validates one full
+    // original frame at a time within this same read snapshot.
+    let mut recorded = BTreeMap::new();
+    let mut owners = BTreeMap::new();
     for mut check in checks {
+        check_read_cancel(cancellation)?;
         if basis_digest(&check.basis_evidence)? != check.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
         }
-        check.outcome = check_outcome(&check.rules).to_owned();
+        check.outcome = check_outcome(&check.rules);
+        checks::validate_projection(&check)?;
+        if let Some(evidence) = &check.evidence {
+            for origin in &evidence.origins {
+                if owners
+                    .insert((origin.attempt_id, origin.result_id), check.run_id)
+                    .is_some()
+                {
+                    return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
+                }
+            }
+            if recorded.insert(check.run_id, check).is_some() {
+                return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
+            }
+        } else {
+            #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+            if check.validator_version == CHECK_VERSION {
+                checks::validate_legacy_source(connection, project_id, &check)?;
+                let target = targets
+                    .get_mut(&check.unit_id)
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
+                target.current_check = Some(check);
+            }
+        }
+    }
+    let pairs: Vec<_> = owners.keys().copied().collect();
+    // The number of fixed slots is bounded. Restore one original frame at a
+    // time, in bounded batches within this same snapshot; do not retain all
+    // provider inputs for a whole editor scope.
+    for batch in pairs.chunks(10_000) {
+        check_read_cancel(cancellation)?;
+        super::super::ledger::visit_result_pairs(connection, batch, |original| {
+            check_read_cancel(cancellation)?;
+            let pair = (
+                original.input.envelope().attempt_id,
+                original.result.envelope().result_id,
+            );
+            let run_id = owners
+                .remove(&pair)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let check = recorded
+                .get(&run_id)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let evidence = check
+                .evidence
+                .as_ref()
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let saved = evidence
+                .origins
+                .iter()
+                .find(|o| (o.attempt_id, o.result_id) == pair)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let request = checks::request_digest(
+                project_id,
+                check.unit_id,
+                &check.locale,
+                &check.basis,
+                check.action_id,
+                &evidence.advisory_checks,
+            )?;
+            checks::validate_saved_frames(
+                project_id,
+                check,
+                &request,
+                saved,
+                &original.input,
+                &original.result,
+            )?;
+            check_read_cancel(cancellation)
+        })?;
+    }
+    if !owners.is_empty() {
+        return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
+    }
+    let mut materials = BTreeMap::new();
+    for (_, check) in recorded {
+        check_read_cancel(cancellation)?;
+        let evidence = check
+            .evidence
+            .as_ref()
+            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
         let target = targets
             .get_mut(&check.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
-        target.current_check = Some(check);
+        if !materials.contains_key(&target.source_snapshot_id) {
+            materials.insert(
+                target.source_snapshot_id,
+                checks::ReviewMaterial::load(connection, project_id, target.source_snapshot_id)?,
+            );
+        }
+        if materials[&target.source_snapshot_id].matches(
+            target,
+            &resolutions[&target.unit_id],
+            evidence,
+        )? {
+            target.current_check = Some(check);
+        }
     }
     let fallbacks: Vec<FallbackDecision> = json_rows(connection,
         "WITH wanted AS MATERIALIZED (SELECT value unit_id FROM json_each(?3)),
@@ -223,6 +353,7 @@ pub(super) fn targets_in(
          FROM latest WHERE position=1 AND kind='allow'",
         &[&project, &locale, &unit_json, &POLICY_VERSION])?;
     for fallback in fallbacks {
+        check_read_cancel(cancellation)?;
         let target = targets
             .get_mut(&fallback.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
@@ -242,6 +373,7 @@ pub(super) fn targets_in(
          FROM latest WHERE position=1 AND kind='grant' ORDER BY issue_id"
     ), &[&project, &locale, &bases, &POLICY_VERSION])?;
     for waiver in waivers {
+        check_read_cancel(cancellation)?;
         let target = targets
             .get_mut(&waiver.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
@@ -255,6 +387,7 @@ pub(super) fn targets_in(
             target.current_waivers.push(waiver);
         }
     }
+    check_read_cancel(cancellation)?;
     units
         .iter()
         .map(|unit| {

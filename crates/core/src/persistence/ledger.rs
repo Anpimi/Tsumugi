@@ -2,26 +2,26 @@ use super::ProjectStore;
 use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+mod activity;
+mod input_storage;
+pub use activity::{TaskActivity, TaskActivityPhase, TaskActivityRow};
 pub(crate) mod provider;
-pub use provider::ProviderBudget;
+pub use provider::{ProviderBudget, ReportedTokenTotal};
 
 const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 2097152), digest TEXT NOT NULL CHECK(length(digest) = 64),
-        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
-pub(super) const EXECUTION_RESULTS_TABLE_V3: &str = "CREATE TABLE execution_results (
-        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 8388608), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
 pub(super) const TABLES: &[(&str, &str)] = &[
+    ("execution_input_chunks", input_storage::TABLE),
     ("execution_tasks", "CREATE TABLE execution_tasks (
         task_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL, operation TEXT NOT NULL,
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0), UNIQUE(task_id, project_id))"),
     ("execution_attempts", "CREATE TABLE execution_attempts (
         attempt_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, project_id TEXT NOT NULL,
         previous_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
-        input BLOB NOT NULL CHECK(length(input) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        input BLOB NOT NULL CHECK(typeof(input)='blob' AND length(input) BETWEEN 1 AND 18432), digest TEXT NOT NULL CHECK(length(digest) = 64),
         cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision >= 0),
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
         FOREIGN KEY(task_id, project_id) REFERENCES execution_tasks(task_id, project_id))"),
@@ -34,6 +34,13 @@ pub(super) const TABLES: &[(&str, &str)] = &[
         retry_safe INTEGER NOT NULL CHECK(retry_safe IN (0,1)), diagnostic TEXT CHECK(length(diagnostic) <= 4096),
         PRIMARY KEY(attempt_id,item_id), UNIQUE(attempt_id,item_id,dispatch_token))"),
     ("execution_results", EXECUTION_RESULTS_TABLE),
+    ("mcp_query_actions", "CREATE TABLE mcp_query_actions (
+        action_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE REFERENCES execution_attempts(attempt_id),
+        input_digest TEXT NOT NULL CHECK(length(input_digest)=64))"),
+    ("plugin_validation_links", "CREATE TABLE plugin_validation_links (
+        producer_result_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_results(result_id),
+        checker_result_id TEXT NOT NULL REFERENCES execution_results(result_id),
+        valid INTEGER NOT NULL CHECK(valid IN (0,1)))"),
     ("execution_cancellations", "CREATE TABLE execution_cancellations (
         request_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL REFERENCES execution_tasks(task_id),
         revision INTEGER NOT NULL CHECK(revision > 0), UNIQUE(task_id,revision))"),
@@ -78,16 +85,46 @@ pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection, false)
+    validate_schema(connection, |connection, input| {
+        validate_attempt_input(connection, input, |result| {
+            load_result(connection, input, result)
+        })
+    })
 }
 
-pub(super) fn validate_v3(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection, true)
+pub(super) fn validate_for_open(
+    connection: &Connection,
+    mut validate_review: impl FnMut(
+        &Connection,
+        &FixedInput,
+        &mut OpenResultReader<'_>,
+    ) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
+    validate_schema(connection, |connection, input| {
+        let mut results = OpenResultReader::new(connection, input);
+        validate_attempt_input(connection, input, |result| results.load(result))?;
+        super::plugin_execution::validate_associated_input(connection, input, &mut results)?;
+        validate_review(connection, input, &mut results)
+    })
+}
+
+fn validate_attempt_input(
+    connection: &Connection,
+    input: &FixedInput,
+    load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
+) -> Result<(), ExecutionError> {
+    let _ = read_attempt_with_results(connection, input, false, load_result)?;
+    if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
+        || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY
+    {
+        super::mcp::validate_ledger_input(connection, input)?;
+    }
+    Ok(())
 }
 
 fn validate_schema(
     connection: &Connection,
-    legacy_result_limit: bool,
+    mut validate_input: impl FnMut(&Connection, &FixedInput) -> Result<(), ExecutionError>,
 ) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
     if let Some(sql) = connection
@@ -104,11 +141,7 @@ fn validate_schema(
         }
     }
     for (name, expected) in TABLES {
-        let expected = if legacy_result_limit && *name == "execution_results" {
-            EXECUTION_RESULTS_TABLE_V3
-        } else {
-            *expected
-        };
+        let expected = *expected;
         let actual: String = connection
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -132,6 +165,7 @@ fn validate_schema(
     {
         return Err(error(ErrorCode::CorruptLedger, "foreign-keys"));
     }
+    input_storage::validate_chunks(connection)?;
     let project = super::read_metadata_from(connection)
         .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
     let mut statement = connection
@@ -146,7 +180,27 @@ fn validate_schema(
         if input.envelope().project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
-        let _ = read_attempt(connection, id, false)?;
+        validate_input(connection, &input)?;
+    }
+    super::mcp::validate_action_links(connection)?;
+    let mut links = connection
+        .prepare("SELECT producer_result_id,valid FROM plugin_validation_links")
+        .map_err(sql_error)?;
+    let rows = links
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
+        .map_err(sql_error)?;
+    for row in rows {
+        let (result_id, valid) = row.map_err(sql_error)?;
+        let attempt: String = connection
+            .query_row(
+                "SELECT attempt_id FROM execution_results WHERE result_id=?1",
+                [&result_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        let input = load_input(connection, parse_id(attempt)?)?;
+        let result = load_result(connection, &input, parse_id(result_id)?)?;
+        validate_plugin_link(connection, &input, &result, valid)?;
     }
     let mut actions = connection
         .prepare("SELECT action_id,attempt_id,unit_id,request,digest FROM execution_actions")
@@ -165,7 +219,7 @@ fn validate_schema(
     for row in rows {
         let (id, attempt, unit, bytes, digest) = row.map_err(sql_error)?;
         let action: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)?;
-        let input = load_input(connection, parse_id(attempt.clone())?)?;
+        let input = load_input_cached(connection, parse_id(attempt.clone())?)?;
         if action.action_id.to_string() != id
             || action.attempt_id.to_string() != attempt
             || action.unit_id.to_string() != unit
@@ -183,8 +237,12 @@ fn validate_schema(
             }
         }
     }
-    let mut continuations = connection.prepare("SELECT action_id FROM execution_continuations").map_err(sql_error)?;
-    let ids = continuations.query_map([], |r| r.get::<_, String>(0)).map_err(sql_error)?;
+    let mut continuations = connection
+        .prepare("SELECT action_id FROM execution_continuations")
+        .map_err(sql_error)?;
+    let ids = continuations
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(sql_error)?;
     for id in ids {
         read_continuation(connection, parse_id(id.map_err(sql_error)?)?)?
             .ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-association"))?;
@@ -197,167 +255,221 @@ fn enqueue_input(
     input: &FixedInput,
     policy: RecoveryPolicy,
     parent: Option<ExecutionId>,
-) -> Result<(), ExecutionError> {
+    prepared_input: &input_storage::PreparedInput<'_>,
+    fresh_delegation: bool,
+) -> Result<bool, ExecutionError> {
     let envelope = input.envelope();
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
-                [envelope.attempt_id.to_string()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql_error)?;
-        if let Some(digest) = existing {
-            return if digest == input.digest()
-                && provider::recovery_policy(tx, envelope.attempt_id)? == policy
-                && provider::matches_parent(tx, envelope.task_id, parent)?
-            {
-                Ok(())
-            } else {
-                Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
-            };
+    super::resources::verify_input_fact_decisions(tx, input)?;
+    let existing: Option<String> = tx
+        .query_row(
+            "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
+            [envelope.attempt_id.to_string()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    if let Some(digest) = existing {
+        if fresh_delegation {
+            return Err(error(ErrorCode::ResultMismatch, "work-plan-tool-attempt"));
         }
-        let task: Option<(String, String)> = tx
-            .query_row(
-                "SELECT project_id,operation FROM execution_tasks WHERE task_id=?1",
-                [envelope.task_id.to_string()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(sql_error)?;
-        if let Some((project, operation)) = task {
-            if project != envelope.project_id.to_string()
-                || operation != envelope.operation
-                || envelope.previous_attempt_id.is_none()
-            {
-                return Err(error(ErrorCode::ResultMismatch, "task-identity"));
-            }
+        return if digest == input.digest()
+            && provider::recovery_policy(tx, envelope.attempt_id)? == policy
+            && provider::matches_parent(tx, envelope.task_id, parent)?
+        {
+            check_stored_input(tx, input)?;
+            Ok(false)
         } else {
-            if envelope.previous_attempt_id.is_some() {
-                return Err(error(ErrorCode::InvalidInput, "previous-attempt"));
-            }
-            tx.execute("INSERT INTO execution_tasks VALUES (?1,?2,?3,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_tasks))", params![envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.operation]).map_err(sql_error)?;
+            Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
+        };
+    }
+    super::resources::strategy::verify_admission(tx, input)?;
+    let task: Option<(String, String)> = tx
+        .query_row(
+            "SELECT project_id,operation FROM execution_tasks WHERE task_id=?1",
+            [envelope.task_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    if let Some((project, operation)) = task {
+        if project != envelope.project_id.to_string()
+            || operation != envelope.operation
+            || envelope.previous_attempt_id.is_none()
+        {
+            return Err(error(ErrorCode::ResultMismatch, "task-identity"));
         }
-        if let Some(previous) = envelope.previous_attempt_id {
-            let old = load_input(tx, previous)?;
-            if provider::recovery_policy(tx, previous)? != policy || !policy.allows_replay() {
-                return Err(error(ErrorCode::Unauthorized, "effect-policy"));
-            }
-            if old.envelope().task_id != envelope.task_id {
-                return Err(error(ErrorCode::ResultMismatch, "previous-attempt"));
-            }
-            if envelope
-                .units
-                .iter()
-                .any(|unit| !old.envelope().units.contains(unit))
-            {
-                return Err(error(ErrorCode::Unauthorized, "retry-unit"));
-            }
-            let state = read_attempt(tx, previous, false)?;
-            for item in &envelope.items {
-                let newer: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON a.attempt_id=i.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![envelope.task_id.to_string(),item.item_id.to_string(),previous.to_string()],|r|r.get(0)).map_err(sql_error)?;
-                if newer {
-                    return Err(error(ErrorCode::Unauthorized, "retry-already-created"));
-                }
-                let status = state
-                    .items
-                    .iter()
-                    .find(|old| old.item_id == item.item_id)
-                    .ok_or_else(|| error(ErrorCode::InvalidInput, "retry-item"))?;
-                if let Some(reference) = envelope
-                    .reused_results
-                    .iter()
-                    .find(|reference| reference.item_id == item.item_id)
-                {
-                    let current:Option<String>=tx.query_row("SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![previous.to_string(),item.item_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-                    let output = load_result(tx, &old, reference.result_id)?;
-                    load_result(tx, input, reference.result_id)?;
-                    if status.adoption == AdoptionState::Committed
-                        || status.validation != ValidationState::Valid
-                        || status.execution != ExecutionState::Succeeded
-                        || current != Some(reference.result_id.to_string())
-                        || output.envelope().attempt_id != reference.source_attempt_id
-                        || old.item(item.item_id)? != item
-                    {
-                        return Err(error(ErrorCode::Unauthorized, "reuse-eligibility"));
-                    }
-                    continue;
-                }
-                if status.adoption == AdoptionState::Committed
-                    || !matches!(
-                        status.execution,
-                        ExecutionState::Queued
-                            | ExecutionState::CancelledBeforeDispatch
-                            | ExecutionState::Failed
-                    )
-                    || status.validation == ValidationState::Invalid
-                    || (status.execution == ExecutionState::Failed && !status.retry_safe)
-                {
-                    return Err(error(ErrorCode::Unauthorized, "retry-eligibility"));
-                }
-                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='continued-in-new-attempt' WHERE attempt_id=?1 AND item_id=?2 AND execution='queued'",params![previous.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
-            }
+    } else {
+        if envelope.previous_attempt_id.is_some() {
+            return Err(error(ErrorCode::InvalidInput, "previous-attempt"));
         }
-        let cancelled = cancel_revision(tx, envelope.task_id)?;
-        tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),input.bytes(),input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
+        tx.execute("INSERT INTO execution_tasks VALUES (?1,?2,?3,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_tasks))", params![envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.operation]).map_err(sql_error)?;
+    }
+    if let Some(previous) = envelope.previous_attempt_id {
+        let old = load_input(tx, previous)?;
+        if provider::recovery_policy(tx, previous)? != policy || !policy.allows_replay() {
+            return Err(error(ErrorCode::Unauthorized, "effect-policy"));
+        }
+        if old.envelope().task_id != envelope.task_id {
+            return Err(error(ErrorCode::ResultMismatch, "previous-attempt"));
+        }
+        if envelope
+            .units
+            .iter()
+            .any(|unit| !old.envelope().units.contains(unit))
+        {
+            return Err(error(ErrorCode::Unauthorized, "retry-unit"));
+        }
+        let state = read_attempt(tx, previous, false)?;
         for item in &envelope.items {
+            let newer: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON a.attempt_id=i.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![envelope.task_id.to_string(),item.item_id.to_string(),previous.to_string()],|r|r.get(0)).map_err(sql_error)?;
+            if newer {
+                return Err(error(ErrorCode::Unauthorized, "retry-already-created"));
+            }
+            let status = state
+                .items
+                .iter()
+                .find(|old| old.item_id == item.item_id)
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "retry-item"))?;
             if let Some(reference) = envelope
                 .reused_results
                 .iter()
                 .find(|reference| reference.item_id == item.item_id)
             {
-                tx.execute("INSERT INTO execution_items VALUES (?1,?2,'succeeded','valid','unapplied',NULL,?3,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string(),reference.result_id.to_string()]).map_err(sql_error)?;
-            } else {
-                tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
+                let current:Option<String>=tx.query_row("SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![previous.to_string(),item.item_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
+                let output = load_result(tx, &old, reference.result_id)?;
+                load_result(tx, input, reference.result_id)?;
+                if status.adoption == AdoptionState::Committed
+                    || status.validation != ValidationState::Valid
+                    || status.execution != ExecutionState::Succeeded
+                    || current != Some(reference.result_id.to_string())
+                    || output.envelope().attempt_id != reference.source_attempt_id
+                    || old.item(item.item_id)? != item
+                {
+                    return Err(error(ErrorCode::Unauthorized, "reuse-eligibility"));
+                }
+                continue;
             }
+            if status.adoption == AdoptionState::Committed
+                || !matches!(
+                    status.execution,
+                    ExecutionState::Queued
+                        | ExecutionState::CancelledBeforeDispatch
+                        | ExecutionState::Failed
+                )
+                || status.validation == ValidationState::Invalid
+                || (status.execution == ExecutionState::Failed && !status.retry_safe)
+            {
+                return Err(error(ErrorCode::Unauthorized, "retry-eligibility"));
+            }
+            tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='continued-in-new-attempt' WHERE attempt_id=?1 AND item_id=?2 AND execution='queued'",params![previous.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
         }
-        provider::record_input(tx, input, policy, parent)?;
-        super::content::record_input(tx, input)?;
-        super::translation::record_input(tx, input)?;
-        super::release::record_input(tx, input)?;
-    Ok(())
+    }
+    let cancelled = cancel_revision(tx, envelope.task_id)?;
+    let stored_input = prepared_input.insert(tx)?;
+    tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),stored_input,input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
+    for item in &envelope.items {
+        if let Some(reference) = envelope
+            .reused_results
+            .iter()
+            .find(|reference| reference.item_id == item.item_id)
+        {
+            tx.execute("INSERT INTO execution_items VALUES (?1,?2,'succeeded','valid','unapplied',NULL,?3,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string(),reference.result_id.to_string()]).map_err(sql_error)?;
+        } else {
+            tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
+        }
+    }
+    provider::record_input(tx, input, policy, parent)?;
+    super::mcp::record_input(tx, input)?;
+    super::content::record_input(tx, input)?;
+    super::translation::record_input(tx, input)?;
+    Ok(true)
 }
 
-fn read_continuation(connection: &Connection, action_id: ExecutionId) -> Result<Option<ContinuationReceipt>, ExecutionError> {
+fn read_continuation(
+    connection: &Connection,
+    action_id: ExecutionId,
+) -> Result<Option<ContinuationReceipt>, ExecutionError> {
     let row: Option<(String, String, String, Vec<u8>, String)> = connection.query_row(
         "SELECT source_attempt_id,unit_id,attempt_id,receipt,digest FROM execution_continuations WHERE action_id=?1",
         [action_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))
         .optional().map_err(sql_error)?;
-    let Some((source, unit, attempt, bytes, digest)) = row else { return Ok(None) };
+    let Some((source, unit, attempt, bytes, digest)) = row else {
+        return Ok(None);
+    };
     let receipt: ContinuationReceipt = codec::decode(&bytes, MAX_INPUT_BYTES)
         .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-receipt"))?;
     let original = load_input(connection, parse_id(source.clone())?)?;
     let next = load_input(connection, parse_id(attempt.clone())?)?;
     let action = &receipt.action;
-    let expected_digest = action.request_digest(&original)
+    let expected_digest = action
+        .request_digest(&original)
         .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-request"))?;
-    let expected_unit = original.envelope().units.iter().find(|u| u.unit_id == action.unit_id)
+    let expected_unit = original
+        .envelope()
+        .units
+        .iter()
+        .find(|u| u.unit_id == action.unit_id)
         .ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-unit"))?;
-    let dispatched: std::collections::BTreeSet<_> = next.envelope().items.iter()
-        .filter(|i| !next.envelope().reused_results.iter().any(|r| r.item_id == i.item_id))
-        .map(|i| i.item_id).collect();
-    let (captured, sequence): (i64,i64) = connection.query_row("SELECT cancellation_revision,sequence FROM execution_attempts WHERE attempt_id=?1", [attempt.clone()], |r| Ok((r.get(0)?,r.get(1)?))).map_err(sql_error)?;
+    let dispatched: std::collections::BTreeSet<_> = next
+        .envelope()
+        .items
+        .iter()
+        .filter(|i| {
+            !next
+                .envelope()
+                .reused_results
+                .iter()
+                .any(|r| r.item_id == i.item_id)
+        })
+        .map(|i| i.item_id)
+        .collect();
+    let (captured, sequence): (i64, i64) = connection
+        .query_row(
+            "SELECT cancellation_revision,sequence FROM execution_attempts WHERE attempt_id=?1",
+            [attempt.clone()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql_error)?;
     let mut expected = original.envelope().clone();
     expected.previous_attempt_id = Some(expected.attempt_id);
     expected.attempt_id = receipt.attempt_id;
     expected.units = vec![expected_unit.clone()];
-    expected.items.retain(|item| expected_unit.item_ids.contains(&item.item_id));
+    expected
+        .items
+        .retain(|item| expected_unit.item_ids.contains(&item.item_id));
     expected.reused_results = next.envelope().reused_results.clone();
     let reconstructed = FixedInput::capture(expected)
         .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-input"))?;
-    if action.action_id != action_id || action.source_attempt_id.to_string() != source
-        || action.unit_id.to_string() != unit || receipt.attempt_id.to_string() != attempt
-        || action.canonical().map_err(|_| error(ErrorCode::CorruptLedger, "continuation-request"))? != *action || receipt.request_digest != expected_digest
-        || receipt.request_digest != digest || receipt.source_input_digest != original.digest()
-        || receipt.input_digest != next.digest() || reconstructed.digest() != next.digest()
+    if action.action_id != action_id
+        || action.source_attempt_id.to_string() != source
+        || action.unit_id.to_string() != unit
+        || receipt.attempt_id.to_string() != attempt
+        || action
+            .canonical()
+            .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-request"))?
+            != *action
+        || receipt.request_digest != expected_digest
+        || receipt.request_digest != digest
+        || receipt.source_input_digest != original.digest()
+        || receipt.input_digest != next.digest()
+        || reconstructed.digest() != next.digest()
         || receipt.task_id != original.envelope().task_id
         || receipt.operation != original.envelope().operation
         || dispatched != action.item_ids.iter().copied().collect()
-        || sequence < 1 || receipt.sequence.get() != sequence as u64
-        || captured < 0 || captured as u64 != action.expected_cancellation_revision.get()
-        || provider::recovery_policy(connection, action.source_attempt_id)? != provider::recovery_policy(connection, receipt.attempt_id)?
+        || sequence < 1
+        || receipt.sequence.get() != sequence as u64
+        || captured < 0
+        || captured as u64 != action.expected_cancellation_revision.get()
+        || provider::recovery_policy(connection, action.source_attempt_id)?
+            != provider::recovery_policy(connection, receipt.attempt_id)?
         || !provider::recovery_policy(connection, receipt.attempt_id)?.allows_replay()
-        || connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)", [action_id.to_string()], |r| r.get::<_,bool>(0)).map_err(sql_error)?
+        || connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)",
+                [action_id.to_string()],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(sql_error)?
     {
         return Err(error(ErrorCode::CorruptLedger, "continuation-association"));
     }
@@ -368,58 +480,6 @@ fn read_continuation(connection: &Connection, action_id: ExecutionId) -> Result<
         }
     }
     Ok(Some(receipt))
-}
-
-pub(super) fn migrate_v3_result_limit(connection: &mut Connection) -> rusqlite::Result<()> {
-    let foreign_keys: bool =
-        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-    if !foreign_keys {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    connection.pragma_update(None, "foreign_keys", false)?;
-
-    let migration = (|| {
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let create_sql = EXECUTION_RESULTS_TABLE.replacen(
-            "\"execution_results\"",
-            "\"execution_results_v4\"",
-            1,
-        );
-        transaction.execute_batch(&create_sql)?;
-        transaction.execute(
-            "INSERT INTO execution_results_v4 (result_id,attempt_id,item_id,dispatch_token,bytes,digest)
-             SELECT result_id,attempt_id,item_id,dispatch_token,bytes,digest FROM execution_results",
-            [],
-        )?;
-        transaction.execute_batch(
-            "DROP TABLE execution_results;
-             ALTER TABLE execution_results_v4 RENAME TO execution_results;",
-        )?;
-        if transaction
-            .prepare("PRAGMA foreign_key_check")?
-            .exists([])?
-        {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        transaction.pragma_update(None, "user_version", 4)?;
-        #[cfg(test)]
-        super::migration_crash_hook("before-v3-migration-commit");
-        transaction.commit()?;
-        #[cfg(test)]
-        super::migration_crash_hook("after-v3-migration-commit");
-        Ok(())
-    })();
-    let restore_foreign_keys = connection.pragma_update(None, "foreign_keys", true);
-    match migration {
-        Err(error) => {
-            restore_foreign_keys?;
-            Err(error)
-        }
-        Ok(()) => {
-            restore_foreign_keys?;
-            Ok(())
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -495,7 +555,10 @@ fn decode_enum<T: serde::de::DeserializeOwned>(value: String) -> Result<T, Execu
     serde_json::from_value(serde_json::Value::String(value))
         .map_err(|_| error(ErrorCode::CorruptLedger, "state"))
 }
-fn cancel_revision(connection: &Connection, task: ExecutionId) -> Result<Revision, ExecutionError> {
+pub(super) fn cancel_revision(
+    connection: &Connection,
+    task: ExecutionId,
+) -> Result<Revision, ExecutionError> {
     let revision: i64 = connection
         .query_row(
             "SELECT COALESCE(MAX(revision),0) FROM execution_cancellations WHERE task_id=?1",
@@ -509,12 +572,94 @@ pub(super) fn load_input(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
-    let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
-        "SELECT CASE WHEN length(input)<=1048576 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
-    let input = FixedInput::restore(&bytes, &digest)?;
-    check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
+    let input = read_stored_input(connection, attempt)?.restore(attempt)?;
+    super::resources::verify_input_fact_decisions(connection, &input)?;
     Ok(input)
+}
+
+pub(super) fn register_input_reader(connection: &Connection) -> rusqlite::Result<()> {
+    input_storage::register(connection)
+}
+
+#[cfg(test)]
+pub(super) fn replace_test_input(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    // Failure-injection fixtures change a complete raw frame, not just its
+    // storage reference. Keep the same actual storage encoder and constraints.
+    let prepared = input_storage::PreparedInput::capture(input)?;
+    let stored = prepared.insert(connection)?;
+    connection
+        .execute(
+            "UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1",
+            params![
+                input.envelope().attempt_id.to_string(),
+                stored,
+                input.digest()
+            ],
+        )
+        .map_err(sql_error)?;
+    Ok(())
+}
+
+pub(super) struct StoredInputRow {
+    metadata: Option<Vec<u8>>,
+    bytes: Option<Vec<u8>>,
+    digest: String,
+    task: String,
+    project: String,
+    previous: Option<String>,
+}
+
+impl StoredInputRow {
+    pub(super) fn from_row(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            metadata: row.get(start)?,
+            bytes: row.get(start + 1)?,
+            digest: row.get(start + 2)?,
+            task: row.get(start + 3)?,
+            project: row.get(start + 4)?,
+            previous: row.get(start + 5)?,
+        })
+    }
+    pub(super) fn restore(self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
+        let input = input_storage::restore(self.metadata, self.bytes, &self.digest)?;
+        check_input_association(
+            &input,
+            attempt,
+            &self.task,
+            &self.project,
+            self.previous.as_deref(),
+        )?;
+        Ok(input)
+    }
+}
+
+/// Six bounded input columns for a caller's existing statement and snapshot.
+/// The execution_attempts table must use alias `a`; restoration owns integrity.
+pub(super) fn input_columns_sql() -> String {
+    format!(
+        "{},{},a.digest,a.task_id,a.project_id,a.previous_attempt_id",
+        input_storage::metadata_sql(),
+        input_storage::reconstruct_sql()
+    )
+}
+
+fn read_stored_input(
+    connection: &Connection,
+    attempt: ExecutionId,
+) -> Result<StoredInputRow, ExecutionError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {} FROM execution_attempts a WHERE a.attempt_id=?1",
+                input_columns_sql()
+            ),
+            [attempt.to_string()],
+            |r| StoredInputRow::from_row(r, 0),
+        )
+        .map_err(sql_error)
 }
 
 fn check_input_association(
@@ -539,48 +684,59 @@ fn check_input_association(
     Ok(())
 }
 
-fn load_input_cached(
+pub(super) fn load_input_cached(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
     use std::sync::{Mutex, OnceLock};
-    // Only the live execution path reuses decoded immutable inputs. Full ledger
-    // reads, reconciliation and reopen validation always verify persisted bytes.
+    // Reuse decoding, never the database's assertion of immutability. Each hit
+    // compares the complete stored bytes and row association with the already
+    // verified capture. A changed blob with an unchanged digest is still corrupt.
     static CACHE: OnceLock<Mutex<Option<(ExecutionId, String, FixedInput)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
-    let (digest,task,project,previous): (String,String,String,Option<String>) = connection.query_row(
-        "SELECT digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+    let stored = read_stored_input(connection, attempt)?;
+    let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
     let cached = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
-        .filter(|(id, hash, _)| *id == attempt && hash == &digest)
+        .filter(|(id, hash, _)| *id == attempt && hash == &stored.digest)
         .map(|(_, _, input)| input.clone());
     let input = if let Some(input) = cached {
+        if bytes != input.bytes() {
+            return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+        }
         input
     } else {
-        let input = load_input(connection, attempt)?;
+        let input = FixedInput::restore(&bytes, &stored.digest)?;
         *cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((attempt, digest.clone(), input.clone()));
+            Some((attempt, stored.digest.clone(), input.clone()));
         input
     };
-    check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
+    check_input_association(
+        &input,
+        attempt,
+        &stored.task,
+        &stored.project,
+        stored.previous.as_deref(),
+    )?;
+    super::resources::verify_input_fact_decisions(connection, &input)?;
     Ok(input)
 }
-pub(super) fn load_result(
+/// A reused result remains bound to its original fixed input and permission.
+fn result_input<'a>(
     connection: &Connection,
-    input: &FixedInput,
+    input: &'a FixedInput,
     result: ExecutionId,
-) -> Result<FixedResult, ExecutionError> {
+) -> Result<std::borrow::Cow<'a, FixedInput>, ExecutionError> {
     let reused = input
         .envelope()
         .reused_results
         .iter()
         .find(|reference| reference.result_id == result);
-    let source = if let Some(reference) = reused {
+    if let Some(reference) = reused {
         let source = load_input(connection, reference.source_attempt_id)?;
         if source.envelope().task_id != input.envelope().task_id
             || source.envelope().project_id != input.envelope().project_id
@@ -588,19 +744,56 @@ pub(super) fn load_result(
             || source.envelope().capability_id != input.envelope().capability_id
             || source.envelope().capability_version != input.envelope().capability_version
             || source.envelope().settings != input.envelope().settings
+            || source.envelope().plugin != input.envelope().plugin
             || source.item(reference.item_id)? != input.item(reference.item_id)?
         {
             return Err(error(ErrorCode::CorruptLedger, "reused-input"));
         }
-        Some(source)
+        Ok(std::borrow::Cow::Owned(source))
     } else {
-        None
-    };
-    let result_input = source.as_ref().unwrap_or(input);
+        Ok(std::borrow::Cow::Borrowed(input))
+    }
+}
+
+pub(super) fn load_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: ExecutionId,
+) -> Result<FixedResult, ExecutionError> {
+    load_result_with_verified(connection, input, result, None)
+}
+
+// Only the open-time attempt owner can supply this already received frame.
+// Every call still reads the original bounded row and checks provenance.
+fn load_result_with_verified(
+    connection: &Connection,
+    input: &FixedInput,
+    result: ExecutionId,
+    verified: Option<&FixedResult>,
+) -> Result<FixedResult, ExecutionError> {
+    let reused = input
+        .envelope()
+        .reused_results
+        .iter()
+        .find(|r| r.result_id == result);
+    let result_input = result_input(connection, input, result)?;
     let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
         "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
         params![result.to_string(),result_input.envelope().attempt_id.to_string(),i64::from(result_input.envelope().limits.max_result_bytes)], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-    let result_value = FixedResult::restore(&bytes, &digest, result_input, parse_id(token)?)?;
+    let token = parse_id(token)?;
+    let result_value = match verified {
+        Some(verified)
+            if verified.envelope().result_id == result
+                && verified.envelope().attempt_id == result_input.envelope().attempt_id
+                && verified.envelope().dispatch_token == token
+                && verified.envelope().item_id.to_string() == item
+                && verified.digest() == digest.as_str()
+                && verified.bytes() == bytes.as_slice() =>
+        {
+            verified.clone()
+        }
+        _ => FixedResult::restore(&bytes, &digest, &result_input, token)?,
+    };
     if reused.is_some_and(|reference| {
         reference.item_id != result_value.envelope().item_id
             || result_value.envelope().outcome != ExecutionState::Succeeded
@@ -612,7 +805,167 @@ pub(super) fn load_result(
     {
         return Err(error(ErrorCode::CorruptLedger, "result-association"));
     }
+    super::plugin_execution::validate_result_in(connection, &result_input, &result_value)?;
     Ok(result_value)
+}
+
+/// One strictly received result for the exact input in the current open snapshot.
+/// A different result replaces the slot; the entire slot dies with this attempt.
+/// Mutable rows and original grants are checked on every load, including hits.
+pub(super) struct OpenResultReader<'a> {
+    connection: &'a Connection,
+    input: &'a FixedInput,
+    verified: Option<FixedResult>,
+}
+
+impl<'a> OpenResultReader<'a> {
+    fn new(connection: &'a Connection, input: &'a FixedInput) -> Self {
+        Self {
+            connection,
+            input,
+            verified: None,
+        }
+    }
+
+    pub(super) fn load(&mut self, result: ExecutionId) -> Result<FixedResult, ExecutionError> {
+        let previous = self.verified.take();
+        // Reused results retain their original input and permission owner. Do
+        // not reuse qualification under the retry attempt's different input.
+        if self
+            .input
+            .envelope()
+            .reused_results
+            .iter()
+            .any(|reference| reference.result_id == result)
+        {
+            drop(previous);
+            return load_result(self.connection, self.input, result);
+        }
+        let previous = previous.filter(|fixed| fixed.envelope().result_id == result);
+        let fixed =
+            load_result_with_verified(self.connection, self.input, result, previous.as_ref())?;
+        self.verified = Some(fixed.clone());
+        Ok(fixed)
+    }
+}
+
+/// Restores associated immutable result pairs in one bounded history read.
+/// Each full frame is released before the next row rather than retaining the
+/// product of scope size and complete plugin input size. Historical reads issue
+/// no grant; a failed visit discards the caller's read projection.
+pub(super) fn visit_result_pairs(
+    connection: &Connection,
+    pairs: &[(ExecutionId, ExecutionId)],
+    mut visit: impl FnMut(ResultValidationCapture) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
+    if pairs.is_empty() {
+        return Ok(());
+    }
+    if pairs.len() > 10_000 {
+        return Err(error(ErrorCode::LimitExceeded, "result-pairs"));
+    }
+    let wanted =
+        serde_json::to_string(pairs).map_err(|_| error(ErrorCode::InvalidInput, "result-pairs"))?;
+    let mut statement = connection.prepare(&format!(
+        "WITH wanted AS (SELECT json_extract(value,'$[0]') attempt,json_extract(value,'$[1]') result FROM json_each(?1))
+         SELECT a.attempt_id,{},a.digest,a.task_id,a.project_id,
+                a.previous_attempt_id,r.result_id,CASE WHEN length(r.bytes)<=?2 THEN r.bytes END,r.digest,r.item_id,r.dispatch_token,{}
+         FROM wanted w JOIN execution_attempts a ON a.attempt_id=w.attempt
+         JOIN execution_results r ON r.attempt_id=a.attempt_id AND r.result_id=w.result",
+         input_storage::reconstruct_sql(), input_storage::metadata_sql()
+    )).map_err(sql_error)?;
+    let rows = statement
+        .query_map(params![wanted, MAX_RESULT_BYTES as i64], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<Vec<u8>>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, Vec<u8>>(7)?,
+                r.get::<_, String>(8)?,
+                r.get::<_, String>(9)?,
+                r.get::<_, String>(10)?,
+                r.get::<_, Option<Vec<u8>>>(11)?,
+            ))
+        })
+        .map_err(sql_error)?;
+    let mut restored = 0;
+    for row in rows {
+        let (
+            attempt,
+            bytes,
+            digest,
+            task,
+            project,
+            previous,
+            result,
+            result_bytes,
+            result_digest,
+            item,
+            token,
+            metadata,
+        ) = row.map_err(sql_error)?;
+        let input = input_storage::restore(metadata, bytes, &digest)?;
+        check_input_association(
+            &input,
+            parse_id(attempt)?,
+            &task,
+            &project,
+            previous.as_deref(),
+        )?;
+        let fixed = FixedResult::restore(&result_bytes, &result_digest, &input, parse_id(token)?)?;
+        if fixed.envelope().result_id.to_string() != result
+            || fixed.envelope().item_id.to_string() != item
+        {
+            return Err(error(ErrorCode::CorruptLedger, "result-association"));
+        }
+        visit(ResultValidationCapture {
+            input,
+            result: fixed,
+        })?;
+        restored += 1;
+    }
+    if restored != pairs.len() {
+        return Err(error(ErrorCode::CorruptLedger, "result-pairs"));
+    }
+    Ok(())
+}
+// Comparing with a verified immutable frame is as strong as restoring its
+// digest again, while avoiding repeated SDK decoding/structural qualification.
+fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
+    let stored = read_stored_input(connection, input.envelope().attempt_id)?;
+    let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
+    if stored.digest != input.digest() || bytes != input.bytes() {
+        return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+    }
+    check_input_association(
+        input,
+        input.envelope().attempt_id,
+        &stored.task,
+        &stored.project,
+        stored.previous.as_deref(),
+    )
+}
+fn check_stored_result(
+    connection: &Connection,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    let expected = result.envelope();
+    let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
+        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
+        params![expected.result_id.to_string(),expected.attempt_id.to_string(),MAX_RESULT_BYTES as i64],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+    if digest != result.digest()
+        || bytes != result.bytes()
+        || item != expected.item_id.to_string()
+        || token != expected.dispatch_token.to_string()
+    {
+        return Err(error(ErrorCode::CorruptLedger, "result-bytes"));
+    }
+    Ok(())
 }
 fn read_attempt(
     connection: &Connection,
@@ -620,6 +973,29 @@ fn read_attempt(
     active: bool,
 ) -> Result<AttemptView, ExecutionError> {
     let input = load_input(connection, attempt)?;
+    read_attempt_in(connection, &input, active)
+}
+
+// Reuse the caller's exact input capture while ordinary reads still receive
+// every result independently. Open supplies its own attempt-local result reader.
+fn read_attempt_in(
+    connection: &Connection,
+    input: &FixedInput,
+    active: bool,
+) -> Result<AttemptView, ExecutionError> {
+    read_attempt_with_results(connection, input, active, |result| {
+        load_result(connection, input, result)
+    })
+}
+
+fn read_attempt_with_results(
+    connection: &Connection,
+    input: &FixedInput,
+    active: bool,
+    mut load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
+) -> Result<AttemptView, ExecutionError> {
+    let attempt = input.envelope().attempt_id;
+    check_translation_projection(connection, input, None)?;
     let envelope = input.envelope();
     let cancellation_revision = cancel_revision(connection, envelope.task_id)?;
     let captured: i64 = connection
@@ -676,7 +1052,7 @@ fn read_attempt(
             state = ExecutionState::Unknown;
         }
         if let Some(result) = result {
-            match load_result(connection, &input, parse_id(result)?) {
+            match load_result(parse_id(result)?) {
                 Ok(output)
                     if output.envelope().item_id == item_id
                         && output.envelope().outcome == state
@@ -685,13 +1061,21 @@ fn read_attempt(
                             .diagnostic
                             .as_ref()
                             .is_some_and(|value| value.retry_safe)
-                            == retry_safe => {}
+                            == retry_safe =>
+                {
+                    if validation == ValidationState::Valid && requires_semantic_check(input) {
+                        validate_plugin_link(connection, input, &output, true)?;
+                    }
+                }
                 _ => validation = ValidationState::Invalid,
             }
         } else if validation != ValidationState::Absent || state == ExecutionState::Succeeded {
             return Err(error(ErrorCode::CorruptLedger, "result-missing"));
         }
         if adoption == AdoptionState::Committed {
+            if state != ExecutionState::Succeeded || validation != ValidationState::Valid {
+                return Err(error(ErrorCode::CorruptLedger, "committed-result-state"));
+            }
             let unit = envelope
                 .units
                 .iter()
@@ -726,7 +1110,689 @@ fn read_attempt(
     })
 }
 
+fn load_check_link(
+    connection: &Connection,
+    result: &FixedResult,
+) -> Result<(FixedInput, FixedResult, bool), ExecutionError> {
+    let (checker_id, saved_valid): (String, bool) = connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
+    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
+    Ok((check_input, check_result, saved_valid))
+}
+
+fn load_check_frames(
+    connection: &Connection,
+    checker_id: &str,
+) -> Result<(FixedInput, FixedResult), ExecutionError> {
+    let checker_attempt: String = connection
+        .query_row(
+            "SELECT attempt_id FROM execution_results WHERE result_id=?1",
+            [checker_id],
+            |r| r.get(0),
+        )
+        .map_err(sql_error)?;
+    let check_input = load_input(connection, parse_id(checker_attempt)?)?;
+    let check_result = load_result(connection, &check_input, parse_id(checker_id.to_owned())?)?;
+    Ok((check_input, check_result))
+}
+
+pub(super) fn artifact_check_proof_in(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<Option<super::release::SavedArtifactCheckProof>, ExecutionError> {
+    let original = result_input(connection, input, result.envelope().result_id)?;
+    let plan = crate::ReleasePlan::from_input(original.as_ref())?;
+    plan.validate_source_reference(connection)?;
+    let link: Option<(String, bool)> = connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(sql_error)?;
+    let Some((checker_id, saved_valid)) = link else {
+        return Ok(None);
+    };
+    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
+    let prepared = ArtifactValidationCapture::restore(
+        ResultValidationCapture {
+            input: original.as_ref().clone(),
+            result: result.clone(),
+        },
+        check_input.clone(),
+    )?
+    .prepare(check_result.clone())?;
+    if prepared.valid() != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    let checker = check_input
+        .envelope()
+        .plugin
+        .clone()
+        .ok_or_else(|| error(ErrorCode::CorruptLedger, "artifact-check-provider"))?;
+    // A negative proof can intentionally retain a failed or malformed report.
+    // None describes unavailable report data, never an empty passing check set.
+    let checks = match check_result
+        .envelope()
+        .plugin
+        .as_ref()
+        .map(|p| &p.result.outcome)
+    {
+        Some(tsumugi_plugin_sdk::InvocationOutcome::Succeeded { output }) => {
+            match tsumugi_plugin_sdk::parse_check_results(output.utf8.as_bytes()) {
+                Ok(checks) => Some(checks),
+                Err(_) if !saved_valid => None,
+                Err(_) => return Err(error(ErrorCode::CorruptLedger, "artifact-check-report")),
+            }
+        }
+        _ if !saved_valid => None,
+        _ => return Err(error(ErrorCode::CorruptLedger, "artifact-check-report")),
+    };
+    Ok(Some(super::release::SavedArtifactCheckProof {
+        checker_attempt_id: check_input.envelope().attempt_id,
+        checker_input_digest: check_input.digest().into(),
+        checker_result_id: check_result.envelope().result_id,
+        checker_result_digest: check_result.digest().into(),
+        checker,
+        valid: saved_valid,
+        checks,
+    }))
+}
+
+fn source_validation_cache() -> &'static std::sync::Mutex<Option<PreparedSourceValidation>> {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Option<PreparedSourceValidation>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Reuse the existing single-proof qualification, never a claim that stored
+/// frames or their provenance are immutable. Snapshot mappings remain the
+/// caller's responsibility and are not part of this memo.
+pub(super) fn load_qualified_source(
+    connection: &Connection,
+    attempt: ExecutionId,
+    result: ExecutionId,
+) -> Result<(FixedInput, FixedResult, crate::content::SourceOutput), ExecutionError> {
+    let cached = source_validation_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|prepared| {
+            let source = &prepared.capture.source;
+            source.input.envelope().attempt_id == attempt
+                && source.result.envelope().attempt_id == attempt
+                && source.result.envelope().result_id == result
+        })
+        .map(|prepared| prepared.capture.source.clone());
+    let (input, result) = if let Some(source) = cached {
+        // Recheck before using the capture even if another reader evicts the
+        // single memo before validate_source_link performs its own lookup.
+        check_stored_input(connection, &source.input)?;
+        check_stored_result(connection, &source.result)?;
+        super::resources::verify_input_fact_decisions(connection, &source.input)?;
+        super::plugin_execution::validate_result_in(connection, &source.input, &source.result)?;
+        (source.input, source.result)
+    } else {
+        let input = load_input(connection, attempt)?;
+        let result = load_result(connection, &input, result)?;
+        (input, result)
+    };
+    let output = if input.envelope().plugin.is_some() {
+        // Persisted snapshots require the original mandatory semantic proof.
+        // Its restored projection belongs to exactly these rechecked frames.
+        validate_source_link(connection, &input, &result, true)?
+            .capture
+            .projected
+            .as_ref()
+            .clone()
+    } else {
+        crate::content::validate_output(&input, &result)?
+    };
+    Ok((input, result, output))
+}
+
+pub(super) fn validate_source_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<PreparedSourceValidation, ExecutionError> {
+    // Memoize only pure immutable source qualification, bounded to one proof.
+    // Each reuse checks all four original frames and row associations, plus
+    // the current proof link. Execution grants/currentness are never cached.
+    let cache = source_validation_cache();
+    let (checker_id, saved_valid): (String, bool) = connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|prepared| {
+            prepared.capture.source.result.envelope().result_id == result.envelope().result_id
+                && prepared.check_result.envelope().result_id.to_string() == checker_id
+        })
+        .cloned();
+    if let Some(prepared) = cached {
+        let source = &prepared.capture.source;
+        if source.input.digest() != input.digest()
+            || source.input.bytes() != input.bytes()
+            || source.result.digest() != result.digest()
+            || source.result.bytes() != result.bytes()
+            || saved_valid != expected_valid
+            || prepared.proof.valid != saved_valid
+        {
+            return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+        }
+        check_stored_input(connection, &source.input)?;
+        check_stored_result(connection, &source.result)?;
+        check_stored_input(connection, &prepared.capture.check_input)?;
+        check_stored_result(connection, &prepared.check_result)?;
+        super::resources::verify_input_fact_decisions(connection, &prepared.capture.check_input)?;
+        super::plugin_execution::validate_result_in(
+            connection,
+            &prepared.capture.check_input,
+            &prepared.check_result,
+        )?;
+        return Ok(prepared);
+    }
+    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
+    let prepared = SourceValidationCapture::restore(
+        ResultValidationCapture {
+            input: input.clone(),
+            result: result.clone(),
+        },
+        check_input,
+    )?
+    .prepare(check_result)?;
+    if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    *cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(prepared.clone());
+    Ok(prepared)
+}
+
+pub(super) fn validate_plugin_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<(), ExecutionError> {
+    let original = result_input(connection, input, result.envelope().result_id)?;
+    let input = original.as_ref();
+    if input.envelope().operation == crate::content::OPERATION {
+        validate_source_link(connection, input, result, expected_valid)?;
+        return Ok(());
+    }
+    if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+        validate_translation_link(connection, input, result, expected_valid)?;
+        return Ok(());
+    }
+    if input.envelope().plugin.is_none()
+        || input.envelope().operation != crate::content::BUILD_OPERATION
+    {
+        return Err(error(
+            ErrorCode::CorruptLedger,
+            "semantic-validation-operation",
+        ));
+    }
+    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
+    let prepared = ArtifactValidationCapture::restore(
+        ResultValidationCapture {
+            input: input.clone(),
+            result: result.clone(),
+        },
+        check_input,
+    )?
+    .prepare(check_result)?;
+    if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_translation_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<PreparedTranslationValidation, ExecutionError> {
+    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
+    let prepared = TranslationValidationCapture::restore(
+        ResultValidationCapture {
+            input: input.clone(),
+            result: result.clone(),
+        },
+        check_input,
+    )?
+    .prepare(check_result)?;
+    if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    Ok(prepared)
+}
+
+/// Restore immutable qualification independently of mutable current check links.
+/// Historical reads preserve exact original proof; new writes also require the
+/// current producer/checker results, link and both live execution grants.
+pub(super) fn check_translation_projection(
+    connection: &Connection,
+    input: &FixedInput,
+    authority: Option<&crate::execution::plugin_authority::PluginAuthority>,
+) -> Result<(), ExecutionError> {
+    if !crate::content::is_translation_projection(input) {
+        return Ok(());
+    }
+    let projection = crate::content::TranslationProjection::from_input(input)?;
+    let origin = &projection.origin;
+    use std::sync::{Mutex, OnceLock};
+    type Frames = (FixedInput, FixedResult, FixedInput, FixedResult);
+    // Bounded memoization of pure qualification. All four persisted byte frames
+    // and row associations are compared on every reuse; no permission, current
+    // result, link or cancellation state is cached.
+    static CACHE: OnceLock<Mutex<Option<(String, Frames)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(digest, _)| digest == input.digest())
+        .map(|(_, frames)| frames.clone());
+    let (producer, result, checker, checked) = if let Some(frames) = cached {
+        check_stored_input(connection, &frames.0)?;
+        check_stored_result(connection, &frames.1)?;
+        check_stored_input(connection, &frames.2)?;
+        check_stored_result(connection, &frames.3)?;
+        frames
+    } else {
+        let producer = load_input(connection, origin.producer_attempt)?;
+        let result = load_result(connection, &producer, origin.producer_result)?;
+        let checker = load_input(connection, origin.checker_attempt)?;
+        let checked = load_result(connection, &checker, origin.checker_result)?;
+        if producer.envelope().project_id != input.envelope().project_id
+            || checker.envelope().project_id != input.envelope().project_id
+        {
+            return Err(error(
+                ErrorCode::Unauthorized,
+                "translation-projection-project",
+            ));
+        }
+        let rebuilt = crate::content::TranslationProjection::capture(
+            &producer,
+            &result,
+            &checker,
+            &checked,
+            projection.bundle_id,
+            projection.file.artifact_id,
+        )?;
+        if rebuilt != *projection {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "translation-projection-origin",
+            ));
+        }
+        let prepared = TranslationValidationCapture::restore(
+            ResultValidationCapture {
+                input: producer.clone(),
+                result: result.clone(),
+            },
+            checker.clone(),
+        )?
+        .prepare(checked.clone())?;
+        if !prepared.proof.valid {
+            return Err(error(
+                ErrorCode::OutputInvalid,
+                "translation-projection-proof",
+            ));
+        }
+        let frames = (producer, result, checker, checked);
+        *cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((input.digest().into(), frames.clone()));
+        frames
+    };
+    if let Some(authority) = authority {
+        for (input, result) in [(&producer, &result), (&checker, &checked)] {
+            require_current_result(connection, input, result)?;
+            let permit = super::plugin_execution::check_input_in(connection, input, authority)?;
+            if permit.as_ref().map(PluginPermit::grant_id)
+                != result
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .map(|e| e.authorization_id)
+            {
+                return Err(error(
+                    ErrorCode::Unauthorized,
+                    "translation-projection-grant",
+                ));
+            }
+            let captured_cancel: i64 = connection
+                .query_row(
+                    "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",
+                    [input.envelope().attempt_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if cancel_revision(connection, input.envelope().task_id)?.get()
+                != captured_cancel as u64
+            {
+                return Err(error(ErrorCode::Cancelled, "translation-projection-origin"));
+            }
+        }
+        let valid: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM plugin_validation_links l JOIN execution_items i ON i.current_result_id=l.producer_result_id
+             WHERE l.producer_result_id=?1 AND l.checker_result_id=?2 AND l.valid=1 AND i.validation='valid')",
+            params![origin.producer_result.to_string(), origin.checker_result.to_string()], |row| row.get(0),
+        ).map_err(sql_error)?;
+        if !valid {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-projection-current-proof",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Complete Core projection coverage, with bounded decoding reuse. Every call
+/// reads all current row states, dispatch associations and complete result bytes;
+/// cached pure output validation is usable only for identical immutable frames.
+fn complete_translation_projection(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Option<(String, Arc<Vec<FixedResult>>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(digest, _)| digest == input.digest())
+        .map(|(_, results)| results.clone());
+    let units: std::collections::BTreeMap<_, _> = input
+        .envelope()
+        .units
+        .iter()
+        .flat_map(|unit| unit.item_ids.iter().map(move |item| (*item, unit.unit_id)))
+        .collect();
+    let mut statement = connection
+        .prepare("SELECT unit_id FROM adoption_receipts WHERE attempt_id=?1 LIMIT ?2")
+        .map_err(sql_error)?;
+    let receipts = statement
+        .query_map(
+            params![
+                input.envelope().attempt_id.to_string(),
+                (input.envelope().units.len() + 1) as i64
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(sql_error)?
+        .map(|row| parse_id(row.map_err(sql_error)?))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    if receipts.len() > input.envelope().units.len() {
+        return Err(error(ErrorCode::CorruptLedger, "receipt-coverage"));
+    }
+    let mut statement=connection.prepare(
+        "SELECT i.item_id,i.current_result_id,i.execution,i.validation,r.dispatch_token,r.digest,
+         CASE WHEN length(r.bytes)<=?2 THEN r.bytes END,i.retry_safe,i.adoption FROM execution_items i
+         LEFT JOIN execution_results r ON r.result_id=i.current_result_id AND r.attempt_id=i.attempt_id
+            AND r.item_id=i.item_id AND r.dispatch_token=i.dispatch_token
+         WHERE i.attempt_id=?1 ORDER BY i.item_id").map_err(sql_error)?;
+    let mut rows = statement
+        .query(params![
+            input.envelope().attempt_id.to_string(),
+            i64::from(input.envelope().limits.max_result_bytes)
+        ])
+        .map_err(sql_error)?;
+    let mut results = Vec::with_capacity(input.envelope().items.len());
+    let mut total = 0usize;
+    while let Some(row) = rows.next().map_err(sql_error)? {
+        let item: String = row.get(0).map_err(sql_error)?;
+        if input
+            .envelope()
+            .items
+            .get(results.len())
+            .is_none_or(|expected| expected.item_id.to_string() != item)
+        {
+            return Err(error(ErrorCode::CorruptLedger, "translation-coverage"));
+        }
+        let execution: String = row.get(2).map_err(sql_error)?;
+        let validation: String = row.get(3).map_err(sql_error)?;
+        if execution != "succeeded" || validation != "valid" {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-incomplete",
+            ));
+        }
+        let id: String = row.get(1).map_err(sql_error)?;
+        let token: String = row.get(4).map_err(sql_error)?;
+        let digest: String = row.get(5).map_err(sql_error)?;
+        let bytes: Vec<u8> = row.get(6).map_err(sql_error)?;
+        total = total
+            .checked_add(bytes.len())
+            .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-results"))?;
+        if total > input.envelope().limits.max_attempt_result_bytes as usize {
+            return Err(error(ErrorCode::LimitExceeded, "translation-results"));
+        }
+        let previous = cached.as_ref().and_then(|values| values.get(results.len()));
+        let result = if let Some(previous) = previous.filter(|previous| {
+            previous.envelope().result_id.to_string() == id
+                && previous.digest() == digest
+                && previous.envelope().dispatch_token.to_string() == token
+        }) {
+            if bytes != previous.bytes() {
+                return Err(error(ErrorCode::CorruptLedger, "translation-result-bytes"));
+            }
+            previous.clone()
+        } else {
+            let result = FixedResult::restore(&bytes, &digest, input, parse_id(token)?)?;
+            if result.envelope().result_id.to_string() != id
+                || result.envelope().item_id.to_string() != item
+            {
+                return Err(error(
+                    ErrorCode::CorruptLedger,
+                    "translation-result-association",
+                ));
+            }
+            crate::content::validate_translation_output(input, &result)?;
+            result
+        };
+        let retry_safe: bool = row.get(7).map_err(sql_error)?;
+        if result
+            .envelope()
+            .diagnostic
+            .as_ref()
+            .is_some_and(|diagnostic| diagnostic.retry_safe)
+            != retry_safe
+        {
+            return Err(error(ErrorCode::CorruptLedger, "result-state"));
+        }
+        let adoption: AdoptionState = decode_enum(row.get(8).map_err(sql_error)?)?;
+        if adoption == AdoptionState::Committed
+            && units
+                .get(&result.envelope().item_id)
+                .is_none_or(|unit| !receipts.contains(unit))
+        {
+            return Err(error(ErrorCode::CorruptLedger, "missing-receipt"));
+        }
+        results.push(result);
+    }
+    if results.len() != input.envelope().items.len() {
+        return Err(error(ErrorCode::CorruptLedger, "translation-coverage"));
+    }
+    *cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((input.digest().into(), Arc::new(results)));
+    Ok(())
+}
+
 impl ProjectStore {
+    /// Read original enqueue evidence without current scope, plugin grants or a runtime.
+    /// Only a complete successful read reconciles the in-memory recovery guard.
+    pub fn translation_projection_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+    ) -> Result<Option<crate::content::TranslationProjectionStartRead>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            if super::read_metadata_from(connection)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "translation-projection-project"))?
+                .project_id()
+                .to_string()
+                != project.to_string()
+            {
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "translation-projection-project",
+                ));
+            }
+            if tsumugi_plugin_sdk::validate_package_digest(digest).is_err() {
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "translation-projection-digest",
+                ));
+            }
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if !exists {
+                return Ok(None);
+            }
+            let input = load_input(connection, attempt)?;
+            let envelope = input.envelope();
+            if envelope.project_id != project
+                || envelope.attempt_id != attempt
+                || input.digest() != digest
+                || envelope.plugin.is_some()
+                || envelope.automation.is_some()
+                || envelope.previous_attempt_id.is_some()
+            {
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "translation-projection-request",
+                ));
+            }
+            let projection = crate::content::TranslationProjection::from_input(&input)?;
+            check_translation_projection(connection, &input, None)?;
+            Ok(Some(crate::content::TranslationProjectionStartRead {
+                project_id: project,
+                task_id: envelope.task_id,
+                attempt_id: attempt,
+                input_digest: input.digest().into(),
+                translation_attempt_id: projection.origin.producer_attempt,
+                translation_result_id: projection.origin.producer_result,
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+    /// Keep the caller's original projection attempt across uncertain submission
+    /// outcomes. Existing inputs must retain the exact producer/result origin;
+    /// reading them never renews either plugin grant.
+    pub fn capture_translation_projection_with_id(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+        projection_attempt: ExecutionId,
+    ) -> Result<FixedInput, ExecutionError> {
+        match self.execution_input(projection_attempt) {
+            Ok(input) => {
+                let projection = crate::content::TranslationProjection::from_input(&input)?;
+                if projection.origin.producer_attempt != attempt
+                    || projection.origin.producer_result != result
+                {
+                    return Err(error(
+                        ErrorCode::ResultMismatch,
+                        "translation-projection-origin",
+                    ));
+                }
+                let connection = self.execution_connection()?;
+                check_translation_projection(connection, &input, Some(&self.plugin_authority))?;
+                let producer = load_input(connection, attempt)?;
+                super::translation::record_input(connection, &producer)?;
+                Ok(input)
+            }
+            Err(error) if error.code == ErrorCode::InvalidInput => {
+                let input = self.capture_translation_projection(attempt, result)?;
+                let mut envelope = input.envelope().clone();
+                envelope.attempt_id = projection_attempt;
+                FixedInput::capture(envelope)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Capture once and reuse this exact input for retries. It retains one whole
+    /// file and one compact entry set; each EX item only references its ordinal.
+    pub fn capture_translation_projection(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<FixedInput, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-projection"))?;
+        let producer = load_input(connection, attempt)?;
+        let result = load_result(connection, &producer, result)?;
+        require_current_result(connection, &producer, &result)?;
+        let validation: String = connection
+            .query_row(
+                "SELECT validation FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![attempt.to_string(), result.envelope().item_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        match decode_enum::<ValidationState>(validation)? {
+            ValidationState::Pending => {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-check-incomplete",
+                ));
+            }
+            ValidationState::Invalid => {
+                return Err(error(ErrorCode::OutputInvalid, "translation-check-invalid"));
+            }
+            ValidationState::Absent => {
+                return Err(error(ErrorCode::CorruptLedger, "result-state"));
+            }
+            ValidationState::Valid => {}
+        }
+        // Only qualified results promise a durable proof link. Missing proof
+        // after successful qualification remains corruption, not a pending check.
+        let prepared = validate_translation_link(connection, &producer, &result, true)?;
+        let projection = crate::content::TranslationProjection::capture(
+            &producer,
+            &result,
+            &prepared.capture.check_input,
+            &prepared.check_result,
+            ExecutionId::new(),
+            ExecutionId::new(),
+        )?;
+        let project: crate::ProjectId = producer
+            .envelope()
+            .project_id
+            .to_string()
+            .parse()
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-project"))?;
+        let input = projection.fixed_input(project)?;
+        check_translation_projection(connection, &input, Some(&self.plugin_authority))?;
+        super::translation::record_input(connection, &producer)?;
+        Ok(input)
+    }
     #[cfg(feature = "execution-test-host")]
     pub fn install_execution_fixture(&mut self, ids: &[String]) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
@@ -863,7 +1929,13 @@ impl ProjectStore {
                 .iter()
                 .any(|item| item.validation == ValidationState::Pending)
             {
-                entry.actions.push(RecoveryAction::ValidateOutput);
+                if input.envelope().plugin.is_some() {
+                    // Plugin output requires its independently authorized
+                    // semantic checker. The generic mutation refuses it.
+                    entry.blocked_reason = Some("external-new-consent".into());
+                } else {
+                    entry.actions.push(RecoveryAction::ValidateOutput);
+                }
                 entry.remaining_item_ids = statuses
                     .iter()
                     .filter(|item| item.validation == ValidationState::Pending)
@@ -997,11 +2069,33 @@ impl ProjectStore {
         &self,
         after: Revision,
     ) -> Result<Vec<ExecutionId>, ExecutionError> {
-        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT 128").map_err(sql_error)?;
+        self.queued_execution_attempt_page(after, 128)
+            .map(|rows| rows.into_iter().map(|(attempt, _)| attempt).collect())
+    }
+    pub(crate) fn queued_execution_attempt_page(
+        &self,
+        after: Revision,
+        limit: usize,
+    ) -> Result<Vec<(ExecutionId, Revision)>, ExecutionError> {
+        if !(1..=128).contains(&limit) {
+            return Err(error(ErrorCode::LimitExceeded, "execution-queue-page"));
+        }
+        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id,a.sequence FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT ?2").map_err(sql_error)?;
         statement
-            .query_map([after.get() as i64], |r| r.get::<_, String>(0))
+            .query_map(params![after.get() as i64, limit as i64], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
             .map_err(sql_error)?
-            .map(|row| parse_id(row.map_err(sql_error)?))
+            .map(|row| {
+                let (attempt, sequence) = row.map_err(sql_error)?;
+                Ok((
+                    parse_id(attempt)?,
+                    Revision::new(
+                        u64::try_from(sequence)
+                            .map_err(|_| error(ErrorCode::CorruptLedger, "execution-sequence"))?,
+                    )?,
+                ))
+            })
             .collect()
     }
     pub(crate) fn queued_execution_item_count(
@@ -1040,8 +2134,16 @@ impl ProjectStore {
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
+        let plugin_permit = if input.envelope().plugin.is_some() {
+            Some(self.plugin_permit(&input)?)
+        } else {
+            None
+        };
         Ok(DispatchRequest {
             provider: None,
+            plugin_permit,
+            service_origin: None,
+            original_deadline: None,
             input,
             item_id: item,
             dispatch_token: parse_id(
@@ -1061,7 +2163,7 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         let changed=tx.execute("UPDATE execution_items SET execution='unknown',diagnostic=?3 WHERE attempt_id=?1 AND item_id=?2 AND execution='dispatched'",params![attempt.to_string(),item.to_string(),reason]).map_err(sql_error)?;
         if changed == 0 {
-            load_input(&tx, attempt)?.item(item)?;
+            load_input_cached(&tx, attempt)?.item(item)?;
         }
         commit(tx)
     }
@@ -1069,17 +2171,17 @@ impl ProjectStore {
         self.connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "session"))
     }
-    fn execution_write(&mut self) -> Result<ExecutionTransaction<'_>, ExecutionError> {
+    pub(super) fn execution_write(&self) -> Result<ExecutionTransaction<'_>, ExecutionError> {
         if self.is_reconciling() {
             return Err(error(ErrorCode::OutcomeUnknown, "session"));
         }
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
-        let tx = self
-            .connection_mut()
-            .map_err(|_| error(ErrorCode::StorageFailed, "session"))?
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sql_error)?;
+        let tx = rusqlite::Transaction::new_unchecked(
+            self.execution_connection()?,
+            TransactionBehavior::Immediate,
+        )
+        .map_err(sql_error)?;
         let observer = change_clock.observe(&tx, super::ChangeScope::Execution);
         Ok(ExecutionTransaction {
             tx,
@@ -1099,6 +2201,7 @@ impl ProjectStore {
             .map_err(|_| error(ErrorCode::CorruptLedger, "translation"))?;
         super::release::validate(connection)
             .map_err(|_| error(ErrorCode::CorruptLedger, "release"))?;
+        super::application::validate(connection)?;
         self.execution_unknown
             .store(false, std::sync::atomic::Ordering::Release);
         Ok(())
@@ -1120,6 +2223,187 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_authority(
+            input, policy, parent, None, None, None, None, None, None,
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_agent_generation(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanAgentGeneration,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.check_prepared_agent_session(prepared)?;
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            Some(prepared.scope.parent_task()),
+            None,
+            None,
+            Some(prepared),
+            None,
+            None,
+            None,
+        )
+    }
+    pub(crate) fn enqueue_team_work(
+        &mut self,
+        prepared: &crate::application::PreparedTeamWork,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        if let Some(scope) = &prepared.scope {
+            self.check_work_plan_agent_scope(scope)?;
+        }
+        let settings = crate::ai::team::settings(prepared.input())?;
+        let parent = if settings.binding.is_root() {
+            None
+        } else {
+            Some(settings.binding.scope().root_task)
+        };
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            parent,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(prepared),
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_tool(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+        generation: ExecutionId,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.check_work_plan_tool_proposal(prepared, consent, generation)?;
+        self.enqueue_execution_with_authority(
+            &prepared.input,
+            policy,
+            None,
+            Some((prepared, consent, grant_id, generation)),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_service_generation(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanServiceGeneration,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            Some(prepared.parent_task()),
+            None,
+            Some(prepared),
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_service_tool(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanServiceTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+        generation: ExecutionId,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.check_work_plan_tool_proposal(&prepared.prepared, consent, generation)?;
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            None,
+            Some((&prepared.prepared, consent, grant_id, generation)),
+            None,
+            None,
+            None,
+            Some(prepared),
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_mcp_term_query(
+        &mut self,
+        prepared: &crate::application::PreparedMcpTermQuery,
+        permit: &crate::application::McpTermQueryPermit,
+    ) -> Result<(), ExecutionError> {
+        self.check_mcp_term_query(prepared)?;
+        permit.check_input(prepared.input())?;
+        if permit.epoch != prepared.epoch {
+            return Err(error(ErrorCode::Unauthorized, "mcp-query-session"));
+        }
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            RecoveryPolicy::ExternalUnknown,
+            None,
+            None,
+            None,
+            None,
+            Some((prepared, permit, None)),
+            None,
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_member_mcp_term_query(
+        &mut self,
+        sealed: &crate::application::PreparedMemberMcpTermQuery,
+    ) -> Result<(), ExecutionError> {
+        self.check_prepared_member_mcp_term_query(sealed)?;
+        self.enqueue_execution_with_authority(
+            sealed.prepared().input(), RecoveryPolicy::ExternalUnknown, None, None,
+            None, None, Some((sealed.prepared(), sealed.permit(), Some(sealed))), None, None,
+        )
+    }
+
+    fn enqueue_execution_with_authority(
+        &mut self,
+        input: &FixedInput,
+        policy: RecoveryPolicy,
+        parent: Option<ExecutionId>,
+        tool: Option<(
+            &crate::application::PreparedWorkPlanTool,
+            &crate::application::WorkPlanToolConsent,
+            ExecutionId,
+            ExecutionId,
+        )>,
+        service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
+        agent: Option<&crate::application::PreparedWorkPlanAgentGeneration>,
+        mcp: Option<(
+            &crate::application::PreparedMcpTermQuery,
+            &crate::application::McpTermQueryPermit,
+            Option<&crate::application::PreparedMemberMcpTermQuery>,
+        )>,
+        service_tool: Option<&crate::application::PreparedWorkPlanServiceTool>,
+        team_work: Option<&crate::application::PreparedTeamWork>,
+    ) -> Result<(), ExecutionError> {
+        if (input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
+            || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY)
+            && mcp.is_none()
+        {
+            return Err(error(ErrorCode::Unauthorized, "mcp-query-admission"));
+        }
+        if input.envelope().operation == crate::ai::team::OPERATION && team_work.is_none() {
+            return Err(error(ErrorCode::Unauthorized, "team-work-admission"));
+        }
+        // Serialized provenance is data. Only the opaque Core preparation may
+        // admit a new Agent input through the existing transaction below.
+        if agent.is_none() && super::application::agent_binding(input)?.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "work-plan-agent-admission"));
+        }
         let project = self
             .metadata()
             .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
@@ -1127,18 +2411,182 @@ impl ProjectStore {
         if envelope.project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::Unauthorized, "project"));
         }
+        let prepared_build = super::release::prepare_input(self, input)?;
+        let prepared_input = input_storage::PreparedInput::capture(input)?;
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
-        enqueue_input(&tx, input, policy, parent)?;
+        if let Some((prepared, permit, member)) = mcp {
+            if agent.is_some()
+                || service.is_some()
+                || tool.is_some()
+                || service_tool.is_some()
+                || parent.is_some()
+                || input.bytes() != prepared.input().bytes()
+                || policy != RecoveryPolicy::ExternalUnknown
+            {
+                return Err(error(ErrorCode::Unauthorized, "mcp-query-admission"));
+            }
+            permit.check_input(input)?;
+            super::mcp::check_prepared_in(&tx, prepared)?;
+            match member {
+                Some(sealed) => super::application::member_mcp::check_prepared(&tx, sealed)?,
+                None if prepared.member_binding.get().is_some() => {
+                    return Err(error(ErrorCode::Unauthorized, "mcp-query-member-bound"));
+                }
+                None => {}
+            }
+        }
+        let verified_build =
+            super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        if let Some(prepared) = team_work {
+            if tool.is_some()
+                || service.is_some()
+                || service_tool.is_some()
+                || agent.is_some()
+                || mcp.is_some()
+                || policy != RecoveryPolicy::ExternalUnknown
+                || input.bytes() != prepared.input().bytes()
+            {
+                return Err(error(ErrorCode::Unauthorized, "team-work-admission"));
+            }
+            super::application::coordination::check_prepared(&tx, prepared)?;
+        }
+        if let Some(prepared) = agent {
+            if service.is_some()
+                || tool.is_some()
+                || service_tool.is_some()
+                || input.bytes() != prepared.input().bytes()
+                || parent != Some(prepared.scope.parent_task())
+            {
+                return Err(error(ErrorCode::Unauthorized, "work-plan-agent-admission"));
+            }
+            super::application::check_prepared_agent(&tx, prepared)?;
+        }
+        if let Some(prepared) = service {
+            if tool.is_some()
+                || service_tool.is_some()
+                || prepared.input().bytes() != input.bytes()
+                || parent != Some(prepared.parent_task())
+            {
+                return Err(error(ErrorCode::Unauthorized, "service-child-enqueue"));
+            }
+            super::application::check_prepared_service(&tx, prepared, &authority)?;
+        }
+        if let Some(prepared) = service_tool {
+            if tool.is_none() || prepared.input().bytes() != input.bytes() || parent.is_some() {
+                return Err(error(ErrorCode::Unauthorized, "service-tool-enqueue"));
+            }
+            super::application::check_prepared_service_tool(&tx, prepared, &authority)?;
+            if tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [input.envelope().attempt_id.to_string()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(sql_error)?
+            {
+                return Err(error(ErrorCode::ResultMismatch, "service-child-enqueued"));
+            }
+        }
+        if input.envelope().plugin.is_some() && parent.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
+        }
+        let delegated = if let Some((prepared, consent, grant, generation)) = tool {
+            let delegation = super::application::check_prepared_tool(&tx, prepared, consent)?;
+            let fresh = super::plugin_execution::record_delegated_grant_in(
+                &tx,
+                &authority,
+                generation,
+                grant,
+                input,
+                consent.expires_at_ms,
+                &delegation,
+                consent.application_lease(&prepared.tool)?,
+            )?;
+            Some((delegation, fresh))
+        } else {
+            super::plugin_execution::check_input_in(&tx, input, &authority)?;
+            super::application::check_enqueue(&tx, input, parent)?;
+            None
+        };
+        super::application::check_service_input(&tx, input, &authority)?;
+        check_translation_projection(&tx, input, Some(&authority))?;
+        if !enqueue_input(
+            &tx,
+            input,
+            policy,
+            parent,
+            &prepared_input,
+            delegated.as_ref().is_some_and(|(_, fresh)| *fresh),
+        )? {
+            return Ok(());
+        }
+        super::release::record_input(&tx, input, verified_build.as_ref())?;
+        if let Some((delegation, _)) = &delegated {
+            super::application::record_tool_input(&tx, input, delegation)?;
+            super::application::validate_tool_input(&tx, input, delegation)?;
+        } else {
+            super::application::record_input(&tx, input)?;
+        }
+        if let Some((_, _, Some(sealed))) = mcp {
+            super::application::member_mcp::record_input(&tx, sealed)?;
+        }
+        if let Some(prepared) = team_work {
+            super::application::coordination::record_work(&tx, prepared)?;
+        }
+        if let Some(prepared) = service {
+            super::application::record_service_call(&tx, prepared)?;
+        }
+        if let Some(prepared) = service_tool {
+            super::application::record_service_tool_call(&tx, prepared)?;
+        }
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;
+        if let Some(prepared) = service {
+            super::application::activate_service_origin(&authority, prepared)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "service-origin-activation"))?;
+        }
+        if let Some(prepared) = service_tool {
+            super::application::activate_service_tool_origin(&authority, prepared)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "service-origin-activation"))?;
+        }
         #[cfg(test)]
         crash_hook("after-enqueue");
+        #[cfg(any(test, feature = "execution-test-host"))]
+        if delegated.is_some() {
+            crash_hook("after-tool-enqueue-commit");
+        }
+        if let (Some((prepared, consent, grant, generation)), Some((delegation, true))) =
+            (tool, delegated)
+        {
+            let application_lease = consent
+                .application_lease(&prepared.tool)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?
+                .cloned();
+            authority
+                .activate_with_delegation(
+                    generation,
+                    grant,
+                    input,
+                    consent.expires_at_ms,
+                    consent.deadline,
+                    application_lease.is_some(),
+                    Some(delegation),
+                    application_lease,
+                )
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?;
+        }
         Ok(())
     }
-    pub fn execution_continuation(&self, action_id: ExecutionId) -> Result<Option<ContinuationReceipt>, ExecutionError> {
+    pub fn execution_continuation(
+        &self,
+        action_id: ExecutionId,
+    ) -> Result<Option<ContinuationReceipt>, ExecutionError> {
         read_continuation(self.execution_connection()?, action_id)
     }
+    /// Explicit result confirmation may reconcile an uncertain commit. Internal
+    /// write admission continues to use the raw idempotence lookup above.
     pub fn read_execution_continuation(
         &self,
         action_id: ExecutionId,
@@ -1151,69 +2599,181 @@ impl ProjectStore {
         }
         Ok(found)
     }
-    pub fn execution_continuation_page(&self, source: ExecutionId, after: Revision, limit: u32) -> Result<Vec<ContinuationReceipt>, ExecutionError> {
-        if !(1..=50).contains(&limit) { return Err(error(ErrorCode::LimitExceeded, "continuation-page")); }
+    pub fn execution_continuation_page(
+        &self,
+        source: ExecutionId,
+        after: Revision,
+        limit: u32,
+    ) -> Result<Vec<ContinuationReceipt>, ExecutionError> {
+        if !(1..=50).contains(&limit) {
+            return Err(error(ErrorCode::LimitExceeded, "continuation-page"));
+        }
         let connection = self.execution_connection()?;
         load_input(connection, source)?;
         let mut statement = connection.prepare("SELECT c.action_id FROM execution_continuations c JOIN execution_attempts a ON a.attempt_id=c.attempt_id WHERE c.source_attempt_id=?1 AND a.sequence>?2 ORDER BY a.sequence LIMIT ?3").map_err(sql_error)?;
-        let ids = statement.query_map(params![source.to_string(), after.get() as i64, limit], |r| r.get::<_,String>(0)).map_err(sql_error)?;
-        ids.map(|id| read_continuation(connection, parse_id(id.map_err(sql_error)?)?)?.ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-association"))).collect()
+        let ids = statement
+            .query_map(
+                params![source.to_string(), after.get() as i64, limit],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(sql_error)?;
+        ids.map(|id| {
+            read_continuation(connection, parse_id(id.map_err(sql_error)?)?)?
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-association"))
+        })
+        .collect()
     }
-    pub(crate) fn enqueue_continuation(&mut self, action: &ContinuationAction, input: &FixedInput, policy: RecoveryPolicy) -> Result<ContinuationReceipt, ExecutionError> {
+    pub(crate) fn enqueue_continuation(
+        &mut self,
+        action: &ContinuationAction,
+        input: &FixedInput,
+        policy: RecoveryPolicy,
+    ) -> Result<ContinuationReceipt, ExecutionError> {
         let action = action.canonical()?;
         if let Some(receipt) = self.execution_continuation(action.action_id)? {
-            return if receipt.action == action { Ok(receipt) } else { Err(error(ErrorCode::ResultMismatch, "continuation-identity")) };
+            return if receipt.action == action {
+                Ok(receipt)
+            } else {
+                Err(error(ErrorCode::ResultMismatch, "continuation-identity"))
+            };
         }
+        let prepared_build = super::release::prepare_input(self, input)?;
+        let prepared_input = input_storage::PreparedInput::capture(input)?;
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         if let Some(receipt) = read_continuation(&tx, action.action_id)? {
-            return if receipt.action == action { Ok(receipt) } else { Err(error(ErrorCode::ResultMismatch, "continuation-identity")) };
+            return if receipt.action == action {
+                Ok(receipt)
+            } else {
+                Err(error(ErrorCode::ResultMismatch, "continuation-identity"))
+            };
         }
-        if tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)", [action.action_id.to_string()], |r| r.get::<_,bool>(0)).map_err(sql_error)? {
+        if tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)",
+                [action.action_id.to_string()],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(sql_error)?
+        {
             return Err(error(ErrorCode::ResultMismatch, "action-identity"));
         }
         let original = load_input(&tx, action.source_attempt_id)?;
         let request_digest = action.request_digest(&original)?;
-        let metadata = super::read_metadata_from(&tx).map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
+        let metadata = super::read_metadata_from(&tx)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
         if action.project_id.to_string() != metadata.project_id().to_string() {
             return Err(error(ErrorCode::Unauthorized, "project"));
         }
-        if cancel_revision(&tx, original.envelope().task_id)? != action.expected_cancellation_revision {
-            return Err(error(ErrorCode::Cancelled, "continuation-cancellation-basis"));
+        if cancel_revision(&tx, original.envelope().task_id)?
+            != action.expected_cancellation_revision
+        {
+            return Err(error(
+                ErrorCode::Cancelled,
+                "continuation-cancellation-basis",
+            ));
         }
-        let unit = original.envelope().units.iter().find(|u| u.unit_id == action.unit_id).ok_or_else(|| error(ErrorCode::InvalidInput, "continuation-unit"))?;
+        let unit = original
+            .envelope()
+            .units
+            .iter()
+            .find(|u| u.unit_id == action.unit_id)
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "continuation-unit"))?;
         let next = input.envelope();
         let selected: std::collections::BTreeSet<_> = action.item_ids.iter().copied().collect();
-        let remaining: std::collections::BTreeSet<_> = next.items.iter().filter(|item| !next.reused_results.iter().any(|r|r.item_id==item.item_id)).map(|item|item.item_id).collect();
-        if next.previous_attempt_id != Some(action.source_attempt_id) || next.units != vec![unit.clone()] || selected != remaining {
+        let remaining: std::collections::BTreeSet<_> = next
+            .items
+            .iter()
+            .filter(|item| {
+                !next
+                    .reused_results
+                    .iter()
+                    .any(|r| r.item_id == item.item_id)
+            })
+            .map(|item| item.item_id)
+            .collect();
+        if next.previous_attempt_id != Some(action.source_attempt_id)
+            || next.units != vec![unit.clone()]
+            || selected != remaining
+        {
             return Err(error(ErrorCode::ResultMismatch, "continuation-input"));
         }
         let mut expected = original.envelope().clone();
         expected.previous_attempt_id = Some(expected.attempt_id);
         expected.attempt_id = next.attempt_id;
         expected.units = vec![unit.clone()];
-        expected.items.retain(|item| unit.item_ids.contains(&item.item_id));
+        expected
+            .items
+            .retain(|item| unit.item_ids.contains(&item.item_id));
         expected.reused_results = next.reused_results.clone();
         if FixedInput::capture(expected)?.digest() != input.digest() {
             return Err(error(ErrorCode::ResultMismatch, "continuation-input"));
         }
-        if next.items.iter().filter_map(|item| item.scope.locale.as_ref()).any(|locale| !metadata.target_locales().iter().any(|target| target.as_str() == locale)) {
+        if next
+            .items
+            .iter()
+            .filter_map(|item| item.scope.locale.as_ref())
+            .any(|locale| {
+                !metadata
+                    .target_locales()
+                    .iter()
+                    .any(|target| target.as_str() == locale)
+            })
+        {
             return Err(error(ErrorCode::Unauthorized, "locale-scope"));
         }
         let state = read_attempt(&tx, action.source_attempt_id, false)?;
-        let has_failure = state.items.iter().any(|item| selected.contains(&item.item_id) && item.execution == ExecutionState::Failed);
+        let has_failure = state.items.iter().any(|item| {
+            selected.contains(&item.item_id) && item.execution == ExecutionState::Failed
+        });
         if has_failure != (action.kind == ContinuationKind::RetrySafeFailure) {
             return Err(error(ErrorCode::Unauthorized, "continuation-action"));
         }
         // Existing enqueue checks scope, current results, cancellation, effect policy,
         // ancestor budget and domain records inside this same writer transaction.
-        enqueue_input(&tx, input, policy, None)?;
-        let sequence: i64 = tx.query_row("SELECT sequence FROM execution_attempts WHERE attempt_id=?1", [next.attempt_id.to_string()], |r|r.get(0)).map_err(sql_error)?;
+        let verified_build =
+            super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        super::plugin_execution::check_input_in(&tx, input, &authority)?;
+        super::application::check_enqueue(&tx, input, None)?;
+        super::application::check_service_input(&tx, input, &authority)?;
+        check_translation_projection(&tx, input, Some(&authority))?;
+        if !enqueue_input(&tx, input, policy, None, &prepared_input, false)? {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "continuation-attempt-identity",
+            ));
+        }
+        super::release::record_input(&tx, input, verified_build.as_ref())?;
+        super::application::record_input(&tx, input)?;
+        let sequence: i64 = tx
+            .query_row(
+                "SELECT sequence FROM execution_attempts WHERE attempt_id=?1",
+                [next.attempt_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
         let receipt = ContinuationReceipt {
-            sequence: Revision::new(sequence as u64)?, action, request_digest, source_input_digest: original.digest().to_owned(),
-            attempt_id: next.attempt_id, input_digest: input.digest().to_owned(),
-            task_id: original.envelope().task_id, operation: original.envelope().operation.clone(),
+            sequence: Revision::new(sequence as u64)?,
+            action,
+            request_digest,
+            source_input_digest: original.digest().to_owned(),
+            attempt_id: next.attempt_id,
+            input_digest: input.digest().to_owned(),
+            task_id: original.envelope().task_id,
+            operation: original.envelope().operation.clone(),
         };
-        tx.execute("INSERT INTO execution_continuations VALUES (?1,?2,?3,?4,?5,?6)", params![receipt.action.action_id.to_string(),receipt.action.source_attempt_id.to_string(),receipt.action.unit_id.to_string(),receipt.attempt_id.to_string(),codec::encode(&receipt, MAX_INPUT_BYTES)?,receipt.request_digest]).map_err(sql_error)?;
+        tx.execute(
+            "INSERT INTO execution_continuations VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                receipt.action.action_id.to_string(),
+                receipt.action.source_attempt_id.to_string(),
+                receipt.action.unit_id.to_string(),
+                receipt.attempt_id.to_string(),
+                codec::encode(&receipt, MAX_INPUT_BYTES)?,
+                receipt.request_digest
+            ],
+        )
+        .map_err(sql_error)?;
         #[cfg(test)]
         crash_hook("before-continuation-commit");
         commit(tx)?;
@@ -1223,13 +2783,27 @@ impl ProjectStore {
     }
     pub fn execution_task(&self, task_id: ExecutionId) -> Result<TaskView, ExecutionError> {
         let connection = self.execution_connection()?;
-        let (project, operation, sequence): (String,String,i64) = connection.query_row("SELECT project_id,operation,sequence FROM execution_tasks WHERE task_id=?1", [task_id.to_string()], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql_error)?;
-        Ok(TaskView { task_id, project_id: parse_id(project)?, operation, sequence: Revision::new(sequence as u64)?, cancellation_revision: cancel_revision(connection, task_id)? })
+        let (project, operation, sequence): (String, String, i64) = connection
+            .query_row(
+                "SELECT project_id,operation,sequence FROM execution_tasks WHERE task_id=?1",
+                [task_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(sql_error)?;
+        Ok(TaskView {
+            task_id,
+            project_id: parse_id(project)?,
+            operation,
+            sequence: Revision::new(sequence as u64)?,
+            cancellation_revision: cancel_revision(connection, task_id)?,
+        })
     }
     pub fn execution_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
         load_input(self.execution_connection()?, attempt)
     }
-    pub(crate) fn execution_input_if_present(
+    /// Read the original immutable input, distinguishing a proven missing
+    /// attempt from storage or ledger validation failures.
+    pub fn execution_input_if_present(
         &self,
         attempt: ExecutionId,
     ) -> Result<Option<FixedInput>, ExecutionError> {
@@ -1247,6 +2821,84 @@ impl ProjectStore {
             Ok(None)
         }
     }
+    /// Confirm an exact ordinary plugin submission without preparing or loading
+    /// a runtime. Only a successfully validated read clears the recovery guard.
+    pub fn plugin_start_action_read(
+        &self,
+        project: ExecutionId,
+        task: ExecutionId,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        self.plugin_start_input_read(project, Some(task), attempt, operation, digest)
+    }
+    /// A captured full input digest also binds its original task when a producer
+    /// preview does not expose that task before enqueueing.
+    pub fn plugin_input_start_action_read(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        self.plugin_start_input_read(project, None, attempt, operation, digest)
+    }
+    fn plugin_start_input_read(
+        &self,
+        project: ExecutionId,
+        expected_task: Option<ExecutionId>,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        let found = super::review::read_snapshot(self.execution_connection()?, |c| {
+            if super::read_metadata_from(c)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "plugin-start-project"))?
+                .project_id()
+                .to_string()
+                != project.to_string()
+            {
+                return Err(error(ErrorCode::ResultMismatch, "plugin-start-project"));
+            }
+            if tsumugi_plugin_sdk::validate_package_digest(digest).is_err() {
+                return Err(error(ErrorCode::InvalidInput, "plugin-start-digest"));
+            }
+            let exists: bool = c
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if !exists {
+                return Ok(None);
+            }
+            let input = load_input(c, attempt)?;
+            let envelope = input.envelope();
+            if envelope.project_id != project
+                || expected_task.is_some_and(|task| envelope.task_id != task)
+                || envelope.operation != operation
+                || input.digest() != digest
+                || envelope.plugin.is_none()
+                || envelope.automation.is_some()
+                || envelope.previous_attempt_id.is_some()
+            {
+                return Err(error(ErrorCode::ResultMismatch, "plugin-start-request"));
+            }
+            Ok(Some(PluginStartActionRead {
+                project_id: project,
+                task_id: envelope.task_id,
+                attempt_id: attempt,
+                operation: envelope.operation.clone(),
+                input_digest: input.digest().into(),
+            }))
+        })?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
     pub(crate) fn execution_input_cached(
         &self,
         attempt: ExecutionId,
@@ -1259,6 +2911,71 @@ impl ProjectStore {
         active: bool,
     ) -> Result<AttemptView, ExecutionError> {
         read_attempt(self.execution_connection()?, attempt, active)
+    }
+    /// A bounded page from one snapshot; this projection never advances runtime
+    /// work or turns its recovery descriptions into execution authority.
+    pub fn execution_attempt_detail(
+        &self,
+        attempt_id: ExecutionId,
+        active: bool,
+        offset: u32,
+        limit: u32,
+    ) -> Result<AttemptDetail, ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |_| {
+            if limit == 0 || limit > 100 {
+                return Err(error(ErrorCode::LimitExceeded, "execution-page-limit"));
+            }
+            let view = self.execution_attempt(attempt_id, active)?;
+            let input = self.execution_input(attempt_id)?;
+            let total = view.items.len();
+            if offset as usize > total {
+                return Err(error(ErrorCode::InvalidInput, "offset"));
+            }
+            let items = view
+                .items
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|status| {
+                    Ok(ItemView {
+                        scope: input.item(status.item_id)?.scope.clone(),
+                        result_id: self.execution_current_result(attempt_id, status.item_id)?,
+                        status,
+                    })
+                })
+                .collect::<Result<Vec<_>, ExecutionError>>()?;
+            let mut recovery = self.execution_recovery(attempt_id, active)?;
+            // A unit can span pages. Return it on each page containing a member so its
+            // full scope remains explicit before an action is requested.
+            recovery.units.retain(|unit| {
+                items
+                    .iter()
+                    .any(|item| unit.item_ids.contains(&item.status.item_id))
+            });
+            if view.operation == crate::ai::OPERATION
+                || view.operation == crate::ai::team::OPERATION
+            {
+                for unit in &mut recovery.units {
+                    unit.actions.retain(|a| {
+                        !matches!(
+                            a,
+                            RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                        )
+                    });
+                }
+            }
+            let end = offset + items.len() as u32;
+            Ok(AttemptDetail {
+                attempt_id: view.attempt_id,
+                task_id: view.task_id,
+                operation: view.operation,
+                progress: view.progress,
+                items,
+                recovery,
+                next_offset: ((end as usize) < total).then_some(end),
+            })
+        })
     }
     pub fn execution_tasks(
         &self,
@@ -1335,8 +3052,44 @@ impl ProjectStore {
         attempt: ExecutionId,
         item: ExecutionId,
     ) -> Result<DispatchRequest, ExecutionError> {
+        let started = std::time::Instant::now();
+        let started_at_ms = crate::execution::plugin_authority::plugin_now_ms()?;
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        let plugin_permit = match super::plugin_execution::check_input_in(&tx, &input, &authority) {
+            Ok(permit) => permit,
+            Err(failure)
+                if matches!(failure.code, ErrorCode::Unauthorized | ErrorCode::Cancelled) =>
+            {
+                if input.envelope().automation.is_some() {
+                    authority.revoke_task(input.envelope().task_id)?;
+                    tx.execute(
+                        "UPDATE plugin_execution_grants SET revoked=1 WHERE attempt_id=?1",
+                        [attempt.to_string()],
+                    )
+                    .map_err(sql_error)?;
+                }
+                let diagnostic = if failure.stage == "work-plan-tool-source" {
+                    "work-plan-tool-source"
+                } else {
+                    "plugin-authority"
+                };
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic=?2 WHERE attempt_id=?1 AND execution='queued'", params![attempt.to_string(), diagnostic]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+            Err(failure) => return Err(failure),
+        };
+        if let Err(error) = super::application::check_input(&tx, &input)
+            .and_then(|_| super::application::check_service_input(&tx, &input, &authority))
+        {
+            if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+            }
+            return Err(error);
+        }
         let captured: i64 = tx
             .query_row(
                 "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",
@@ -1375,8 +3128,20 @@ impl ProjectStore {
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-dispatch-intent");
+        let timeout = std::time::Duration::from_millis(input.envelope().limits.timeout_ms.into());
+        let original_deadline = crate::execution::DispatchDeadline {
+            instant: started
+                .checked_add(timeout)
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
+            expires_at_ms: started_at_ms
+                .checked_add(input.envelope().limits.timeout_ms.into())
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
+        };
         Ok(DispatchRequest {
             provider: None,
+            plugin_permit,
+            service_origin: authority.service_origin(attempt)?,
+            original_deadline: Some(original_deadline),
             input,
             item_id: item,
             dispatch_token: token,
@@ -1384,6 +3149,7 @@ impl ProjectStore {
     }
 
     pub fn save_execution_result(&mut self, result: &FixedResult) -> Result<bool, ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let envelope = result.envelope();
         let input = load_input_cached(&tx, envelope.attempt_id)?;
@@ -1406,6 +3172,12 @@ impl ProjectStore {
             } else {
                 Err(error(ErrorCode::ResultMismatch, "result-identity"))
             };
+        }
+        let permit = super::plugin_execution::check_input_in(&tx, &input, &authority)?;
+        if let Some(evidence) = &envelope.plugin {
+            if permit.as_ref().map(PluginPermit::grant_id) != Some(evidence.authorization_id) {
+                return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
+            }
         }
         if let Some(current) = &current {
             if envelope.supersedes.map(|id| id.to_string()).as_ref() != Some(current)
@@ -1437,6 +3209,22 @@ impl ProjectStore {
         {
             return Err(error(ErrorCode::LimitExceeded, "attempt-output"));
         }
+        let validation = if envelope.output.is_some() && requires_semantic_check(&input) {
+            "pending"
+        } else if envelope.output.is_some() {
+            match result.semantic_validation.as_ref() {
+                Some(proof) if proof.matches(&input, &checked) => {
+                    if proof.valid {
+                        "valid"
+                    } else {
+                        "invalid"
+                    }
+                }
+                _ => "pending",
+            }
+        } else {
+            "absent"
+        };
         tx.execute(
             "INSERT INTO execution_results VALUES (?1,?2,?3,?4,?5,?6)",
             params![
@@ -1450,7 +3238,7 @@ impl ProjectStore {
         )
         .map_err(sql_error)?;
         tx.execute("UPDATE execution_items SET execution=?3,validation=?4,current_result_id=?5,retry_safe=?6,diagnostic=?7,adoption='unapplied' WHERE attempt_id=?1 AND item_id=?2",
-            params![envelope.attempt_id.to_string(),envelope.item_id.to_string(),encode_enum(envelope.outcome)?,if envelope.output.is_some(){"pending"}else{"absent"},envelope.result_id.to_string(),envelope.diagnostic.as_ref().is_some_and(|d|d.retry_safe),envelope.diagnostic.as_ref().map(|d|d.code.clone())]).map_err(sql_error)?;
+            params![envelope.attempt_id.to_string(),envelope.item_id.to_string(),encode_enum(envelope.outcome)?,validation,envelope.result_id.to_string(),envelope.diagnostic.as_ref().is_some_and(|d|d.retry_safe),envelope.diagnostic.as_ref().map(|d|d.code.clone())]).map_err(sql_error)?;
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-output");
@@ -1461,14 +3249,27 @@ impl ProjectStore {
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        check_translation_projection(&tx, &input, Some(&authority))?;
+        if input.envelope().plugin.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "plugin-semantic-validation"));
+        }
         let output = load_result(&tx, &input, result)?;
         if output.envelope().outcome != ExecutionState::Succeeded {
             return Err(error(ErrorCode::OutputInvalid, "validation"));
         }
-        if input.envelope().operation == crate::content::OPERATION {
-            if let Err(failure) = crate::content::validate_output(&input, &output) {
+        if input.envelope().operation == crate::ai::team::OPERATION {
+            if let Err(failure) = super::application::coordination::validate_result(&tx, &input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+        }
+        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+        if input.envelope().operation == crate::content::OPERATION && input.envelope().plugin.is_none() {
+            if let Err(failure) = crate::content::validate_builtin_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);
@@ -1476,6 +3277,13 @@ impl ProjectStore {
         }
         if input.envelope().operation == crate::content::TRANSLATION_OPERATION {
             if let Err(failure) = crate::content::validate_translation_output(&input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+        }
+        if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION {
+            if let Err(failure) = super::mcp::validate_query_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);
@@ -1490,13 +3298,283 @@ impl ProjectStore {
         crash_hook("after-validation");
         Ok(())
     }
+    pub fn capture_result_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<ResultValidationCapture, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        self.check_plugin_input(&input)?;
+        let result = self.execution_result(attempt, result)?;
+        Ok(ResultValidationCapture { input, result })
+    }
+    /// Capture every actual locale result in one read snapshot. A requested
+    /// batch is complete or rejected; no caller-supplied payload is retained.
+    pub fn capture_artifact_check_workflow(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        input_digest: &str,
+        results: &[ArtifactCheckBuildResultRef],
+    ) -> Result<Vec<ResultValidationCapture>, ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input_cached(connection, attempt)?;
+            let plan = crate::ReleasePlan::from_input(&input)?;
+            plan.validate_source_reference(connection)?;
+            if input.envelope().project_id != project || input.digest() != input_digest {
+                return Err(error(ErrorCode::ResultMismatch, "artifact-workflow-build"));
+            }
+            super::plugin_execution::check_input_in(connection, &input, &self.plugin_authority)?;
+            if results.is_empty()
+                || results.len() > 16
+                || results.len() != input.envelope().items.len()
+                || results
+                    .iter()
+                    .map(|r| r.item_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != results.len()
+                || results
+                    .iter()
+                    .map(|r| r.result_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != results.len()
+            {
+                return Err(error(ErrorCode::InvalidInput, "artifact-workflow-coverage"));
+            }
+            input.envelope().items.iter().map(|item| {
+                let reference = results.iter().find(|r| r.item_id == item.item_id)
+                    .ok_or_else(|| error(ErrorCode::ResultMismatch, "artifact-workflow-item"))?;
+                let current: Option<String> = connection.query_row(
+                    "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                    params![attempt.to_string(), item.item_id.to_string()], |r| r.get(0),
+                ).map_err(sql_error)?;
+                if current.as_deref() != Some(reference.result_id.to_string().as_str()) {
+                    return Err(error(ErrorCode::DependencyConflict, "artifact-workflow-current"));
+                }
+                let result = load_result(connection, &input, reference.result_id)?;
+                if result.envelope().item_id != item.item_id
+                    || result.envelope().outcome != ExecutionState::Succeeded
+                {
+                    return Err(error(ErrorCode::ResultMismatch, "artifact-workflow-result"));
+                }
+                let original = result_input(connection, &input, reference.result_id)?;
+                super::plugin_execution::check_input_in(connection, original.as_ref(), &self.plugin_authority)?;
+                Ok(ResultValidationCapture { input: original.as_ref().clone(), result })
+            }).collect()
+        })
+    }
+
+    /// Historical association only. The original input and artifact basis,
+    /// rather than a caller's descriptor, identify this checker and producer.
+    pub fn verify_artifact_check_association(
+        &self,
+        project: ExecutionId,
+        build_attempt: ExecutionId,
+        build_digest: &str,
+        reference: &ArtifactCheckBuildResultRef,
+        checker: &FixedInput,
+    ) -> Result<(ExecutionId, String), ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input_cached(connection, build_attempt)?;
+            let plan = crate::ReleasePlan::from_input(&input)?;
+            plan.validate_source_reference(connection)?;
+            let result = load_result(connection, &input, reference.result_id)?;
+            if input.envelope().project_id != project
+                || input.digest() != build_digest
+                || result.envelope().item_id != reference.item_id
+                || checker.envelope().project_id != project
+            {
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "artifact-workflow-association",
+                ));
+            }
+            let original = result_input(connection, &input, reference.result_id)?;
+            ArtifactValidationCapture::restore(
+                ResultValidationCapture {
+                    input: original.as_ref().clone(),
+                    result,
+                },
+                checker.clone(),
+            )?;
+            Ok((original.envelope().attempt_id, original.digest().into()))
+        })
+    }
+
+    /// Pure historical proof lookup, including revoked and reopened inputs.
+    pub fn read_artifact_check_proof(
+        &self,
+        project: ExecutionId,
+        build_attempt: ExecutionId,
+        build_result: ExecutionId,
+    ) -> Result<Option<super::release::SavedArtifactCheckProof>, ExecutionError> {
+        let connection = self.execution_connection()?;
+        super::review::read_snapshot(connection, |connection| {
+            let input = load_input_cached(connection, build_attempt)?;
+            if input.envelope().project_id != project {
+                return Err(error(ErrorCode::Unauthorized, "artifact-workflow-project"));
+            }
+            let result = load_result(connection, &input, build_result)?;
+            artifact_check_proof_in(connection, &input, &result)
+        })
+    }
+    pub fn commit_result_validation(
+        &mut self,
+        prepared: PreparedResultValidation,
+    ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
+        let tx = self.execution_write()?;
+        let expected = &prepared.capture.result;
+        let input = load_input_cached(&tx, expected.envelope().attempt_id)?;
+        let output = load_result(&tx, &input, expected.envelope().result_id)?;
+        if requires_semantic_check(&input) {
+            return Err(error(
+                ErrorCode::Unauthorized,
+                "independent-semantic-check-required",
+            ));
+        }
+        super::plugin_execution::check_input_in(&tx, &input, &authority)?;
+        check_translation_projection(&tx, &input, Some(&authority))?;
+        if crate::content::is_translation_projection(&input) {
+            crate::content::validate_translation_output(&input, &output)?;
+        }
+        if !prepared.proof.matches(&input, &output)
+            || input.digest() != prepared.capture.input.digest()
+        {
+            return Err(error(ErrorCode::ResultMismatch, "validation-preparation"));
+        }
+        let changed = tx.execute("UPDATE execution_items SET validation=?4 WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3 AND execution='succeeded' AND adoption<>'committed'", params![input.envelope().attempt_id.to_string(), output.envelope().item_id.to_string(), output.envelope().result_id.to_string(), if prepared.proof.valid { "valid" } else { "invalid" }]).map_err(sql_error)?;
+        if changed != 1 {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "validation-current-result",
+            ));
+        }
+        commit(tx)
+    }
+    /// Capture outside any write transaction. Running the returned checker input
+    /// uses the ordinary runtime, independent permission and exact Host binding.
+    pub fn capture_source_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<SourceValidationCapture, ExecutionError> {
+        SourceValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+    }
+    pub fn commit_source_validation(
+        &mut self,
+        prepared: PreparedSourceValidation,
+    ) -> Result<(), ExecutionError> {
+        self.commit_semantic_validation(
+            prepared.capture.source,
+            prepared.capture.check_input,
+            prepared.check_result,
+            prepared.proof,
+        )
+    }
+    pub fn capture_artifact_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<ArtifactValidationCapture, ExecutionError> {
+        ArtifactValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+    }
+    pub fn capture_translation_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<TranslationValidationCapture, ExecutionError> {
+        TranslationValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+    }
+    pub fn commit_translation_validation(
+        &mut self,
+        prepared: PreparedTranslationValidation,
+    ) -> Result<(), ExecutionError> {
+        self.commit_semantic_validation(
+            prepared.capture.producer,
+            prepared.capture.check_input,
+            prepared.check_result,
+            prepared.proof,
+        )
+    }
+    pub fn commit_artifact_validation(
+        &mut self,
+        prepared: PreparedArtifactValidation,
+    ) -> Result<(), ExecutionError> {
+        self.commit_semantic_validation(
+            prepared.capture.build,
+            prepared.capture.check_input,
+            prepared.check_result,
+            prepared.proof,
+        )
+    }
+    /// All producer/checker flows use one durable link and the same mutation
+    /// boundary. Expensive reconstruction runs before this short write phase.
+    fn commit_semantic_validation(
+        &mut self,
+        captured: ResultValidationCapture,
+        captured_check: FixedInput,
+        expected_check: FixedResult,
+        proof: ValidationProof,
+    ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
+        let tx = self.execution_write()?;
+        let producer_input = load_input_cached(&tx, captured.input.envelope().attempt_id)?;
+        let producer_result =
+            load_result(&tx, &producer_input, captured.result.envelope().result_id)?;
+        let check_input = load_input_cached(&tx, captured_check.envelope().attempt_id)?;
+        let check_result = load_result(&tx, &check_input, expected_check.envelope().result_id)?;
+        for input in [&producer_input, &check_input] {
+            super::plugin_execution::check_input_in(&tx, input, &authority)?;
+        }
+        if !proof.matches(&producer_input, &producer_result)
+            || producer_input.digest() != captured.input.digest()
+            || check_input.digest() != captured_check.digest()
+            || check_result.digest() != expected_check.digest()
+        {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "semantic-validation-preparation",
+            ));
+        }
+        let current_check: Option<String> = tx
+            .query_row(
+                "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![
+                    check_input.envelope().attempt_id.to_string(),
+                    check_result.envelope().item_id.to_string()
+                ],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        if current_check.as_deref() != Some(&check_result.envelope().result_id.to_string()) {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "semantic-check-current-result",
+            ));
+        }
+        let changed = tx.execute("UPDATE execution_items SET validation=?4 WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3 AND execution='succeeded' AND adoption<>'committed'", params![producer_input.envelope().attempt_id.to_string(), producer_result.envelope().item_id.to_string(), producer_result.envelope().result_id.to_string(), if proof.valid { "valid" } else { "invalid" }]).map_err(sql_error)?;
+        if changed != 1 {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "semantic-validation-current-result",
+            ));
+        }
+        tx.execute("INSERT INTO plugin_validation_links VALUES (?1,?2,?3) ON CONFLICT(producer_result_id) DO UPDATE SET checker_result_id=excluded.checker_result_id,valid=excluded.valid", params![producer_result.envelope().result_id.to_string(), check_result.envelope().result_id.to_string(), proof.valid]).map_err(sql_error)?;
+        commit(tx)
+    }
     pub fn execution_result(
         &self,
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<FixedResult, ExecutionError> {
-        let input = self.execution_input(attempt)?;
-        load_result(self.execution_connection()?, &input, result)
+        let connection = self.execution_connection()?;
+        let input = load_input_cached(connection, attempt)?;
+        load_result(connection, &input, result)
     }
     pub fn finish_execution_attempt(&mut self, attempt: ExecutionId) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
@@ -1504,6 +3582,7 @@ impl ProjectStore {
         tx.execute("UPDATE execution_items SET execution='unknown',diagnostic='result-missing' WHERE attempt_id=?1 AND execution='dispatched'",[attempt.to_string()]).map_err(sql_error)?;
         commit(tx)
     }
+    /// Read only the exact cancellation request, never the latest task revision.
     pub fn cancellation_action_read(
         &self,
         project: ExecutionId,
@@ -1511,14 +3590,20 @@ impl ProjectStore {
         request: ExecutionId,
     ) -> Result<Option<CancellationReceipt>, ExecutionError> {
         let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
-            let row: Option<(String, i64, Option<String>)> = connection.query_row(
-                "SELECT c.task_id,c.revision,t.project_id FROM execution_cancellations c
+            let row: Option<(String, i64, Option<String>)> = connection
+                .query_row(
+                    "SELECT c.task_id,c.revision,t.project_id FROM execution_cancellations c
                  LEFT JOIN execution_tasks t ON t.task_id=c.task_id WHERE c.request_id=?1",
-                [request.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).optional().map_err(sql_error)?;
-            let Some((saved_task, revision, saved_project)) = row else { return Ok(None); };
-            let saved_project = saved_project.ok_or_else(|| error(ErrorCode::CorruptLedger, "cancellation-task"))?;
+                    [request.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            let Some((saved_task, revision, saved_project)) = row else {
+                return Ok(None);
+            };
+            let saved_project = saved_project
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "cancellation-task"))?;
             let saved_task = parse_id(saved_task)?;
             let saved_project = parse_id(saved_project)?;
             if revision <= 0 {
@@ -1530,7 +3615,10 @@ impl ProjectStore {
             let revision = Revision::new(revision as u64)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "cancellation-revision"))?;
             Ok(Some(CancellationReceipt {
-                project_id: saved_project, task_id: saved_task, request_id: request, revision,
+                project_id: saved_project,
+                task_id: saved_task,
+                request_id: request,
+                revision,
             }))
         })?;
         if self.is_reconciling() {
@@ -1543,7 +3631,8 @@ impl ProjectStore {
         task: ExecutionId,
         request: ExecutionId,
     ) -> Result<Revision, ExecutionError> {
-        let tx = self.execution_write()?;
+        let authority = self.plugin_authority.clone();
+        let mut tx = self.execution_write()?;
         let existing: Option<(String, i64)> = tx
             .query_row(
                 "SELECT task_id,revision FROM execution_cancellations WHERE request_id=?1",
@@ -1559,7 +3648,11 @@ impl ProjectStore {
                 Err(error(ErrorCode::ResultMismatch, "cancel-identity"))
             };
         }
+        if super::application::stop_execution_plan_in(&tx, task, request)? {
+            tx.observer.add_scope(super::ChangeScope::Project);
+        }
         let revision = cancel_revision(&tx, task)?.next()?;
+        authority.revoke_task(task)?;
         tx.execute(
             "INSERT INTO execution_cancellations VALUES (?1,?2,?3)",
             params![request.to_string(), task.to_string(), revision.get() as i64],
@@ -1567,13 +3660,19 @@ impl ProjectStore {
         .map_err(sql_error)?;
         tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM execution_attempts WHERE task_id=?1)",[task.to_string()]).map_err(sql_error)?;
         let descendants = {
-            let mut stmt = tx.prepare("SELECT task_id FROM execution_budget_ancestry WHERE ancestor_id=?1 AND task_id<>?1").map_err(sql_error)?;
+            let mut stmt = tx.prepare("SELECT task_id FROM execution_budget_ancestry WHERE ancestor_id=?1 AND task_id<>?1 UNION SELECT a.task_id FROM application_executions x JOIN execution_attempts a USING(attempt_id) WHERE x.kind='tool' AND x.root_task=?1 AND a.task_id<>?1").map_err(sql_error)?;
             stmt.query_map([task.to_string()], |r| r.get::<_, String>(0))
                 .map_err(sql_error)?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(sql_error)?
         };
         for child in descendants {
+            authority.revoke_task(parse_id(child.clone())?)?;
+            tx.execute(
+                "UPDATE plugin_execution_grants SET revoked=1 WHERE task_id=?1",
+                [&child],
+            )
+            .map_err(sql_error)?;
             let child_revision = cancel_revision(&tx, parse_id(child.clone())?)?.next()?;
             tx.execute(
                 "INSERT INTO execution_cancellations VALUES (?1,?2,?3)",
@@ -1612,6 +3711,8 @@ impl ProjectStore {
             .map_err(sql_error)?;
         codec::decode(&bytes, MAX_INPUT_BYTES)
     }
+
+    /// Confirm the original generic preparation without refreshing its authority.
     pub fn execution_adoption_action_read(
         &self,
         project: ExecutionId,
@@ -1645,6 +3746,8 @@ impl ProjectStore {
         }
         Ok(found)
     }
+
+    /// Confirm a historical source action against its original request and frozen input.
     pub fn source_adoption_action_read(
         &self,
         project: ExecutionId,
@@ -1677,6 +3780,8 @@ impl ProjectStore {
         }
         Ok(found)
     }
+
+    /// The import item-to-unit association comes only from its original frozen input.
     pub fn translation_adoption_action_read(
         &self,
         project: ExecutionId,
@@ -1700,11 +3805,16 @@ impl ProjectStore {
                 || original.operation != crate::content::TRANSLATION_OPERATION
                 || original.result_ids != [result]
                 || original.parameters != parameters
-                || !input.envelope().units.iter().any(|value| {
-                    value.unit_id == unit && value.item_ids == [item]
-                })
+                || !input
+                    .envelope()
+                    .units
+                    .iter()
+                    .any(|value| value.unit_id == unit && value.item_ids == [item])
             {
-                return Err(error(ErrorCode::ResultMismatch, "translation-action-request"));
+                return Err(error(
+                    ErrorCode::ResultMismatch,
+                    "translation-action-request",
+                ));
             }
             Ok(Some(read))
         })?;
@@ -1721,11 +3831,13 @@ impl ProjectStore {
         mut result_ids: Vec<ExecutionId>,
         parameters: serde_json::Value,
     ) -> Result<AdoptionAction, ExecutionError> {
+        let epoch = self.changes_since(Revision::new(0)?).epoch;
+        let hook_slots = self.source_hook_deadlines.len() < 128;
         let tx = self.execution_write()?;
         if read_continuation(&tx, action_id)?.is_some() {
             return Err(error(ErrorCode::ResultMismatch, "action-identity"));
         }
-        let input = load_input(&tx, attempt)?;
+        let input = load_input_cached(&tx, attempt)?;
         result_ids.sort();
         let existing: Option<Vec<u8>> = tx
             .query_row(
@@ -1773,7 +3885,15 @@ impl ProjectStore {
             ],
         )
         .map_err(sql_error)?;
+        let hook_deadline =
+            super::content::maintenance_hook::prepare_deadline(&tx, &action, &epoch)?;
+        if hook_deadline.is_some() && !hook_slots {
+            return Err(error(ErrorCode::LimitExceeded, "source-hook-preparations"));
+        }
         commit(tx)?;
+        if let Some(deadline) = hook_deadline {
+            self.source_hook_deadlines.insert(action_id, deadline);
+        }
         Ok(action)
     }
     pub fn adoption_receipt(
@@ -1791,7 +3911,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::DependencyConflict, "adoption-transaction"));
         }
         let transaction = connection.unchecked_transaction().map_err(sql_error)?;
-        let capture = capture_adoption_in(&transaction, action)?;
+        let capture = capture_adoption_in(&transaction, action, &self.plugin_authority)?;
         transaction.commit().map_err(sql_error)?;
         Ok(capture)
     }
@@ -1809,9 +3929,11 @@ impl ProjectStore {
         &mut self,
         prepared: PreparedAdoption,
     ) -> Result<AdoptionReceipt, ExecutionError> {
+        let authority = self.plugin_authority.clone();
+        let store_epoch = self.changes_since(Revision::new(0)?).epoch;
         let mut tx = self.execution_write()?;
         let action = &prepared.capture.action;
-        let current = capture_adoption_in(&tx, action)?;
+        let current = capture_adoption_in(&tx, action, &authority)?;
         if let Some(receipt) = current.receipt {
             return Ok(receipt);
         }
@@ -1834,7 +3956,7 @@ impl ProjectStore {
         let mutation = prepared
             .mutation
             .ok_or_else(|| error(ErrorCode::CorruptLedger, "receipt"))?;
-        let changes = mutation(&AdoptionTransaction::new(&tx))?;
+        let changes = mutation(&AdoptionTransaction::new(&tx, &store_epoch))?;
         let receipt = AdoptionReceipt {
             project_id: action.project_id,
             attempt_id: action.attempt_id,
@@ -1871,11 +3993,121 @@ impl ProjectStore {
     }
 }
 
+fn require_current_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    let (current, execution): (Option<String>, String) = connection.query_row(
+        "SELECT current_result_id,execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+        params![input.envelope().attempt_id.to_string(), result.envelope().item_id.to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(sql_error)?;
+    if current.as_deref() != Some(result.envelope().result_id.to_string().as_str())
+        || execution != "succeeded"
+    {
+        return Err(error(
+            ErrorCode::ResultMismatch,
+            "semantic-check-current-result",
+        ));
+    }
+    Ok(())
+}
+
+fn require_unsuperseded_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    let newer: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id
+         WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",
+        params![input.envelope().task_id.to_string(), result.envelope().item_id.to_string(), input.envelope().attempt_id.to_string()],
+        |row| row.get(0),
+    ).map_err(sql_error)?;
+    if newer {
+        return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
+    }
+    Ok(())
+}
+
+/// Review alone may preserve a real terminal error as advisory evidence. The
+/// generic adoption guard remains succeeded-only for every other operation.
+fn require_current_review_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    if input.envelope().operation != crate::execution::REVIEW_CHECK_OPERATION
+        || input.envelope().items.len() != 1
+        || !matches!(
+            result.envelope().outcome,
+            ExecutionState::Succeeded | ExecutionState::Failed | ExecutionState::Unknown
+        )
+        || result.envelope().plugin.is_none()
+    {
+        return Err(error(ErrorCode::ResultMismatch, "review-terminal-result"));
+    }
+    let (current, execution): (Option<String>, String) = connection.query_row(
+        "SELECT current_result_id,execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+        params![input.envelope().attempt_id.to_string(), result.envelope().item_id.to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(sql_error)?;
+    if current.as_deref() != Some(result.envelope().result_id.to_string().as_str())
+        || execution != encode_enum(result.envelope().outcome)?
+    {
+        return Err(error(
+            ErrorCode::ResultMismatch,
+            "review-terminal-current-result",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn capture_current_review_result_in(
+    connection: &Connection,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+    attempt: ExecutionId,
+    result: ExecutionId,
+) -> Result<ResultValidationCapture, ExecutionError> {
+    let input = load_input_cached(connection, attempt)?;
+    let result = load_result(connection, &input, result)?;
+    recheck_current_review_result_in(connection, authority, &input, &result)?;
+    Ok(ResultValidationCapture { input, result })
+}
+
+/// Exact stored frames and the original live grant are required even when the
+/// actual worker returned Failed/Unknown. A caller envelope supplies no proof.
+pub(super) fn recheck_current_review_result_in(
+    connection: &Connection,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    check_stored_input(connection, input)?;
+    check_stored_result(connection, result)?;
+    let permit = super::plugin_execution::check_input_in(connection, input, authority)?
+        .ok_or_else(|| error(ErrorCode::Unauthorized, "review-result-grant"))?;
+    require_current_review_result(connection, input, result)?;
+    require_unsuperseded_result(connection, input, result)?;
+    if result
+        .envelope()
+        .plugin
+        .as_ref()
+        .map(|e| e.authorization_id)
+        != Some(permit.grant_id())
+    {
+        return Err(error(ErrorCode::Unauthorized, "review-result-grant"));
+    }
+    Ok(())
+}
+
 fn capture_adoption_in(
     connection: &Connection,
     action: &AdoptionAction,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
 ) -> Result<AdoptionCapture, ExecutionError> {
-    let input = load_input(connection, action.attempt_id)?;
+    let input = load_input_cached(connection, action.attempt_id)?;
     let digest = action.request_digest(&input)?;
     let persisted: (Vec<u8>, String) = connection
             .query_row(
@@ -1901,40 +4133,92 @@ fn capture_adoption_in(
             Err(error(ErrorCode::CorruptLedger, "receipt"))
         };
     }
+    if crate::content::is_translation_projection(&input) {
+        complete_translation_projection(connection, &input)?;
+    }
+    super::application::check_input(connection, &input)?;
+    super::application::check_service_input(connection, &input, authority)?;
+    check_translation_projection(connection, &input, Some(authority))?;
+    if input.envelope().plugin.is_some()
+        && input.envelope().operation == crate::content::BUILD_OPERATION
+    {
+        super::release::ReleasePlan::from_input(&input)?.validate_source_reference(connection)?;
+    }
+    let permit = super::plugin_execution::check_input_in(connection, &input, authority)?;
     let results = action
         .result_ids
         .iter()
         .map(|id| load_result(connection, &input, *id))
         .collect::<Result<Vec<_>, _>>()?;
     action.validate(&input, &results)?;
+    for result in &results {
+        let original = result_input(connection, &input, result.envelope().result_id)?;
+        let result_permit = if original.envelope().attempt_id == input.envelope().attempt_id {
+            permit.clone()
+        } else {
+            require_current_result(connection, &original, result)?;
+            super::plugin_execution::check_input_in(connection, &original, authority)?
+        };
+        if result.envelope().plugin.as_ref().is_some_and(|origin| {
+            result_permit.as_ref().map(PluginPermit::grant_id) != Some(origin.authorization_id)
+        }) {
+            return Err(error(ErrorCode::Unauthorized, "plugin-adoption-grant"));
+        }
+    }
     if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
         return Err(error(ErrorCode::Cancelled, "adoption"));
     }
-    let state = read_attempt(connection, action.attempt_id, true)?;
+    let state = if crate::content::is_translation_projection(&input) {
+        None
+    } else {
+        Some(read_attempt(connection, action.attempt_id, true)?)
+    };
     for result in &results {
-        let newer:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),result.envelope().item_id.to_string(),action.attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-        if newer {
-            return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
+        require_unsuperseded_result(connection, &input, result)?;
+        let (current,validation,adoption):(String,String,String)=connection.query_row(
+            "SELECT current_result_id,validation,adoption FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+            params![action.attempt_id.to_string(),result.envelope().item_id.to_string()],
+            |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).map_err(sql_error)?;
+        let validation: ValidationState = decode_enum(validation)?;
+        let adoption: AdoptionState = decode_enum(adoption)?;
+        if let Some(state) = &state {
+            let item = state
+                .items
+                .iter()
+                .find(|item| item.item_id == result.envelope().item_id)
+                .ok_or_else(|| error(ErrorCode::ResultMismatch, "item"))?;
+            if item.validation != validation || item.adoption != adoption {
+                return Err(error(ErrorCode::CorruptLedger, "adoption-state"));
+            }
         }
-        let item = state
-            .items
-            .iter()
-            .find(|item| item.item_id == result.envelope().item_id)
-            .ok_or_else(|| error(ErrorCode::ResultMismatch, "item"))?;
-        let current: String = connection
-            .query_row(
-                "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
-                params![action.attempt_id.to_string(), item.item_id.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql_error)?;
         if current != result.envelope().result_id.to_string()
-            || item.validation != ValidationState::Valid
-            || item.adoption == AdoptionState::Committed
+            || validation != ValidationState::Valid
+            || adoption == AdoptionState::Committed
         {
             return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
         }
-        let scope = &input.item(item.item_id)?.scope;
+        if requires_semantic_check(&input) {
+            // Historical proof remains readable. New adoption also requires
+            // the exact checker's live grant and unsuperseded result, both at
+            // capture and again in the short commit transaction.
+            let (check_input, check_result, _) = load_check_link(connection, result)?;
+            require_current_result(connection, &check_input, &check_result)?;
+            let permit =
+                super::plugin_execution::check_input_in(connection, &check_input, authority)?;
+            if permit.as_ref().map(PluginPermit::grant_id)
+                != check_result
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .map(|e| e.authorization_id)
+            {
+                return Err(error(
+                    ErrorCode::Unauthorized,
+                    "semantic-check-adoption-grant",
+                ));
+            }
+        }
+        let scope = &input.item(result.envelope().item_id)?.scope;
         if let Some(locale) = &scope.locale {
             let metadata = super::read_metadata_from(connection)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "scope"))?;
@@ -1958,7 +4242,7 @@ fn capture_adoption_in(
 
 /// Restore one historical action and optional receipt inside the caller's read snapshot.
 /// Stored bytes, frozen input and row associations are evidence, never new eligibility.
-fn read_adoption_action_in(
+pub(in crate::persistence) fn read_adoption_action_in(
     connection: &Connection,
     action: ExecutionId,
 ) -> Result<Option<(AdoptionActionRead, FixedInput)>, ExecutionError> {
@@ -1974,10 +4258,14 @@ fn read_adoption_action_in(
         if read_receipt(connection, action)?.is_some() {
             return Err(error(ErrorCode::CorruptLedger, "adoption-action-orphan"));
         }
-        if connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM execution_continuations WHERE action_id=?1)",
-            [action.to_string()], |row| row.get::<_, bool>(0),
-        ).map_err(sql_error)? {
+        if connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_continuations WHERE action_id=?1)",
+                [action.to_string()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sql_error)?
+        {
             return Err(error(ErrorCode::ResultMismatch, "adoption-action-kind"));
         }
         return Ok(None);
@@ -1985,27 +4273,44 @@ fn read_adoption_action_in(
     let original: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)
         .map_err(|_| error(ErrorCode::CorruptLedger, "adoption-action-bytes"))?;
     let input = load_input_cached(connection, original.attempt_id)?;
-    let digest = original.request_digest(&input)
+    let digest = original
+        .request_digest(&input)
         .map_err(|_| error(ErrorCode::CorruptLedger, "adoption-action-digest"))?;
     if original.action_id != action
         || saved_attempt != original.attempt_id.to_string()
         || saved_unit != original.unit_id.to_string()
         || original.project_id != input.envelope().project_id
         || original.operation != input.envelope().operation
-        || !input.envelope().units.iter().any(|unit| unit.unit_id == original.unit_id)
-        || original.result_ids.windows(2).any(|pair| pair[0] >= pair[1])
+        || !input
+            .envelope()
+            .units
+            .iter()
+            .any(|unit| unit.unit_id == original.unit_id)
+        || original
+            .result_ids
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
         || saved_digest != digest
     {
-        return Err(error(ErrorCode::CorruptLedger, "adoption-action-association"));
+        return Err(error(
+            ErrorCode::CorruptLedger,
+            "adoption-action-association",
+        ));
     }
     let receipt = read_receipt(connection, action)?;
     if receipt.is_some() {
-        let (receipt_attempt, receipt_unit): (String, String) = connection.query_row(
-            "SELECT attempt_id,unit_id FROM adoption_receipts WHERE action_id=?1",
-            [action.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
-        ).map_err(sql_error)?;
+        let (receipt_attempt, receipt_unit): (String, String) = connection
+            .query_row(
+                "SELECT attempt_id,unit_id FROM adoption_receipts WHERE action_id=?1",
+                [action.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sql_error)?;
         if receipt_attempt != saved_attempt || receipt_unit != saved_unit {
-            return Err(error(ErrorCode::CorruptLedger, "adoption-receipt-association"));
+            return Err(error(
+                ErrorCode::CorruptLedger,
+                "adoption-receipt-association",
+            ));
         }
     }
     if receipt.as_ref().is_some_and(|value| {
@@ -2017,7 +4322,13 @@ fn read_adoption_action_in(
     }) {
         return Err(error(ErrorCode::CorruptLedger, "adoption-action-receipt"));
     }
-    Ok(Some((AdoptionActionRead { action: original, receipt }, input)))
+    Ok(Some((
+        AdoptionActionRead {
+            action: original,
+            receipt,
+        },
+        input,
+    )))
 }
 
 pub(super) fn read_receipt(
@@ -2044,10 +4355,10 @@ pub(super) fn read_receipt(
     })
     .transpose()
 }
-struct ExecutionTransaction<'a> {
+pub(super) struct ExecutionTransaction<'a> {
     tx: rusqlite::Transaction<'a>,
     unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    observer: super::changes::CommitObserver,
+    pub(super) observer: super::changes::CommitObserver,
 }
 impl<'a> std::ops::Deref for ExecutionTransaction<'a> {
     type Target = rusqlite::Transaction<'a>;
@@ -2055,7 +4366,7 @@ impl<'a> std::ops::Deref for ExecutionTransaction<'a> {
         &self.tx
     }
 }
-fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), ExecutionError> {
+pub(super) fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), ExecutionError> {
     transaction.observer.commit(transaction.tx).map_err(|_| {
         transaction
             .unknown
@@ -2063,8 +4374,8 @@ fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), ExecutionError> {
         error(ErrorCode::OutcomeUnknown, "execution-commit")
     })
 }
-#[cfg(test)]
-fn crash_hook(point: &str) {
+#[cfg(any(test, feature = "execution-test-host"))]
+pub(in crate::persistence) fn crash_hook(point: &str) {
     if std::env::var("TSUMUGI_EXECUTION_CRASH").as_deref() == Ok(point) {
         if let Ok(path) = std::env::var("TSUMUGI_EXECUTION_HOOK") {
             std::fs::write(path, point).unwrap();

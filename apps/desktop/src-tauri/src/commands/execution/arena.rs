@@ -1,7 +1,7 @@
-use super::ai_wire::{AiItemView, AiOutputView, ArenaPreviewView, index};
+use super::ai_wire::{AiItemView, AiOutputView, AiConfig, ArenaConfig, ArenaPreviewView, ComparisonView, ProviderBudget, index};
 use super::*;
 use tsumugi_core::{
-    ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis, SaveTranslationRevision,
+    ComparisonRequest, ComparisonSummary, MergeBasis, SaveTranslationRevision,
     TranslationSelection, ai::arena::*,
 };
 
@@ -62,10 +62,10 @@ pub struct Row {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct View {
-    budget: Option<tsumugi_core::ProviderBudget>,
+    budget: Option<ProviderBudget>,
     detail: AttemptDetail,
     rows: Vec<Row>,
-    variants: Option<Vec<tsumugi_core::ai::AiConfig>>,
+    variants: Option<Vec<AiConfig>>,
     blind: bool,
     revealed: bool,
     different_inputs: bool,
@@ -111,6 +111,12 @@ mod wire_tests {
         round_trip!("responses", "comparisons", Vec<ComparisonSummary>);
         round_trip!("responses", "reveal", ());
         round_trip!("responses", "selection", TranslationSelection);
+        let core: tsumugi_core::ComparisonView =
+            serde_json::from_value(fixture["responses"]["comparison"].clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(ComparisonView::from(core)).unwrap(),
+            fixture["responses"]["comparison"]
+        );
         let mut value = fixture["responses"]["comparison"].clone();
         value["rows"][0]["originKind"] = serde_json::json!("best");
         assert!(serde_json::from_value::<ComparisonView>(value).is_err());
@@ -140,7 +146,7 @@ pub async fn preview_arena_translation(
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 let preview = store
-                    .preview_arena(request.config, &request.locale, &request.unit_ids)
+                    .preview_arena(request.config.into(), &request.locale, &request.unit_ids)
                     .map_err(mapped)?;
                 let input = preview
                     .fixed_input(
@@ -324,7 +330,7 @@ pub async fn read_arena_translation(
                     .iter()
                     .enumerate()
                     .any(|(i, c)| s.config.variants[..i].iter().any(|p| p == c));
-                let variants = if revealed {
+                let variants: Option<Vec<tsumugi_core::ai::AiConfig>> = if revealed {
                     Some(
                         s.display_order
                             .iter()
@@ -335,10 +341,10 @@ pub async fn read_arena_translation(
                     None
                 };
                 Ok(View {
-                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?,
+                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?.map(Into::into),
                     detail,
                     rows,
-                    variants,
+                    variants: variants.map(|configs| configs.into_iter().map(Into::into).collect()),
                     blind: s.config.blind,
                     revealed,
                     different_inputs,
@@ -387,6 +393,7 @@ pub async fn create_arena_comparison(
                         revision_ids: request.revision_ids,
                         blind: request.blind,
                     })
+                    .map(Into::into)
                     .map_err(mapped)
             },
         )
@@ -411,6 +418,7 @@ pub async fn read_arena_comparison(
                 )?
                 .store
                 .read_comparison(request.project_id, request.comparison_id)
+                .map(Into::into)
                 .map_err(mapped)
             },
         )

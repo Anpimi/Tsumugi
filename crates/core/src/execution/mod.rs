@@ -4,11 +4,17 @@
 //! active project session must check these associations again at every mutation.
 
 mod adoption;
+mod artifact_validation;
 pub(crate) mod codec;
+mod plugin;
+pub(crate) mod plugin_authority;
 mod runner;
 mod runtime;
+mod source_validation;
 #[cfg(feature = "execution-test-host")]
 pub mod test_support;
+mod translation_validation;
+mod validation;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,19 +23,38 @@ use uuid::Uuid;
 
 use crate::{Locale, ProjectId};
 pub use adoption::{AdoptionCapture, PreparedAdoption};
+pub use artifact_validation::{
+    ARTIFACT_CHECK_OPERATION, ArtifactCheckBuildResultRef, ArtifactValidationCapture,
+    PreparedArtifactValidation,
+};
+pub use plugin::*;
+pub use plugin_authority::{ApplicationExecutionLease, PluginConsent, PluginPermit};
 pub use runner::*;
-pub use runtime::{ExecutionRuntime, OutcomeQuery};
+pub use runtime::{ExecutionRuntime, OutcomeQuery, PackageQuiescence};
+pub use source_validation::{
+    PreparedSourceValidation, SOURCE_CHECK_OPERATION, SourceValidationCapture,
+};
+pub use translation_validation::{
+    PreparedTranslationValidation, TRANSLATION_CHECK_OPERATION, TranslationValidationCapture,
+    translation_check_payload,
+};
+pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
+pub(crate) use validation::{ValidationProof, requires_semantic_check, restore_check_input};
+
+/// Read-only domain Review computation; QA adoption remains a separate boundary.
+pub const REVIEW_CHECK_OPERATION: &str = "review-semantic-check";
 
 pub const MAX_ITEMS: usize = 2000;
-pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
 pub const DEFAULT_RESULT_BYTES: usize = 256 * 1024;
-pub const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ATTEMPT_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 pub const MAX_DEPTH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum ErrorCode {
     InvalidInput,
     LimitExceeded,
@@ -46,6 +71,7 @@ pub enum ErrorCode {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ExecutionError {
     pub code: ErrorCode,
     pub stage: String,
@@ -182,7 +208,7 @@ fn parse_decimal(value: &str) -> Option<u64> {
     (parsed.to_string() == value).then_some(parsed)
 }
 
-/// Full unsigned counters on display IPC, without changing stored AI payloads.
+/// Full unsigned counters encoded without JavaScript precision loss.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct UnsignedDecimal(u64);
@@ -359,6 +385,10 @@ pub struct InputEnvelope {
     pub task_id: ExecutionId,
     pub attempt_id: ExecutionId,
     pub previous_attempt_id: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation: Option<crate::application::AutomationLease>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginExecutionBinding>,
     pub operation: String,
     pub capability_id: String,
     pub capability_version: String,
@@ -395,6 +425,8 @@ impl InputEnvelope {
             task_id: ExecutionId::new(),
             attempt_id: ExecutionId::new(),
             previous_attempt_id: None,
+            automation: None,
+            plugin: None,
             operation: operation.into(),
             capability_id: capability_id.into(),
             capability_version: capability_version.into(),
@@ -419,16 +451,33 @@ impl InputEnvelope {
     }
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
-        if self.version != 1 || self.previous_attempt_id == Some(self.attempt_id) {
+        if self.version != 1
+            || self.previous_attempt_id == Some(self.attempt_id)
+            || self
+                .automation
+                .is_some_and(|lease| lease.generation.get() == 0)
+        {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "input"));
         }
         label(&self.operation)?;
         label(&self.capability_id)?;
         label(&self.capability_version)?;
+        if let Some(binding) = &self.plugin {
+            binding.validate()?;
+            if self.capability_id != binding.capability.declaration.contract.id
+                || self.capability_version != binding.capability_version()
+            {
+                return Err(ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"));
+            }
+        }
         self.limits.validate(
             if matches!(
                 self.operation.as_str(),
-                crate::ai::OPERATION | crate::ai::arena::OPERATION
+                crate::ai::OPERATION
+                    | crate::ai::team::OPERATION
+                    | crate::ai::arena::OPERATION
+                    | crate::ai::semantic_review::OPERATION
+                    | crate::application::MCP_TERM_QUERY_OPERATION
             ) {
                 600_000
             } else {
@@ -500,9 +549,9 @@ impl InputEnvelope {
         if reused.len() == items.len() {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "empty-retry"));
         }
-        let value = serde_json::to_value(self)
-            .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "input"))?;
-        codec::validate_depth(&value, 0)
+        codec::validate_serialized_depth(self, || {
+            ExecutionError::new(ErrorCode::InvalidInput, "input")
+        })
     }
 }
 
@@ -679,25 +728,38 @@ impl ContinuationAction {
     pub fn canonical(&self) -> Result<Self, ExecutionError> {
         let mut action = self.clone();
         action.item_ids.sort();
-        if action.item_ids.is_empty() || action.item_ids.len() > MAX_ITEMS
+        if action.item_ids.is_empty()
+            || action.item_ids.len() > MAX_ITEMS
             || action.item_ids.windows(2).any(|ids| ids[0] == ids[1])
         {
-            return Err(ExecutionError::new(ErrorCode::InvalidInput, "continuation-scope"));
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "continuation-scope",
+            ));
         }
         Ok(action)
     }
     pub(crate) fn request_digest(&self, input: &FixedInput) -> Result<String, ExecutionError> {
         let action = self.canonical()?;
         let envelope = input.envelope();
-        let unit = envelope.units.iter().find(|unit| unit.unit_id == action.unit_id)
+        let unit = envelope
+            .units
+            .iter()
+            .find(|unit| unit.unit_id == action.unit_id)
             .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "continuation-unit"))?;
         if action.project_id != envelope.project_id
             || action.source_attempt_id != envelope.attempt_id
             || action.item_ids.iter().any(|id| !unit.item_ids.contains(id))
         {
-            return Err(ExecutionError::new(ErrorCode::Unauthorized, "continuation-scope"));
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "continuation-scope",
+            ));
         }
-        Ok(codec::digest(&codec::encode(&(action, input.digest()), MAX_INPUT_BYTES)?))
+        Ok(codec::digest(&codec::encode(
+            &(action, input.digest()),
+            MAX_INPUT_BYTES,
+        )?))
     }
 }
 
@@ -714,6 +776,30 @@ pub struct ContinuationReceipt {
     pub input_digest: String,
     pub task_id: ExecutionId,
     pub operation: String,
+}
+
+/// Read-only execution projection shared by human and bounded consumers.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ItemView {
+    pub status: ItemStatus,
+    pub scope: Scope,
+    pub result_id: Option<ExecutionId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AttemptDetail {
+    pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub operation: String,
+    pub progress: Progress,
+    pub items: Vec<ItemView>,
+    pub recovery: crate::RecoveryPlan,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+    pub next_offset: Option<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -842,6 +928,8 @@ pub struct ResultEnvelope {
     pub dispatch_token: ExecutionId,
     pub capability_id: String,
     pub capability_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginResultEvidence>,
     pub outcome: ExecutionState,
     pub output: Option<Value>,
     pub diagnostic: Option<Diagnostic>,
@@ -865,6 +953,16 @@ impl ResultEnvelope {
             );
         }
         input.item(self.item_id)?;
+        match (&expected.plugin, &self.plugin) {
+            (Some(_), Some(evidence)) => evidence.validate(self, input, dispatch_token)?,
+            (None, None) => {}
+            _ => {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "plugin-evidence",
+                ));
+            }
+        }
         if !matches!(
             self.outcome,
             ExecutionState::Succeeded | ExecutionState::Failed | ExecutionState::Unknown
@@ -884,11 +982,9 @@ impl ResultEnvelope {
                 ));
             }
         }
-        codec::validate_depth(
-            &serde_json::to_value(self)
-                .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "result"))?,
-            0,
-        )
+        codec::validate_serialized_depth(self, || {
+            ExecutionError::new(ErrorCode::OutputInvalid, "result")
+        })
     }
 }
 
@@ -897,6 +993,7 @@ pub struct FixedResult {
     envelope: Arc<ResultEnvelope>,
     bytes: Arc<[u8]>,
     digest: String,
+    pub(crate) semantic_validation: Option<validation::ValidationProof>,
 }
 impl FixedResult {
     pub fn capture(
@@ -919,6 +1016,7 @@ impl FixedResult {
             envelope: Arc::new(envelope),
             bytes: Arc::from(bytes),
             digest: codec::digest(bytes),
+            semantic_validation: None,
         })
     }
     pub fn restore(
@@ -1067,6 +1165,19 @@ pub struct AdoptionReceipt {
     pub changes: Vec<ChangeReference>,
 }
 
+/// Evidence of one exact ordinary plugin input in the durable execution ledger.
+/// This proves enqueueing, never current scope, worker completion or live consent.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginStartActionRead {
+    pub project_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub operation: String,
+    pub input_digest: String,
+}
+
 /// The durable original cancellation request, independently of worker shutdown.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1100,6 +1211,9 @@ pub struct AdoptionActionRead {
     pub receipt: Option<AdoptionReceipt>,
 }
 
+/// Existing source callers use the same historical action/receipt contract.
+pub type SourceAdoptionActionRead = AdoptionActionRead;
+
 fn label(value: &str) -> Result<(), ExecutionError> {
     if value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
         return Err(ExecutionError::new(ErrorCode::InvalidInput, "identifier"));
@@ -1111,12 +1225,37 @@ fn label(value: &str) -> Result<(), ExecutionError> {
 mod tests;
 
 #[cfg(test)]
-pub(crate) fn test_continuation_action(store: &crate::ProjectStore, attempt: ExecutionId, items: &[ExecutionId]) -> ContinuationAction {
+pub(crate) fn test_continuation_action(
+    store: &crate::ProjectStore,
+    attempt: ExecutionId,
+    items: &[ExecutionId],
+) -> ContinuationAction {
     let input = store.execution_input(attempt).unwrap();
-    let unit = input.envelope().units.iter().find(|u| u.item_ids.contains(&items[0])).unwrap();
+    let unit = input
+        .envelope()
+        .units
+        .iter()
+        .find(|u| u.item_ids.contains(&items[0]))
+        .unwrap();
     let state = store.execution_attempt(attempt, false).unwrap();
-    ContinuationAction { action_id: ExecutionId::new(), project_id: input.envelope().project_id,
-        source_attempt_id: attempt, unit_id: unit.unit_id,
-        kind: if state.items.iter().any(|item| items.contains(&item.item_id) && item.execution == ExecutionState::Failed) { ContinuationKind::RetrySafeFailure } else { ContinuationKind::ResumeUndispatched },
-        item_ids: items.to_vec(), expected_cancellation_revision: store.execution_task(input.envelope().task_id).unwrap().cancellation_revision }
+    ContinuationAction {
+        action_id: ExecutionId::new(),
+        project_id: input.envelope().project_id,
+        source_attempt_id: attempt,
+        unit_id: unit.unit_id,
+        kind: if state
+            .items
+            .iter()
+            .any(|item| items.contains(&item.item_id) && item.execution == ExecutionState::Failed)
+        {
+            ContinuationKind::RetrySafeFailure
+        } else {
+            ContinuationKind::ResumeUndispatched
+        },
+        item_ids: items.to_vec(),
+        expected_cancellation_revision: store
+            .execution_task(input.envelope().task_id)
+            .unwrap()
+            .cancellation_revision,
+    }
 }

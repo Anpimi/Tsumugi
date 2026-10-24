@@ -3,6 +3,90 @@ use crate::ai::provider::ProviderService;
 use std::process::{Command, Stdio};
 
 #[test]
+fn provider_children_keep_the_exact_parent_dependencies() {
+    let (_temp, mut store, rows) = source_project();
+    let preview = store
+        .preview_ai(
+            config("http://127.0.0.1:9/v1/chat/completions".into()),
+            "zh-CN",
+            &[rows[0].unit_id.unwrap()],
+        )
+        .unwrap();
+    let project = store.metadata().unwrap().project_id();
+    let dependency = Dependency {
+        kind: "captured-source".into(),
+        id: rows[0].source_revision_id.unwrap().to_string(),
+        expected_revision: Revision::new(1).unwrap(),
+    };
+    let mut other_dependency = dependency.clone();
+    other_dependency.id = rows[1].source_revision_id.unwrap().to_string();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
+
+    for parent_dependencies in [
+        vec![],
+        vec![dependency.clone()],
+        vec![dependency.clone(), other_dependency.clone()],
+    ] {
+        let capture = |dependencies| {
+            let mut envelope = preview.fixed_input(project).unwrap().envelope().clone();
+            envelope.items[0].dependencies = dependencies;
+            FixedInput::capture(envelope).unwrap()
+        };
+        let parent = capture(parent_dependencies.clone());
+        runtime.submit(&mut store, &parent).unwrap();
+        let mut changed_revision = dependency.clone();
+        changed_revision.expected_revision = Revision::new(2).unwrap();
+        let mut changed_kind = dependency.clone();
+        changed_kind.kind = "captured-context".into();
+        for dependencies in [
+            vec![],
+            vec![dependency.clone()],
+            vec![other_dependency.clone()],
+            vec![changed_revision],
+            vec![changed_kind],
+            vec![dependency.clone(), other_dependency.clone()],
+        ] {
+            if dependencies == parent_dependencies {
+                continue;
+            }
+            let child = capture(dependencies);
+            assert_eq!(
+                child.envelope().items[0].scope,
+                parent.envelope().items[0].scope
+            );
+            assert_eq!(
+                child.envelope().items[0].payload,
+                parent.envelope().items[0].payload
+            );
+            let error = runtime
+                .submit_child(&mut store, &child, parent.envelope().task_id)
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::Unauthorized);
+            assert_eq!(error.stage, "provider-parent-scope");
+            assert!(store.execution_input(child.envelope().attempt_id).is_err());
+        }
+        let child = capture(parent_dependencies.into_iter().rev().collect());
+        runtime
+            .submit_child(&mut store, &child, parent.envelope().task_id)
+            .unwrap();
+        let stored = store.execution_input(child.envelope().attempt_id).unwrap();
+        assert_eq!(stored.envelope(), child.envelope());
+        assert_eq!(stored.digest(), child.digest());
+        let budget = store
+            .provider_budget(parent.envelope().task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!((budget.dispatched, budget.unresolved), (0, 0));
+    }
+}
+
+#[test]
 fn provider_shared_parent_budget_persists_and_scope_cannot_expand() {
     let (temp, mut store, rows) = source_project();
     let (url, calls, wire) = server("ok");
@@ -216,7 +300,7 @@ fn provider_parent_cancel_stops_children_and_preserves_unknown_reservation() {
 }
 
 #[test]
-fn provider_current_reopen_retains_unknown_usage_and_refuses_schema_eleven() {
+fn provider_current_reopen_preserves_budget_and_refuses_unsupported_schemas() {
     let (temp, mut store, rows) = source_project();
     let (url, calls, wire) = server("no-usage");
     let mut c = config(url);
@@ -234,9 +318,23 @@ fn provider_current_reopen_retains_unknown_usage_and_refuses_schema_eleven() {
     .unwrap();
     rt.submit(&mut store, &input).unwrap();
     drain(&mut rt, &mut store, input.envelope().attempt_id);
-    let budget = store.provider_budget(input.envelope().task_id).unwrap().unwrap();
+    let captured_budget = store
+        .provider_budget(input.envelope().task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!((captured_budget.limit, captured_budget.dispatched), (3, 1));
+    let budget = store
+        .provider_budget(input.envelope().task_id)
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        (budget.limit, budget.dispatched, budget.unresolved, budget.usage_unknown, budget.legacy_held),
+        (
+            budget.limit,
+            budget.dispatched,
+            budget.unresolved,
+            budget.usage_unknown,
+            budget.legacy_held
+        ),
         (3, 1, 0, 1, 0)
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -245,25 +343,64 @@ fn provider_current_reopen_retains_unknown_usage_and_refuses_schema_eleven() {
     wire.join().unwrap();
     let path = temp.path().join("project");
     let reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(reopened.provider_budget(input.envelope().task_id).unwrap().unwrap(), budget);
+    assert_eq!(
+        reopened
+            .provider_budget(input.envelope().task_id)
+            .unwrap()
+            .unwrap(),
+        budget
+    );
     reopened.close().unwrap();
     let db = path.join("project.sqlite3");
+    let before = std::fs::read(&db).unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    let budget = reopened
+        .provider_budget(input.envelope().task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(budget, captured_budget);
+    assert_eq!(std::fs::read(&db).unwrap(), before);
+    drop(reopened);
+    let c = rusqlite::Connection::open(&db).unwrap();
+    c.pragma_update(None, "user_version", crate::persistence::SCHEMA_VERSION + 1)
+        .unwrap();
+    drop(c);
+    let future = std::fs::read(&db).unwrap();
+    let error = ProjectStore::open(&path).unwrap_err();
+    assert_eq!(error.code(), crate::PersistenceErrorCode::UnsupportedSchema);
+    assert_eq!(
+        error.found_schema_version(),
+        Some(crate::persistence::SCHEMA_VERSION + 1)
+    );
+    assert_eq!(std::fs::read(&db).unwrap(), future);
+    assert_ne!(before, future);
     let conn = rusqlite::Connection::open(&db).unwrap();
-    conn.execute_batch("DROP TABLE execution_continuations;").unwrap();
-    crate::persistence::ledger::provider::drop_for_legacy_fixture(&conn).unwrap();
+    conn.execute_batch("DROP TABLE execution_continuations;")
+        .unwrap();
+    crate::persistence::remove_unsupported_fixture_domain(
+        &conn,
+        crate::persistence::UnsupportedFixtureDomain::Provider,
+    )
+    .unwrap();
     conn.pragma_update(None, "user_version", 11).unwrap();
     drop(conn);
     assert_unsupported_snapshot_unchanged(&path, 11);
-    let old = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let old =
+        rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
     assert_eq!(
-        old.query_row("SELECT COUNT(*) FROM execution_results", [], |row| row.get::<_, u32>(0)).unwrap(),
+        old.query_row("SELECT COUNT(*) FROM execution_results", [], |row| row
+            .get::<_, u32>(0))
+            .unwrap(),
         2
     );
     drop(old);
     let future = rusqlite::Connection::open(&db).unwrap();
-    future.pragma_update(None, "user_version", 14).unwrap();
+    future
+        .pragma_update(None, "user_version", crate::persistence::SCHEMA_VERSION + 1)
+        .unwrap();
     drop(future);
-    assert_unsupported_snapshot_unchanged(&path, 14);
+    assert_unsupported_snapshot_unchanged(&path, crate::persistence::SCHEMA_VERSION + 1);
 }
 
 #[test]
@@ -338,14 +475,12 @@ fn provider_process_crash_preserves_reservation_without_sending_or_replaying() {
     )
     .unwrap();
     rt.tick(&mut store).unwrap();
-    let continuation = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
-    assert!(
-        rt.resume(
-            &mut store,
-                &continuation
-        )
-        .is_err()
+    let continuation = crate::execution::test_continuation_action(
+        &store,
+        input.envelope().attempt_id,
+        &[input.envelope().items[0].item_id],
     );
+    assert!(rt.resume(&mut store, &continuation).is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     wire.join().unwrap();
 }
@@ -390,7 +525,13 @@ fn provider_schema_eleven_refusal_child() {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .unwrap();
-    assert!(unchanged.query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row.get::<_, i64>(0)).unwrap() > 0);
+    assert!(
+        unchanged
+            .query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap()
+            > 0
+    );
     std::fs::write(proof, b"unsupported-schema:11").unwrap();
 }
 
@@ -400,8 +541,13 @@ fn provider_schema_eleven_process_reopen_preserves_original_snapshot() {
     let path = store.directory().to_path_buf();
     store.close().unwrap();
     let c = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-    c.execute_batch("DROP TABLE execution_continuations;").unwrap();
-    crate::persistence::ledger::provider::drop_for_legacy_fixture(&c).unwrap();
+    c.execute_batch("DROP TABLE execution_continuations;")
+        .unwrap();
+    crate::persistence::remove_unsupported_fixture_domain(
+        &c,
+        crate::persistence::UnsupportedFixtureDomain::Provider,
+    )
+    .unwrap();
     c.pragma_update(None, "user_version", 11).unwrap();
     drop(c);
     let before = std::fs::read(path.join("project.sqlite3")).unwrap();

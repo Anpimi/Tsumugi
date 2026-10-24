@@ -1,6 +1,7 @@
 //! Translation revision schema and checked project-local mutations.
 
 use super::ProjectStore;
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 use crate::content::{TranslationBundle, TranslationImportStart, TranslationImportStartRead};
 use crate::execution::{
     AdoptionAction, AdoptionHandler, ChangeReference, ConflictEvidence, ErrorCode, ExecutionError,
@@ -9,6 +10,107 @@ use crate::execution::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+mod candidates;
+pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
+pub(in crate::persistence) use candidates::selectable as candidate_selectable;
+pub(in crate::persistence) use candidates::rejected as candidate_rejected;
+
+/// Immutable matching scopes from the current adopted source. This observation
+/// allocates no identities and grants neither execution nor adoption authority.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationSourceContext {
+    pub source_snapshot_id: ExecutionId,
+    pub source_set_id: ExecutionId,
+    pub content_revision: Revision,
+    pub profile: tsumugi_plugin_sdk::ContractRef,
+    pub native_scopes: Vec<tsumugi_plugin_sdk::TranslationNativeScope>,
+}
+
+fn checked_source_context(
+    context: TranslationSourceContext,
+) -> Result<TranslationSourceContext, ExecutionError> {
+    codec::encode(&context, crate::content::MAX_CONTENT_PAGE_BYTES)
+        .map_err(|failure| error(failure.code, "translation-source-budget"))?;
+    Ok(context)
+}
+
+fn native_scopes(
+    source: &crate::content::SourceOutput,
+) -> Vec<tsumugi_plugin_sdk::TranslationNativeScope> {
+    source
+        .occurrences
+        .iter()
+        .filter_map(|row| row.native_identity.as_ref())
+        .map(|identity| (identity.namespace.clone(), identity.policy.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|(namespace, policy)| tsumugi_plugin_sdk::TranslationNativeScope { namespace, policy })
+        .collect()
+}
+
+fn check_native_scope(
+    scopes: &[tsumugi_plugin_sdk::TranslationNativeScope],
+    selected: &tsumugi_plugin_sdk::TranslationNativeScope,
+) -> Result<(), ExecutionError> {
+    if !scopes
+        .iter()
+        .any(|scope| scope.namespace == selected.namespace)
+    {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-scope",
+        ));
+    }
+    if !scopes.contains(selected) {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-policy",
+        ));
+    }
+    Ok(())
+}
+
+impl ProjectStore {
+    pub fn translation_source_context(
+        &self,
+        target_locale: &str,
+    ) -> Result<TranslationSourceContext, ExecutionError> {
+        let project = ExecutionId::parse(
+            &self
+                .metadata()
+                .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?
+                .project_id()
+                .to_string(),
+        )?;
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        check_target(connection, project, target_locale)?;
+        let snapshot = self
+            .content_scope()?
+            .current_snapshot
+            .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-source"))?;
+        // Reuse the adopted-source reader, including its original proof,
+        // receipt, row association and immutable-result checks.
+        let page = self.source_content(snapshot, 0, 1)?;
+        if page.scope.current_snapshot != Some(snapshot) {
+            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+        }
+        let input = self.execution_input(page.attempt_id)?;
+        let result = self.execution_result(page.attempt_id, page.result_id)?;
+        let bundle = crate::content::SourceBundle::from_input(&input)?;
+        let source = crate::content::validate_output(&input, &result)?;
+        checked_source_context(TranslationSourceContext {
+            source_snapshot_id: snapshot,
+            source_set_id: bundle.set_id,
+            content_revision: page.scope.revision,
+            profile: bundle.profile,
+            native_scopes: native_scopes(&source),
+        })
+    }
+}
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -179,6 +281,8 @@ pub struct TranslationRevision {
     pub native_key: Option<String>,
     pub file_digest: Option<String>,
     pub contributors: Vec<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_decision: Option<CandidateDecision>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -221,6 +325,7 @@ pub struct TranslationSaveReceipt {
 }
 
 const TABLES: &[(&str, &str)] = &[
+    candidates::TABLE,
     (
         "translation_revisions",
         "CREATE TABLE translation_revisions (
@@ -274,38 +379,6 @@ fn current_sql(name: &str, sql: &str) -> String {
        .replace("file_digest IS NOT NULL)))", "file_digest IS NOT NULL) OR (origin_kind='ai' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)))")
 }
 
-#[cfg(test)]
-pub(super) fn legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE; CREATE TEMP TABLE translation_fixture AS SELECT * FROM translation_revisions; DROP TABLE translation_revisions;")?;
-    connection.execute_batch(TABLES[0].1)?;
-    connection.execute_batch("INSERT INTO translation_revisions SELECT * FROM translation_fixture; DROP TABLE translation_fixture; COMMIT; PRAGMA foreign_keys=ON;")
-}
-
-pub(super) fn migrate_v9(connection: &mut Connection) -> rusqlite::Result<()> {
-    // Recreate the owning table with unchanged columns and relaxed origin CHECK.
-    // Foreign keys are restored even when the transaction fails; no dependent
-    // selection/review/release records are rebuilt or discarded.
-    connection.pragma_update(None, "foreign_keys", false)?;
-    let outcome = (|| {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch("CREATE TEMP TABLE translation_copy AS SELECT * FROM translation_revisions; DROP TABLE translation_revisions;")?;
-        tx.execute_batch(&current_sql(TABLES[0].0, TABLES[0].1))?;
-        tx.execute_batch("INSERT INTO translation_revisions SELECT * FROM translation_copy; DROP TABLE translation_copy;")?;
-        if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        tx.pragma_update(None, "user_version", 10)?;
-        #[cfg(test)]
-        super::migration_crash_hook("before-ai-migration-commit");
-        tx.commit()?;
-        #[cfg(test)]
-        super::migration_crash_hook("after-ai-migration-commit");
-        Ok(())
-    })();
-    connection.pragma_update(None, "foreign_keys", true)?;
-    outcome
-}
-
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     TABLES.iter().map(|(name, _)| (*name).to_owned())
 }
@@ -314,36 +387,120 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (name, sql) in TABLES {
         connection.execute_batch(&current_sql(name, sql))?;
     }
-    Ok(())
+    candidates::initialize(connection)
 }
 
-pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for (_, sql) in TABLES {
-        transaction.execute_batch(sql)?;
+/// The shared preview/adoption view of a checked plugin projection. The former
+/// built-in importer is available only as an explicit test baseline.
+struct TranslationImportView {
+    bundle_id: ExecutionId,
+    source_snapshot_id: ExecutionId,
+    target_locale: String,
+    declared_locale: String,
+    manifest_digest: String,
+    file: crate::content::CapturedFile,
+    entries: Vec<crate::content::TranslationEntry>,
+    namespace: Option<String>,
+    policy: tsumugi_plugin_sdk::ContractRef,
+    native_values: Vec<String>,
+}
+impl TranslationImportView {
+    fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
+        if crate::content::is_translation_projection(input) {
+            let projection = crate::content::TranslationProjection::from_input(input)?;
+            return Ok(Self {
+                bundle_id: projection.bundle_id,
+                source_snapshot_id: projection.source_snapshot_id,
+                target_locale: projection.target_locale.clone(),
+                declared_locale: projection.declared_locale.clone(),
+                manifest_digest: input.digest().into(),
+                file: projection.file.clone(),
+                entries: projection
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, entry)| {
+                        entry.entry(ordinal as u32, projection.file.artifact_id)
+                    })
+                    .collect(),
+                namespace: Some(projection.native_scope.namespace.clone()),
+                policy: projection.native_scope.policy.clone(),
+                native_values: projection
+                    .entries
+                    .iter()
+                    .map(|entry| entry.native_value().to_owned())
+                    .collect(),
+            });
+        }
+        #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+        {
+            Self::from_legacy_input(input)
+        }
+        #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+        {
+            Err(error(
+                ErrorCode::InvalidInput,
+                "translation-projection-required",
+            ))
+        }
     }
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
+
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    fn from_legacy_input(input: &FixedInput) -> Result<Self, ExecutionError> {
+        let bundle = crate::content::TranslationBundle::from_input(input)?;
+        let entries = crate::content::extract_translation(
+            &bundle,
+            &crate::execution::Cancellation::default(),
+        )?;
+        let native_values = entries
+            .iter()
+            .map(|entry| entry.native_key.to_ascii_lowercase())
+            .collect();
+        Ok(Self {
+            bundle_id: bundle.bundle_id,
+            source_snapshot_id: bundle.source_snapshot_id,
+            target_locale: bundle.target_locale,
+            declared_locale: bundle.declared_locale,
+            manifest_digest: bundle.manifest_digest,
+            file: bundle.file,
+            entries,
+            namespace: None,
+            policy: crate::content::contract_ref("smapi-native-key"),
+            native_values,
+        })
     }
-    transaction.pragma_update(None, "user_version", 5)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-translation-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-translation-migration-commit");
-    Ok(())
 }
 
 pub(super) fn record_input(
     connection: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+        return record_plugin_input(connection, input);
+    }
     if input.envelope().operation != crate::content::TRANSLATION_OPERATION {
         return Ok(());
     }
+    if crate::content::is_translation_projection(input) {
+        let projection = crate::content::TranslationProjection::from_input(input)?;
+        let producer = super::ledger::load_input(connection, projection.origin.producer_attempt)?;
+        return record_plugin_input(connection, &producer);
+    }
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+    {
+        record_legacy_input(connection, input)
+    }
+    #[cfg(not(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain")))]
+    {
+        Err(error(
+            ErrorCode::InvalidInput,
+            "translation-projection-required",
+        ))
+    }
+}
+
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+fn record_legacy_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
     let bundle = crate::content::TranslationBundle::from_input(input)?;
     check_target(
         connection,
@@ -371,6 +528,51 @@ pub(super) fn record_input(
     if source.format_id != bundle.format_id || source.format_version != bundle.format_version {
         return Err(error(ErrorCode::DependencyConflict, "translation-format"));
     }
+    Ok(())
+}
+
+/// The existing ledger owns captured plugin attempts as well as later entry
+/// adoption. No filename decoder or second project store is introduced here.
+fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
+    let (material, _) = crate::content::plugin_translation_input(input)?;
+    check_target(
+        connection,
+        input.envelope().project_id,
+        &material.target_language,
+    )?;
+    let row: Option<(String, String, String, String)> = connection
+        .query_row(
+            "SELECT s.project_id,s.set_id,s.attempt_id,s.result_id FROM source_snapshots s
+             JOIN content_scope c ON c.current_snapshot=s.snapshot_id
+             WHERE s.snapshot_id=?1",
+            [&material.source_snapshot_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(super::ledger::sql_error)?;
+    let Some((project, set, attempt, result)) = row else {
+        return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+    };
+    if project != input.envelope().project_id.to_string() || set != material.source_set_id {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-source-set",
+        ));
+    }
+    let source_input = super::ledger::load_input(connection, id(attempt)?)?;
+    let source_result = super::ledger::load_result(connection, &source_input, id(result)?)?;
+    let bundle = crate::content::SourceBundle::from_input(&source_input)?;
+    let source = crate::content::validate_output(&source_input, &source_result)?;
+    let scopes = native_scopes(&source);
+    if bundle.profile != material.profile {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-scope",
+        ));
+    }
+    // Compare the selected domain policy exactly. Display labels and text
+    // equality cannot establish a policy or justify normalizing native values.
+    check_native_scope(&scopes, &material.native_scope)?;
     Ok(())
 }
 
@@ -526,6 +728,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         }
         previous_events.insert(key, (sequence, id));
     }
+    candidates::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
 }
 
@@ -556,7 +759,7 @@ fn source_basis(
              FROM source_occurrences o
              JOIN source_units u ON u.unit_id=o.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-             WHERE o.unit_id=?1",
+             WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
             [unit.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -571,7 +774,7 @@ fn source_basis(
     Ok((id(snapshot)?, id(revision)?))
 }
 
-fn check_target(
+pub(super) fn check_target(
     connection: &Connection,
     project: ExecutionId,
     locale: &str,
@@ -594,7 +797,7 @@ fn check_target(
     Ok(())
 }
 
-fn current_selection(
+pub(super) fn current_selection(
     connection: &Connection,
     unit: ExecutionId,
     locale: &str,
@@ -632,7 +835,7 @@ fn current_selection(
     .transpose()
 }
 
-fn selection_by_action(
+pub(super) fn selection_by_action(
     connection: &Connection,
     action: ExecutionId,
 ) -> Result<Option<(TranslationSelection, String)>, ExecutionError> {
@@ -675,7 +878,7 @@ fn selection_by_action(
     .transpose()
 }
 
-fn check_expected(
+pub(super) fn check_expected(
     current: &Option<TranslationSelection>,
     expected: Option<ExecutionId>,
 ) -> Result<u64, ExecutionError> {
@@ -698,7 +901,7 @@ fn check_expected(
     })
 }
 
-fn insert_selection(
+pub(super) fn insert_selection(
     connection: &Connection,
     project: ExecutionId,
     unit: ExecutionId,
@@ -709,7 +912,35 @@ fn insert_selection(
     current: Option<TranslationSelection>,
     sequence: u64,
 ) -> Result<TranslationSelection, ExecutionError> {
-    let event = ExecutionId::new();
+    insert_reserved_selection(
+        connection,
+        project,
+        unit,
+        locale,
+        revision,
+        action,
+        digest,
+        current,
+        sequence,
+        ExecutionId::new(),
+    )
+}
+
+// Only the persistence owner reserves this identity. It lets candidate QA bind
+// the exact prospective selection before the atomic selection/QA transaction.
+pub(super) fn insert_reserved_selection(
+    connection: &Connection,
+    project: ExecutionId,
+    unit: ExecutionId,
+    locale: &str,
+    revision: ExecutionId,
+    action: ExecutionId,
+    digest: &str,
+    current: Option<TranslationSelection>,
+    sequence: u64,
+    event: ExecutionId,
+) -> Result<TranslationSelection, ExecutionError> {
+    candidate_selectable(connection, revision)?;
     connection
         .execute(
             "INSERT INTO translation_selections
@@ -760,7 +991,7 @@ impl AdoptionHandler for TranslationAdoptionHandler {
         let entry = output
             .entry
             .ok_or_else(|| error(ErrorCode::InvalidInput, "translation-empty"))?;
-        let bundle = crate::content::TranslationBundle::from_input(input)?;
+        let bundle = TranslationImportView::from_input(input)?;
         let confirmation: TranslationAdoptionConfirmation =
             crate::content::from_value(&action.parameters)?;
         if confirmation.result_digest != result.digest()
@@ -810,29 +1041,40 @@ impl AdoptionHandler for TranslationAdoptionHandler {
             {
                 return Err(error(ErrorCode::DependencyConflict, "translation-source"));
             }
-            let (unit, revision, native_key, namespace): (String, String, String, String) = tx
-                .query_row(
-                    "SELECT unit_id,revision_id,native_key,namespace FROM source_occurrences
+            let (unit, revision, projection): (String, String, Vec<u8>) = tx.query_row(
+                "SELECT unit_id,revision_id,projection FROM source_occurrences
                  WHERE occurrence_id=?1 AND snapshot_id=?2",
-                    rusqlite::params![
-                        confirmation.occurrence_id.to_string(),
-                        bundle.source_snapshot_id.to_string()
-                    ],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )?;
+                rusqlite::params![
+                    confirmation.occurrence_id.to_string(),
+                    bundle.source_snapshot_id.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            let occurrence: crate::content::SourceOccurrence =
+                codec::decode(&projection, MAX_INPUT_BYTES)?;
+            // Canonical values belong to the producer/checker. Display text,
+            // source text and coordinates cannot establish native identity.
+            let identity = occurrence
+                .native_identity
+                .as_ref()
+                .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-match"))?;
             if unit != confirmation.target_unit_id.to_string()
                 || revision != confirmation.source_revision_id.to_string()
-                || !native_key.eq_ignore_ascii_case(&entry.native_key)
+                || bundle
+                    .namespace
+                    .as_ref()
+                    .is_some_and(|namespace| *namespace != identity.namespace)
+                || identity.policy != bundle.policy
+                || identity.value != bundle.native_values[entry.ordinal as usize]
             {
                 return Err(error(ErrorCode::DependencyConflict, "translation-match"));
             }
             let matches: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM source_occurrences
-             WHERE snapshot_id=?1 AND namespace=?2 AND comparison_key=?3",
+             WHERE snapshot_id=?1 AND comparison_key=?2",
                 rusqlite::params![
                     bundle.source_snapshot_id.to_string(),
-                    namespace,
-                    entry.native_key.to_ascii_lowercase()
+                    occurrence.comparison_key()?
                 ],
                 |row| row.get(0),
             )?;
@@ -955,6 +1197,7 @@ impl AdoptionHandler for TranslationAdoptionHandler {
 }
 
 impl ProjectStore {
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     pub fn translation_import_start_action_read(
         &self, request: &TranslationImportStart,
     ) -> Result<Option<TranslationImportStartRead>, ExecutionError> {
@@ -986,7 +1229,7 @@ impl ProjectStore {
         limit: u32,
         expected_basis: Option<&str>,
     ) -> Result<TranslationPreview, ExecutionError> {
-        use crate::content::{TranslationBundle, TranslationOutput, extract_translation};
+        use crate::content::TranslationOutput;
         use crate::execution::ExecutionState;
         use std::collections::BTreeMap;
 
@@ -997,13 +1240,14 @@ impl ProjectStore {
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
         let input = super::ledger::load_input(connection, attempt)?;
-        let bundle = TranslationBundle::from_input(&input)?;
+        let bundle = TranslationImportView::from_input(&input)?;
+        super::ledger::check_translation_projection(connection, &input, None)?;
         check_target(
             connection,
             input.envelope().project_id,
             &bundle.target_locale,
         )?;
-        let entries = extract_translation(&bundle, &crate::execution::Cancellation::default())?;
+        let entries = &bundle.entries;
         if after as usize > entries.len() {
             return Err(error(ErrorCode::InvalidInput, "translation-page"));
         }
@@ -1012,11 +1256,13 @@ impl ProjectStore {
             .current_snapshot
             .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-source"))?;
         let source = self.source_content(current, 0, 1)?;
-        let mut matches: BTreeMap<String, Vec<(ExecutionId, ExecutionId, ExecutionId, String)>> =
-            BTreeMap::new();
+        let mut matches: BTreeMap<
+            (String, tsumugi_plugin_sdk::ContractRef, String),
+            Vec<(ExecutionId, ExecutionId, ExecutionId, String)>,
+        > = BTreeMap::new();
         let mut statement = connection
             .prepare(
-                "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.comparison_key,r.text
+                "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.projection,r.text
                  FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
                  WHERE o.snapshot_id=?1 AND o.namespace=?2 ORDER BY o.ordinal",
             )
@@ -1027,13 +1273,24 @@ impl ProjectStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, String>(4)?,
                 ))
             })
             .map_err(super::ledger::sql_error)?;
         for row in source_rows {
-            let (occurrence, unit, revision, key, text) = row.map_err(super::ledger::sql_error)?;
+            let (occurrence, unit, revision, projection, text) =
+                row.map_err(super::ledger::sql_error)?;
+            let source: crate::content::SourceOccurrence =
+                codec::decode(&projection, MAX_INPUT_BYTES)?;
+            let Some(identity) = source.native_identity.as_ref() else {
+                continue;
+            };
+            let key = (
+                identity.namespace.clone(),
+                identity.policy.clone(),
+                identity.value.clone(),
+            );
             matches
                 .entry(key)
                 .or_default()
@@ -1067,6 +1324,7 @@ impl ProjectStore {
             {
                 return Err(error(ErrorCode::CorruptLedger, "translation-result"));
             }
+            crate::content::validate_translation_output(&input, &result)?;
             let ordinal: Option<u32> = crate::content::from_value(&item.payload)?;
             let expected = TranslationOutput {
                 version: 1,
@@ -1090,7 +1348,16 @@ impl ProjectStore {
             let Some(entry) = expected.entry else {
                 continue;
             };
-            let candidates = matches.get(&entry.native_key.to_ascii_lowercase());
+            let key = (
+                bundle
+                    .namespace
+                    .as_ref()
+                    .unwrap_or(&source.namespace)
+                    .clone(),
+                bundle.policy.clone(),
+                bundle.native_values[entry.ordinal as usize].clone(),
+            );
+            let candidates = matches.get(&key);
             let only = candidates.and_then(|rows| (rows.len() == 1).then(|| &rows[0]));
             let (selection, selected_text) =
                 if let Some((_, unit, _, _)) = only {
@@ -1288,6 +1555,7 @@ impl ProjectStore {
             let raw = RawRevision::from_row(row).map_err(super::ledger::sql_error)?;
             let mut revision = raw.parse()?;
             revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
+            revision.candidate_decision = candidates::latest(connection, revision.revision_id)?;
             if revision.unit_id != unit || revision.locale != locale {
                 return Err(error(ErrorCode::CorruptLedger, "translation-scope"));
             }
@@ -1365,14 +1633,11 @@ impl ProjectStore {
                 return Err(error(ErrorCode::ResultMismatch, "translation-action"));
             }
             save_receipt_in(connection, request.project_id, &selection).map(Some)
-        })?;
-        if self
-            .execution_unknown
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        });
+        if receipt.is_ok() && self.is_reconciling() {
             self.reconcile_execution()?;
         }
-        Ok(receipt)
+        receipt
     }
 
     /// Confirm a selection using its complete original request, even when a
@@ -1404,14 +1669,11 @@ impl ProjectStore {
                 return Err(error(ErrorCode::ResultMismatch, "translation-action"));
             }
             Ok(Some(selection))
-        })?;
-        if self
-            .execution_unknown
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        });
+        if selection.is_ok() && self.is_reconciling() {
             self.reconcile_execution()?;
         }
-        Ok(selection)
+        selection
     }
 
     pub fn save_translation_revision(
@@ -1612,6 +1874,7 @@ impl ProjectStore {
         }
         // Build the response before commit: a projection failure must roll back,
         // rather than misreporting an already committed save as rejected.
+        super::application::protect_manual_in(&transaction, request.unit_id, &request.locale)?;
         let result = project_result(&transaction, &selection)?;
         #[cfg(test)]
         if merge.is_some() {
@@ -1694,6 +1957,7 @@ impl ProjectStore {
             current,
             next_sequence,
         )?;
+        super::application::protect_manual_in(&transaction, request.unit_id, &request.locale)?;
         commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "translation-commit")
@@ -1702,22 +1966,30 @@ impl ProjectStore {
     }
 }
 
+pub(super) fn check_protection_basis(
+    connection: &Connection,
+    request: &crate::application::SetWorkProtection,
+) -> Result<(), ExecutionError> {
+    check_target(connection, request.project_id, &request.locale)?;
+    let (_, source) = source_basis(connection, request.project_id, request.unit_id)?;
+    let selection = current_selection(connection, request.unit_id, &request.locale)?;
+    if source != request.source_revision_id
+        || selection.map(|value| value.event_id) != request.selection_id
+    {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "work-protection-basis",
+        ));
+    }
+    Ok(())
+}
+
 fn save_receipt_in(
     connection: &Connection,
     project_id: ExecutionId,
     selection: &TranslationSelection,
 ) -> Result<TranslationSaveReceipt, ExecutionError> {
-    let revision = connection
-        .query_row(
-            "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
-                    origin_kind,action_id,attempt_id,result_id,item_id,artifact_id,
-                    logical_path,declared_locale,native_key,file_digest
-             FROM translation_revisions WHERE project_id=?1 AND revision_id=?2",
-            params![project_id.to_string(), selection.revision_id.to_string()],
-            RawRevision::from_row,
-        )
-        .map_err(super::ledger::sql_error)?
-        .parse()?;
+    let revision = revision_in(connection, project_id, selection.revision_id)?;
     if revision.unit_id != selection.unit_id
         || revision.locale != selection.locale
         || revision.action_id != selection.action_id
@@ -1736,6 +2008,25 @@ fn save_receipt_in(
         selection: selection.clone(),
         revision,
     })
+}
+
+/// Exact immutable identity reader shared by action receipts and artifact references.
+pub(super) fn revision_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    revision_id: ExecutionId,
+) -> Result<TranslationRevision, ExecutionError> {
+    connection
+        .query_row(
+            "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
+                    origin_kind,action_id,attempt_id,result_id,item_id,artifact_id,
+                    logical_path,declared_locale,native_key,file_digest
+             FROM translation_revisions WHERE project_id=?1 AND revision_id=?2",
+            params![project_id.to_string(), revision_id.to_string()],
+            RawRevision::from_row,
+        )
+        .map_err(super::ledger::sql_error)?
+        .parse()
 }
 
 struct RawRevision {
@@ -1802,6 +2093,7 @@ impl RawRevision {
             native_key: self.native_key,
             file_digest: self.file_digest,
             contributors: vec![],
+            candidate_decision: None,
         })
     }
 }
@@ -1918,6 +2210,165 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM translation_selections", [], |row| row.get(0))
             .unwrap();
         (revisions, selections)
+    }
+
+    #[test]
+    fn translation_source_context_restores_exact_adopted_scope_without_business_writes() {
+        let (temp, store, rows) = project_with_source();
+        let before = store.content_scope().unwrap();
+        let context = store.translation_source_context("zh-CN").unwrap();
+        assert_eq!(context.source_snapshot_id, before.current_snapshot.unwrap());
+        assert_eq!(context.content_revision, before.revision);
+        let page = store
+            .source_content(context.source_snapshot_id, 0, 10)
+            .unwrap();
+        let bundle = crate::content::SourceBundle::from_input(
+            &store.execution_input(page.attempt_id).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(context.source_set_id, bundle.set_id);
+        assert_eq!(context.profile, bundle.profile);
+        assert_eq!(
+            context.native_scopes,
+            vec![tsumugi_plugin_sdk::TranslationNativeScope {
+                namespace: rows[0]
+                    .occurrence
+                    .native_identity
+                    .as_ref()
+                    .unwrap()
+                    .namespace
+                    .clone(),
+                policy: rows[0]
+                    .occurrence
+                    .native_identity
+                    .as_ref()
+                    .unwrap()
+                    .policy
+                    .clone(),
+            }]
+        );
+        assert_eq!(store.translation_source_context("ja").unwrap(), context);
+        assert!(store.translation_source_context("fr").is_err());
+        assert!(store.translation_source_context("zh-cn").is_err());
+        assert_eq!(store.content_scope().unwrap(), before);
+        drop(store);
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(
+            reopened.translation_source_context("zh-CN").unwrap(),
+            context
+        );
+        let empty = tempfile::tempdir().unwrap();
+        let store = ProjectStore::create(
+            empty.path().join("project"),
+            ProjectMetadata::create("Empty", "en", ["zh-CN"]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            store.translation_source_context("zh-CN").unwrap_err().stage,
+            "translation-source"
+        );
+    }
+
+    #[test]
+    fn translation_source_context_keeps_namespace_and_policy_paired() {
+        let bundle = SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"same","second":"same"}"#, "en",
+        ).unwrap();
+        let mut source =
+            crate::content::extract(&bundle, &crate::execution::Cancellation::default()).unwrap();
+        let first = source.occurrences[0].native_identity.clone().unwrap();
+        let second = source.occurrences[1].native_identity.as_mut().unwrap();
+        second.namespace = "Other.Mod".into();
+        second.policy.id = "other-native-key".into();
+        let selected = tsumugi_plugin_sdk::TranslationNativeScope {
+            namespace: second.namespace.clone(),
+            policy: second.policy.clone(),
+        };
+        let scopes = native_scopes(&source);
+        assert_eq!(scopes.len(), 2);
+        check_native_scope(&scopes, &selected).unwrap();
+        let borrowed = tsumugi_plugin_sdk::TranslationNativeScope {
+            namespace: first.namespace,
+            policy: selected.policy,
+        };
+        assert_eq!(
+            check_native_scope(&scopes, &borrowed).unwrap_err().stage,
+            "translation-native-policy"
+        );
+        let missing = tsumugi_plugin_sdk::TranslationNativeScope {
+            namespace: "Unknown.Mod".into(),
+            policy: first.policy,
+        };
+        assert_eq!(
+            check_native_scope(&scopes, &missing).unwrap_err().stage,
+            "translation-native-scope"
+        );
+        assert!(check_native_scope(&[], &missing).is_err());
+    }
+
+    #[test]
+    fn translation_source_context_enforces_complete_read_budget_at_n_and_n_plus_one() {
+        let mut context = TranslationSourceContext {
+            source_snapshot_id: ExecutionId::new(),
+            source_set_id: ExecutionId::new(),
+            content_revision: Revision::new(1).unwrap(),
+            profile: tsumugi_plugin_sdk::ContractRef {
+                id: "p".repeat(128),
+                schema_version: 1,
+                behavior_version: 1,
+            },
+            native_scopes: vec![],
+        };
+        while serde_json::to_vec(&context).unwrap().len() <= crate::content::MAX_CONTENT_PAGE_BYTES
+        {
+            let prefix = format!("scope-{}-", context.native_scopes.len());
+            context
+                .native_scopes
+                .push(tsumugi_plugin_sdk::TranslationNativeScope {
+                    namespace: format!("{prefix}{}", "n".repeat(256 - prefix.len())),
+                    policy: tsumugi_plugin_sdk::ContractRef {
+                        id: "k".repeat(128),
+                        schema_version: 1,
+                        behavior_version: 1,
+                    },
+                });
+        }
+        let mut extra =
+            serde_json::to_vec(&context).unwrap().len() - crate::content::MAX_CONTENT_PAGE_BYTES;
+        let last = context.native_scopes.last_mut().unwrap();
+        for field in [
+            &mut last.namespace,
+            &mut last.policy.id,
+            &mut context.profile.id,
+        ] {
+            let remove = extra.min(field.len() - 1);
+            field.truncate(field.len() - remove);
+            extra -= remove;
+        }
+        assert_eq!(extra, 0);
+        assert_eq!(
+            serde_json::to_vec(&context).unwrap().len(),
+            crate::content::MAX_CONTENT_PAGE_BYTES
+        );
+        assert_eq!(checked_source_context(context.clone()).unwrap(), context);
+        let last = context.native_scopes.last_mut().unwrap();
+        if context.profile.id.len() < 128 {
+            context.profile.id.push('x');
+        } else if last.policy.id.len() < 128 {
+            last.policy.id.push('x');
+        } else {
+            last.namespace.push('x');
+        }
+        assert_eq!(
+            serde_json::to_vec(&context).unwrap().len(),
+            crate::content::MAX_CONTENT_PAGE_BYTES + 1
+        );
+        let count = context.native_scopes.len();
+        let failure = checked_source_context(context.clone()).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::LimitExceeded);
+        assert_eq!(failure.stage, "translation-source-budget");
+        assert_eq!(context.native_scopes.len(), count);
     }
 
     #[test]
@@ -2245,13 +2696,12 @@ mod tests {
         assert_eq!(store.read_execution_continuation(continuation.action_id).unwrap(), Some(continued));
         let direct = bundle.fixed_input(project).unwrap(); runtime.submit(&mut store, &direct).unwrap();
         assert_eq!(store.translation_import_start_action_read(&TranslationImportStart { attempt_id: direct.envelope().attempt_id, ..request.clone() }).unwrap_err().code, ErrorCode::ResultMismatch);
-        let original_bytes = input.bytes().to_vec(); let original_digest = input.digest().to_owned();
         let mut corrupt = input.envelope().clone(); corrupt.settings["nativeStart"]["unexpected"] = serde_json::json!(true);
         let corrupt = FixedInput::capture(corrupt).unwrap();
-        store.connection().unwrap().execute("UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1", params![request.attempt_id.to_string(), corrupt.bytes(), corrupt.digest()]).unwrap();
+        super::super::ledger::replace_test_input(store.connection().unwrap(), &corrupt).unwrap();
         store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
         assert!(store.translation_import_start_action_read(&request).is_err()); assert!(store.is_reconciling());
-        store.connection().unwrap().execute("UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1", params![request.attempt_id.to_string(), original_bytes, original_digest]).unwrap();
+        super::super::ledger::replace_test_input(store.connection().unwrap(), &input).unwrap();
         assert_eq!(store.translation_import_start_action_read(&request).unwrap(), expected);
         adopt_source(&mut store, br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#, br#"{"first":"Updated"}"#);
         let revision = store.metadata().unwrap().metadata_revision(); store.set_target_locales(revision, &["ja".into()]).unwrap();
@@ -2781,7 +3231,9 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime
+            .register_read_only(Arc::new(TranslationRunner))
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -2868,24 +3320,22 @@ mod tests {
             let result = store
                 .execution_result(input.envelope().attempt_id, row.result_id)
                 .unwrap();
-            store
-                .prepare_adoption_with_id(
-                    ExecutionId::new(),
-                    input.envelope().attempt_id,
-                    unit.unit_id,
-                    vec![row.result_id],
-                    serde_json::to_value(TranslationAdoptionConfirmation {
-                        result_digest: result.digest().into(),
-                        source_snapshot_id: snapshot,
-                        occurrence_id: row.occurrence_id.unwrap(),
-                        source_revision_id: row.source_revision_id.unwrap(),
-                        target_unit_id: row.unit_id.unwrap(),
-                        expected_selection_id: row.current_selection.as_ref().map(|s| s.event_id),
-                        decision,
-                    })
-                    .unwrap(),
-                )
-                .unwrap()
+            let confirmation = TranslationAdoptionConfirmation {
+                result_digest: result.digest().into(), source_snapshot_id: snapshot,
+                occurrence_id: row.occurrence_id.unwrap(), source_revision_id: row.source_revision_id.unwrap(),
+                target_unit_id: row.unit_id.unwrap(), expected_selection_id: row.current_selection.as_ref().map(|s| s.event_id), decision,
+            };
+            let action_id = ExecutionId::new();
+            let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, row.item_id, row.result_id, &confirmation).unwrap(), None);
+            assert_eq!(store.changes_since(sequence).sequence, sequence);
+            let action = store.prepare_adoption_with_id(action_id, input.envelope().attempt_id, unit.unit_id, vec![row.result_id], serde_json::to_value(&confirmation).unwrap()).unwrap();
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, row.item_id, row.result_id, &confirmation).unwrap(), Some(crate::execution::AdoptionActionRead { action: action.clone(), receipt: None }));
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, ExecutionId::new(), row.result_id, &confirmation).unwrap_err().code, ErrorCode::ResultMismatch);
+            let mut wrong = confirmation.clone(); wrong.expected_selection_id = Some(ExecutionId::new());
+            assert_eq!(store.translation_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, row.item_id, row.result_id, &wrong).unwrap_err().code, ErrorCode::ResultMismatch);
+            assert_eq!(store.execution_adoption_action_read(project_id, input.envelope().attempt_id, action_id, unit.unit_id, &[row.result_id]).unwrap_err().code, ErrorCode::ResultMismatch);
+            action
         };
         let conflict = adopt(
             &mut store,
@@ -2990,6 +3440,13 @@ mod tests {
             .unwrap();
         assert_eq!(replaced_history.total, 2);
         assert_eq!(replaced_history.current.unwrap().sequence, 2);
+        let original_item = input.envelope().units.iter().find(|unit| unit.unit_id == selected.unit_id).unwrap().item_ids[0];
+        let original_confirmation: TranslationAdoptionConfirmation = serde_json::from_value(selected.parameters.clone()).unwrap();
+        let expected_read = Some(crate::execution::AdoptionActionRead { action: selected.clone(), receipt: Some(selected_receipt.clone()) });
+        store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
+        let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+        assert_eq!(store.translation_adoption_action_read(project_id, selected.attempt_id, selected.action_id, selected.unit_id, original_item, selected.result_ids[0], &original_confirmation).unwrap(), expected_read);
+        assert_eq!(store.changes_since(sequence).sequence, sequence);
         let after_replace = store
             .translation_preview(input.envelope().attempt_id, 0, 3, None)
             .unwrap()
@@ -2997,6 +3454,7 @@ mod tests {
         store.close().unwrap();
         std::fs::remove_file(&external).unwrap();
         let store = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(store.translation_adoption_action_read(project_id, selected.attempt_id, selected.action_id, selected.unit_id, original_item, selected.result_ids[0], &original_confirmation).unwrap(), expected_read);
         let saved = store.execution_input(input.envelope().attempt_id).unwrap();
         assert_eq!(TranslationBundle::from_input(&saved).unwrap(), bundle);
         for item in &saved.envelope().items {
@@ -3036,7 +3494,9 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime
+            .register_read_only(Arc::new(TranslationRunner))
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -3145,7 +3605,9 @@ mod tests {
             .unwrap();
             let input = bundle.fixed_input(project_id).unwrap();
             let mut runtime = ExecutionRuntime::new(&store).unwrap();
-            runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+            runtime
+                .register_read_only(Arc::new(TranslationRunner))
+                .unwrap();
             runtime.submit(&mut store, &input).unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {

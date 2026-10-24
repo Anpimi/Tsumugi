@@ -1,0 +1,8 @@
+{
+  "Welcome": "Welcome, {{name}}!\nCafé 🚲",
+  "waystation": "Meet me at the Waystation. The Waystation closes at dusk.",
+  "river-bank": "Wait by the bank.",
+  "lantern-count": "Bring two blue lanterns.",
+  "panel-old": "Open",
+  "obsolete": "The ferry leaves at dusk."
+}

@@ -1,4 +1,6 @@
 use super::*;
+mod input_chunks;
+mod activity;
 use crate::{
     PersistenceErrorCode, ProjectMetadata,
     content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
@@ -75,6 +77,7 @@ fn produce(store: &mut ProjectStore, input: &FixedInput, item: ExecutionId) -> F
         .unwrap();
     FixedResult::capture(
         ResultEnvelope {
+            plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
             item_id: item,
@@ -265,6 +268,120 @@ fn prepared_adoption_rechecks_cancellation_and_returns_competing_receipt_without
         )
         .unwrap();
     assert_eq!(revision, 2);
+}
+
+#[test]
+fn historical_adoption_action_reads_keep_original_proof_after_cancel_and_reopen() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    install_targets(&store);
+    let input = fixture_input(&store, true);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let mut results = Vec::new();
+    for item in &input.envelope().items {
+        let result = produce(&mut store, &input, item.item_id);
+        store.save_execution_result(&result).unwrap();
+        store.validate_execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap();
+        results.push(result.envelope().result_id);
+    }
+    let project = input.envelope().project_id;
+    let attempt = input.envelope().attempt_id;
+    let unit = input.envelope().units[0].unit_id;
+    let action_id = ExecutionId::new();
+    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), None);
+    assert_eq!(store.changes_since(before).sequence, before);
+    results.reverse();
+    let original = store.prepare_adoption_with_id(action_id, attempt, unit, results.clone(), serde_json::Value::Null).unwrap();
+    let prepared = Some(AdoptionActionRead { action: original.clone(), receipt: None });
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), prepared);
+    for (p, a, u, ids) in [
+        (ExecutionId::new(), attempt, unit, results.clone()),
+        (project, ExecutionId::new(), unit, results.clone()),
+        (project, attempt, ExecutionId::new(), results.clone()),
+        (project, attempt, unit, vec![ExecutionId::new()]),
+    ] {
+        assert_eq!(store.execution_adoption_action_read(p, a, action_id, u, &ids).unwrap_err().code, ErrorCode::ResultMismatch);
+    }
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &[results[0], results[0]]).unwrap_err().code, ErrorCode::InvalidInput);
+    let receipt = store.adopt_execution(&original, &Handler).unwrap();
+    store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
+    let expected = Some(AdoptionActionRead { action: original.clone(), receipt: Some(receipt.clone()) });
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get(0)).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get::<_, i64>(0)).unwrap(), count);
+
+    let connection = store.execution_connection().unwrap();
+    let (bytes, digest): (Vec<u8>, String) = connection.query_row("SELECT request,digest FROM execution_actions WHERE action_id=?1", [action_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), "0".repeat(64)]).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert!(store.is_reconciling());
+    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), &digest]).unwrap();
+    connection.pragma_update(None, "foreign_keys", "OFF").unwrap();
+    connection.execute("DELETE FROM execution_actions WHERE action_id=?1", [action_id.to_string()]).unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    connection.execute("INSERT INTO execution_actions(action_id,attempt_id,unit_id,request,digest) VALUES (?1,?2,?3,?4,?5)", params![action_id.to_string(), attempt.to_string(), unit.to_string(), bytes, digest]).unwrap();
+    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), ExecutionId::new().to_string()]).unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
+    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), unit.to_string()]).unwrap();
+    connection.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
+}
+
+#[test]
+fn cancellation_action_reads_confirm_original_requests_without_writes() {
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let project = input.envelope().project_id;
+    let task = input.envelope().task_id;
+    let request = ExecutionId::new();
+    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), None);
+    assert_eq!(store.changes_since(before).sequence, before);
+    let first = store.cancel_execution(task, request).unwrap();
+    let next = store.cancel_execution(task, ExecutionId::new()).unwrap();
+    assert!(next > first);
+    let receipt = Some(CancellationReceipt { project_id: project, task_id: task, request_id: request, revision: first });
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
+    assert_eq!(store.cancellation_action_read(project, ExecutionId::new(), request).unwrap_err().code, ErrorCode::ResultMismatch);
+    assert_eq!(store.cancellation_action_read(ExecutionId::new(), task, request).unwrap_err().code, ErrorCode::ResultMismatch);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.cancel_execution(task, request).unwrap_err().code, ErrorCode::OutcomeUnknown);
+    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get(0)).unwrap();
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get::<_, i64>(0)).unwrap(), count);
+
+    let connection = store.execution_connection().unwrap();
+    connection.pragma_update(None, "ignore_check_constraints", "ON").unwrap();
+    connection.execute("UPDATE execution_cancellations SET revision=0 WHERE request_id=?1", [request.to_string()]).unwrap();
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.cancellation_action_read(project, task, request).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert!(store.is_reconciling());
+    connection.execute("UPDATE execution_cancellations SET revision=?2 WHERE request_id=?1", params![request.to_string(), first.get() as i64]).unwrap();
+    connection.pragma_update(None, "ignore_check_constraints", "OFF").unwrap();
+    assert_eq!(store.cancellation_action_read(project, task, ExecutionId::new()).unwrap(), None);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(sequence).sequence, sequence);
+    assert!(store.cancel_execution(task, ExecutionId::new()).unwrap() > next);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.cancellation_action_read(project, task, request).unwrap(), receipt);
 }
 
 #[test]
@@ -635,7 +752,7 @@ fn versions_and_corrupt_inputs_are_rejected_without_rebuilding_and_bad_output_is
 }
 
 #[test]
-fn current_results_and_relations_reopen_and_schema_three_is_refused() {
+fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_schema_three() {
     let parent = tempfile::tempdir().unwrap();
     let path = parent.path().join("project");
     let mut store = store(&path);
@@ -689,15 +806,95 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
     let preview = store
         .source_preview(source_input.envelope().attempt_id, source_result_id, 0, 50)
         .unwrap();
+    let source_project = source_input.envelope().project_id;
+    let source_attempt = source_input.envelope().attempt_id;
+    let source_unit = source_input.envelope().units[0].unit_id;
+    let source_action_id = ExecutionId::new();
+    let confirmation = preview.confirmation;
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        None
+    );
     let source_action = store
         .prepare_adoption_with_id(
-            ExecutionId::new(),
-            source_input.envelope().attempt_id,
-            source_input.envelope().units[0].unit_id,
+            source_action_id,
+            source_attempt,
+            source_unit,
             vec![source_result_id],
-            serde_json::to_value(preview.confirmation).unwrap(),
+            serde_json::to_value(&confirmation).unwrap(),
         )
         .unwrap();
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        Some(AdoptionActionRead {
+            action: source_action.clone(),
+            receipt: None,
+        })
+    );
+    let mut changed_confirmation = confirmation.clone();
+    changed_confirmation.source_language = "fr-FR".into();
+    for wrong in [
+        store.source_adoption_action_read(
+            ExecutionId::new(),
+            source_attempt,
+            source_action_id,
+            source_unit,
+            source_result_id,
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            ExecutionId::new(),
+            source_action_id,
+            source_unit,
+            source_result_id,
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            source_attempt,
+            source_action_id,
+            ExecutionId::new(),
+            source_result_id,
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            source_attempt,
+            source_action_id,
+            source_unit,
+            ExecutionId::new(),
+            &confirmation,
+        ),
+        store.source_adoption_action_read(
+            source_project,
+            source_attempt,
+            source_action_id,
+            source_unit,
+            source_result_id,
+            &changed_confirmation,
+        ),
+    ] {
+        assert_eq!(wrong.unwrap_err().code, ErrorCode::ResultMismatch);
+    }
     let source_receipt = store
         .adopt_execution(&source_action, &SourceAdoptionHandler)
         .unwrap();
@@ -717,6 +914,80 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
     assert_eq!(store.source_adoption_action_read(project, attempt, source_action.action_id, unit, source_result_id, &original_confirmation).unwrap(), expected_source_read);
     assert!(!store.is_reconciling());
     assert_eq!(store.changes_since(cancelled_sequence).sequence, cancelled_sequence);
+    store
+        .execution_unknown
+        .store(true, std::sync::atomic::Ordering::Release);
+    let changes = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let receipt_count: i64 = store
+        .execution_connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        Some(AdoptionActionRead {
+            action: source_action.clone(),
+            receipt: Some(source_receipt.clone()),
+        })
+    );
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(changes).sequence, changes);
+    assert_eq!(
+        store
+            .execution_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        receipt_count
+    );
+    let saved_digest: String = store
+        .execution_connection()
+        .unwrap()
+        .query_row(
+            "SELECT digest FROM execution_actions WHERE action_id=?1",
+            [source_action_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    store
+        .execution_connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_actions SET digest=?2 WHERE action_id=?1",
+            params![source_action_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger
+    );
+    store
+        .execution_connection()
+        .unwrap()
+        .execute(
+            "UPDATE execution_actions SET digest=?2 WHERE action_id=?1",
+            params![source_action_id.to_string(), saved_digest],
+        )
+        .unwrap();
     let source_result_bytes = source_result.bytes().to_vec();
     store.close().unwrap();
 
@@ -749,6 +1020,22 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
     assert_eq!(
         reopened.adoption_receipt(source_action.action_id).unwrap(),
         Some(source_receipt)
+    );
+    assert_eq!(
+        reopened
+            .source_adoption_action_read(
+                source_project,
+                source_attempt,
+                source_action_id,
+                source_unit,
+                source_result_id,
+                &confirmation,
+            )
+            .unwrap(),
+        Some(AdoptionActionRead {
+            action: source_action,
+            receipt: reopened.adoption_receipt(source_action_id).unwrap(),
+        })
     );
     let version: i64 = reopened
         .execution_connection()
@@ -784,11 +1071,15 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
     transaction
         .pragma_update(None, "defer_foreign_keys", true)
         .unwrap();
-    crate::persistence::arena::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::ledger::provider::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::release::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::review::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::resources::drop_for_legacy_fixture(&transaction).unwrap();
+    for domain in [
+        crate::persistence::UnsupportedFixtureDomain::Arena,
+        crate::persistence::UnsupportedFixtureDomain::Provider,
+        crate::persistence::UnsupportedFixtureDomain::Release,
+        crate::persistence::UnsupportedFixtureDomain::Review,
+        crate::persistence::UnsupportedFixtureDomain::Resources,
+    ] {
+        crate::persistence::remove_unsupported_fixture_domain(&transaction, domain).unwrap();
+    }
     transaction
         .execute_batch(
             "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;
@@ -796,7 +1087,10 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
         )
         .unwrap();
     transaction
-        .execute_batch(super::EXECUTION_RESULTS_TABLE_V3)
+        .execute_batch("CREATE TABLE execution_results (
+        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))")
         .unwrap();
     transaction
         .execute_batch(
@@ -830,11 +1124,8 @@ fn current_results_and_relations_reopen_and_schema_three_is_refused() {
     assert_eq!(error.found_schema_version(), Some(3));
     assert_eq!(std::fs::read(&database).unwrap(), before);
     assert_eq!(entries(), before_entries);
-    let unchanged = Connection::open_with_flags(
-        &database,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .unwrap();
+    let unchanged =
+        Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let version: i64 = unchanged
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
@@ -877,7 +1168,10 @@ fn storage_failure_does_not_leave_a_partial_attempt_and_readability_is_preserved
     );
     let duplicate = input.retry(&[selected]).unwrap();
     assert_eq!(
-        store.enqueue_read_only_execution(&duplicate).unwrap_err().code,
+        store
+            .enqueue_read_only_execution(&duplicate)
+            .unwrap_err()
+            .code,
         ErrorCode::Unauthorized
     );
 }
@@ -1029,6 +1323,7 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
         .unwrap();
     let failure = FixedResult::capture(
         ResultEnvelope {
+            plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
             item_id: failed,
@@ -1061,13 +1356,39 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
         .execution_retry_input(input.envelope().attempt_id, &[failed])
         .unwrap();
     assert_eq!(retry.envelope().reused_results.len(), 2);
-    let continuation = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[failed]);
-    let continuation_receipt = store.enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly).unwrap();
+    let continuation =
+        crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[failed]);
+    let continuation_receipt = store
+        .enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly)
+        .unwrap();
 
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.execution_continuation(continuation.action_id).unwrap(), Some(continuation_receipt.clone()));
+    assert!(store.is_reconciling(), "raw mutation idempotence must not reconcile admission");
+    let before_read = store.changes_since(Revision::new(0).unwrap()).sequence;
+    let attempts: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row.get(0)).unwrap();
+    assert_eq!(store.read_execution_continuation(continuation.action_id).unwrap(), Some(continuation_receipt.clone()));
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(before_read).sequence, before_read);
+    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row.get::<_, i64>(0)).unwrap(), attempts);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    assert_eq!(store.read_execution_continuation(ExecutionId::new()).unwrap(), None);
+    assert!(!store.is_reconciling());
+    assert_eq!(store.changes_since(before_read).sequence, before_read);
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(reopened.execution_continuation(continuation.action_id).unwrap(), Some(continuation_receipt.clone()));
-    assert_eq!(reopened.enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly).unwrap(), continuation_receipt);
+    assert_eq!(
+        reopened
+            .execution_continuation(continuation.action_id)
+            .unwrap(),
+        Some(continuation_receipt.clone())
+    );
+    assert_eq!(
+        reopened
+            .enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        continuation_receipt
+    );
     let view = reopened
         .execution_attempt(retry.envelope().attempt_id, false)
         .unwrap();
@@ -1480,12 +1801,740 @@ fn cancellation_preserves_committed_failed_and_undispatched_items_and_late_evide
 }
 
 #[test]
+fn open_result_slot_reuses_one_frame_then_releases_it_on_replacement() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let first = produce(&mut store, &input, input.envelope().items[0].item_id);
+    let second = produce(&mut store, &input, input.envelope().items[1].item_id);
+    store.save_execution_result(&first).unwrap();
+    store.save_execution_result(&second).unwrap();
+    let other_input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&other_input).unwrap();
+    let connection = store.execution_connection().unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    let cold = results.load(first.envelope().result_id).unwrap();
+    let hot = results.load(first.envelope().result_id).unwrap();
+    assert!(std::ptr::eq(cold.envelope(), hot.envelope()));
+    assert!(std::ptr::eq(cold.bytes().as_ptr(), hot.bytes().as_ptr()));
+    results.load(second.envelope().result_id).unwrap();
+    let replaced = results.load(first.envelope().result_id).unwrap();
+    assert!(!std::ptr::eq(cold.envelope(), replaced.envelope()));
+    assert_eq!(cold.bytes(), replaced.bytes());
+    let fresh = OpenResultReader::new(connection, &input)
+        .load(first.envelope().result_id)
+        .unwrap();
+    assert!(!std::ptr::eq(replaced.envelope(), fresh.envelope()));
+    assert!(
+        OpenResultReader::new(connection, &other_input)
+            .load(first.envelope().result_id)
+            .is_err()
+    );
+    let mut bounded = input.envelope().clone();
+    bounded.limits.max_result_bytes = first.bytes().len() as u32 - 1;
+    let bounded = FixedInput::capture(bounded).unwrap();
+    assert!(
+        OpenResultReader::new(connection, &bounded)
+            .load(first.envelope().result_id)
+            .is_err(),
+        "the original per-input SQL frame limit still applies"
+    );
+}
+
+#[test]
+fn open_result_slot_rechecks_bytes_digest_and_legal_row_associations() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let first = produce(&mut store, &input, input.envelope().items[0].item_id);
+    let second = produce(&mut store, &input, input.envelope().items[1].item_id);
+    store.save_execution_result(&first).unwrap();
+    store.save_execution_result(&second).unwrap();
+    let other_input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&other_input).unwrap();
+    let other = produce(
+        &mut store,
+        &other_input,
+        other_input.envelope().items[0].item_id,
+    );
+    store.save_execution_result(&other).unwrap();
+    let connection = store.execution_connection().unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    for change in 0..5 {
+        results.load(first.envelope().result_id).unwrap();
+        connection
+            .execute_batch("SAVEPOINT result_corruption")
+            .unwrap();
+        match change {
+            0 => {
+                let mut bytes = first.bytes().to_vec();
+                bytes[0] ^= 1;
+                connection
+                    .execute(
+                        "UPDATE execution_results SET bytes=?2 WHERE result_id=?1",
+                        params![first.envelope().result_id.to_string(), bytes],
+                    )
+                    .unwrap();
+            }
+            1 => {
+                connection
+                    .execute(
+                        "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+                        params![first.envelope().result_id.to_string(), "0".repeat(64)],
+                    )
+                    .unwrap();
+            }
+            2 => {
+                connection
+                    .pragma_update(None, "defer_foreign_keys", true)
+                    .unwrap();
+                let token = ExecutionId::new().to_string();
+                connection.execute(
+                    "UPDATE execution_items SET dispatch_token=?3 WHERE attempt_id=?1 AND item_id=?2",
+                    params![input.envelope().attempt_id.to_string(), first.envelope().item_id.to_string(), &token],
+                ).unwrap();
+                connection
+                    .execute(
+                        "UPDATE execution_results SET dispatch_token=?2 WHERE result_id=?1",
+                        params![first.envelope().result_id.to_string(), token],
+                    )
+                    .unwrap();
+            }
+            3 => {
+                connection.execute(
+                    "UPDATE execution_results SET item_id=?2,dispatch_token=?3 WHERE result_id=?1",
+                    params![first.envelope().result_id.to_string(), second.envelope().item_id.to_string(), second.envelope().dispatch_token.to_string()],
+                ).unwrap();
+            }
+            _ => {
+                connection.execute(
+                    "UPDATE execution_results SET attempt_id=?2,item_id=?3,dispatch_token=?4 WHERE result_id=?1",
+                    params![first.envelope().result_id.to_string(), other.envelope().attempt_id.to_string(), other.envelope().item_id.to_string(), other.envelope().dispatch_token.to_string()],
+                ).unwrap();
+            }
+        }
+        assert!(
+            !connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .exists([])
+                .unwrap()
+        );
+        assert!(
+            results.load(first.envelope().result_id).is_err(),
+            "case {change}"
+        );
+        assert!(results.verified.is_none());
+        connection
+            .execute_batch("ROLLBACK TO result_corruption; RELEASE result_corruption")
+            .unwrap();
+    }
+}
+
+#[test]
+fn open_result_projection_keeps_terminal_unknown_and_invalid_read_semantics() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, false);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let mut saved = Vec::new();
+    for (item, state) in input.envelope().items.iter().zip([
+        ExecutionState::Succeeded,
+        ExecutionState::Failed,
+        ExecutionState::Unknown,
+    ]) {
+        let produced = produce(&mut store, &input, item.item_id);
+        let mut envelope = produced.envelope().clone();
+        envelope.outcome = state;
+        if state != ExecutionState::Succeeded {
+            envelope.output = None;
+            envelope.diagnostic = Some(Diagnostic {
+                code: "terminal".into(),
+                retry_safe: false,
+            });
+        }
+        let result =
+            FixedResult::capture(envelope, &input, produced.envelope().dispatch_token).unwrap();
+        store.save_execution_result(&result).unwrap();
+        saved.push(result);
+    }
+    let connection = store.execution_connection().unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET execution='dispatched' WHERE attempt_id=?1 AND item_id=?2",
+            params![
+                input.envelope().attempt_id.to_string(),
+                saved[2].envelope().item_id.to_string()
+            ],
+        )
+        .unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    let opened =
+        read_attempt_with_results(connection, &input, false, |id| results.load(id)).unwrap();
+    for result in &saved {
+        let actual = opened
+            .items
+            .iter()
+            .find(|item| item.item_id == result.envelope().item_id)
+            .unwrap();
+        assert_eq!(actual.execution, result.envelope().outcome);
+        results.load(result.envelope().result_id).unwrap();
+    }
+    connection
+        .execute(
+            "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+            params![saved[2].envelope().result_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    let opened =
+        read_attempt_with_results(connection, &input, false, |id| results.load(id)).unwrap();
+    let ordinary = read_attempt_in(connection, &input, false).unwrap();
+    for view in [opened, ordinary] {
+        let item = view
+            .items
+            .iter()
+            .find(|item| item.item_id == saved[2].envelope().item_id)
+            .unwrap();
+        assert_eq!(item.execution, ExecutionState::Unknown);
+        assert_eq!(item.validation, ValidationState::Invalid);
+    }
+}
+
+#[test]
+fn open_result_reused_frames_always_restore_their_original_input() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let input = fixture_input(&store, true);
+    store.enqueue_read_only_execution(&input).unwrap();
+    let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+    store.save_execution_result(&result).unwrap();
+    let retry = input
+        .retry_with_reused(
+            &[
+                input.envelope().items[1].item_id,
+                input.envelope().items[2].item_id,
+            ],
+            vec![ReusedResult {
+                item_id: result.envelope().item_id,
+                source_attempt_id: input.envelope().attempt_id,
+                result_id: result.envelope().result_id,
+            }],
+        )
+        .unwrap();
+    let connection = store.execution_connection().unwrap();
+    let mut results = OpenResultReader::new(connection, &retry);
+    let first = results.load(result.envelope().result_id).unwrap();
+    let second = results.load(result.envelope().result_id).unwrap();
+    assert!(!std::ptr::eq(first.envelope(), second.envelope()));
+    assert!(results.verified.is_none());
+    let mut changed = input.envelope().clone();
+    changed.items[0].payload = json!({"text":"changed"});
+    replace_test_input(connection, &FixedInput::capture(changed).unwrap()).unwrap();
+    assert!(results.load(result.envelope().result_id).is_err());
+}
+
+#[test]
+fn open_result_hits_recheck_historical_grants_and_scan_noncurrent_results() {
+    use tsumugi_plugin_sdk as sdk;
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    let manifest = sdk::parse_manifest(include_bytes!(
+        "../../../../plugin-sdk/tests/fixtures/review.manifest.json"
+    ))
+    .unwrap();
+    let review = sdk::parse_review_declaration(include_bytes!(
+        "../../../../plugin-sdk/tests/fixtures/review.declaration.json"
+    ))
+    .unwrap()
+    .bind(&manifest, &"a".repeat(64))
+    .unwrap();
+    let binding = PluginExecutionBinding {
+        component_scope: sdk::ComponentScope::Project,
+        application_scope: None,
+        capability: review.checker,
+        profile: Some(review.declaration.profile),
+        environment: sdk::RuntimeEnvironmentDescriptor {
+            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+            platform: sdk::RuntimePlatform {
+                operating_system: sdk::RuntimeOperatingSystem::Macos,
+                architecture: sdk::RuntimeArchitecture::Aarch64,
+            },
+            sdk_version: "0.1.0-alpha.1".into(),
+            process_protocol: sdk::PROCESS_PROTOCOL,
+            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+            tool_version: "26.10.0".into(),
+            tool: sdk::RuntimeArtifactBinding {
+                tree_digest: "b".repeat(64),
+                entrypoint: "bin/node".into(),
+            },
+            host: sdk::RuntimeArtifactBinding {
+                tree_digest: "c".repeat(64),
+                entrypoint: "dist/main.js".into(),
+            },
+        }
+        .into(),
+    };
+    let mut envelope = InputEnvelope::new(
+        store.metadata().unwrap().project_id(),
+        "fixture",
+        &binding.capability.declaration.contract.id,
+        &binding.capability_version(),
+        vec![InputItem::new(
+            Scope {
+                kind: "fixture".into(),
+                id: "a".into(),
+                locale: None,
+            },
+            json!("captured"),
+            vec![],
+        )],
+    )
+    .unwrap();
+    envelope.limits.timeout_ms = binding.capability.declaration.limits.timeout_ms;
+    envelope.plugin = Some(binding.clone());
+    let input = FixedInput::capture(envelope).unwrap();
+    let generation = ExecutionId::new();
+    let grant = ExecutionId::new();
+    store.begin_plugin_epoch(generation).unwrap();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 60_000;
+    store
+        .authorize_plugin_input(
+            generation,
+            grant,
+            &input,
+            expires,
+            PluginConsent {
+                unsandboxed_execution: true,
+                application_execution: false,
+            },
+            None,
+        )
+        .unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
+    let item = input.envelope().items[0].item_id;
+    let dispatched = store
+        .dispatch_execution_item(input.envelope().attempt_id, item)
+        .unwrap();
+    let provider = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: provider.plugin.clone(),
+        component_id: provider.component_id.clone(),
+        contribution_id: provider.contribution_id.clone(),
+        package_digest: provider.package_digest.clone(),
+        instance_id: ExecutionId::new().to_string(),
+        activation_generation: 1,
+    };
+    let invocation = input
+        .plugin_request(item, dispatched.dispatch_token, &channel)
+        .unwrap();
+    let result = FixedResult::capture_plugin(
+        &input,
+        item,
+        dispatched.dispatch_token,
+        PluginResultEvidence {
+            authorization_id: grant,
+            channel: channel.clone(),
+            result: sdk::InvocationResult {
+                context: invocation.context,
+                provider: channel,
+                capability: invocation.capability,
+                profile: invocation.profile,
+                result_id: ExecutionId::new().to_string(),
+                outcome: sdk::InvocationOutcome::Succeeded {
+                    output: sdk::EncodedPayload::capture(invocation.output_schema, "[]".into())
+                        .unwrap(),
+                },
+            },
+        },
+    )
+    .unwrap();
+    store.save_execution_result(&result).unwrap();
+    let connection = store.execution_connection().unwrap();
+    connection
+        .execute(
+            "UPDATE plugin_execution_grants SET revoked=1,expires_at_ms=1 WHERE grant_id=?1",
+            [grant.to_string()],
+        )
+        .unwrap();
+    let mut results = OpenResultReader::new(connection, &input);
+    let cold = results.load(result.envelope().result_id).unwrap();
+    let hot = results.load(result.envelope().result_id).unwrap();
+    assert!(
+        std::ptr::eq(cold.envelope(), hot.envelope()),
+        "historical reads require no live permit"
+    );
+    for change in 0..2 {
+        connection
+            .execute_batch("SAVEPOINT grant_corruption")
+            .unwrap();
+        if change == 0 {
+            connection
+                .execute(
+                    "UPDATE plugin_execution_grants SET grant_id=?1",
+                    [ExecutionId::new().to_string()],
+                )
+                .unwrap();
+        } else {
+            connection
+                .execute(
+                    "UPDATE plugin_execution_grants SET input_digest=?1",
+                    ["0".repeat(64)],
+                )
+                .unwrap();
+        }
+        assert!(
+            results.load(result.envelope().result_id).is_err(),
+            "grant case {change}"
+        );
+        connection
+            .execute_batch("ROLLBACK TO grant_corruption; RELEASE grant_corruption")
+            .unwrap();
+        results.load(result.envelope().result_id).unwrap();
+    }
+    let mut historical = result.envelope().clone();
+    historical.result_id = ExecutionId::new();
+    let historical = FixedResult::capture(historical, &input, dispatched.dispatch_token).unwrap();
+    connection.execute(
+        "INSERT INTO execution_results(result_id,attempt_id,item_id,dispatch_token,bytes,digest) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![historical.envelope().result_id.to_string(), input.envelope().attempt_id.to_string(), item.to_string(), dispatched.dispatch_token.to_string(), historical.bytes(), historical.digest()],
+    ).unwrap();
+    super::super::plugin_execution::validate_associated_input(connection, &input, &mut results)
+        .unwrap();
+    results.load(result.envelope().result_id).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+            params![historical.envelope().result_id.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    assert!(read_attempt_in(connection, &input, false).is_ok());
+    assert!(
+        super::super::plugin_execution::validate_associated_input(connection, &input, &mut results)
+            .is_err()
+    );
+}
+
+#[test]
+fn verified_decoding_cache_rejects_changed_bytes_and_row_associations() {
+    let _schema = TestSchema::enable();
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = store(&temp.path().join("project"));
+    install_targets(&store);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+    store.save_execution_result(&result).unwrap();
+    let connection = store.execution_connection().unwrap();
+    assert_eq!(
+        load_input_cached(connection, input.envelope().attempt_id)
+            .unwrap()
+            .bytes(),
+        input.bytes()
+    );
+    check_stored_input(connection, &input).unwrap();
+    check_stored_result(connection, &result).unwrap();
+    let mut corrupt = input.bytes().to_vec();
+    corrupt[0] ^= 1;
+    connection
+        .execute(
+            "UPDATE execution_attempts SET input=?2 WHERE attempt_id=?1",
+            params![input.envelope().attempt_id.to_string(), &corrupt],
+        )
+        .unwrap();
+    assert!(
+        load_input_cached(connection, input.envelope().attempt_id).is_err(),
+        "same digest cannot authorize a changed cached input"
+    );
+    assert!(check_stored_input(connection, &input).is_err());
+    replace_test_input(connection, &input).unwrap();
+    load_input_cached(connection, input.envelope().attempt_id).unwrap();
+    let mut corrupt = result.bytes().to_vec();
+    corrupt[0] ^= 1;
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE result_id=?1",
+            params![result.envelope().result_id.to_string(), &corrupt],
+        )
+        .unwrap();
+    assert!(
+        check_stored_result(connection, &result).is_err(),
+        "same digest cannot authorize a changed cached result"
+    );
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE result_id=?1",
+            params![result.envelope().result_id.to_string(), result.bytes()],
+        )
+        .unwrap();
+    check_stored_result(connection, &result).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_attempts SET previous_attempt_id=?1 WHERE attempt_id=?1",
+            [input.envelope().attempt_id.to_string()],
+        )
+        .unwrap();
+    assert!(load_input_cached(connection, input.envelope().attempt_id).is_err());
+    assert!(check_stored_input(connection, &input).is_err());
+    assert!(
+        store
+            .note_execution_unknown(
+                input.envelope().attempt_id,
+                result.envelope().item_id,
+                "result-missing",
+            )
+            .is_err(),
+        "completed worker reconciliation must still reject changed input associations"
+    );
+}
+
+#[test]
+fn complete_projection_cache_rechecks_current_coverage_bytes_and_dispatch() {
+    // Exercise pure coverage independently; full origin authority is covered by
+    // the captured Host workflow and is never supplied by this decoding cache.
+    let projection: crate::content::TranslationProjection = serde_json::from_value(json!({
+        "version": 1,
+        "origin": {
+            "producerAttempt": ExecutionId::new(),
+            "producerResult": ExecutionId::new(),
+            "producerInputDigest": "a".repeat(64),
+            "producerResultDigest": "b".repeat(64),
+            "checkerAttempt": ExecutionId::new(),
+            "checkerResult": ExecutionId::new(),
+            "checkerInputDigest": "c".repeat(64),
+            "checkerResultDigest": "d".repeat(64)
+        },
+        "bundleId": ExecutionId::new(),
+        "sourceSnapshotId": ExecutionId::new(),
+        "targetLocale": "zh-CN",
+        "declaredLocale": "zh",
+        "nativeScope": {
+            "namespace": "Example.Mod",
+            "policy": crate::content::contract_ref("opaque-case-sensitive")
+        },
+        "file": crate::content::CapturedFile {
+            artifact_id: ExecutionId::new(),
+            logical_path: "i18n/zh.json".into(),
+            role: "translation".into(),
+            byte_length: 2,
+            sha256: codec::digest(b"xx"),
+            utf8: "xx".into(),
+        },
+        "entries": [
+            ["key-a", "Key A", "x", null, [0, 1]],
+            ["key-b", "Key B", "x", null, [1, 2]]
+        ]
+    }))
+    .unwrap();
+    let input = projection
+        .fixed_input(
+            ProjectMetadata::create("Coverage cache", "en-US", ["zh-CN"])
+                .unwrap()
+                .project_id(),
+        )
+        .unwrap();
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE execution_items (
+            attempt_id TEXT,item_id TEXT,current_result_id TEXT,execution TEXT,
+            validation TEXT,dispatch_token TEXT,retry_safe INTEGER,adoption TEXT);
+         CREATE TABLE execution_results (
+            result_id TEXT,attempt_id TEXT,item_id TEXT,dispatch_token TEXT,digest TEXT,bytes BLOB);
+         CREATE TABLE adoption_receipts (attempt_id TEXT,unit_id TEXT);",
+        )
+        .unwrap();
+    let mut results = Vec::new();
+    for item in &input.envelope().items {
+        let token = ExecutionId::new();
+        let (sender, receiver) = result_channel();
+        crate::content::TranslationProjectionRunner
+            .run(
+                DispatchRequest {
+                    input: input.clone(),
+                    item_id: item.item_id,
+                    dispatch_token: token,
+                    provider: None,
+                    plugin_permit: None,
+                    service_origin: None,
+                    original_deadline: None,
+                },
+                Cancellation::default(),
+                sender,
+            )
+            .unwrap();
+        let result = receiver.recv().unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_items VALUES (?1,?2,?3,'succeeded','valid',?4,0,'unapplied')",
+                params![
+                    input.envelope().attempt_id.to_string(),
+                    item.item_id.to_string(),
+                    result.envelope().result_id.to_string(),
+                    token.to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_results VALUES (?1,?2,?3,?4,?5,?6)",
+                params![
+                    result.envelope().result_id.to_string(),
+                    input.envelope().attempt_id.to_string(),
+                    item.item_id.to_string(),
+                    token.to_string(),
+                    result.digest(),
+                    result.bytes()
+                ],
+            )
+            .unwrap();
+        results.push(result);
+    }
+    complete_translation_projection(&connection, &input).unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    let result = &results[0];
+    let item = result.envelope().item_id.to_string();
+    connection
+        .execute(
+            "UPDATE execution_items SET validation='pending' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .code,
+        ErrorCode::DependencyConflict,
+    );
+    connection
+        .execute(
+            "UPDATE execution_items SET validation='valid' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    let mut corrupt = result.bytes().to_vec();
+    corrupt[0] ^= 1;
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE item_id=?1",
+            params![&item, &corrupt],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger,
+    );
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE item_id=?1",
+            params![&item, result.bytes()],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET dispatch_token=?2 WHERE item_id=?1",
+            params![&item, ExecutionId::new().to_string()],
+        )
+        .unwrap();
+    assert!(complete_translation_projection(&connection, &input).is_err());
+    connection
+        .execute(
+            "UPDATE execution_items SET dispatch_token=?2 WHERE item_id=?1",
+            params![&item, result.envelope().dispatch_token.to_string()],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET retry_safe=1 WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .stage,
+        "result-state",
+    );
+    connection
+        .execute(
+            "UPDATE execution_items SET retry_safe=0,adoption='committed' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .stage,
+        "missing-receipt",
+    );
+    let unit = input
+        .envelope()
+        .units
+        .iter()
+        .find(|unit| unit.item_ids == [result.envelope().item_id])
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO adoption_receipts VALUES (?1,?2)",
+            params![
+                input.envelope().attempt_id.to_string(),
+                unit.unit_id.to_string()
+            ],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute("DELETE FROM adoption_receipts", [])
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .stage,
+        "missing-receipt",
+    );
+    connection
+        .execute(
+            "UPDATE execution_items SET adoption='unapplied' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute("DELETE FROM execution_items WHERE item_id=?1", [&item])
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger,
+    );
+}
+
+#[test]
 fn continuation_crash_child() {
-    let Ok(path) = std::env::var("TSUMUGI_CONTINUATION_PROJECT") else { return };
-    let action: ContinuationAction = serde_json::from_slice(&std::fs::read(Path::new(&path).join("continuation.json")).unwrap()).unwrap();
+    let Ok(path) = std::env::var("TSUMUGI_CONTINUATION_PROJECT") else {
+        return;
+    };
+    let action: ContinuationAction =
+        serde_json::from_slice(&std::fs::read(Path::new(&path).join("continuation.json")).unwrap())
+            .unwrap();
     let mut store = ProjectStore::open(&path).unwrap();
-    let next = store.execution_retry_input(action.source_attempt_id, &action.item_ids).unwrap();
-    store.enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly).unwrap();
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
     panic!("configured continuation boundary did not terminate");
 }
 
@@ -1497,17 +2546,41 @@ fn continuation_commit_crashes_preserve_exact_intent_and_one_attempt() {
         let mut store = store(&path);
         let input = fixture_input(&store, false);
         store.enqueue_read_only_execution(&input).unwrap();
-        let action = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
-        std::fs::write(path.join("continuation.json"), serde_json::to_vec(&action).unwrap()).unwrap();
+        let action = crate::execution::test_continuation_action(
+            &store,
+            input.envelope().attempt_id,
+            &[input.envelope().items[0].item_id],
+        );
+        std::fs::write(
+            path.join("continuation.json"),
+            serde_json::to_vec(&action).unwrap(),
+        )
+        .unwrap();
         store.close().unwrap();
         let hook = temp.path().join("hook");
-        let mut child = Command::new(std::env::current_exe().unwrap()).args(["--exact", "persistence::ledger::tests::continuation_crash_child", "--nocapture"])
-            .env("TSUMUGI_CONTINUATION_PROJECT", &path).env("TSUMUGI_EXECUTION_CRASH", point).env("TSUMUGI_EXECUTION_HOOK", &hook)
-            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "persistence::ledger::tests::continuation_crash_child",
+                "--nocapture",
+            ])
+            .env("TSUMUGI_CONTINUATION_PROJECT", &path)
+            .env("TSUMUGI_EXECUTION_CRASH", point)
+            .env("TSUMUGI_EXECUTION_HOOK", &hook)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let status = loop {
-            if let Some(status) = child.try_wait().unwrap() { break status }
-            if Instant::now() >= deadline { child.kill().unwrap(); child.wait().unwrap(); panic!("owned continuation helper timed out") }
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned continuation helper timed out")
+            }
             std::thread::sleep(Duration::from_millis(10));
         };
         assert!(!status.success());
@@ -1515,21 +2588,148 @@ fn continuation_commit_crashes_preserve_exact_intent_and_one_attempt() {
         let mut reopened = ProjectStore::open(&path).unwrap();
         let recorded = reopened.execution_continuation(action.action_id).unwrap();
         assert_eq!(recorded.is_some(), point == "after-continuation-commit");
-        assert_eq!(reopened.execution_attempt_ids(input.envelope().task_id).unwrap().len(), if recorded.is_some() { 2 } else { 1 });
+        assert_eq!(
+            reopened
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap()
+                .len(),
+            if recorded.is_some() { 2 } else { 1 }
+        );
         let receipt = if let Some(receipt) = recorded {
             // Confirming the original commit needs no new input, plan or dispatch.
             assert_eq!(receipt.action, action.canonical().unwrap());
             receipt
         } else {
-            let next = reopened.execution_retry_input(action.source_attempt_id, &action.item_ids).unwrap();
-            reopened.enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly).unwrap()
+            let next = reopened
+                .execution_retry_input(action.source_attempt_id, &action.item_ids)
+                .unwrap();
+            reopened
+                .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+                .unwrap()
         };
         let original = reopened.execution_input(receipt.attempt_id).unwrap();
-        assert_eq!(reopened.enqueue_continuation(&action, &original, RecoveryPolicy::ReadOnly).unwrap(), receipt);
-        assert_eq!(reopened.execution_attempt_ids(input.envelope().task_id).unwrap().len(), 2);
-        assert_eq!(reopened.execution_continuation_page(action.source_attempt_id, Revision::new(0).unwrap(), 1).unwrap(), vec![receipt.clone()]);
-        assert!(reopened.execution_continuation_page(action.source_attempt_id, receipt.sequence, 1).unwrap().is_empty());
+        assert_eq!(
+            reopened
+                .enqueue_continuation(&action, &original, RecoveryPolicy::ReadOnly)
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            reopened
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            reopened
+                .execution_continuation_page(action.source_attempt_id, Revision::new(0).unwrap(), 1)
+                .unwrap(),
+            vec![receipt.clone()]
+        );
+        assert!(
+            reopened
+                .execution_continuation_page(action.source_attempt_id, receipt.sequence, 1)
+                .unwrap()
+                .is_empty()
+        );
     }
+}
+
+#[test]
+fn continuation_keeps_large_captured_frames_in_the_original_chunk_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = store(&path);
+    let material = "captured-🧵;".repeat(4096);
+    let mut envelope = fixture_input(&store, false).envelope().clone();
+    envelope.settings = json!({"material": material});
+    let original = FixedInput::capture(envelope).unwrap();
+    store.enqueue_read_only_execution(&original).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        original.envelope().attempt_id,
+        &[original.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    assert!(original.bytes().len() > input_storage::MAX_STORED_INPUT_BYTES);
+    assert!(next.bytes().len() > input_storage::MAX_STORED_INPUT_BYTES);
+    let receipt = store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
+    assert_eq!(receipt.action, action.canonical().unwrap());
+    assert_eq!(receipt.source_input_digest, original.digest());
+    assert_eq!(receipt.input_digest, next.digest());
+    assert_eq!(receipt.task_id, original.envelope().task_id);
+    assert_eq!(receipt.attempt_id, next.envelope().attempt_id);
+    for input in [&original, &next] {
+        let bytes: Vec<u8> = store
+            .execution_connection()
+            .unwrap()
+            .query_row(
+                "SELECT input FROM execution_attempts WHERE attempt_id=?1",
+                [input.envelope().attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(bytes.len() <= input_storage::MAX_STORED_INPUT_BYTES);
+        let stored: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(stored["rawBytes"], json!(input.bytes().len()));
+        assert!(stored["chunks"].as_array().unwrap().len() > 1);
+        assert_eq!(
+            store
+                .execution_input(input.envelope().attempt_id)
+                .unwrap()
+                .bytes(),
+            input.bytes()
+        );
+        assert_eq!(
+            input.envelope().settings["material"],
+            json!("captured-🧵;".repeat(4096))
+        );
+    }
+    assert_eq!(
+        store
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        store.execution_attempt_ids(receipt.task_id).unwrap().len(),
+        2
+    );
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.execution_continuation(action.action_id).unwrap(),
+        Some(receipt.clone())
+    );
+    for input in [&original, &next] {
+        let restored = reopened
+            .execution_input(input.envelope().attempt_id)
+            .unwrap();
+        assert_eq!(restored.bytes(), input.bytes());
+        assert_eq!(restored.digest(), input.digest());
+        assert_eq!(
+            restored.envelope().settings["material"],
+            json!("captured-🧵;".repeat(4096))
+        );
+    }
+    assert_eq!(
+        reopened
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        reopened
+            .execution_attempt_ids(receipt.task_id)
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -1546,130 +2746,27 @@ fn current_continuation_shape_and_relationship_corruption_are_rejected_without_r
         let mut store = store(&path);
         let input = fixture_input(&store, false);
         store.enqueue_read_only_execution(&input).unwrap();
-        let action = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
-        let next = store.execution_retry_input(action.source_attempt_id, &action.item_ids).unwrap();
-        store.enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly).unwrap();
+        let action = crate::execution::test_continuation_action(
+            &store,
+            input.envelope().attempt_id,
+            &[input.envelope().items[0].item_id],
+        );
+        let next = store
+            .execution_retry_input(action.source_attempt_id, &action.item_ids)
+            .unwrap();
+        store
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap();
         store.close().unwrap();
         let database = path.join("project.sqlite3");
         let connection = Connection::open(&database).unwrap();
         connection.execute_batch(mutation).unwrap();
         drop(connection);
         let bytes = std::fs::read(&database).unwrap();
-        assert_eq!(ProjectStore::open(&path).unwrap_err().code(), PersistenceErrorCode::CorruptProject);
+        assert_eq!(
+            ProjectStore::open(&path).unwrap_err().code(),
+            PersistenceErrorCode::CorruptProject
+        );
         assert_eq!(std::fs::read(&database).unwrap(), bytes);
     }
-}
-
-#[test]
-fn historical_adoption_action_reads_keep_original_proof_after_cancel_and_reopen() {
-    let _schema = TestSchema::enable();
-    let parent = tempfile::tempdir().unwrap();
-    let path = parent.path().join("project");
-    let mut store = store(&path);
-    install_targets(&store);
-    let input = fixture_input(&store, true);
-    store.enqueue_read_only_execution(&input).unwrap();
-    let mut results = Vec::new();
-    for item in &input.envelope().items {
-        let result = produce(&mut store, &input, item.item_id);
-        store.save_execution_result(&result).unwrap();
-        store.validate_execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap();
-        results.push(result.envelope().result_id);
-    }
-    let project = input.envelope().project_id;
-    let attempt = input.envelope().attempt_id;
-    let unit = input.envelope().units[0].unit_id;
-    let action_id = ExecutionId::new();
-    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), None);
-    assert_eq!(store.changes_since(before).sequence, before);
-    results.reverse();
-    let original = store.prepare_adoption_with_id(action_id, attempt, unit, results.clone(), serde_json::Value::Null).unwrap();
-    let prepared = Some(AdoptionActionRead { action: original.clone(), receipt: None });
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), prepared);
-    for (p, a, u, ids) in [
-        (ExecutionId::new(), attempt, unit, results.clone()),
-        (project, ExecutionId::new(), unit, results.clone()),
-        (project, attempt, ExecutionId::new(), results.clone()),
-        (project, attempt, unit, vec![ExecutionId::new()]),
-    ] {
-        assert_eq!(store.execution_adoption_action_read(p, a, action_id, u, &ids).unwrap_err().code, ErrorCode::ResultMismatch);
-    }
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &[results[0], results[0]]).unwrap_err().code, ErrorCode::InvalidInput);
-    let receipt = store.adopt_execution(&original, &Handler).unwrap();
-    store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
-    let expected = Some(AdoptionActionRead { action: original.clone(), receipt: Some(receipt.clone()) });
-    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
-    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get(0)).unwrap();
-    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
-    assert!(!store.is_reconciling());
-    assert_eq!(store.changes_since(sequence).sequence, sequence);
-    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM adoption_receipts", [], |row| row.get::<_, i64>(0)).unwrap(), count);
-
-    let connection = store.execution_connection().unwrap();
-    let (bytes, digest): (Vec<u8>, String) = connection.query_row("SELECT request,digest FROM execution_actions WHERE action_id=?1", [action_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
-    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), "0".repeat(64)]).unwrap();
-    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
-    assert!(store.is_reconciling());
-    connection.execute("UPDATE execution_actions SET digest=?2 WHERE action_id=?1", params![action_id.to_string(), &digest]).unwrap();
-    connection.pragma_update(None, "foreign_keys", "OFF").unwrap();
-    connection.execute("DELETE FROM execution_actions WHERE action_id=?1", [action_id.to_string()]).unwrap();
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
-    connection.execute("INSERT INTO execution_actions(action_id,attempt_id,unit_id,request,digest) VALUES (?1,?2,?3,?4,?5)", params![action_id.to_string(), attempt.to_string(), unit.to_string(), bytes, digest]).unwrap();
-    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), ExecutionId::new().to_string()]).unwrap();
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap_err().code, ErrorCode::CorruptLedger);
-    connection.execute("UPDATE adoption_receipts SET unit_id=?2 WHERE action_id=?1", params![action_id.to_string(), unit.to_string()]).unwrap();
-    connection.pragma_update(None, "foreign_keys", "ON").unwrap();
-    assert_eq!(store.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
-    store.close().unwrap();
-    let reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(reopened.execution_adoption_action_read(project, attempt, action_id, unit, &results).unwrap(), expected);
-}
-
-#[test]
-fn cancellation_action_reads_confirm_original_requests_without_writes() {
-    let parent = tempfile::tempdir().unwrap();
-    let path = parent.path().join("project");
-    let mut store = store(&path);
-    let input = fixture_input(&store, false);
-    store.enqueue_read_only_execution(&input).unwrap();
-    let project = input.envelope().project_id;
-    let task = input.envelope().task_id;
-    let request = ExecutionId::new();
-    let before = store.changes_since(Revision::new(0).unwrap()).sequence;
-    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), None);
-    assert_eq!(store.changes_since(before).sequence, before);
-    let first = store.cancel_execution(task, request).unwrap();
-    let next = store.cancel_execution(task, ExecutionId::new()).unwrap();
-    assert!(next > first);
-    let receipt = Some(CancellationReceipt { project_id: project, task_id: task, request_id: request, revision: first });
-    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
-    assert_eq!(store.cancellation_action_read(project, ExecutionId::new(), request).unwrap_err().code, ErrorCode::ResultMismatch);
-    assert_eq!(store.cancellation_action_read(ExecutionId::new(), task, request).unwrap_err().code, ErrorCode::ResultMismatch);
-    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
-    assert_eq!(store.cancel_execution(task, request).unwrap_err().code, ErrorCode::OutcomeUnknown);
-    let sequence = store.changes_since(Revision::new(0).unwrap()).sequence;
-    let count: i64 = store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get(0)).unwrap();
-    assert_eq!(store.cancellation_action_read(project, task, request).unwrap(), receipt);
-    assert!(!store.is_reconciling());
-    assert_eq!(store.changes_since(sequence).sequence, sequence);
-    assert_eq!(store.execution_connection().unwrap().query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| row.get::<_, i64>(0)).unwrap(), count);
-
-    let connection = store.execution_connection().unwrap();
-    connection.pragma_update(None, "ignore_check_constraints", "ON").unwrap();
-    connection.execute("UPDATE execution_cancellations SET revision=0 WHERE request_id=?1", [request.to_string()]).unwrap();
-    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
-    assert_eq!(store.cancellation_action_read(project, task, request).unwrap_err().code, ErrorCode::CorruptLedger);
-    assert!(store.is_reconciling());
-    connection.execute("UPDATE execution_cancellations SET revision=?2 WHERE request_id=?1", params![request.to_string(), first.get() as i64]).unwrap();
-    connection.pragma_update(None, "ignore_check_constraints", "OFF").unwrap();
-    assert_eq!(store.cancellation_action_read(project, task, ExecutionId::new()).unwrap(), None);
-    assert!(!store.is_reconciling());
-    assert_eq!(store.changes_since(sequence).sequence, sequence);
-    assert!(store.cancel_execution(task, ExecutionId::new()).unwrap() > next);
-    store.close().unwrap();
-    let reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(reopened.cancellation_action_read(project, task, request).unwrap(), receipt);
 }

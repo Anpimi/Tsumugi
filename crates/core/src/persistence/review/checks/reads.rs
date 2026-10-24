@@ -1,5 +1,17 @@
-//! Exact original built-in QA results, independent of current workbench state.
+//! Durable QA receipts correlated with the complete original checker selection.
 use super::*;
+use tsumugi_plugin_sdk::{ContractRef, PluginIdentity};
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewCheckActionSelection {
+    pub plugin: PluginIdentity,
+    pub package_digest: String,
+    pub resource_id: String,
+    pub environment_digest: String,
+    pub rules: Vec<ContractRef>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -10,6 +22,7 @@ pub struct ReviewCheckActionRequest {
     pub unit_id: ExecutionId,
     pub locale: String,
     pub expected_basis: String,
+    pub advisory_checks: Vec<ReviewCheckActionSelection>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -21,55 +34,40 @@ pub struct ReviewCheckActionRead {
 }
 
 impl ProjectStore {
-    /// Only a durable final run is confirmed. Missing does not prove a worker stopped.
-    pub fn review_check_action_read(
-        &self,
-        request: &ReviewCheckActionRequest,
-    ) -> Result<Option<ReviewCheckActionRead>, ExecutionError> {
+    /// Only persisted final QA evidence is confirmed. A missing run says nothing
+    /// about an in-memory preparation or a worker still executing it.
+    pub fn review_check_action_read(&self, request: &ReviewCheckActionRequest)
+        -> Result<Option<ReviewCheckActionRead>, ExecutionError> {
         self.read_review_action(request.project_id, |c| {
-            let owner: Option<String> = c
-                .query_row(
-                    "SELECT project_id FROM review_checks WHERE action_id=?1",
-                    [request.action_id.to_string()],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(sql)?;
-            let Some(owner) = owner else {
-                return Ok(None);
-            };
-            if owner != request.project_id.to_string() {
-                return Err(failure(ErrorCode::CorruptLedger, "review-check-action"));
+            let owner: Option<(String,String)> = c.query_row(
+                "SELECT project_id,purpose FROM review_checks WHERE action_id=?1",
+                [request.action_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?)))
+                .optional().map_err(sql)?;
+            let Some((project,purpose)) = owner else { return Ok(None); };
+            if project != request.project_id.to_string() || purpose != "qa" {
+                return Err(failure(ErrorCode::CorruptLedger,"review-check-action"));
             }
-            let (run, saved_digest) = check_by_action(c, request.project_id, request.action_id)?
-                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-action"))?;
-            // Keep the existing prepare_review_check wire-independent digest format.
-            let expected = digest(&(
-                request.project_id,
-                request.unit_id,
-                request.locale.as_str(),
-                request.expected_basis.as_str(),
-                request.action_id,
-            ))?;
-            if saved_digest != expected
-                || run.action_id != request.action_id
-                || run.unit_id != request.unit_id
-                || run.locale != request.locale
-                || run.basis != request.expected_basis
-            {
-                return Err(failure(ErrorCode::ResultMismatch, "review-check-action"));
+            let (run,saved_digest) = check_by_action(c,request.project_id,request.action_id)?
+                .ok_or_else(||failure(ErrorCode::CorruptLedger,"review-check-action"))?;
+            let choices = run.evidence.as_ref().map(|e|e.advisory_checks.as_slice()).unwrap_or(&[]);
+            if run.action_id != request.action_id || run.unit_id != request.unit_id
+                || run.locale != request.locale || run.basis != request.expected_basis
+                || choices::request_digest(request.project_id,request.unit_id,&request.locale,
+                    &request.expected_basis,request.action_id,choices)? != saved_digest
+                || choices.len() != request.advisory_checks.len() {
+                return Err(failure(ErrorCode::ResultMismatch,"review-check-action"));
             }
-            validate_historical_basis(
-                c,
-                request.project_id,
-                request.unit_id,
-                &request.locale,
-                &run.basis_evidence,
-            )?;
-            Ok(Some(ReviewCheckActionRead {
-                request: request.clone(),
-                receipt: run,
-            }))
+            for (saved,selected) in choices.iter().zip(&request.advisory_checks) {
+                if saved.binding.checker.provider.plugin != selected.plugin
+                    || saved.binding.checker.provider.package_digest != selected.package_digest
+                    || saved.declaration_resource_id != selected.resource_id
+                    || saved.execution.environment.digest().map_err(|_|failure(ErrorCode::CorruptLedger,"review-check-environment"))? != selected.environment_digest
+                    || saved.rules != selected.rules {
+                    return Err(failure(ErrorCode::ResultMismatch,"review-check-action"));
+                }
+            }
+            validate_historical_basis(c,request.project_id,request.unit_id,&request.locale,&run.basis_evidence)?;
+            Ok(Some(ReviewCheckActionRead {request:request.clone(),receipt:run}))
         })
     }
 }
@@ -85,6 +83,7 @@ mod tests {
         let unit = units[0];
         let target = store.review_target(project, unit, "zh-CN").unwrap();
         let mut request = ReviewCheckActionRequest {
+            advisory_checks: Vec::new(),
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: unit,
@@ -173,7 +172,7 @@ mod tests {
         assert!(store.is_reconciling());
         c.execute(
             "UPDATE review_checks SET request_digest=?2 WHERE action_id=?1",
-            params![run.action_id.to_string(), original],
+            params![run.action_id.to_string(), &original],
         )
         .unwrap();
         // Internally consistent JSON and basis digest must still refer to real historical associations.
@@ -186,13 +185,14 @@ mod tests {
                 run.action_id.to_string(),
                 forged_digest,
                 serde_json::to_string(&forged).unwrap(),
-                digest(&(
+                choices::request_digest(
                     project,
                     unit,
                     "zh-CN",
                     forged_digest.as_str(),
-                    run.action_id
-                ))
+                    run.action_id,
+                    &[],
+                )
                 .unwrap()
             ],
         )
@@ -213,7 +213,7 @@ mod tests {
                 run.action_id.to_string(),
                 run.basis,
                 serde_json::to_string(&run.basis_evidence).unwrap(),
-                digest(&(project, unit, "zh-CN", run.basis.as_str(), run.action_id)).unwrap()
+                &original
             ],
         )
         .unwrap();

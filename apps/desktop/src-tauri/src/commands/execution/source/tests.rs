@@ -28,9 +28,9 @@ fn source_wire_fixture_matches_rust_types() {
     round_trip::<LineageRequest>(&fixture["lineageRequest"]);
     round_trip::<ImpactRequest>(&fixture["impactRequest"]);
     round_trip::<content::SourceHistory>(&fixture["history"]);
-    round_trip::<Vec<content::LineageEvidence>>(&fixture["lineage"]);
-    round_trip::<content::SourceChangePage>(&fixture["comparison"]);
-    round_trip::<content::SourceImpactPage>(&fixture["impact"]);
+    round_trip::<Vec<super::super::source_wire::LineageEvidence>>(&fixture["lineage"]);
+    round_trip::<SourceChangePage>(&fixture["comparison"]);
+    round_trip::<super::super::source_wire::SourceImpactPage>(&fixture["impact"]);
     round_trip::<Vec<content::SourceImpactSummary>>(&fixture["estimates"]);
     let mut rounded = fixture["history"].clone();
     rounded["snapshots"][0]["revision"] = serde_json::json!(9_007_199_254_740_993u64);
@@ -48,10 +48,10 @@ fn source_wire_fixture_matches_rust_types() {
     assert!(serde_json::from_value::<ContentPage>(invalid_range).is_err());
     let mut unknown_kind = fixture["comparison"].clone();
     unknown_kind["rows"][0]["kind"] = serde_json::json!("future-kind");
-    assert!(serde_json::from_value::<content::SourceChangePage>(unknown_kind).is_err());
+    assert!(serde_json::from_value::<SourceChangePage>(unknown_kind).is_err());
     let mut unknown_status = fixture["impact"].clone();
     unknown_status["rows"][0]["status"] = serde_json::json!("future-status");
-    assert!(serde_json::from_value::<content::SourceImpactPage>(unknown_status).is_err());
+    assert!(serde_json::from_value::<super::super::source_wire::SourceImpactPage>(unknown_status).is_err());
     let mut unknown = fixture["prepare"].clone();
     unknown["confirmation"]["requiredExtension"] = serde_json::json!("unknown/v1");
     assert!(serde_json::from_value::<SourceAdoptRequest>(unknown).is_err());
@@ -304,7 +304,7 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     summary_request["afterOrdinal"] = json!(0);
     summary_request["limit"] = json!(50);
     let summaries = call(&view, "read_review_summary_page", summary_request.clone()).unwrap();
-    let typed: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summaries.clone()).unwrap();
+    let typed: super::super::review_wire::ReviewSummaryPage = serde_json::from_value(summaries.clone()).unwrap();
     assert_eq!(typed.total, 532);
     assert_eq!(typed.rows.len(), 50);
     assert_eq!(

@@ -9,23 +9,45 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 use crate::review::CHECK_VERSION;
-mod actions;
-pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
 mod checks;
-pub use checks::{ComputedReviewCheck, PreparedReviewCheck, ReviewCheckActionRequest, ReviewCheckActionRead};
-const POLICY_VERSION: &str = "balanced-1";
+#[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
+pub use checks::ComputedReviewCheck;
+#[cfg(any(test, feature = "execution-test-host"))]
+pub(super) use checks::record_check_in;
+pub(super) use checks::candidate_checks_clean;
+pub(crate) use checks::validate_choices;
+pub(super) use checks::validator_version;
+pub use checks::{
+    AdvisoryReviewCheck, CapturedReviewCheckExecution, ComputedReviewEvidence, PreparedReviewCheck,
+    ReviewCheckActionRequest, ReviewCheckActionSelection, ReviewCheckActionRead,
+    ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckPlan,
+    ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewInvocationOutcome,
+};
+pub(super) use checks::{
+    CURRENT_CHECK_VERSION, PreparedReviewAdoption, prepare_candidate_in,
+    validate_candidate_evidence,
+};
+pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
+mod actions;
+pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
+mod findings;
+pub use findings::{
+    AdvisoryFinding, ReviewFindingDecision, ReviewFindingDisposition, ReviewFindingRepair,
+    ReviewFindingView, ReviewFindingWrite, ReviewRepairStatus,
+};
 mod queries;
-pub(super) use queries::read_snapshot;
+pub(super) use queries::{read_snapshot, targets_in};
 #[cfg(test)]
 mod query_tests;
 mod views;
 pub(super) use views::ReadScopes;
 pub use views::{
-    ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary,
-    ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
 };
 
 // A selected translation may predate the captured source. These associations
@@ -66,9 +88,14 @@ fn validate_historical_basis(
 }
 
 fn check_outcome(rules: &[CheckRuleResult]) -> ReviewCheckOutcome {
-    if rules.iter().all(|rule| rule.status == "cancelled") {
+    if rules.iter().any(|rule| rule.status == "cancelled") {
         ReviewCheckOutcome::Cancelled
-    } else if rules.iter().all(|rule| rule.status == "failed") {
+    } else if rules.iter().any(|rule| rule.status == "unknown") {
+        ReviewCheckOutcome::Unknown
+    } else if rules
+        .iter()
+        .any(|rule| matches!(rule.status.as_str(), "failed" | "missing" | "unavailable"))
+    {
         ReviewCheckOutcome::Failed
     } else {
         ReviewCheckOutcome::Completed
@@ -103,6 +130,11 @@ fn basis_digest(value: &ReviewBasis) -> Result<String, ExecutionError> {
         value.context_revision_id,
         &value.term_revision_ids,
     ))
+}
+impl ReviewBasis {
+    pub(crate) fn digest(&self) -> Result<String, ExecutionError> {
+        basis_digest(self)
+    }
 }
 fn checked_note(value: &str, required: bool) -> Result<(), ExecutionError> {
     if value.len() > 4_096
@@ -139,6 +171,7 @@ pub enum ReviewCheckOutcome {
     Completed,
     Failed,
     Cancelled,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -204,6 +237,8 @@ pub struct CheckFinding {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct CheckRuleResult {
     pub rule: String,
+    pub key: tsumugi_plugin_sdk::CheckKey,
+    pub mandatory: bool,
     pub status: String,
     pub reason: Option<String>,
     pub findings: Vec<CheckFinding>,
@@ -222,6 +257,7 @@ pub struct CheckRun {
     pub validator_version: String,
     pub outcome: ReviewCheckOutcome,
     pub rules: Vec<CheckRuleResult>,
+    pub evidence: Option<ReviewCheckEvidence>,
     pub created_at: String,
 }
 
@@ -389,6 +425,7 @@ pub struct ReviewHistoryPage {
 }
 
 const TABLES: &[(&str, &str)] = &[
+    findings::TABLE,
     (
         "review_decisions",
         "CREATE TABLE review_decisions (
@@ -420,8 +457,13 @@ const TABLES: &[(&str, &str)] = &[
         basis_json TEXT NOT NULL,
         validator_version TEXT NOT NULL,
         rules_json TEXT NOT NULL,
+        qa_basis TEXT CHECK(qa_basis IS NULL OR length(qa_basis)=64),
+        evidence_json TEXT,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))",
+        purpose TEXT NOT NULL CHECK(purpose IN ('qa','ai-semantic')),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        CHECK((purpose='qa' AND (qa_basis IS NULL)=(evidence_json IS NULL)) OR
+              (purpose='ai-semantic' AND qa_basis IS NULL AND evidence_json IS NOT NULL)))",
     ),
     (
         "review_waivers",
@@ -467,33 +509,65 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (_, definition) in TABLES {
         connection.execute_batch(definition)?;
     }
+    findings::initialize(connection)?;
+    super::ai_semantic_review::initialize(connection)?;
     Ok(())
 }
-#[cfg(test)]
-pub(super) fn drop_for_legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        connection.execute_batch(&format!("DROP TABLE {name}"))?;
+// The open path needs only identities between the metadata pass and the ledger
+// visit. Full input and result frames are restored and dropped one at a time.
+struct OpenReviewOrigin {
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    index: usize,
+}
+
+pub(super) struct OpenReviewValidation {
+    pending: BTreeMap<ExecutionId, Vec<OpenReviewOrigin>>,
+}
+
+impl OpenReviewValidation {
+    pub(super) fn validate_input(
+        &mut self,
+        connection: &Connection,
+        input: &crate::execution::FixedInput,
+        results: &mut super::ledger::OpenResultReader<'_>,
+    ) -> Result<(), ExecutionError> {
+        let Some(origins) = self.pending.remove(&input.envelope().attempt_id) else {
+            return Ok(());
+        };
+        for origin in origins {
+            let (run, request_digest) =
+                decode_check_by_action(connection, origin.project_id, origin.action_id)?
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
+            let saved = run
+                .evidence
+                .as_ref()
+                .and_then(|evidence| evidence.origins.get(origin.index))
+                .filter(|saved| saved.attempt_id == input.envelope().attempt_id)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
+            let result = results.load(saved.result_id)?;
+            checks::validate_saved_frames(
+                origin.project_id,
+                &run,
+                &request_digest,
+                saved,
+                input,
+                &result,
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
-}
-pub(super) fn migrate_v6(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
+
+    pub(super) fn finish(self) -> rusqlite::Result<()> {
+        if self.pending.is_empty() {
+            Ok(())
+        } else {
+            Err(rusqlite::Error::InvalidQuery)
+        }
     }
-    transaction.pragma_update(None, "user_version", 7)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-review-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-review-migration-commit");
-    Ok(())
 }
-pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+
+pub(super) fn prepare_open(connection: &Connection) -> rusqlite::Result<OpenReviewValidation> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -530,7 +604,36 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
-    Ok(())
+    let mut statement = connection.prepare("SELECT project_id,action_id FROM review_checks WHERE purpose='qa'")?;
+    let identities = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut pending: BTreeMap<ExecutionId, Vec<OpenReviewOrigin>> = BTreeMap::new();
+    for (project, action) in identities {
+        let project = parse_id(project).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let action = parse_id(action).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let (run, _) = decode_check_by_action(connection, project, action)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?
+            .ok_or(rusqlite::Error::InvalidQuery)?;
+        checks::validate_projection(&run).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if let Some(evidence) = &run.evidence {
+            for (index, origin) in evidence.origins.iter().enumerate() {
+                pending
+                    .entry(origin.attempt_id)
+                    .or_default()
+                    .push(OpenReviewOrigin {
+                        project_id: project,
+                        action_id: action,
+                        index,
+                    });
+            }
+        }
+    }
+    super::ai_semantic_review::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    findings::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok(OpenReviewValidation { pending })
 }
 
 fn check_project(
@@ -621,38 +724,29 @@ fn decision_by_action(
     .transpose()
 }
 
-fn latest_decision(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    basis: &str,
-) -> Result<Option<ReviewDecision>, ExecutionError> {
-    let action: Option<String> = connection.query_row(
-        "SELECT action_id FROM review_decisions WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4
-         ORDER BY rowid DESC LIMIT 1",
-        params![project_id.to_string(), unit_id.to_string(), locale, basis], |row| row.get(0)
-    ).optional().map_err(sql)?;
-    action
-        .map(|value| {
-            decision_by_action(connection, project_id, parse_id(value)?)
-                .map(|row| row.map(|item| item.0))
-        })
-        .transpose()
-        .map(Option::flatten)
-}
-
-fn check_by_action(
+pub(super) fn check_by_action(
     connection: &Connection,
     project_id: ExecutionId,
     action_id: ExecutionId,
 ) -> Result<Option<(CheckRun, String)>, ExecutionError> {
-    let row: Option<(String,String,String,String,String,String,String,String,String,String)> = connection.query_row(
-        "SELECT run_id,action_id,unit_id,locale,basis,basis_json,validator_version,rules_json,created_at,request_digest
-         FROM review_checks WHERE project_id=?1 AND action_id=?2",
+    let decoded = decode_check_by_action(connection, project_id, action_id)?;
+    if let Some((run, request_digest)) = &decoded {
+        checks::validate_saved(connection, project_id, run, request_digest)?;
+    }
+    Ok(decoded)
+}
+
+fn decode_check_by_action(
+    connection: &Connection,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+) -> Result<Option<(CheckRun, String)>, ExecutionError> {
+    let row: Option<(String,String,String,String,String,String,String,String,String,String,Option<String>,Option<String>)> = connection.query_row(
+        "SELECT run_id,action_id,unit_id,locale,basis,basis_json,validator_version,rules_json,created_at,request_digest,evidence_json,qa_basis
+         FROM review_checks WHERE project_id=?1 AND action_id=?2 AND purpose='qa'",
         params![project_id.to_string(), action_id.to_string()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
-                  row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+                  row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
     ).optional().map_err(sql)?;
     row.map(
         |(
@@ -666,6 +760,8 @@ fn check_by_action(
             rules_json,
             created_at,
             request_digest,
+            evidence_json,
+            qa_basis,
         )| {
             let basis_evidence: ReviewBasis = serde_json::from_str(&basis_json)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "review-basis"))?;
@@ -675,151 +771,31 @@ fn check_by_action(
             let rules: Vec<CheckRuleResult> = serde_json::from_str(&rules_json)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "review-checks"))?;
             let outcome = check_outcome(&rules);
-            Ok((
-                CheckRun {
-                    run_id: parse_id(run_id)?,
-                    action_id: parse_id(action_id)?,
-                    unit_id: parse_id(unit_id)?,
-                    locale,
-                    basis,
-                    basis_evidence,
-                    validator_version,
-                    outcome: outcome.to_owned(),
-                    rules,
-                    created_at,
-                },
-                request_digest,
-            ))
-        },
-    )
-    .transpose()
-}
-
-fn latest_check(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    basis: &str,
-) -> Result<Option<CheckRun>, ExecutionError> {
-    let action: Option<String> = connection
-        .query_row(
-            "SELECT action_id FROM review_checks WHERE project_id=?1 AND unit_id=?2 AND locale=?3
-         AND basis=?4 AND validator_version=?5 ORDER BY rowid DESC LIMIT 1",
-            params![
-                project_id.to_string(),
-                unit_id.to_string(),
-                locale,
-                basis,
-                CHECK_VERSION
-            ],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(sql)?;
-    action
-        .map(|value| {
-            check_by_action(connection, project_id, parse_id(value)?)
-                .map(|row| row.map(|item| item.0))
-        })
-        .transpose()
-        .map(Option::flatten)
-}
-
-fn current_fallback(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    source_revision_id: ExecutionId,
-) -> Result<Option<FallbackDecision>, ExecutionError> {
-    let row: Option<(String,String,String,String,String,String,Option<String>)> = connection.query_row(
-        "SELECT fallback_id,action_id,actor,reason,created_at,kind,previous_fallback_id FROM review_fallbacks
-         WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND source_revision_id=?4
-           AND policy_version=?5 ORDER BY rowid DESC LIMIT 1",
-        params![project_id.to_string(), unit_id.to_string(), locale, source_revision_id.to_string(), POLICY_VERSION],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
-    ).optional().map_err(sql)?;
-    row.map(
-        |(fallback_id, action_id, actor, reason, created_at, kind, previous)| {
-            Ok(FallbackDecision {
-                fallback_id: parse_id(fallback_id)?,
+            let evidence: Option<ReviewCheckEvidence> = evidence_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
+            if evidence.as_ref().map(|e| e.qa_basis.as_str()) != qa_basis.as_deref() {
+                return Err(failure(ErrorCode::CorruptLedger, "review-check-evidence"));
+            }
+            let run = CheckRun {
+                run_id: parse_id(run_id)?,
                 action_id: parse_id(action_id)?,
-                unit_id,
-                locale: locale.to_owned(),
-                source_revision_id,
-                allow: kind == "allow",
-                previous_fallback_id: previous.map(parse_id).transpose()?,
-                policy_version: POLICY_VERSION.to_owned(),
-                actor,
-                reason,
+                unit_id: parse_id(unit_id)?,
+                locale,
+                basis,
+                basis_evidence,
+                validator_version,
+                outcome: outcome.to_owned(),
+                rules,
+                evidence,
                 created_at,
-            })
+            };
+            Ok((run, request_digest))
         },
     )
     .transpose()
-    .map(|item| item.filter(|value| value.allow))
-}
-
-fn current_waivers(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    basis: &str,
-) -> Result<Vec<Waiver>, ExecutionError> {
-    let mut statement = connection.prepare(
-        "SELECT waiver_id,action_id,issue_id,actor,reason,created_at,kind,previous_waiver_id FROM review_waivers
-         WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4 AND policy_version=?5 ORDER BY rowid"
-    ).map_err(sql)?;
-    let rows = statement
-        .query_map(
-            params![
-                project_id.to_string(),
-                unit_id.to_string(),
-                locale,
-                basis,
-                POLICY_VERSION
-            ],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                ))
-            },
-        )
-        .map_err(sql)?;
-    let mut current = BTreeMap::new();
-    for row in rows {
-        let (waiver_id, action_id, issue_id, actor, reason, created_at, kind, previous) =
-            row.map_err(sql)?;
-        let waiver = Waiver {
-            waiver_id: parse_id(waiver_id)?,
-            action_id: parse_id(action_id)?,
-            unit_id,
-            locale: locale.to_owned(),
-            basis: basis.to_owned(),
-            issue_id: issue_id.clone(),
-            grant: kind == "grant",
-            previous_waiver_id: previous.map(parse_id).transpose()?,
-            policy_version: POLICY_VERSION.to_owned(),
-            actor,
-            reason,
-            created_at,
-        };
-        if waiver.grant {
-            current.insert(issue_id, waiver);
-        } else {
-            current.remove(&issue_id);
-        }
-    }
-    Ok(current.into_values().collect())
 }
 
 pub(super) fn target_in(
@@ -828,109 +804,42 @@ pub(super) fn target_in(
     unit_id: ExecutionId,
     locale: &str,
 ) -> Result<ReviewTarget, ExecutionError> {
-    check_project(connection, project_id, locale)?;
-    let row: Option<(String,String,String,String,Option<String>,Option<String>,Option<String>)> = connection.query_row(
-        "SELECT o.snapshot_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,tr.text
-         FROM source_occurrences o
-         JOIN source_units u ON u.unit_id=o.unit_id
-         JOIN source_revisions r ON r.revision_id=o.revision_id
-         JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-         LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?3
-           AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?3)
-         LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
-         WHERE u.project_id=?1 AND o.unit_id=?2",
-        params![project_id.to_string(), unit_id.to_string(), locale],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
-    ).optional().map_err(sql)?;
-    let Some((snapshot, source_revision, native_key, source_text, selection, revision, text)) = row
-    else {
-        return Err(failure(ErrorCode::DependencyConflict, "review-unit"));
-    };
-    let source_snapshot_id = parse_id(snapshot)?;
-    let source_revision_id = parse_id(source_revision)?;
-    let selection_id = selection.map(parse_id).transpose()?;
-    let revision_id = revision.map(parse_id).transpose()?;
-    if selection_id.is_some() != revision_id.is_some() || revision_id.is_some() != text.is_some() {
-        return Err(failure(ErrorCode::CorruptLedger, "review-selection"));
-    }
-    let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
-    let context = resources::current_context(connection, project_id, unit_id, locale)?;
-    let term_conflict = terms
-        .entries
-        .iter()
-        .any(|item| !item.conflicting.is_empty());
-    let mut term_revision_ids: Vec<ExecutionId> = terms
-        .entries
-        .iter()
-        .flat_map(|entry| {
-            entry
-                .selected
-                .iter()
-                .chain(entry.conflicting.iter())
-                .map(|term| term.revision_id)
-        })
-        .collect();
-    term_revision_ids.sort();
-    term_revision_ids.dedup();
-    let basis_evidence = ReviewBasis {
-        source_snapshot_id,
-        source_revision_id,
-        selection_id,
-        revision_id,
-        context_revision_id: context.as_ref().map(|item| item.revision_id),
-        term_revision_ids,
-    };
-    let basis = basis_digest(&basis_evidence)?;
-    let current_decision = latest_decision(connection, project_id, unit_id, locale, &basis)?;
-    let current_check = latest_check(connection, project_id, unit_id, locale, &basis)?;
-    let current_fallback = if selection_id.is_none() {
-        current_fallback(connection, project_id, unit_id, locale, source_revision_id)?
-    } else {
-        None
-    };
-    let waivers = current_waivers(connection, project_id, unit_id, locale, &basis)?;
-    let current_waivers = if let Some(check) = &current_check {
-        let current_issues: BTreeSet<&str> = check
-            .rules
-            .iter()
-            .flat_map(|rule| &rule.findings)
-            .filter(|finding| finding.waivable)
-            .map(|finding| finding.issue_id.as_str())
-            .collect();
-        waivers
-            .into_iter()
-            .filter(|waiver| current_issues.contains(waiver.issue_id.as_str()))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    Ok(ReviewTarget {
-        unit_id,
-        locale: locale.to_owned(),
-        native_key,
-        source_snapshot_id,
-        source_revision_id,
-        source_text,
-        selection_id,
-        revision_id,
-        translation_text: text,
-        basis,
-        basis_evidence,
-        term_conflict,
-        current_decision,
-        current_check,
-        current_fallback,
-        current_waivers,
-    })
+    queries::targets_in(connection, project_id, &[unit_id], locale)?
+        .pop()
+        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-unit"))
 }
 
 impl ProjectStore {
+    /// Original receipt evidence, without rediscovery or renewed execution grants.
+    pub fn review_check_action(
+        &self,
+        project_id: ExecutionId,
+        action_id: ExecutionId,
+    ) -> Result<Option<CheckRun>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?;
+        queries::read_snapshot(connection, |c| {
+            check_by_action(c, project_id, action_id).map(|run| run.map(|(run, _)| run))
+        })
+    }
+
     /// One bounded traversal reused by work pagination and source impact summaries.
     pub(super) fn review_work_set(
         &self,
         project_id: ExecutionId,
         locale: &str,
     ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
+        self.review_work_set_with_cancel(project_id, locale, &Cancellation::default())
+    }
+
+    fn review_work_set_with_cancel(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        cancellation: &Cancellation,
+    ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
+        queries::check_read_cancel(cancellation)?;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
@@ -938,7 +847,14 @@ impl ProjectStore {
             check_project(connection, project_id, locale)?;
             let (_, units) = all_units(connection, project_id)?;
             let impacts = self.impact_map(project_id, locale)?;
-            let targets = queries::targets_in(connection, project_id, &units, locale)?;
+            let targets = queries::targets_in_with_cancel(
+                connection,
+                project_id,
+                &units,
+                locale,
+                cancellation,
+            )?;
+            queries::check_read_cancel(cancellation)?;
             Ok(targets
                 .into_iter()
                 .map(|target| {
@@ -1021,7 +937,7 @@ impl ProjectStore {
         };
         let total: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM source_occurrences WHERE snapshot_id=?1",
+                "SELECT COUNT(DISTINCT unit_id) FROM source_occurrences WHERE snapshot_id=?1",
                 [&snapshot],
                 |row| row.get(0),
             )
@@ -1033,7 +949,7 @@ impl ProjectStore {
             // The usual list view only needs the requested page. Searching reads
             // text across the scope, but must not make every unfiltered page do so.
             let mut statement = connection
-                .prepare("SELECT unit_id,ordinal FROM source_occurrences WHERE snapshot_id=?1 AND ordinal>=?2 ORDER BY ordinal LIMIT ?3")
+                .prepare("SELECT unit_id,MIN(ordinal) FROM source_occurrences WHERE snapshot_id=?1 GROUP BY unit_id HAVING MIN(ordinal)>=?2 ORDER BY MIN(ordinal) LIMIT ?3")
                 .map_err(sql)?;
             let items = statement
                 .query_map(params![snapshot, after_ordinal, limit + 1], |row| {
@@ -1046,13 +962,14 @@ impl ProjectStore {
         } else {
             let query = query.to_lowercase();
             let mut statement = connection.prepare(
-            "SELECT o.unit_id,o.ordinal,o.native_key,r.text,tr.text
+            "SELECT o.unit_id,MIN(o.ordinal) OVER(PARTITION BY o.unit_id),o.native_key,r.text,tr.text
              FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
              LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
                AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?2)
              LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
              WHERE o.snapshot_id=?1 ORDER BY o.ordinal"
         ).map_err(sql)?;
+            let mut matched_units = BTreeSet::new();
             let matches = statement
                 .query_map(params![snapshot, locale], |row| {
                     Ok((
@@ -1075,6 +992,7 @@ impl ProjectStore {
                             .as_ref()
                             .is_some_and(|text| text.to_lowercase().contains(&query))
                 })
+                .filter(|(unit, _, _, _, _)| matched_units.insert(unit.clone()))
                 .collect::<Vec<_>>();
             let total = matches.len() as u32;
             let items = matches
@@ -1124,7 +1042,8 @@ impl ProjectStore {
         let read_actions = |table: &str| -> Result<Vec<ExecutionId>, ExecutionError> {
             // Table names come only from this fixed list, never request data.
             let query = format!(
-                "SELECT action_id FROM {table} WHERE project_id=?1 AND unit_id=?2 AND locale=?3 ORDER BY rowid DESC LIMIT ?4 OFFSET ?5"
+                "SELECT action_id FROM {table} WHERE project_id=?1 AND unit_id=?2 AND locale=?3 {} ORDER BY rowid DESC LIMIT ?4 OFFSET ?5",
+                if table=="review_checks" { "AND purpose='qa'" } else { "" }
             );
             let mut statement = connection.prepare(&query).map_err(sql)?;
             statement
@@ -1300,6 +1219,7 @@ impl ProjectStore {
         .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-receipt"))
     }
 
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     pub fn run_review_checks(
         &mut self,
         project_id: ExecutionId,
@@ -1318,6 +1238,7 @@ impl ProjectStore {
         )
     }
 
+    #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
     pub fn run_review_checks_with_cancel(
         &mut self,
         project_id: ExecutionId,
@@ -1328,7 +1249,7 @@ impl ProjectStore {
         cancellation: &Cancellation,
     ) -> Result<CheckRun, ExecutionError> {
         let prepared =
-            self.prepare_review_check(project_id, unit_id, locale, expected_basis, action_id)?;
+            self.prepare_review_check(project_id, unit_id, locale, expected_basis, action_id, &[])?;
         let computed = prepared.compute(cancellation);
         self.commit_review_check(computed, cancellation)
     }
@@ -1652,7 +1573,7 @@ fn all_units(
     let mut statement = connection
         .prepare(
             "SELECT o.unit_id FROM source_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
-         WHERE o.snapshot_id=?1 AND u.project_id=?2 ORDER BY o.ordinal LIMIT 10001",
+         WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001",
         )
         .map_err(sql)?;
     let units = statement
@@ -1668,7 +1589,7 @@ fn all_units(
     Ok((snapshot_id, units))
 }
 
-fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec<String>) {
+pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec<String>) {
     let mut blockers = Vec::new();
     let mut exceptions = Vec::new();
     if target.selection_id.is_none() {
@@ -1692,16 +1613,9 @@ fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec<String>) {
     match &target.current_check {
         None => blockers.push("qa-missing-or-stale".to_owned()),
         Some(check) => {
-            let rules: BTreeSet<&str> = check.rules.iter().map(|rule| rule.rule.as_str()).collect();
-            if rules
-                != BTreeSet::from([
-                    "required-translation",
-                    "placeholders",
-                    "format",
-                    "terminology",
-                ])
-                || check.rules.len() != 4
-            {
+            let complete =
+                checks::validate_projection(check).is_ok() && checks::coverage_complete(check);
+            if !complete {
                 blockers.push("qa-incomplete-coverage".to_owned());
             }
             let waivers: BTreeSet<&str> = target
@@ -1709,7 +1623,7 @@ fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec<String>) {
                 .iter()
                 .map(|item| item.issue_id.as_str())
                 .collect();
-            for rule in &check.rules {
+            for rule in check.rules.iter().filter(|rule| rule.mandatory) {
                 if rule.status != "passed"
                     && rule.status != "findings"
                     && rule.status != "not-applicable"
@@ -1789,11 +1703,32 @@ impl ProjectStore {
         offset: u32,
         limit: u32,
     ) -> Result<WorkPage, ExecutionError> {
+        self.review_work_page_with_cancel(
+            project_id,
+            locale,
+            offset,
+            limit,
+            &Cancellation::default(),
+        )
+    }
+
+    /// Interruptible read only: cancellation discards the complete projection,
+    /// never a partial page or a persisted review outcome.
+    pub fn review_work_page_with_cancel(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        offset: u32,
+        limit: u32,
+        cancellation: &Cancellation,
+    ) -> Result<WorkPage, ExecutionError> {
         if limit == 0 || limit > 100 || offset > MAX_SCOPE as u32 {
             return Err(failure(ErrorCode::InvalidInput, "review-work-page"));
         }
         let mut items = Vec::new();
-        for (target, reasons) in self.review_work_set(project_id, locale)? {
+        for (target, reasons) in
+            self.review_work_set_with_cancel(project_id, locale, cancellation)?
+        {
             if !reasons.is_empty() {
                 items.push(WorkItem {
                     unit_id: target.unit_id,
@@ -1804,6 +1739,7 @@ impl ProjectStore {
                 });
             }
         }
+        queries::check_read_cancel(cancellation)?;
         let total = items.len() as u32;
         let next_offset = (offset + limit < total).then_some(offset + limit);
         Ok(WorkPage {
@@ -1823,90 +1759,112 @@ impl ProjectStore {
         project_id: ExecutionId,
         locales: &[String],
     ) -> Result<Eligibility, ExecutionError> {
+        self.review_eligibility_with_cancel(project_id, locales, &Cancellation::default())
+    }
+
+    /// A cancelled read returns no qualification and releases its read snapshot.
+    /// Callers must obtain a complete fresh qualification before using it.
+    pub fn review_eligibility_with_cancel(
+        &self,
+        project_id: ExecutionId,
+        locales: &[String],
+        cancellation: &Cancellation,
+    ) -> Result<Eligibility, ExecutionError> {
         if locales.is_empty()
             || locales.len() > 16
             || locales.iter().collect::<BTreeSet<_>>().len() != locales.len()
         {
             return Err(failure(ErrorCode::InvalidInput, "review-locales"));
         }
+        queries::check_read_cancel(cancellation)?;
         let mut requested = locales.to_vec();
         requested.sort();
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
-        for locale in &requested {
-            check_project(connection, project_id, locale)?;
-        }
-        let (source_snapshot_id, units) = all_units(connection, project_id)?;
-        let mut outcomes = Vec::new();
-        let mut bases = Vec::new();
-        for locale in &requested {
-            let impacts = self.impact_map(project_id, locale)?;
-            let mut blockers = Vec::new();
-            let mut exceptions = Vec::new();
-            let mut blocker_count = 0u32;
-            let mut exception_count = 0u32;
-            for unit_id in &units {
-                let target = target_in(connection, project_id, *unit_id, locale)?;
-                let (unit_blockers, unit_exceptions) =
-                    assess(&target, impacts.contains_key(unit_id));
-                blocker_count += unit_blockers.len() as u32;
-                exception_count += unit_exceptions.len() as u32;
-                let decision_id = target
-                    .current_decision
-                    .as_ref()
-                    .map(|value| value.decision_id);
-                let check_id = target.current_check.as_ref().map(|value| value.run_id);
-                let fallback_id = target
-                    .current_fallback
-                    .as_ref()
-                    .map(|value| value.fallback_id);
-                let waiver_ids: Vec<_> = target
-                    .current_waivers
-                    .iter()
-                    .map(|value| value.waiver_id)
-                    .collect();
-                let impact_ids = impacts.get(unit_id).cloned();
-                bases.push((
-                    locale.clone(),
-                    *unit_id,
-                    target.basis.clone(),
-                    decision_id,
-                    check_id,
-                    fallback_id,
-                    waiver_ids,
-                    impact_ids,
-                    unit_blockers.clone(),
-                    unit_exceptions.clone(),
-                ));
-                for reason in unit_blockers {
-                    if blockers.len() < 100 {
-                        blockers.push(eligibility_reason(&target, &reason));
-                    }
-                }
-                for reason in unit_exceptions {
-                    if exceptions.len() < 100 {
-                        exceptions.push(eligibility_reason(&target, &reason));
-                    }
-                }
+        queries::read_snapshot(connection, |connection| {
+            for locale in &requested {
+                check_project(connection, project_id, locale)?;
             }
-            outcomes.push(EligibilityLocale {
-                locale: locale.clone(),
-                ready: blocker_count == 0,
-                blockers,
-                exceptions,
-                checked_units: units.len() as u32,
-                blocker_count,
-                exception_count,
-            });
-        }
-        let ready = outcomes.iter().all(|item| item.ready);
-        Ok(Eligibility {
-            policy_version: POLICY_VERSION.to_owned(),
-            source_snapshot_id,
-            basis: digest(&(POLICY_VERSION, source_snapshot_id, &bases))?,
-            ready,
-            locales: outcomes,
+            let (source_snapshot_id, units) = all_units(connection, project_id)?;
+            let mut outcomes = Vec::new();
+            let mut bases = Vec::new();
+            for locale in &requested {
+                queries::check_read_cancel(cancellation)?;
+                let impacts = self.impact_map(project_id, locale)?;
+                let mut blockers = Vec::new();
+                let mut exceptions = Vec::new();
+                let mut blocker_count = 0u32;
+                let mut exception_count = 0u32;
+                for target in queries::targets_in_with_cancel(
+                    connection,
+                    project_id,
+                    &units,
+                    locale,
+                    cancellation,
+                )? {
+                    let unit_id = target.unit_id;
+                    let (unit_blockers, unit_exceptions) =
+                        assess(&target, impacts.contains_key(&unit_id));
+                    blocker_count += unit_blockers.len() as u32;
+                    exception_count += unit_exceptions.len() as u32;
+                    let decision_id = target
+                        .current_decision
+                        .as_ref()
+                        .map(|value| value.decision_id);
+                    let check_id = target.current_check.as_ref().map(|value| value.run_id);
+                    let fallback_id = target
+                        .current_fallback
+                        .as_ref()
+                        .map(|value| value.fallback_id);
+                    let waiver_ids: Vec<_> = target
+                        .current_waivers
+                        .iter()
+                        .map(|value| value.waiver_id)
+                        .collect();
+                    let impact_ids = impacts.get(&unit_id).cloned();
+                    bases.push((
+                        locale.clone(),
+                        unit_id,
+                        target.basis.clone(),
+                        decision_id,
+                        check_id,
+                        fallback_id,
+                        waiver_ids,
+                        impact_ids,
+                        unit_blockers.clone(),
+                        unit_exceptions.clone(),
+                    ));
+                    for reason in unit_blockers {
+                        if blockers.len() < 100 {
+                            blockers.push(eligibility_reason(&target, &reason));
+                        }
+                    }
+                    for reason in unit_exceptions {
+                        if exceptions.len() < 100 {
+                            exceptions.push(eligibility_reason(&target, &reason));
+                        }
+                    }
+                }
+                outcomes.push(EligibilityLocale {
+                    locale: locale.clone(),
+                    ready: blocker_count == 0,
+                    blockers,
+                    exceptions,
+                    checked_units: units.len() as u32,
+                    blocker_count,
+                    exception_count,
+                });
+            }
+            queries::check_read_cancel(cancellation)?;
+            let ready = outcomes.iter().all(|item| item.ready);
+            Ok(Eligibility {
+                policy_version: POLICY_VERSION.to_owned(),
+                source_snapshot_id,
+                basis: digest(&(POLICY_VERSION, source_snapshot_id, &bases))?,
+                ready,
+                locales: outcomes,
+            })
         })
     }
 
@@ -1993,7 +1951,7 @@ pub(super) mod tests {
             .unwrap();
     }
 
-    pub(super) fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
+    pub(in crate::persistence) fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
         adopt_source_files(
             store,
             br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
@@ -2008,7 +1966,9 @@ pub(super) mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(store).unwrap();
-        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime
+            .register_read_only(Arc::new(TranslationRunner))
+            .unwrap();
         runtime.submit(store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -2076,7 +2036,7 @@ pub(super) mod tests {
         }
     }
 
-    pub(super) fn fixture() -> (
+    pub(in crate::persistence) fn fixture() -> (
         tempfile::TempDir,
         ProjectStore,
         ExecutionId,
@@ -2098,7 +2058,7 @@ pub(super) mod tests {
             page.rows.iter().map(|row| row.unit_id).collect(),
         )
     }
-    pub(super) fn translate(
+    pub(in crate::persistence) fn translate(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,
@@ -2192,7 +2152,7 @@ pub(super) mod tests {
             ErrorCode::InvalidInput
         );
     }
-    fn approve(
+    pub(in crate::persistence) fn approve(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,
@@ -2213,7 +2173,7 @@ pub(super) mod tests {
             })
             .unwrap()
     }
-    pub(super) fn check(
+    pub(in crate::persistence) fn check(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,
@@ -2779,6 +2739,7 @@ pub(super) mod tests {
                     "zh-CN",
                     &old_target.basis,
                     ExecutionId::new(),
+                    &[],
                 )
                 .err()
                 .expect("removed unit must not prepare fresh QA");
@@ -2848,10 +2809,10 @@ pub(super) mod tests {
             let new_occurrence = ExecutionId::new().to_string();
             transaction
                 .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
                      SELECT ?1,?2,ordinal,artifact_id,unit_id,
                             CASE WHEN unit_id=?3 THEN ?4 ELSE revision_id END,
-                            namespace,native_key,comparison_key,key_start,key_end,value_start,value_end
+                            namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection
                      FROM source_occurrences WHERE occurrence_id=?5",
                     params![new_occurrence, next_snapshot, units[0].to_string(), next_revision, old_occurrence],
                 )
@@ -3017,7 +2978,14 @@ pub(super) mod tests {
             )
             .unwrap();
         let delayed_check = store
-            .prepare_review_check(project, units[0], "zh-CN", &newer.basis, ExecutionId::new())
+            .prepare_review_check(
+                project,
+                units[0],
+                "zh-CN",
+                &newer.basis,
+                ExecutionId::new(),
+                &[],
+            )
             .unwrap()
             .compute(&Cancellation::default());
         store
@@ -3635,11 +3603,9 @@ pub(super) mod tests {
         assert_eq!(error.found_schema_version(), Some(version));
         assert_eq!(std::fs::read(&database).unwrap(), before);
         assert_eq!(entries(), before_entries);
-        let unchanged = Connection::open_with_flags(
-            &database,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
+        let unchanged =
+            Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
         assert_eq!(
             unchanged
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
@@ -3652,7 +3618,11 @@ pub(super) mod tests {
     fn schema_six_snapshot_is_refused_without_ddl_or_backup() {
         let (directory, mut store, _, _) = fixture();
         let connection = store.connection_mut().unwrap();
-        crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
+        crate::persistence::remove_unsupported_fixture_domain(
+            connection,
+            crate::persistence::UnsupportedFixtureDomain::Release,
+        )
+        .unwrap();
         for (name, _) in TABLES.iter().rev() {
             connection
                 .execute_batch(&format!("DROP TABLE {name}"))
@@ -3661,7 +3631,7 @@ pub(super) mod tests {
         connection
             .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
             .unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
+        crate::persistence::prepare_unsupported_translation_fixture(&connection).unwrap();
         connection.pragma_update(None, "user_version", 6).unwrap();
         drop(store);
         assert_unsupported_review_snapshot(&directory.path().join("project"), 6);
@@ -3682,7 +3652,11 @@ pub(super) mod tests {
         let (directory, mut store, _, _) = fixture();
         let path = directory.path().join("project");
         let connection = store.connection_mut().unwrap();
-        crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
+        crate::persistence::remove_unsupported_fixture_domain(
+            connection,
+            crate::persistence::UnsupportedFixtureDomain::Release,
+        )
+        .unwrap();
         for (name, _) in TABLES.iter().rev() {
             connection
                 .execute_batch(&format!("DROP TABLE {name}"))
@@ -3691,7 +3665,7 @@ pub(super) mod tests {
         connection
             .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
             .unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
+        crate::persistence::prepare_unsupported_translation_fixture(&connection).unwrap();
         connection.pragma_update(None, "user_version", 6).unwrap();
         drop(store);
         let before = std::fs::read(path.join("project.sqlite3")).unwrap();
@@ -4208,8 +4182,8 @@ pub(super) mod tests {
                 .unwrap();
             transaction
                 .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
-                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2)",
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
+                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2,?7,?7,?7,x'7b7d')",
                     params![occurrence, snapshot, ordinal as i64, artifact, unit, revision, key],
                 )
                 .unwrap();
@@ -4269,8 +4243,8 @@ pub(super) mod tests {
                 .unwrap();
             transaction
                 .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
-                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2)",
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
+                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2,?7,?7,?7,x'7b7d')",
                     params![ExecutionId::new().to_string(), snapshot, ordinal, artifact, unit, source_revision, key],
                 )
                 .unwrap();
@@ -4312,6 +4286,55 @@ pub(super) mod tests {
                 .code,
             ErrorCode::LimitExceeded
         );
+    }
+
+    #[test]
+    fn current_layout_tagged_schema_six_is_refused_without_ddl_or_backup() {
+        let (directory, mut store, _, _) = fixture();
+        let connection = store.connection_mut().unwrap();
+        connection.pragma_update(None, "user_version", 6).unwrap();
+        drop(store);
+        assert_unsupported_review_snapshot(&directory.path().join("project"), 6);
+    }
+
+    #[test]
+    fn current_layout_tagged_schema_six_process_reopen_is_refused_without_changes() {
+        let (directory, mut store, _, _) = fixture();
+        let path = directory.path().join("project");
+        let connection = store.connection_mut().unwrap();
+        connection.pragma_update(None, "user_version", 6).unwrap();
+        drop(store);
+        let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+        for replay in 0..2 {
+            let proof = directory.path().join(format!("refusal-{replay}.txt"));
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "persistence::review::tests::schema_six_refusal_child",
+                ])
+                .env("TSUMUGI_REVIEW_UNSUPPORTED_PROJECT", &path)
+                .env("TSUMUGI_REVIEW_UNSUPPORTED_PROOF", &proof)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("unsupported snapshot child timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert!(status.success());
+            assert_eq!(std::fs::read(&proof).unwrap(), b"unsupported-schema:6");
+            assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
+            assert_unsupported_review_snapshot(&path, 6);
+        }
     }
 
     #[test]
@@ -4780,7 +4803,9 @@ pub(super) mod tests {
         let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
         assert_eq!(history_rows(reopened.connection().unwrap()), before_reopen);
         assert_eq!(
-            reopened.connection().unwrap()
+            reopened
+                .connection()
+                .unwrap()
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
             crate::persistence::SCHEMA_VERSION
@@ -4799,7 +4824,7 @@ pub(super) mod tests {
         let database = directory.path().join("project/project.sqlite3");
         let current_snapshot = std::fs::read(&database).unwrap();
         let legacy = Connection::open(&database).unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&legacy).unwrap();
+        crate::persistence::prepare_unsupported_translation_fixture(&legacy).unwrap();
         legacy.pragma_update(None, "user_version", 9).unwrap();
         drop(legacy);
         assert_unsupported_review_snapshot(&directory.path().join("project"), 9);
@@ -4808,7 +4833,10 @@ pub(super) mod tests {
         std::fs::write(&database, current_snapshot).unwrap();
         let restored = ProjectStore::open(directory.path().join("project")).unwrap();
         assert_eq!(history_rows(restored.connection().unwrap()), before_reopen);
-        assert_eq!(restored.release_artifact(release_id, "zh-CN").unwrap().1, bytes);
+        assert_eq!(
+            restored.release_artifact(release_id, "zh-CN").unwrap().1,
+            bytes
+        );
         drop(restored);
         let moved = directory.path().join("moved-project");
         std::fs::rename(directory.path().join("project"), &moved).unwrap();
@@ -4922,7 +4950,14 @@ pub(super) mod tests {
             })
         );
         let check_failure = store
-            .prepare_review_check(project, units[0], "zh-CN", &old.basis, ExecutionId::new())
+            .prepare_review_check(
+                project,
+                units[0],
+                "zh-CN",
+                &old.basis,
+                ExecutionId::new(),
+                &[],
+            )
             .err()
             .unwrap();
         assert_eq!(check_failure.conflict, failure.conflict);

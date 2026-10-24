@@ -47,6 +47,19 @@ mod contracts {
         round_trip!("responses", "work", WorkPage);
         round_trip!("responses", "eligibility", Eligibility);
         round_trip!("responses", "editor", ReviewEditorSnapshot);
+        let mut summary = fixture["responses"]["summary"].clone();
+        summary["rows"][0]["currentCheck"]["hasIncomplete"] = serde_json::json!(true);
+        let core: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summary).unwrap();
+        assert!(core.rows[0].current_check.as_ref().unwrap().has_incomplete);
+        assert_eq!(
+            serde_json::to_value(ReviewSummaryPage::try_from(core).unwrap()).unwrap(),
+            fixture["responses"]["summary"]
+        );
+        assert_eq!(
+            super::super::review_wire::ReviewCheckOutcome::try_from(tsumugi_core::ReviewCheckOutcome::Unknown)
+                .unwrap_err().code,
+            ErrorCode::DependencyConflict
+        );
         let mut optional = fixture["requests"]["decision"].clone();
         optional["decision"]
             .as_object_mut()
@@ -77,10 +90,12 @@ mod contracts {
     }
 }
 use tsumugi_core::{
-    CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewEditorSnapshot,
-    ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
-    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
+    Eligibility, FallbackDecision, FallbackWrite, ReviewDecision,
+    ReviewNeighbor, ReviewScopeCapture,
+    ReviewWrite, Waiver, WaiverWrite, WorkPage,
 };
+
+use super::review_wire::{CheckRun, ReviewEditorSnapshot, ReviewHistoryPage, ReviewPage, ReviewSummaryPage, ReviewTarget};
 
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewPageRequest {
     locale: String,
@@ -200,6 +215,7 @@ pub async fn read_review_summary_page(
                         &request.query,
                         request.scope_id,
                     )
+                    .and_then(TryInto::try_into)
                     .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
@@ -225,6 +241,7 @@ pub async fn read_review_editor_snapshot(
                 )?
                 .store
                 .review_editor_snapshot(request.project_id, request.unit_id, &request.locale)
+                .and_then(TryInto::try_into)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
@@ -321,7 +338,8 @@ pub async fn read_review_page(
                         request.limit,
                         request.query.as_deref().unwrap_or(""),
                     )
-                    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                    .and_then(TryInto::try_into)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
         .await
@@ -346,6 +364,7 @@ pub async fn read_review_target(
                 )?
                 .store
                 .review_target(request.project_id, request.unit_id, &request.locale)
+                .and_then(TryInto::try_into)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
@@ -377,6 +396,7 @@ pub async fn read_review_history(
                     request.offset,
                     request.limit,
                 )
+                .and_then(TryInto::try_into)
                 .map_err(|error| mapped(error, CommandStage::ExecutionRead))
             },
         )
@@ -417,7 +437,7 @@ pub async fn write_review_decision(
 }
 
 enum CheckCapture {
-    Recorded(CheckRun),
+    Recorded(tsumugi_core::CheckRun),
     Prepared(tsumugi_core::PreparedReviewCheck),
 }
 
@@ -511,6 +531,7 @@ pub async fn run_review_checks(
                     &initial.locale,
                     &initial.expected_basis,
                     initial.action_id,
+                    &[],
                 )
                 .map(CheckCapture::Prepared)
                 .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
@@ -573,6 +594,7 @@ pub async fn run_review_checks(
     })
     .await
     .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
+    .and_then(|run| run.try_into().map_err(|error| mapped(error, CommandStage::ExecutionAdopt)))
 }
 
 #[tauri::command]
@@ -813,7 +835,7 @@ pub async fn read_review_fallback_action(
 pub async fn read_review_check_action(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
-) -> Result<Option<tsumugi_core::ReviewCheckActionRead>, CommandError> {
+) -> Result<Option<super::review_wire::ReviewCheckActionRead>, CommandError> {
     state
         .sessions
         .run(
@@ -834,7 +856,9 @@ pub async fn read_review_check_action(
                         unit_id: request.unit_id,
                         locale: request.locale,
                         expected_basis: request.expected_basis,
+                        advisory_checks: Vec::new(),
                     })
+                    .and_then(|read| read.map(TryInto::try_into).transpose())
                     .map_err(map_read)
             },
         )
