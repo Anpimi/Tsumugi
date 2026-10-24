@@ -1,34 +1,40 @@
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { createRef } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
+import { createRef, useLayoutEffect } from "react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
-import type { ContentPage, SourceChangePage } from "./sourceCommands";
+import type { ContentPage, SourceChangePage, SourceAdoptRequest } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture, sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
+import { sourcePageFixture, sourceIntegrationFixture, captionIntegrationFixture, sourceAttemptFixture, sourceActionFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
+import { useSourceDraftSession } from "./SourceDraftSession";
+import { useWorkbenchCommands, type SourceBasisCommandPayload } from "./workbenchCommands";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
-const preview: ContentPage = { snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "native-key" } }] };
+const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: executionFixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
+const preview: ContentPage = { snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: sourcePageFixture().confirmation.resultDigest, identityPolicy: "smapi-native-key/1", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: sourcePageFixture().coverage[0].sha256 }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "smapi-native-key/1" } }] };
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); invoke.mockReset();
-  invoke.mockImplementation(async (command: string) => {
+  let identities = 0;
+  let prepared: SourceAdoptRequest | null = null;
+  invoke.mockImplementation(async (command: string, args: { request?: Record<string, unknown> }) => {
     if (command === "read_source_integration") return sourceIntegrationFixture;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: null };
     if (command === "select_source") return { selectionId: fixtureIdentity(102), folderName: "Example Mod" };
     if (command === "preflight_source") return { namespace: "Example.Mod", count: 2, sourceLanguage: "en-US", diagnostics: [], files: [] };
-    if (command === "create_execution_identity") return executionFixture.prepare.actionId;
-    if (command === "start_source_import") return executionFixture.detail.attemptId;
-    if (command === "read_execution_attempt") return { ...executionFixture.detail, items: [{ ...executionFixture.detail.items[0], resultId: executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: "valid" } }] };
-    if (command === "read_source_preview") return preview;
-    if (command === "prepare_source_adoption") return executionFixture.action;
+    if (command === "create_execution_identity") return ++identities === 1 ? executionFixture.detail.attemptId : executionFixture.prepare.actionId;
+    if (command === "start_source_import") return args.request!.attemptId;
+    if (command === "read_execution_attempt") return sourceAttemptFixture(args.request!.attemptId as string, preview.resultId);
+    if (command === "read_source_preview") return { ...preview, attemptId: args.request!.attemptId };
+    if (command === "prepare_source_adoption") { prepared = args.request as unknown as SourceAdoptRequest; return sourceActionFixture(prepared); }
     if (command === "cancel_source_capture") return null;
-    if (command === "adopt_execution" || command === "read_execution_receipt") return { ...executionFixture.receipt, changes: [{ kind: "source-snapshot", id: fixtureIdentity(100), revision: "2" }] };
-    if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) } };
+    if (command === "adopt_execution" || command === "read_execution_receipt") return sourceReceiptFixture(prepared!);
+    if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) },
+      rows: preview.rows.map(row => ({ ...row, occurrenceId: fixtureIdentity(151), unitId: fixtureIdentity(152), sourceRevisionId: fixtureIdentity(153) })),
+      confirmation: { ...preview.confirmation, expectedContentRevision: "2", expectedCurrentSnapshot: fixtureIdentity(100) } };
     if (command === "read_source_impact") return { snapshotId: fixtureIdentity(100), summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
     throw new Error(command);
   });
@@ -51,7 +57,7 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
   await user.click(await screen.findByRole("button", { name: choose }));
   expect(screen.getByRole("region", { name: choose })).toBeInTheDocument();
   expect(screen.queryByText(/The name default\.json|default\.json 文件名/)).not.toBeInTheDocument();
-  expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: "project" } });
+  expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: executionFixture.session.projectId } });
   await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
   await user.click(screen.getByRole("button", { name: check }));
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
@@ -138,8 +144,43 @@ it("requires a language declaration and full-range confirmation, retaining liter
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
   await user.click(screen.getByRole("button", { name: "Apply to project" }));
   await screen.findByRole("heading", { name: "Imported source content" });
-  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: "project", attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
+  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: executionFixture.session.projectId, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+});
+it("keeps confirmed application separate from a failed content read and retries only the read", async () => {
+  const original = invoke.getMockImplementation()!;
+  let unreadable = true;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_source_content" && unreadable
+    ? Promise.reject(new Error("Content read unavailable")) : original(command, args));
+  const view = render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
+  await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await screen.findByText("Source content was applied. If reading it fails, retry the read below.");
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Check recorded outcome" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Apply to project" })).not.toBeInTheDocument();
+  view.rerender(null); view.rerender(<SourceWorkbench project={project} disabled={false} />);
+  await screen.findByRole("alert");
+  unreadable = false;
+  await user.click(screen.getByRole("button", { name: "Read applied source content" }));
+  await screen.findByRole("heading", { name: "Imported source content" });
+  expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption")).toHaveLength(1);
+});
+
+it("restores source selection, declaration and preflight when only the view remounts", async () => {
+  const view = render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await screen.findByRole("button", { name: "Import for preview" });
+  view.rerender(null); view.rerender(<SourceWorkbench project={project} disabled={false} />);
+  expect(await screen.findByText("Example Mod")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /I confirm/ })).toBeChecked();
+  // Reopening verifies the cached current reads before allowing a fresh start.
+  await waitFor(() => expect(screen.getByRole("button", { name: "Import for preview" })).toBeEnabled());
+  expect(invoke.mock.calls.filter(([name]) => name === "preflight_source")).toHaveLength(1);
 });
 it("keeps the selection across view changes and requires a decision before leaving the project", async () => {
   const ref = createRef<SourceHandle>();
@@ -157,7 +198,7 @@ it("keeps the selection across view changes and requires a decision before leavi
   act(() => { decision = ref.current!.allowLeave(); });
   await user.click(screen.getByRole("button", { name: "Discard selection and continue" }));
   expect(await decision).toBe(true);
-  expect(invoke).toHaveBeenCalledWith("cancel_source_capture", { request: { sessionToken: "session", projectId: "project" } });
+  expect(invoke).toHaveBeenCalledWith("cancel_source_capture", { request: { sessionToken: "session", projectId: executionFixture.session.projectId } });
 });
 it("queries a lost acknowledgement without applying a second time", async () => {
   const original = invoke.getMockImplementation()!;
@@ -276,4 +317,235 @@ it("does not overwrite a newer identity draft after a delayed estimate or projec
   expect(await leave).toBe(false);
   await act(async () => complete([{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }]));
   expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Preserved draft");
+});
+
+let draft: ReturnType<typeof useSourceDraftSession>, registry: ReturnType<typeof useWorkbenchCommands>;
+function SourceProbe() { const value = useSourceDraftSession(), commands = useWorkbenchCommands(); useLayoutEffect(() => { draft = value; registry = commands; }); return null; }
+const sourceScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "source" as const };
+
+it("distinguishes current source from an earlier applied receipt without discarding its confirmed outcome", async () => {
+  const original = invoke.getMockImplementation()!;
+  let current: string | null = null, revision = "1";
+  invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return { revision, currentSnapshot: current };
+    if (command === "read_source_content") { const id = payload.request.snapshotId as string; return { ...preview, snapshotId: id, scope: { revision, currentSnapshot: current },
+      confirmation: { ...preview.confirmation, expectedContentRevision: revision, expectedCurrentSnapshot: current },
+      rows: [{ ...preview.rows[0], occurrenceId: fixtureIdentity(151), unitId: fixtureIdentity(152), sourceRevisionId: fixtureIdentity(153),
+        occurrence: { ...preview.rows[0].occurrence, text: id === fixtureIdentity(100) ? "Previously applied source" : "New current source" } }] }; }
+    if (command === "read_source_impact") return { snapshotId: current, summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
+    const result = await original(command, payload);
+    if (command === "adopt_execution") { current = fixtureIdentity(100); revision = "2"; }
+    return result;
+  });
+  render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>, project);
+  const user = await prepare(); await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ })); await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await screen.findByText("Previously applied source"); const receipt = draft.current().receipt;
+  current = fixtureIdentity(200); revision = "3"; await refreshWorkbenchReads(["source"]);
+  await user.click(screen.getByRole("button", { name: "View current source content" }));
+  await screen.findByText("New current source"); expect(screen.queryByText("Previously applied source")).not.toBeInTheDocument();
+  expect(draft.current().receipt).toBe(receipt); expect(draft.current().pendingApply).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Read applied source content" })); await screen.findByText("Previously applied source");
+  expect(draft.current().receipt).toBe(receipt); expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it.each(["comparison", "preview"] as const)("reads the applied snapshot beside a newer retained %s after a delayed ACK, with independent read recovery and paging", async kind => {
+  const ref = createRef<SourceHandle>(), original = invoke.getMockImplementation()!, fixed = updateComparison();
+  let scope = kind === "comparison" ? fixed.scope : preview.scope, submitted: SourceAdoptRequest | null = null;
+  let finish!: (value: unknown) => void, failContent = true;
+  invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return Promise.resolve(scope);
+    if (command === "read_source_comparison") return Promise.resolve(fixed);
+    if (command === "estimate_source_update") return Promise.resolve([{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }]);
+    if (command === "prepare_source_adoption") { submitted = payload.request as unknown as SourceAdoptRequest; return Promise.resolve(sourceActionFixture(submitted)); }
+    if (command === "adopt_execution") return new Promise(resolve => { finish = resolve; });
+    if (command === "read_source_preview") return Promise.resolve({ ...preview, attemptId: payload.request.attemptId, scope,
+      confirmation: { ...preview.confirmation, expectedContentRevision: scope.revision, expectedCurrentSnapshot: scope.currentSnapshot },
+      ...(payload.request.after ? { nextOrdinal: null, rows: [{ ...preview.rows[0], occurrence: { ...preview.rows[0].occurrence, ordinal: 1, text: "Preview next page" } }] } : {}) });
+    if (command === "read_source_content") {
+      if (failContent) return Promise.reject(new Error("Applied snapshot read unavailable"));
+      return Promise.resolve({ ...preview, snapshotId: payload.request.snapshotId, scope,
+        confirmation: { ...preview.confirmation, expectedContentRevision: scope.revision, expectedCurrentSnapshot: scope.currentSnapshot },
+        nextOrdinal: payload.request.after ? null : 1, rows: [{ ...preview.rows[0], occurrenceId: fixtureIdentity(151), unitId: fixtureIdentity(152), sourceRevisionId: fixtureIdentity(153),
+          occurrence: { ...preview.rows[0].occurrence, ordinal: payload.request.after ? 1 : 0, text: payload.request.after ? "Applied next page" : "Applied first page" } }] });
+    }
+    if (command === "read_source_impact") return Promise.resolve({ snapshotId: fixtureIdentity(100), summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null });
+    return original(command, payload);
+  });
+  render(<><SourceProbe/><SourceWorkbench ref={ref} project={project} disabled={false}/></>, project);
+  const user = userEvent.setup();
+  if (kind === "comparison") {
+    act(() => ref.current!.showAttempt(fixed.attemptId)); await screen.findByRole("heading", { name: "Review upstream changes" });
+    await user.type(screen.getByRole("textbox", { name: "Reviewer for identity decisions" }), "Submitted reviewer");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), `continue:${fixtureIdentity(106)}`);
+    await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Submitted reason");
+    await user.click(screen.getByRole("button", { name: "Review estimated impact" }));
+    await user.click(screen.getByRole("checkbox", { name: /Apply all 3 compared/ }));
+    await user.click(screen.getByRole("button", { name: "Apply new source snapshot" }));
+  } else {
+    await prepare(); await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
+    await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  }
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  const basis = draft.current().comparison ?? draft.current().preview, request = structuredClone(submitted!);
+  act(() => { draft.edit("actor", "Newer reviewer"); if (kind === "comparison") draft.edit("lineage", before => ({ ...before, 0: { ...before[0], reason: "Newer reason" } })); });
+  if (kind === "comparison") { expect(request.confirmation.actor).toBe("Submitted reviewer"); expect(request.confirmation.lineage?.[0].reason).toBe("Submitted reason"); }
+  scope = { revision: (BigInt(request.confirmation.expectedContentRevision) + 1n).toString(), currentSnapshot: fixtureIdentity(100) };
+  await act(async () => { finish(sourceReceiptFixture(request)); });
+  await screen.findByText("Source content could not be read. Retry this page; saved content and your identity decisions are kept.");
+  const receipt = draft.current().receipt;
+  expect(receipt?.changes[0].id).toBe(fixtureIdentity(100)); expect(draft.current().pendingApply).toBeNull();
+  expect(draft.current().comparison ?? draft.current().preview).toBe(basis); expect(draft.current().actor).toBe("Newer reviewer");
+  if (kind === "comparison") expect(draft.current().lineage[0].reason).toBe("Newer reason");
+  await user.click(screen.getByRole("button", { name: "Read applied source content" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_source_content")).toHaveLength(2));
+  const retry = screen.getByRole("button", { name: "Retry this read" }); await waitFor(() => expect(retry).toBeEnabled());
+  failContent = false; await user.click(retry); await screen.findByText("Applied first page");
+  expect(draft.current().receipt).toBe(receipt); expect(draft.current().comparison ?? draft.current().preview).toBe(basis);
+  expect(draft.current().actor).toBe("Newer reviewer"); expect(draft.current().confirmed).toBe(false);
+  if (kind === "comparison") expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Newer reason");
+  expect(registry.dispatch("source.begin-update", sourceScope)).toBe(false);
+  expect(screen.queryByRole("button", { name: "Update source content" })).not.toBeInTheDocument();
+  let content = within(screen.getByRole("heading", { name: "Imported source content" }).closest("section")!);
+  const nextContent = content.getByRole("button", { name: "Next page" }); await waitFor(() => expect(nextContent).toBeEnabled());
+  await user.click(nextContent);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_source_content", { request: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, snapshotId: fixtureIdentity(100), after: 1, limit: 50 } }));
+  await screen.findByText("Applied next page");
+  // Changing the exact query removes the empty projection and mounts its new result.
+  content = within(screen.getByRole("heading", { name: "Imported source content" }).closest("section")!);
+  expect(content.getByText("Applied next page")).toBeInTheDocument();
+  expect(draft.current().previewAfter).toBe(0); expect(draft.current().comparisonAfter).toBe(0);
+  if (kind === "preview") {
+    const fixedView = within(screen.getByRole("heading", { name: "Review imported strings" }).closest("section")!);
+    const nextPreview = fixedView.getByRole("button", { name: "Next page" }); await waitFor(() => expect(nextPreview).toBeEnabled());
+    await user.click(nextPreview);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_source_preview", { request: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: preview.attemptId, resultId: preview.resultId, after: 1, limit: 50 } }));
+    await screen.findByText("Source content could not be read. Retry this page; saved content and your identity decisions are kept.");
+    content = within(screen.getByRole("heading", { name: "Imported source content" }).closest("section")!);
+    expect(draft.current().previewAfter).toBe(1); expect(content.getByText("Applied next page")).toBeInTheDocument();
+    expect(draft.current().preview).toBe(basis); expect(screen.queryByText("Preview next page")).not.toBeInTheDocument();
+  }
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+});
+
+it("shows no captured first-page rows when a new exact comparison cursor fails, while retaining decisions and typed search", async () => {
+  const ref = createRef<SourceHandle>(), original = invoke.getMockImplementation()!, fixed = updateComparison(); let fail = true;
+  invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return Promise.resolve(fixed.scope);
+    if (command === "read_source_comparison") {
+      const after = payload.request.after as number, query = payload.request.filter;
+      if (query === "A" && after === 1 && fail) return Promise.reject(new Error("Next comparison page unavailable"));
+      return Promise.resolve(query ? { ...fixed, filteredTotal: 2, nextOrdinal: after ? null : 1, rows: [{ ...fixed.rows[0], new: { ...fixed.rows[0].new!, ordinal: after ? 70 : 0, key: after ? "A-next" : "A-first" } }] } : fixed);
+    }
+    return original(command, payload);
+  });
+  render(<><SourceProbe/><SourceWorkbench ref={ref} project={project} disabled={false}/></>, project); act(() => ref.current!.showAttempt(fixed.attemptId));
+  await screen.findByRole("heading", { name: "Review upstream changes" }); const user = userEvent.setup();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), `continue:${fixtureIdentity(106)}`);
+  await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Keep my reason");
+  const basis = draft.current().comparison, input = screen.getByRole("textbox", { name: "Find a key, text or change type" });
+  await user.type(input, "A"); await user.click(screen.getByRole("button", { name: "Search" })); await screen.findByText("A-first");
+  await user.clear(input); await user.type(input, "B"); await user.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByRole("alert"); expect(screen.queryByText("A-first")).not.toBeInTheDocument(); expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  expect(draft.current().comparison).toBe(basis); expect(draft.current().lineage[0].reason).toBe("Keep my reason"); expect(input).toHaveValue("B");
+  fail = false; await user.click(screen.getByRole("button", { name: "Retry this read" })); await screen.findByText("A-next");
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_comparison").slice(-2).map(([, payload]) => payload.request)).toEqual([
+    expect.objectContaining({ base: fixed.previousSnapshotId, filter: "A", after: 1, limit: 50 }), expect.objectContaining({ base: fixed.previousSnapshotId, filter: "A", after: 1, limit: 50 })]);
+  expect(draft.current().comparison).toBe(basis); expect(draft.current().confirmed).toBe(false);
+});
+
+it("does not recapture an automatically refreshed comparison until the user explicitly refreshes the same lineage base", async () => {
+  const ref = createRef<SourceHandle>(), original = invoke.getMockImplementation()!, fixed = updateComparison(); let revision = "2";
+  invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => {
+    const current = revision === "2" ? fixed.scope.currentSnapshot : fixtureIdentity(200);
+    if (command === "read_content_scope") return Promise.resolve({ revision, currentSnapshot: current });
+    if (command === "read_source_comparison") return Promise.resolve({ ...fixed, scope: { revision, currentSnapshot: current }, previousSnapshotId: payload.request.base ?? fixed.previousSnapshotId,
+      confirmation: { ...fixed.confirmation, expectedContentRevision: revision, expectedCurrentSnapshot: current, lineageBaseSnapshot: payload.request.base ?? fixed.previousSnapshotId } });
+    if (command === "estimate_source_update") return Promise.resolve([{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }]);
+    return original(command, payload);
+  });
+  render(<><SourceProbe/><SourceWorkbench ref={ref} project={project} disabled={false}/></>, project); act(() => ref.current!.showAttempt(fixed.attemptId));
+  await screen.findByRole("heading", { name: "Review upstream changes" }); const user = userEvent.setup();
+  await user.type(screen.getByRole("textbox", { name: "Reviewer for identity decisions" }), "Maintainer");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), `continue:${fixtureIdentity(106)}`);
+  await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Fixed lineage reason");
+  await user.click(screen.getByRole("button", { name: "Review estimated impact" })); await user.click(screen.getByRole("checkbox", { name: /Apply all 3 compared/ }));
+  const basis = draft.current().comparison; revision = "3"; await refreshWorkbenchReads(["source"]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh comparison against current source" })).toBeEnabled());
+  expect(draft.current().comparison).toBe(basis); expect(draft.current().confirmed).toBe(false); expect(draft.current().estimate).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Fixed lineage reason");
+  await user.click(screen.getByRole("button", { name: "Refresh comparison against current source" }));
+  await waitFor(() => expect(draft.current().comparison?.scope.revision).toBe("3"));
+  expect(draft.current().comparison?.previousSnapshotId).toBe(fixed.previousSnapshotId); expect(draft.current().lineage[0].reason).toBe("Fixed lineage reason");
+  expect(draft.current().actor).toBe("Maintainer"); expect(draft.current().estimate).toBeNull(); expect(draft.current().confirmed).toBe(false);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption" || command === "adopt_execution")).toHaveLength(0);
+});
+
+it("keeps manual candidate pagination on its applied query and assigns the captured new ordinal", async () => {
+  const ref = createRef<SourceHandle>(), original = invoke.getMockImplementation()!, fixed = updateComparison();
+  invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return Promise.resolve(fixed.scope);
+    if (command === "read_source_comparison") return Promise.resolve(fixed);
+    if (command === "read_source_history_content") return Promise.resolve({ ...preview, snapshotId: fixed.previousSnapshotId, scope: fixed.scope,
+      confirmation: fixed.confirmation, total: 2, nextOrdinal: payload.request.after ? null : 1, rows: [{ ...fixed.rows[0].old!, occurrence: { ...fixed.rows[0].old!.occurrence, ordinal: 73, key: "Historical candidate" } }] });
+    return original(command, payload);
+  });
+  render(<><SourceProbe/><SourceWorkbench ref={ref} project={project} disabled={false}/></>, project); act(() => ref.current!.showAttempt(fixed.attemptId));
+  await screen.findByRole("heading", { name: "Review upstream changes" }); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Choose another historical item" }));
+  const panel = within(screen.getByRole("heading", { name: /Choose correspondence for/ }).closest("section")!);
+  const input = panel.getByRole("textbox", { name: "Search historical keys or text" });
+  await user.type(input, "A"); await user.click(panel.getByRole("button", { name: "Search" })); await panel.findByText("Historical candidate");
+  await user.clear(input); await user.type(input, "B"); await user.click(panel.getByRole("button", { name: "Next page" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_source_history_content", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, snapshotId: fixed.previousSnapshotId, query: "A", after: 1, limit: 20 } }));
+  await user.click(await panel.findByRole("button", { name: "Continue content identity" }));
+  expect(draft.current().lineage[0]).toMatchObject({ newOrdinal: 0, oldOccurrenceId: fixtureIdentity(106), reason: "" });
+  expect(draft.current().lineage[73]).toBeUndefined(); expect(input).toHaveValue("B");
+});
+
+it("allows leaving a pure content read and ignores its hidden late result", async () => {
+  const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void, first = true;
+  invoke.mockImplementation((command: string, payload: unknown) => {
+    if (command === "read_content_scope") return Promise.resolve({ revision: "2", currentSnapshot: fixtureIdentity(100) });
+    if (command === "read_source_content" && first) { first = false; return new Promise(resolve => { finish = resolve; }); }
+    return original(command, payload);
+  });
+  render(<SourceWorkbench project={project} disabled={false}/>); const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Source content" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function")); await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  await act(async () => { const page = await original("read_source_content", {}); finish({ ...page, rows: [{ ...page.rows[0], occurrence: { ...page.rows[0].occurrence, text: "Hidden stale text" } }] }); });
+  await user.click(screen.getByRole("button", { name: "Source content" })); await screen.findByRole("heading", { name: "Imported source content" });
+  expect(screen.queryByText("Hidden stale text")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_content")).toHaveLength(2);
+});
+
+it("rejects stale registry inputs and prevents a fresh application after its consumer unmounts during identity preparation", async () => {
+  const view = render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>, project); const user = await prepare();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
+  const basis = draft.current().preview!, payload: SourceBasisCommandPayload = { kind: "source-basis", attemptId: basis.attemptId, resultId: basis.resultId,
+    revision: basis.scope.revision, currentSnapshot: basis.scope.currentSnapshot, base: null, editSeq: draft.current().editSeq };
+  expect(registry.dispatch("source.apply", sourceScope, { ...payload, resultId: fixtureIdentity(201) })).toBe(false);
+  expect(registry.dispatch("source.apply", sourceScope, { ...payload, editSeq: payload.editSeq + 1 })).toBe(false);
+  const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void;
+  invoke.mockImplementation((command: string, args: unknown) => command === "create_execution_identity" ? new Promise(resolve => { finish = resolve; }) : original(command, args));
+  act(() => { expect(registry.dispatch("source.apply", sourceScope, payload)).toBe(true); expect(registry.dispatch("source.apply", sourceScope, payload)).toBe(false); });
+  await waitFor(() => expect(finish).toBeTypeOf("function")); view.rerender(<SourceProbe/>);
+  await act(async () => { finish(fixtureIdentity(202)); });
+  await waitFor(() => expect(draft.inFlight()).toBe(false));
+  expect(draft.current().preview).toBe(basis); expect(draft.current().pendingApply).toBeNull();
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_source_adoption" || command === "adopt_execution")).toHaveLength(0);
+});
+
+it("checks the original pending application even when current scope queries fail", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "adopt_execution" ? Promise.reject(new Error("Unknown adoption"))
+    : command === "read_content_scope" && invoke.mock.calls.some(([name]) => name === "adopt_execution") ? Promise.reject(new Error("Current scope unavailable")) : original(command, payload));
+  render(<><SourceProbe/><SourceWorkbench project={project} disabled={false}/></>, project); const user = await prepare();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ })); await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await screen.findByRole("button", { name: "Check recorded outcome" }); const request = draft.current().pendingApply;
+  await refreshWorkbenchReads(["source"]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check recorded outcome" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Check recorded outcome" }));
+  await screen.findByText("Source content was applied. If reading it fails, retry the read below.");
+  expect(draft.current().pendingApply).toBeNull(); expect(draft.current().receipt?.actionId).toBe(request?.actionId);
+  expect(invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
 });

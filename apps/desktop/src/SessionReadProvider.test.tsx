@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { SessionReadProvider, useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { SessionReadProvider, useSessionQuery, useSessionInfiniteQuery, useSessionReads } from "./SessionReadProvider";
 import type { SessionReads } from "./sessionReads";
 afterEach(cleanup);
 const context = { projectId: "project", sessionToken: "session" };
@@ -47,4 +47,35 @@ it("keeps a slow project A response out of project B's view and cache", async ()
   expect(owners[1].client.getQueryData(owners[1].key(["same-attempt"]))).toBe("Current project B");
   expect(owners[1].client.getQueryCache().getAll().every(query => query.queryKey[0] === projectB.projectId && query.queryKey[1] === projectB.sessionToken)).toBe(true);
   expect(readB).toHaveBeenCalledTimes(1);
+});
+
+
+function PagesProbe({ read, enabled = true }: { read: (offset: number) => Promise<string[]>; enabled?: boolean }) {
+  const query = useSessionInfiniteQuery({ key: ["paged"], scopes: ["resources"], enabled, initialPageParam: 0,
+    nextPage: (last, _pages, offset) => last.length === 2 ? offset + 2 : undefined, read });
+  return <><p>{query.data?.pages.flat().join(",") ?? "Loading pages"}</p>
+    {query.error ? <p role="alert">Read failed</p> : null}
+    <button disabled={!query.hasNextPage || query.isFetching} onClick={() => void query.fetchNextPage()}>More</button></>;
+}
+it("retains loaded infinite pages and retries a failed next page at its exact parameter", async () => {
+  const read = vi.fn().mockResolvedValueOnce(["a", "b"]).mockRejectedValueOnce(new Error("page failed"))
+    .mockResolvedValueOnce(["c", "d"]).mockResolvedValueOnce(["e"]);
+  render(<SessionReadProvider context={context} bridge={false}><PagesProbe read={read}/></SessionReadProvider>);
+  await screen.findByText("a,b"); fireEvent.click(screen.getByRole("button", { name: "More" }));
+  await screen.findByRole("alert"); expect(screen.getByText("a,b")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "More" })); await screen.findByText("a,b,c,d");
+  fireEvent.click(screen.getByRole("button", { name: "More" })); await screen.findByText("a,b,c,d,e");
+  expect(read.mock.calls.map(([offset]) => offset)).toEqual([0, 2, 2, 4]);
+  expect(screen.getByRole("button", { name: "More" })).toBeDisabled();
+});
+it.each(["hidden", "unmounted"] as const)("cancels late infinite-page results while %s and refreshes on return", async mode => {
+  let finish!: (value: string[]) => void;
+  const read = vi.fn().mockResolvedValueOnce(["a", "b"]).mockImplementationOnce(() => new Promise<string[]>(resolve => { finish = resolve; }))
+    .mockResolvedValue(["current"]);
+  const ui = (visible: boolean) => <SessionReadProvider context={context} bridge={false}>
+    {mode === "unmounted" && !visible ? null : <PagesProbe read={read} enabled={visible}/>}</SessionReadProvider>;
+  const view = render(ui(true)); await screen.findByText("a,b"); fireEvent.click(screen.getByRole("button", { name: "More" }));
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2)); view.rerender(ui(false));
+  await act(async () => finish(["obsolete", "late"])); expect(screen.queryByText(/obsolete/)).not.toBeInTheDocument();
+  view.rerender(ui(true)); await screen.findByText("current"); expect(read.mock.calls.map(([offset]) => offset)).toEqual([0, 2, 0]);
 });
