@@ -1,5 +1,7 @@
 //! Capture and commit adapters for database-independent review computation.
 use super::*;
+mod reads;
+pub use reads::{ReviewCheckActionRequest, ReviewCheckActionRead};
 use crate::review::{CheckInput, check_rules, interrupted_rules};
 
 #[derive(Debug)]

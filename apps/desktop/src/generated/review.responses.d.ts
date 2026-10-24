@@ -10,10 +10,13 @@ export type TranslationOrigin = "import" | "manual" | "ai";
 export interface Responses {
   cancelCheck: boolean;
   check: CheckRun;
+  checkAction: ReviewCheckActionRead | null;
   decision: ReviewDecision;
+  decisionAction: ReviewDecisionActionRead | null;
   editor: ReviewEditorSnapshot;
   eligibility: Eligibility;
   fallback: FallbackDecision;
+  fallbackAction: ReviewFallbackActionRead | null;
   history: ReviewHistoryPage;
   neighbor: ReviewNeighbor;
   page: ReviewPage;
@@ -21,6 +24,7 @@ export interface Responses {
   summary: ReviewSummaryPage;
   target: ReviewTarget;
   waiver: Waiver;
+  waiverAction: ReviewWaiverActionRead | null;
   work: WorkPage;
 }
 export interface CheckRun {
@@ -57,6 +61,17 @@ export interface CheckFinding {
   severity: string;
   waivable: boolean;
 }
+export interface ReviewCheckActionRead {
+  receipt: CheckRun;
+  request: ReviewCheckActionRequest;
+}
+export interface ReviewCheckActionRequest {
+  actionId: ExecutionId;
+  expectedBasis: string;
+  locale: string;
+  projectId: ExecutionId;
+  unitId: ExecutionId;
+}
 export interface ReviewDecision {
   actionId: ExecutionId;
   actor: string;
@@ -70,6 +85,21 @@ export interface ReviewDecision {
   revisionId: ExecutionId;
   selectionId: ExecutionId;
   sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ReviewDecisionActionRead {
+  receipt: ReviewDecision;
+  request: ReviewWrite;
+}
+export interface ReviewWrite {
+  actionId: ExecutionId;
+  actor: string;
+  expectedBasis: string;
+  expectedDecisionId: ExecutionId | null;
+  kind: ReviewDecisionKind;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
   unitId: ExecutionId;
 }
 export interface ReviewEditorSnapshot {
@@ -219,6 +249,21 @@ export interface EligibilityReason {
   reference: string | null;
   unitId: ExecutionId;
 }
+export interface ReviewFallbackActionRead {
+  receipt: FallbackDecision;
+  request: FallbackWrite;
+}
+export interface FallbackWrite {
+  actionId: ExecutionId;
+  actor: string;
+  allow: boolean;
+  expectedBasis: string;
+  expectedFallbackId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  unitId: ExecutionId;
+}
 export interface ReviewHistoryPage {
   checks: CheckRun[];
   decisions: ReviewDecision[];
@@ -281,6 +326,22 @@ export interface ReviewSummaryDecision {
   basis: string;
   decisionId: ExecutionId;
   kind: ReviewDecisionKind;
+}
+export interface ReviewWaiverActionRead {
+  receipt: Waiver;
+  request: WaiverWrite;
+}
+export interface WaiverWrite {
+  actionId: ExecutionId;
+  actor: string;
+  expectedBasis: string;
+  expectedWaiverId: ExecutionId | null;
+  grant: boolean;
+  issueId: string;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  unitId: ExecutionId;
 }
 export interface WorkPage {
   coverage: string;

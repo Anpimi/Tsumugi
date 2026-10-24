@@ -12,16 +12,20 @@ export type TranslationOrigin = "import" | "manual" | "ai";
 
 export interface Responses {
   capture: GlossaryCapture | null;
+  captureAction: ContextCaptureActionRead | null;
   captures: GlossaryCapture[];
   context: ContextRevision | null;
+  contextAction: ContextSaveActionRead | null;
   contextCapture: ContextCapture;
   decision: ResourceDecisionResult;
+  decisionAction: ResourceDecisionActionRead | null;
   impacts: ImpactPage;
   preview: ResourcePreview;
   resolution: TermResolution;
   savedContext: ContextRevision;
   suggestions: TmSuggestion[];
   term: TermRevision;
+  termAction: TermSaveActionRead | null;
   terms: TermRevision[];
 }
 export interface GlossaryCapture {
@@ -34,13 +38,9 @@ export interface GlossaryCapture {
   sourceLocale: string;
   targetLocale: string;
 }
-export interface ContextRevision {
-  locale: string;
-  previousRevisionId: ExecutionId | null;
-  reason: string;
-  revisionId: ExecutionId;
-  text: string;
-  unitId: ExecutionId;
+export interface ContextCaptureActionRead {
+  receipt: ContextCapture;
+  request: CaptureContext;
 }
 export interface ContextCapture {
   budgetBytes: number;
@@ -62,6 +62,36 @@ export interface ContextOmission {
   reason: string;
   reference: string;
 }
+export interface CaptureContext {
+  actionId: ExecutionId;
+  budgetBytes: number;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ContextRevision {
+  locale: string;
+  previousRevisionId: ExecutionId | null;
+  reason: string;
+  revisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface ContextSaveActionRead {
+  receipt: ContextRevision;
+  request: SaveContext;
+}
+export interface SaveContext {
+  actionId: ExecutionId;
+  expectedRevisionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
 export interface ResourceDecisionResult {
   actionId: ExecutionId;
   decision: ResourceDecisionKind;
@@ -82,6 +112,18 @@ export interface TermRevision {
   source: string;
   target: string;
   termId: string;
+}
+export interface ResourceDecisionActionRead {
+  receipt: ResourceDecisionResult;
+  request: ResourceDecision;
+}
+export interface ResourceDecision {
+  actionId: ExecutionId;
+  captureId: ExecutionId;
+  decision: ResourceDecisionKind;
+  entryId: string;
+  expectedRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
 }
 export interface ImpactPage {
   coverage: string;
@@ -153,4 +195,21 @@ export interface TmSuggestion {
   translationRevisionId: ExecutionId;
   translationText: string;
   unitId: ExecutionId;
+}
+export interface TermSaveActionRead {
+  receipt: TermRevision;
+  request: SaveTerm;
+}
+export interface SaveTerm {
+  actionId: ExecutionId;
+  aliases: string[];
+  expectedRevisionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  protected: boolean;
+  reason: string;
+  scopeUnitId: ExecutionId | null;
+  source: string;
+  target: string;
+  termId: string | null;
 }

@@ -39,13 +39,13 @@ pub use resources::{
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
     ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
     ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
-    SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
+    TermSaveActionRead, ContextSaveActionRead, ContextCaptureActionRead, ResourceDecisionActionRead, SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
     TmSuggestion,
 };
 pub use review::{
     CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck, Eligibility, EligibilityLocale,
     EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
-    ReviewCheckOutcome, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
+    ReviewCheckActionRequest, ReviewCheckActionRead, ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead, ReviewCheckOutcome, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
     ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewScopeUnit,
     ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget,
     ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,

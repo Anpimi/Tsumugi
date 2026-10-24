@@ -16,10 +16,13 @@ export declare function validateRequestWaiver(value: unknown): value is Requests
 export declare function validateRequestWork(value: unknown): value is Requests["work"];
 export declare function validateResponseCancelCheck(value: unknown): value is Responses["cancelCheck"];
 export declare function validateResponseCheck(value: unknown): value is Responses["check"];
+export declare function validateResponseCheckAction(value: unknown): value is Responses["checkAction"];
 export declare function validateResponseDecision(value: unknown): value is Responses["decision"];
+export declare function validateResponseDecisionAction(value: unknown): value is Responses["decisionAction"];
 export declare function validateResponseEditor(value: unknown): value is Responses["editor"];
 export declare function validateResponseEligibility(value: unknown): value is Responses["eligibility"];
 export declare function validateResponseFallback(value: unknown): value is Responses["fallback"];
+export declare function validateResponseFallbackAction(value: unknown): value is Responses["fallbackAction"];
 export declare function validateResponseHistory(value: unknown): value is Responses["history"];
 export declare function validateResponseNeighbor(value: unknown): value is Responses["neighbor"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
@@ -27,4 +30,5 @@ export declare function validateResponseScope(value: unknown): value is Response
 export declare function validateResponseSummary(value: unknown): value is Responses["summary"];
 export declare function validateResponseTarget(value: unknown): value is Responses["target"];
 export declare function validateResponseWaiver(value: unknown): value is Responses["waiver"];
+export declare function validateResponseWaiverAction(value: unknown): value is Responses["waiverAction"];
 export declare function validateResponseWork(value: unknown): value is Responses["work"];

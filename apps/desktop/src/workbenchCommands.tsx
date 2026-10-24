@@ -13,7 +13,7 @@ import { validateResponseProjectView } from "./generated/validators";
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.cancel-checks" | "review.retry-pending"
-  | "review.approve-batch" | "review.stop-batch"
+  | "review.check-pending" | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
 export interface ProjectMetadataReconcileCommandPayload {
   kind: "project-metadata-reconcile";
@@ -248,6 +248,7 @@ interface WorkbenchCommandPayloads {
   "resource.open-preview": ResourceCaptureCommandPayload;
   "resource.refresh-preview": ResourceCaptureCommandPayload;
   "resource.decide-entry": ResourceDecisionCommandPayload;
+  "resource.check-pending": ResourcePendingCommandPayload;
   "resource.retry-pending": ResourcePendingCommandPayload;
   "resource.open-translation": ResourceTranslationCommandPayload;
   "source.select": SourceSelectionCommandPayload;
@@ -290,7 +291,7 @@ interface CommandMetadata {
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
-    | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
+    | "reads-review" | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
     | "writes-resources" | "captures-resources" | "reads-resources" | "retries-resource-action" | "opens-translation"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
@@ -374,7 +375,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"resource-locale", "resource.choose-file">
   | ResourceCommand<"resource-capture", "resource.open-preview" | "resource.refresh-preview">
   | ResourceCommand<"resource-decision", "resource.decide-entry">
-  | ResourceCommand<"resource-pending", "resource.retry-pending">
+  | ResourceCommand<"resource-pending", "resource.check-pending" | "resource.retry-pending">
   | ResourceCommand<"resource-translation", "resource.open-translation">
   | ResourceCommand<"source-selection", "source.select">
   | ResourceCommand<"source-capture", "source.preflight" | "source.start">

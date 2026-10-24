@@ -85,3 +85,33 @@ it("keeps malformed mutation acknowledgements unknown and preserves backend reje
   invoke.mockRejectedValueOnce(rejected);
   await expect(resourceCommands.saveTerm(fixture.requests.term)).rejects.toBe(rejected);
 });
+
+function decisionActionRequest() {
+  const request = fixture.requests.decision;
+  if (!validators.validateRequestDecision(request)) throw new Error("Invalid resource fixture");
+  return request;
+}
+
+for (const [kind, original, receipt, run] of [
+    ["term", fixture.requests.term.term, fixture.responses.term, () => resourceCommands.termAction(fixture.requests.term)],
+    ["context", fixture.requests.context.context, fixture.responses.savedContext, () => resourceCommands.contextAction(fixture.requests.context)],
+    ["capture", fixture.requests.contextCapture.capture, fixture.responses.contextCapture, () => resourceCommands.captureAction(fixture.requests.contextCapture)],
+    ["decision", fixture.requests.decision.decision, fixture.responses.decision, () => resourceCommands.decisionAction(decisionActionRequest())],
+] as const) it(`reads ${kind} only with a strict nullable complete original request echo`, async () => {
+  invoke.mockResolvedValueOnce({ request: original, receipt });
+  expect(await run()).toEqual(receipt);
+  invoke.mockResolvedValueOnce(null); expect(await run()).toBeNull();
+  for (const invalid of [undefined, {}, { request: original, receipt: undefined }]) {
+    invoke.mockResolvedValueOnce(invalid); await expect(run()).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  for (const [key, value] of Object.entries(original)) {
+    const altered = value === null ? "ffffffff-ffff-4fff-8fff-ffffffffffff" : typeof value === "boolean" ? !value
+      : typeof value === "number" ? value + 1 : Array.isArray(value) ? [...value, "changed"]
+      : typeof value === "string" && /^[0-9a-f-]{36}$/.test(value) ? "ffffffff-ffff-4fff-8fff-ffffffffffff" : `${value}-changed`;
+    invoke.mockResolvedValueOnce({ request: { ...original, [key]: altered }, receipt });
+    await expect(run(), key).rejects.toSatisfy(hasUnknownOutcome);
+    const missing = { ...original } as Record<string, unknown>; delete missing[key];
+    invoke.mockResolvedValueOnce({ request: missing, receipt });
+    await expect(run(), key).rejects.toSatisfy(hasUnknownOutcome);
+  }
+});

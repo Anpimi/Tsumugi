@@ -273,8 +273,10 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
         handler: () => { void owner.retryPreview(currentView()); } }),
       registry.register({ ...metadata, id: "resource.decide-entry", nameKey: "resource.actions", risk: "writes-resources", payloadKind: "resource-decision", availability: decisionAvailability,
         handler: input => { const current = proof([sourceScopeKey, sourceKey, previewKey]); void refreshDecision(() => owner.decide(input.entryId, input.expectedRevisionId, input.decision, () => current() && previewSourceCurrent() && matchesDecision(reads.client.getQueryData<ResourcePreview>(reads.key(previewKey)), input))); } }),
+      registry.register({ ...metadata, id: "resource.check-pending", nameKey: "resource.checkAction", risk: "reads-resources", payloadKind: "resource-pending",
+        availability: input => { const allowed = common(undefined, false); return !allowed.enabled ? allowed : input && same(input, pendingPayload()) ? allowed : unavailable; }, handler: () => { void owner.checkPending(); } }),
       registry.register({ ...metadata, id: "resource.retry-pending", nameKey: "resource.retry", risk: "retries-resource-action", payloadKind: "resource-pending",
-        availability: input => { const allowed = common(undefined, false); return !allowed.enabled ? allowed : input && same(input, pendingPayload()) ? allowed : unavailable; }, handler: () => { void retryPending(); } }),
+        availability: input => { const allowed = common(undefined, false); return !allowed.enabled ? allowed : input && same(input, pendingPayload()) && owner.current().pendingCheckedMissing ? allowed : unavailable; }, handler: () => { void retryPending(); } }),
       registry.register({ ...metadata, id: "resource.open-translation", nameKey: "resource.openTranslation", risk: "opens-translation", payloadKind: "resource-translation", availability: translationAvailability,
         handler: input => openTranslation(input.target, input.evidenceKind === "tm" ? suggestions.find(item => item.translationRevisionId === input.evidenceId)?.translationText : undefined) }),
     ];
@@ -283,7 +285,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
   function chooseFileAvailability() {
     const allowed = common("updates"); return !allowed.enabled ? allowed : owner.localeAvailable(locale) && sourceReady() && !owner.termDirty() && !owner.contextDirty() ? allowed : unavailable;
   }
-  function retryAvailable() { const input = pendingPayload(); return !!input && common(undefined, false).enabled; }
+  function retryAvailable() { const input = pendingPayload(); return !!input && common(undefined, false).enabled && owner.current().pendingCheckedMissing; }
   function dispatchRetry() { const input = pendingPayload(); if (input) registry.dispatch("resource.retry-pending", commandScope, input); }
   function decideEntry(entryId: string, revision: string | null, decision: ResourceDecisionCommandPayload["decision"], rowKind: ResourceDecisionCommandPayload["rowKind"], scopeUnitId: string | null) {
     const input = decisionPayload(entryId, revision, decision, rowKind, scopeUnitId); if (input) registry.dispatch("resource.decide-entry", commandScope, input);
@@ -305,6 +307,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
           {!targetAvailable && locale ? <p role="status">{t("resource.removedTarget", { locale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {previewCapture && previewCapture.targetLocale !== locale && !owner.localeAvailable(previewCapture.targetLocale) ? <p role="status">{t("resource.removedPreviewTarget", { locale: previewCapture.targetLocale })} <button className="text-button" onClick={requestClose}>{t("resource.returnSettings")}</button></p> : null}
           {pending && (pending.kind === "capture" || (pending.kind === "term" && tab !== "terms") || (pending.kind === "context" && tab !== "context") || (pending.kind === "decision" && tab !== "updates")) ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={!retryAvailable()} onClick={dispatchRetry}>{t("resource.retry")}</button></div> : null}
+          {pending ? <div className="execution-actions"><button className="secondary-button" disabled={!common(undefined, false).enabled} onClick={() => { const input = pendingPayload(); if (input) registry.dispatch("resource.check-pending", commandScope, input); }}>{t(owner.state.checkingAction ? "resource.checkingAction" : "resource.checkAction")}</button>{owner.state.pendingCheckedMissing ? <p role="status">{t("resource.actionMissing")}</p> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           <label>{t("resource.targetLocale")}<select value={locale} disabled={busyMutation || !!pending} onChange={event => switchLocale(event.target.value)}>{!targetAvailable && locale ? <option value={locale} disabled>{t("resource.removedTargetOption", { locale })}</option> : null}{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
           {!locale ? <p>{t("resource.noLocale")}</p> : null}

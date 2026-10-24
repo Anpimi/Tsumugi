@@ -227,6 +227,14 @@ pub struct SaveTerm {
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TermSaveActionRead {
+    pub request: SaveTerm,
+    pub receipt: TermRevision,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResourceDecisionKind {
     Adopt,
@@ -254,6 +262,14 @@ pub struct ResourceDecisionResult {
     pub action_id: ExecutionId,
     pub decision: ResourceDecisionKind,
     pub revision: Option<TermRevision>,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResourceDecisionActionRead {
+    pub request: ResourceDecision,
+    pub receipt: ResourceDecisionResult,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -292,6 +308,14 @@ pub struct SaveContext {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextSaveActionRead {
+    pub request: SaveContext,
+    pub receipt: ContextRevision,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextRevision {
     pub revision_id: ExecutionId,
     pub unit_id: ExecutionId,
@@ -311,6 +335,14 @@ pub struct CaptureContext {
     pub locale: String,
     pub source_revision_id: ExecutionId,
     pub budget_bytes: u32,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextCaptureActionRead {
+    pub request: CaptureContext,
+    pub receipt: ContextCapture,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -1133,7 +1165,384 @@ fn capture_by_action(
     .transpose()
 }
 
+#[derive(Clone, Copy)]
+enum ManualActionKind {
+    Decision,
+    Term,
+    Context,
+    Capture,
+}
+
+fn other_manual_action(
+    connection: &Connection,
+    action_id: ExecutionId,
+    expected: ManualActionKind,
+) -> Result<bool, ExecutionError> {
+    let (term, context, capture, decision): (bool, bool, bool, bool) = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM term_revisions WHERE action_id=?1),
+                    EXISTS(SELECT 1 FROM context_revisions WHERE action_id=?1),
+                    EXISTS(SELECT 1 FROM context_captures WHERE action_id=?1),
+                    EXISTS(SELECT 1 FROM resource_decisions WHERE action_id=?1)",
+            [action_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(sql)?;
+    Ok(match expected {
+        ManualActionKind::Decision => term || context || capture,
+        ManualActionKind::Term => context || capture || decision,
+        ManualActionKind::Context => term || capture || decision,
+        ManualActionKind::Capture => term || context || decision,
+    })
+}
+
+fn check_action_project(
+    connection: &Connection,
+    project: ExecutionId,
+) -> Result<(), ExecutionError> {
+    if super::read_metadata_from(connection)
+        .map_err(|_| failure(ErrorCode::CorruptLedger, "resource-project"))?
+        .project_id()
+        .to_string()
+        != project.to_string()
+    {
+        return Err(failure(ErrorCode::Unauthorized, "resource-project"));
+    }
+    Ok(())
+}
+
 impl ProjectStore {
+    /// Confirm one file entry decision without recomputing a current preview.
+    pub fn resource_decision_action(
+        &self,
+        request: &ResourceDecision,
+    ) -> Result<Option<ResourceDecisionActionRead>, ExecutionError> {
+        let value = super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
+            |c| {
+                check_action_project(c, request.project_id)?;
+                let row: Option<(String,String,String,Option<String>,String,Option<String>,String)> = c.query_row(
+                "SELECT project_id,capture_id,entry_id,expected_revision_id,decision,result_revision_id,request_digest
+                 FROM resource_decisions WHERE action_id=?1",[request.action_id.to_string()],
+                |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?))).optional().map_err(sql)?;
+                let Some((project, capture, entry, previous, decision, result, saved_digest)) = row
+                else {
+                    if other_manual_action(c, request.action_id, ManualActionKind::Decision)? {
+                        return Err(failure(ErrorCode::ResultMismatch, "resource-action-kind"));
+                    }
+                    return Ok(None);
+                };
+                if saved_digest != digest(request)? {
+                    return Err(failure(ErrorCode::ResultMismatch, "resource-action"));
+                }
+                let stored = ResourceDecision {
+                    project_id: id(project)?,
+                    action_id: request.action_id,
+                    capture_id: id(capture)?,
+                    entry_id: entry,
+                    expected_revision_id: previous.map(id).transpose()?,
+                    decision: match decision.as_str() {
+                        "adopt" => ResourceDecisionKind::Adopt,
+                        "keep" => ResourceDecisionKind::Keep,
+                        "ignore" => ResourceDecisionKind::Ignore,
+                        "override" => ResourceDecisionKind::Override,
+                        _ => return Err(failure(ErrorCode::CorruptLedger, "resource-decision")),
+                    },
+                };
+                if &stored != request {
+                    return Err(failure(ErrorCode::CorruptLedger, "resource-decision"));
+                }
+                let revision = result
+                    .map(id)
+                    .transpose()?
+                    .map(|revision| {
+                        term_by_revision(c, request.project_id, revision).and_then(|value| {
+                            value.ok_or_else(|| {
+                                failure(ErrorCode::CorruptLedger, "resource-decision")
+                            })
+                        })
+                    })
+                    .transpose()?;
+                let (_, file) = capture_by_id(c, request.project_id, request.capture_id)?;
+                let term_id = external_term_id(&file.resource_id, &request.entry_id);
+                if revision.as_ref().is_some_and(|value| {
+                    value.term_id != term_id || value.locale != file.target_locale
+                }) {
+                    return Err(failure(
+                        ErrorCode::CorruptLedger,
+                        "resource-decision-revision",
+                    ));
+                }
+                if matches!(
+                    request.decision,
+                    ResourceDecisionKind::Keep | ResourceDecisionKind::Ignore
+                ) {
+                    if revision.as_ref().map(|value| value.revision_id)
+                        != request.expected_revision_id
+                    {
+                        return Err(failure(
+                            ErrorCode::CorruptLedger,
+                            "resource-decision-revision",
+                        ));
+                    }
+                } else {
+                    let value = revision.as_ref().ok_or_else(|| {
+                        failure(ErrorCode::CorruptLedger, "resource-decision-revision")
+                    })?;
+                    let incoming = file
+                        .entries
+                        .iter()
+                        .find(|entry| entry.id == request.entry_id);
+                    if value.origin_kind != TermOrigin::External
+                        || value.capture_id != Some(request.capture_id)
+                        || value.external_entry_id.as_deref() != Some(request.entry_id.as_str())
+                        || value.previous_revision_id != request.expected_revision_id
+                        || value.removed != incoming.is_none()
+                        || incoming.is_some_and(|entry| {
+                            value.source != entry.source
+                                || value.aliases != entry.aliases
+                                || value.target != entry.target
+                                || value.reason != entry.reason
+                                || value.protected != entry.protected
+                        })
+                    {
+                        return Err(failure(
+                            ErrorCode::CorruptLedger,
+                            "resource-decision-revision",
+                        ));
+                    }
+                }
+                Ok(Some(ResourceDecisionActionRead {
+                    request: stored,
+                    receipt: ResourceDecisionResult {
+                        action_id: request.action_id,
+                        decision: request.decision.clone(),
+                        revision,
+                    },
+                }))
+            },
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(value)
+    }
+
+    /// Confirm one historical manual context save without consulting current source or locale.
+    pub fn context_save_action(
+        &self,
+        request: &SaveContext,
+    ) -> Result<Option<ContextSaveActionRead>, ExecutionError> {
+        let expected_digest = digest(request)?;
+        let found = super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "context-read"))?,
+            |connection| {
+                check_action_project(connection, request.project_id)?;
+                let row: Option<(
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    Option<String>,
+                    String,
+                )> = connection
+                    .query_row(
+                        "SELECT revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,request_digest
+                         FROM context_revisions WHERE action_id=?1",
+                        [request.action_id.to_string()],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                                row.get(6)?,
+                                row.get(7)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                    .map_err(sql)?;
+                let Some((revision, project, unit, locale, text, reason, previous, saved_digest)) =
+                    row
+                else {
+                    if other_manual_action(connection, request.action_id, ManualActionKind::Context)? {
+                        return Err(failure(ErrorCode::ResultMismatch, "context-action-kind"));
+                    }
+                    return Ok(None);
+                };
+                if saved_digest != expected_digest {
+                    return Err(failure(ErrorCode::ResultMismatch, "context-action"));
+                }
+                let receipt = ContextRevision {
+                    revision_id: id(revision)?,
+                    unit_id: id(unit)?,
+                    locale,
+                    text,
+                    reason,
+                    previous_revision_id: previous.map(id).transpose()?,
+                };
+                if project != request.project_id.to_string()
+                    || receipt.unit_id != request.unit_id
+                    || receipt.locale != request.locale
+                    || receipt.text != request.text
+                    || receipt.reason != request.reason
+                    || receipt.previous_revision_id != request.expected_revision_id
+                {
+                    return Err(failure(ErrorCode::CorruptLedger, "context-action-revision"));
+                }
+                Ok(Some(ContextSaveActionRead {
+                    request: request.clone(),
+                    receipt,
+                }))
+            },
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+
+    /// Return the persisted context projection for one exact capture request.
+    pub fn context_capture_action(
+        &self,
+        request: &CaptureContext,
+    ) -> Result<Option<ContextCaptureActionRead>, ExecutionError> {
+        let expected_digest = digest(request)?;
+        let found = super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "context-read"))?,
+            |connection| {
+                check_action_project(connection, request.project_id)?;
+                let row: Option<(String, String, String, String, String, String, String)> =
+                    connection
+                        .query_row(
+                            "SELECT capture_id,project_id,unit_id,locale,source_revision_id,input_json,request_digest
+                             FROM context_captures WHERE action_id=?1",
+                            [request.action_id.to_string()],
+                            |row| {
+                                Ok((
+                                    row.get(0)?,
+                                    row.get(1)?,
+                                    row.get(2)?,
+                                    row.get(3)?,
+                                    row.get(4)?,
+                                    row.get(5)?,
+                                    row.get(6)?,
+                                ))
+                            },
+                        )
+                        .optional()
+                        .map_err(sql)?;
+                let Some((capture_id, project, unit, locale, source_revision, json, saved_digest)) =
+                    row
+                else {
+                    if other_manual_action(connection, request.action_id, ManualActionKind::Capture)? {
+                        return Err(failure(ErrorCode::ResultMismatch, "context-action-kind"));
+                    }
+                    return Ok(None);
+                };
+                if saved_digest != expected_digest {
+                    return Err(failure(ErrorCode::ResultMismatch, "context-action"));
+                }
+                let receipt: ContextCapture = serde_json::from_str(&json)
+                    .map_err(|_| failure(ErrorCode::CorruptLedger, "context-capture"))?;
+                if project != request.project_id.to_string()
+                    || id(capture_id)? != receipt.capture_id
+                    || id(unit)? != request.unit_id
+                    || id(source_revision)? != request.source_revision_id
+                    || locale != request.locale
+                    || receipt.unit_id != request.unit_id
+                    || receipt.locale != request.locale
+                    || receipt.source_revision_id != request.source_revision_id
+                    || receipt.budget_bytes != request.budget_bytes
+                {
+                    return Err(failure(ErrorCode::CorruptLedger, "context-action-capture"));
+                }
+                Ok(Some(ContextCaptureActionRead {
+                    request: request.clone(),
+                    receipt,
+                }))
+            },
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+
+    /// Confirm one historical manual term save against its complete original request.
+    pub fn term_save_action(
+        &self,
+        request: &SaveTerm,
+    ) -> Result<Option<TermSaveActionRead>, ExecutionError> {
+        let expected_digest = digest(request)?;
+        let found = super::review::read_snapshot(
+            self.connection()
+                .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?,
+            |connection| {
+                check_action_project(connection, request.project_id)?;
+                let row: Option<(String, String, String)> = connection
+                    .query_row(
+                        "SELECT revision_id,project_id,request_digest FROM term_revisions WHERE action_id=?1",
+                        [request.action_id.to_string()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()
+                    .map_err(sql)?;
+                let Some((revision_id, project_id, saved_digest)) = row else {
+                    if other_manual_action(connection, request.action_id, ManualActionKind::Term)? {
+                        return Err(failure(ErrorCode::ResultMismatch, "resource-action-kind"));
+                    }
+                    return Ok(None);
+                };
+                if saved_digest != expected_digest {
+                    return Err(failure(ErrorCode::ResultMismatch, "resource-action"));
+                }
+                if project_id != request.project_id.to_string() {
+                    return Err(failure(ErrorCode::CorruptLedger, "resource-action-project"));
+                }
+                let receipt = term_by_revision(connection, request.project_id, id(revision_id)?)?
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "resource-action-revision"))?;
+                if receipt.locale != request.locale
+                    || receipt.source != request.source
+                    || receipt.aliases != request.aliases
+                    || receipt.target != request.target
+                    || receipt.protected != request.protected
+                    || receipt.scope_unit_id != request.scope_unit_id
+                    || receipt.reason != request.reason
+                    || receipt.previous_revision_id != request.expected_revision_id
+                    || receipt.origin_kind != TermOrigin::Manual
+                    || receipt.capture_id.is_some()
+                    || receipt.external_entry_id.is_some()
+                    || receipt.removed
+                    || request
+                        .term_id
+                        .as_ref()
+                        .is_some_and(|term_id| term_id != &receipt.term_id)
+                    || (request.term_id.is_none()
+                        && ExecutionId::parse(&receipt.term_id).is_err())
+                {
+                    return Err(failure(ErrorCode::CorruptLedger, "resource-action-revision"));
+                }
+                Ok(Some(TermSaveActionRead {
+                    request: request.clone(),
+                    receipt,
+                }))
+            },
+        )?;
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(found)
+    }
+
     pub fn resource_impacts(
         &self,
         project_id: ExecutionId,
@@ -3322,5 +3731,444 @@ mod tests {
                 1
             );
         }
+    }
+    #[test]
+    fn manual_resource_action_reads_bind_requests_and_preserve_historical_receipts() {
+        let (temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let term = SaveTerm {
+            project_id,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Barrel".into(),
+            aliases: vec!["Cask".into()],
+            target: "木桶".into(),
+            protected: true,
+            scope_unit_id: Some(unit_id),
+            expected_revision_id: None,
+            reason: "Reviewed".into(),
+        };
+        let context = SaveContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            expected_revision_id: None,
+            text: "".into(),
+            reason: "Reviewed".into(),
+        };
+        let capture = CaptureContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            budget_bytes: 16 * 1024,
+        };
+        let initial_sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        assert_eq!(store.term_save_action(&term).unwrap(), None);
+        assert_eq!(store.context_save_action(&context).unwrap(), None);
+        assert_eq!(store.context_capture_action(&capture).unwrap(), None);
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            initial_sequence
+        );
+
+        let saved_term = store.save_term(&term).unwrap();
+        let saved_context = store.save_context(&context).unwrap();
+        let saved_capture = store.capture_context(&capture).unwrap();
+        let term_read = Some(TermSaveActionRead {
+            request: term.clone(),
+            receipt: saved_term.clone(),
+        });
+        let context_read = Some(ContextSaveActionRead {
+            request: context.clone(),
+            receipt: saved_context.clone(),
+        });
+        let capture_read = Some(ContextCaptureActionRead {
+            request: capture.clone(),
+            receipt: saved_capture.clone(),
+        });
+        let saved_sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        assert_eq!(store.term_save_action(&term).unwrap(), term_read);
+        assert_eq!(store.context_save_action(&context).unwrap(), context_read);
+        assert_eq!(store.context_capture_action(&capture).unwrap(), capture_read);
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            saved_sequence
+        );
+
+        let mut wrong_term = term.clone();
+        wrong_term.target = "酒桶".into();
+        assert_eq!(
+            store.term_save_action(&wrong_term).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        wrong_term = term.clone();
+        wrong_term.expected_revision_id = Some(ExecutionId::new());
+        assert_eq!(
+            store.term_save_action(&wrong_term).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        let mut wrong_context = context.clone();
+        wrong_context.source_revision_id = ExecutionId::new();
+        assert_eq!(
+            store.context_save_action(&wrong_context).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        wrong_context = context.clone();
+        wrong_context.action_id = term.action_id;
+        assert_eq!(
+            store.context_save_action(&wrong_context).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        let mut wrong_capture = capture.clone();
+        wrong_capture.budget_bytes -= 1;
+        assert_eq!(
+            store.context_capture_action(&wrong_capture).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        wrong_capture = capture.clone();
+        wrong_capture.action_id = context.action_id;
+        assert_eq!(
+            store.context_capture_action(&wrong_capture).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE term_revisions SET target='forged' WHERE action_id=?1",
+                [term.action_id.to_string()],
+            )
+            .unwrap();
+        assert_eq!(
+            store.term_save_action(&term).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE term_revisions SET target=?2 WHERE action_id=?1",
+                params![term.action_id.to_string(), &term.target],
+            )
+            .unwrap();
+        let mut forged_capture = saved_capture.clone();
+        forged_capture.unit_id = ExecutionId::new();
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE context_captures SET input_json=?2 WHERE action_id=?1",
+                params![
+                    capture.action_id.to_string(),
+                    serde_json::to_string(&forged_capture).unwrap()
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            store.context_capture_action(&capture).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE context_captures SET input_json='{}' WHERE action_id=?1",
+                [capture.action_id.to_string()],
+            )
+            .unwrap();
+        assert_eq!(
+            store.context_capture_action(&capture).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE context_captures SET input_json=?2 WHERE action_id=?1",
+                params![
+                    capture.action_id.to_string(),
+                    serde_json::to_string(&saved_capture).unwrap()
+                ],
+            )
+            .unwrap();
+
+        store
+            .save_term(&SaveTerm {
+                action_id: ExecutionId::new(),
+                term_id: Some(saved_term.term_id.clone()),
+                expected_revision_id: Some(saved_term.revision_id),
+                target: "大木桶".into(),
+                ..term.clone()
+            })
+            .unwrap();
+        store
+            .save_context(&SaveContext {
+                action_id: ExecutionId::new(),
+                expected_revision_id: Some(saved_context.revision_id),
+                text: "Updated".into(),
+                ..context.clone()
+            })
+            .unwrap();
+        assert_eq!(store.term_save_action(&term).unwrap(), term_read);
+        assert_eq!(store.context_save_action(&context).unwrap(), context_read);
+        assert_eq!(store.context_capture_action(&capture).unwrap(), capture_read);
+
+        store.close().unwrap();
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.term_save_action(&term).unwrap(), term_read);
+        assert_eq!(reopened.context_save_action(&context).unwrap(), context_read);
+        assert_eq!(reopened.context_capture_action(&capture).unwrap(), capture_read);
+    }
+    #[test]
+    fn context_capture_action_read_reconciles_unknown_without_writing_resources() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let capture = CaptureContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            budget_bytes: 16 * 1024,
+        };
+        let receipt = store.capture_context(&capture).unwrap();
+        let fresh = SaveTerm {
+            project_id,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Barrel".into(),
+            aliases: vec![],
+            target: "木桶".into(),
+            protected: false,
+            scope_unit_id: Some(unit_id),
+            expected_revision_id: None,
+            reason: "Reviewed".into(),
+        };
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(store.save_term(&fresh).unwrap_err().code, ErrorCode::OutcomeUnknown);
+        let sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let counts: (i64, i64, i64) = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM term_revisions),
+                        (SELECT COUNT(*) FROM context_captures),
+                        (SELECT COUNT(*) FROM resource_changes)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            store.context_capture_action(&capture).unwrap(),
+            Some(ContextCaptureActionRead {
+                request: capture.clone(),
+                receipt,
+            })
+        );
+        assert!(!store.is_reconciling());
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            sequence
+        );
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT (SELECT COUNT(*) FROM term_revisions),
+                            (SELECT COUNT(*) FROM context_captures),
+                            (SELECT COUNT(*) FROM resource_changes)",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap(),
+            counts
+        );
+        store.save_term(&fresh).unwrap();
+
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut missing = capture;
+        missing.action_id = ExecutionId::new();
+        let sequence = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        assert_eq!(store.context_capture_action(&missing).unwrap(), None);
+        assert!(!store.is_reconciling());
+        assert_eq!(
+            store
+                .changes_since(crate::execution::Revision::new(0).unwrap())
+                .sequence,
+            sequence
+        );
+    }
+
+    #[test]
+    fn file_decision_action_reads_bind_complete_requests_without_mutating_history() {
+        let (temp, mut store, project) = fixture_project();
+        let capture = store
+            .capture_glossary(
+                project,
+                ExecutionId::new(),
+                include_bytes!("../../tests/fixtures/resource-updates/g1.json"),
+            )
+            .unwrap();
+        let request = ResourceDecision {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            capture_id: capture.capture_id,
+            entry_id: "barrel".into(),
+            expected_revision_id: None,
+            decision: ResourceDecisionKind::Adopt,
+        };
+        assert_eq!(store.resource_decision_action(&request).unwrap(), None);
+        let receipt = store.decide_glossary_entry(&request).unwrap();
+        let expected = Some(ResourceDecisionActionRead {
+            request: request.clone(),
+            receipt: receipt.clone(),
+        });
+        for field in 0..5 {
+            let mut wrong = request.clone();
+            match field {
+                0 => wrong.capture_id = ExecutionId::new(),
+                1 => wrong.entry_id = "box".into(),
+                2 => wrong.expected_revision_id = Some(ExecutionId::new()),
+                3 => wrong.decision = ResourceDecisionKind::Ignore,
+                _ => wrong.project_id = ExecutionId::new(),
+            }
+            store
+                .execution_unknown
+                .store(true, std::sync::atomic::Ordering::Release);
+            assert!(store.resource_decision_action(&wrong).is_err());
+            assert!(store.is_reconciling());
+            let writes = store.connection().unwrap().total_changes();
+            assert_eq!(store.resource_decision_action(&request).unwrap(), expected);
+            assert!(!store.is_reconciling());
+            assert_eq!(store.connection().unwrap().total_changes(), writes);
+        }
+        let second = ResourceDecision {
+            action_id: ExecutionId::new(),
+            expected_revision_id: receipt.revision.as_ref().map(|r| r.revision_id),
+            decision: ResourceDecisionKind::Keep,
+            ..request.clone()
+        };
+        let kept = store.decide_glossary_entry(&second).unwrap();
+        assert_eq!(
+            store
+                .resource_decision_action(&second)
+                .unwrap()
+                .unwrap()
+                .receipt,
+            kept
+        );
+        let manual = SaveTerm {
+            project_id: project,
+            action_id: second.action_id,
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Other".into(),
+            aliases: vec![],
+            target: "其他".into(),
+            protected: false,
+            scope_unit_id: None,
+            expected_revision_id: None,
+            reason: "Fixture".into(),
+        };
+        let unit_id = unit(&store, project, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project, unit_id).unwrap();
+        let context = SaveContext {
+            project_id: project,
+            action_id: second.action_id,
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            expected_revision_id: None,
+            text: "Fixture".into(),
+            reason: "Fixture".into(),
+        };
+        let capture_request = CaptureContext {
+            project_id: project,
+            action_id: second.action_id,
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            budget_bytes: 16384,
+        };
+        assert_eq!(
+            store.term_save_action(&manual).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store.context_save_action(&context).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store
+                .context_capture_action(&capture_request)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+
+        let c = store.connection().unwrap();
+        let old = receipt.revision.as_ref().unwrap().revision_id;
+        c.execute(
+            "UPDATE resource_decisions SET result_revision_id=NULL WHERE action_id=?1",
+            [request.action_id.to_string()],
+        )
+        .unwrap();
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(
+            store.resource_decision_action(&request).unwrap_err().code,
+            ErrorCode::CorruptLedger
+        );
+        assert!(store.is_reconciling());
+        c.execute(
+            "UPDATE resource_decisions SET result_revision_id=?2 WHERE action_id=?1",
+            params![request.action_id.to_string(), old.to_string()],
+        )
+        .unwrap();
+        let seq = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let writes = c.total_changes();
+        assert_eq!(store.resource_decision_action(&request).unwrap(), expected);
+        assert_eq!(store.connection().unwrap().total_changes(), writes);
+        assert_eq!(store.changes_since(seq).sequence, seq);
+        store.close().unwrap();
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(
+            reopened.resource_decision_action(&request).unwrap(),
+            expected
+        );
     }
 }

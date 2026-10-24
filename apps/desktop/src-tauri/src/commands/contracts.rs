@@ -161,6 +161,10 @@ struct ResourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceResponses {
+    term_action: Option<tsumugi_core::TermSaveActionRead>,
+    context_action: Option<tsumugi_core::ContextSaveActionRead>,
+    capture_action: Option<tsumugi_core::ContextCaptureActionRead>,
+    decision_action: Option<tsumugi_core::ResourceDecisionActionRead>,
     captures: Vec<tsumugi_core::GlossaryCapture>,
     capture: Option<tsumugi_core::GlossaryCapture>,
     preview: tsumugi_core::ResourcePreview,
@@ -197,6 +201,10 @@ struct ReviewRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReviewResponses {
+    decision_action: Option<tsumugi_core::ReviewDecisionActionRead>,
+    waiver_action: Option<tsumugi_core::ReviewWaiverActionRead>,
+    fallback_action: Option<tsumugi_core::ReviewFallbackActionRead>,
+    check_action: Option<tsumugi_core::ReviewCheckActionRead>,
     page: tsumugi_core::ReviewPage,
     target: tsumugi_core::ReviewTarget,
     summary: tsumugi_core::ReviewSummaryPage,
