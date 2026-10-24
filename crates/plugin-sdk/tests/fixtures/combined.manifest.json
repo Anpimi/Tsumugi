@@ -1,0 +1,156 @@
+{
+  "protocolVersion": 1,
+  "plugin": {
+    "publisher": "org.example",
+    "id": "combined-knowledge",
+    "version": "0.1.0-alpha.1"
+  },
+  "permissions": [
+    {
+      "kind": "project-service",
+      "contract": {
+        "id": "example.model.generate",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "knowledge-data",
+      "scope": "project",
+      "runtime": "data",
+      "entrypoint": null,
+      "dependencies": [],
+      "exit": {
+        "stopTimeoutMs": 100,
+        "cleanupTimeoutMs": 100
+      }
+    },
+    {
+      "id": "panel",
+      "scope": "project",
+      "runtime": "javascript",
+      "entrypoint": "ui/panel.mjs",
+      "dependencies": [
+        {
+          "contract": {
+            "id": "example.context.query",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "required": false,
+          "selection": "collect-independent"
+        }
+      ],
+      "exit": {
+        "stopTimeoutMs": 1000,
+        "cleanupTimeoutMs": 1000
+      }
+    },
+    {
+      "id": "ai-helper",
+      "scope": "attempt",
+      "runtime": "native-worker",
+      "entrypoint": "bin/helper",
+      "dependencies": [
+        {
+          "contract": {
+            "id": "example.model.generate",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "required": true,
+          "selection": "single"
+        }
+      ],
+      "exit": {
+        "stopTimeoutMs": 1000,
+        "cleanupTimeoutMs": 1000
+      }
+    }
+  ],
+  "contributions": [
+    {
+      "id": "terms",
+      "componentId": "knowledge-data",
+      "contribution": {
+        "kind": "resource",
+        "schema": {
+          "id": "example.terms",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "path": "resources/terms.json"
+      }
+    },
+    {
+      "id": "guide",
+      "componentId": "knowledge-data",
+      "contribution": {
+        "kind": "skill",
+        "path": "skills/guide.md"
+      }
+    },
+    {
+      "id": "reference-panel",
+      "componentId": "panel",
+      "contribution": {
+        "kind": "ui",
+        "slot": "reference",
+        "schema": {
+          "id": "example.panel",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        }
+      }
+    },
+    {
+      "id": "analyze",
+      "componentId": "ai-helper",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.analyze",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.analyze.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.analyze.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "project-service",
+              "contract": {
+                "id": "example.model.generate",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 65536,
+            "maxOutputBytes": 65536,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    }
+  ]
+}

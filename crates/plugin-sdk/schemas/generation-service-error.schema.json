@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GenerationServiceError",
+  "type": "object",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/GenerationServiceErrorCode"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "code"
+  ],
+  "$defs": {
+    "GenerationServiceErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid-input",
+        "unavailable",
+        "permission-denied",
+        "cancelled",
+        "limit-exceeded",
+        "conflict",
+        "busy",
+        "storage-failed",
+        "outcome-unknown"
+      ]
+    }
+  }
+}

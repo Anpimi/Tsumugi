@@ -1,0 +1,94 @@
+{
+  "cases": [
+    {
+      "profile": "smapi-json",
+      "raw": "﻿// 中文\r\n{\"hello\": \"中文 👩🏽‍💻 e\\u0301\", \"escaped\": \"\\u4e16\\u754c \\ud83d\\ude00\"}\r\n",
+      "rows": [
+        {
+          "occurrence": {
+            "ordinal": 0,
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "namespace": "Example.Mod",
+            "key": "hello",
+            "text": "中文 👩🏽‍💻 é",
+            "keyByteRange": [
+              15,
+              22
+            ],
+            "valueByteRange": [
+              24,
+              56
+            ],
+            "identityBasis": "smapi-native-key/1"
+          },
+          "keyUtf16Range": [
+            9,
+            16
+          ],
+          "valueUtf16Range": [
+            18,
+            38
+          ]
+        },
+        {
+          "occurrence": {
+            "ordinal": 1,
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "namespace": "Example.Mod",
+            "key": "escaped",
+            "text": "世界 😀",
+            "keyByteRange": [
+              58,
+              67
+            ],
+            "valueByteRange": [
+              69,
+              96
+            ],
+            "identityBasis": "smapi-native-key/1"
+          },
+          "keyUtf16Range": [
+            40,
+            49
+          ],
+          "valueUtf16Range": [
+            51,
+            78
+          ]
+        }
+      ]
+    },
+    {
+      "profile": "webvtt",
+      "raw": "WEBVTT\r\n\r\ncue-1\r\n00:00:01.000 --> 00:00:02.000\r\n中文 👩🏽‍💻 é\r\n第二行 😀\r\n\r\n",
+      "rows": [
+        {
+          "occurrence": {
+            "ordinal": 0,
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "namespace": "webvtt:source",
+            "key": "cue-1",
+            "text": "中文 👩🏽‍💻 é\n第二行 😀",
+            "keyByteRange": [
+              10,
+              15
+            ],
+            "valueByteRange": [
+              48,
+              90
+            ],
+            "identityBasis": "{\"policy\":\"webvtt-cue/1\",\"timing\":\"00:00:01.000 --> 00:00:02.000\",\"nativeId\":\"cue-1\",\"layoutDigest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+          },
+          "keyUtf16Range": [
+            10,
+            15
+          ],
+          "valueUtf16Range": [
+            48,
+            69
+          ]
+        }
+      ]
+    }
+  ]
+}

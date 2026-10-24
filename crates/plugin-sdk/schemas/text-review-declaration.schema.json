@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TextReviewDeclaration",
+  "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+  "type": "object",
+  "properties": {
+    "checker": {
+      "type": "string"
+    },
+    "disposition": {
+      "$ref": "#/$defs/TextReviewDisposition"
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TextReviewRuleDeclaration"
+      }
+    },
+    "supportingResources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "checker",
+    "disposition",
+    "supportingResources",
+    "rules"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "TextReviewDisposition": {
+      "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+      "type": "string",
+      "enum": [
+        "advisory"
+      ]
+    },
+    "TextReviewRuleDeclaration": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "requiresTranslation": {
+          "type": "boolean"
+        },
+        "rule": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "requiresTranslation",
+        "title",
+        "description"
+      ]
+    }
+  }
+}

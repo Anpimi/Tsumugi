@@ -1,0 +1,18 @@
+{
+  "profile": {
+    "id": "webvtt-captions",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "sourceSetId": "source-set",
+  "sourceLanguage": "en-US",
+  "artifacts": [
+    {
+      "id": "source-artifact",
+      "logicalPath": "source.vtt",
+      "role": "source",
+      "sha256": "629b7d88d436e5ed7d38f038511e0ee9f24fb118d62ff4688d43e8dc1470b90a",
+      "utf8": "WEBVTT\r\n\r\ncue-1\r\n00:00:01.000 --> 00:00:02.000\r\n中文 👩🏽‍💻 é\r\n第二行 😀\r\n\r\n"
+    }
+  ]
+}

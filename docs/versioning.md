@@ -23,7 +23,7 @@ Use `alpha.N` while the target is under development. A move to `beta.N`, `rc.N` 
 
 Assess the whole unreleased batch, including earlier commits. A new feature in a fix batch changes its target; a new incompatibility requires a fresh compatibility review even if a version was already chosen. Routine commits and internal validation builds can share a pending version. Freeze that version when an explicitly designated prerelease/release snapshot is distributed or tagged; subsequent snapshots must use a new version. Record the source commit and artifact digest to distinguish internal builds.
 
-The first managed target is `0.2.0-alpha.1`. It consolidates development commits through `7febd7e`, including new workflows and storage incompatibilities, after the original `0.1.0` scaffold version. There are no historical release tags to reconstruct. These changes remain **Unreleased**; the version assignment does not assert publication or completed release acceptance.
+The first managed target, `0.2.0-alpha.1`, consolidated development commits through `7febd7e`, including new workflows and storage incompatibilities, after the original `0.1.0` scaffold version. The application alpha.1 release is now frozen. Subsequent source-only integrations remain under **Unreleased** without replacing that release; the next application distribution must advance its prerelease counter.
 
 ## Maintaining each change
 
@@ -33,3 +33,26 @@ The first managed target is `0.2.0-alpha.1`. It consolidates development commits
 4. If the batch's target changes, update the Cargo workspace version, regenerate its lockfile entries, and synchronize current-version statements. Verify the resolved versions of both workspace packages and the version metadata of the actual desktop build. Select behavior checks according to the changed risk; a version-only change does not require an unrelated full test suite.
 
 Before an authorized application release, move the batch into `## [VERSION] - YYYY-MM-DD` in both changelogs using the actual release date, leave a fresh `Unreleased` section, and align the manifest version, release title, source commit and artifact identity. Preserve published entries. Tags and release publication are separate operations from local development commits.
+
+## Experimental SDK source and artifacts
+
+`crates/plugin-sdk/Cargo.toml` owns the SDK's independent version, currently
+`0.1.0-alpha.1`. It inherits the workspace edition, minimum Rust version, license
+and authors, while retaining its own package version. The SDK has no Core or
+Host dependency; adding its source does not add a desktop plugin workflow or
+change application storage, IPC or execution profiles. See the
+[SDK build and consumption guide](../crates/plugin-sdk/README.md).
+
+The current source-only integration retains the application and SDK version
+metadata and does not designate a new distribution snapshot. The application
+alpha.1 release and earlier immutable SDK archives remain frozen. Current SDK
+source may differ from an archive with the same version label; consumers must
+select exact source/artifact provenance and must not replace a frozen archive
+or silently update a consumer lock.
+
+Before another SDK distribution, reassess the complete changes since its selected
+artifact and advance the prerelease. In particular, the current Windows runtime
+data enum variant requires downstream exhaustive Rust matches to be updated;
+this data choice establishes no Windows execution support. Review protocol and
+profile compatibility independently from SemVer. A source integration or local
+Cargo package verification does not publish to crates.io or update any release.

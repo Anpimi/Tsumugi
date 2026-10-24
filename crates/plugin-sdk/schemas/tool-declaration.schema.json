@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CapabilityToolDeclaration",
+  "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+  "type": "object",
+  "properties": {
+    "capabilityId": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "profile": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ContractRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "query": {
+      "description": "Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ToolQueryDeclaration"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "skill": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "supportingResources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "title",
+    "description",
+    "capabilityId",
+    "supportingResources"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "ToolQueryColumn": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "path"
+      ]
+    },
+    "ToolQueryDeclaration": {
+      "type": "object",
+      "properties": {
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "inputTemplate": true,
+        "maxTextBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "output": {
+          "$ref": "#/$defs/ToolQueryOutput"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "selections": {
+          "description": "Explicit senses or categories. Matching text alone does not select them.",
+          "$ref": "#/$defs/ToolQuerySelection"
+        },
+        "target": {
+          "description": "One explicit target option; no host-side locale or value normalization.",
+          "$ref": "#/$defs/ToolQuerySelection"
+        },
+        "textPath": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "inputSchema",
+        "outputSchema",
+        "inputTemplate",
+        "textPath",
+        "maxTextBytes",
+        "target",
+        "selections",
+        "output"
+      ]
+    },
+    "ToolQueryOption": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "label",
+        "description"
+      ]
+    },
+    "ToolQueryOutput": {
+      "type": "object",
+      "properties": {
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryColumn"
+          }
+        },
+        "emptyDescription": {
+          "type": "string"
+        },
+        "entriesPath": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        },
+        "maxEntries": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entriesPath",
+        "columns",
+        "maxEntries",
+        "emptyDescription"
+      ]
+    },
+    "ToolQueryPathPart": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "maximum": 1999,
+          "minimum": 0
+        }
+      ]
+    },
+    "ToolQuerySelection": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "maxSelected": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "minSelected": {
+          "type": "integer",
+          "maximum": 64,
+          "minimum": 0
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryOption"
+          }
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "description",
+        "path",
+        "options",
+        "minSelected",
+        "maxSelected"
+      ]
+    }
+  }
+}

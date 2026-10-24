@@ -1,0 +1,72 @@
+{
+  "protocolVersion": 1,
+  "body": {
+    "kind": "check-set",
+    "data": {
+      "policy": {
+        "id": "balanced.policy",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "requirements": [
+        {
+          "key": {
+            "rule": {
+              "id": "core.input.integrity",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "implementation": {
+              "kind": "core",
+              "validator": {
+                "id": "core.validator",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            }
+          },
+          "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "scopeDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "targets": [
+            "unit-a",
+            "unit-b"
+          ],
+          "mandatory": true,
+          "waivable": false,
+          "notApplicable": null
+        },
+        {
+          "key": {
+            "rule": {
+              "id": "example.domain.structure",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "implementation": {
+              "kind": "plugin",
+              "provider": {
+                "plugin": {
+                  "publisher": "example",
+                  "id": "synthetic-domain",
+                  "version": "0.1.0-alpha.1"
+                },
+                "componentId": "domain-worker",
+                "contributionId": "extract-source",
+                "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "scopeDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "targets": [
+            "unit-a",
+            "unit-b"
+          ],
+          "mandatory": true,
+          "waivable": false,
+          "notApplicable": null
+        }
+      ]
+    }
+  }
+}

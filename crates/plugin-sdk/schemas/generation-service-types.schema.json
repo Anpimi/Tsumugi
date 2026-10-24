@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GenerationServiceTypes",
+  "type": "object",
+  "properties": {
+    "error": {
+      "$ref": "#/$defs/GenerationServiceError"
+    },
+    "input": {
+      "$ref": "#/$defs/GenerationServiceInput"
+    },
+    "receipt": {
+      "$ref": "#/$defs/GenerationServiceReceipt"
+    }
+  },
+  "required": [
+    "input",
+    "receipt",
+    "error"
+  ],
+  "$defs": {
+    "GenerationServiceError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/GenerationServiceErrorCode"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ]
+    },
+    "GenerationServiceErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid-input",
+        "unavailable",
+        "permission-denied",
+        "cancelled",
+        "limit-exceeded",
+        "conflict",
+        "busy",
+        "storage-failed",
+        "outcome-unknown"
+      ]
+    },
+    "GenerationServiceInput": {
+      "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+      "type": "object",
+      "properties": {
+        "attemptId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "unitIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "attemptId",
+        "unitIds"
+      ]
+    },
+    "GenerationServiceReceipt": {
+      "description": "The original ledger accepted these identities. A repeated call may already\nbe terminal; this acknowledgement does not claim queue or model completion.\nIt carries no grant, lease, credential or authorization renewal handle.",
+      "type": "object",
+      "properties": {
+        "attemptId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "inputDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "attemptId",
+        "inputDigest"
+      ]
+    }
+  }
+}

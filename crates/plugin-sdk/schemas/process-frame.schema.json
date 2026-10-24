@@ -1,0 +1,932 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProcessFrame",
+  "description": "Wire representation: a four-byte big-endian length followed by exactly that\nmany JSON bytes. Stdout is reserved for frames; stderr is a separate bounded\ndiagnostic stream. Hosts must also enforce direction, state and deadlines.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "#/$defs/ProcessBody"
+    },
+    "protocolVersion": {
+      "type": "integer",
+      "const": 3
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "body"
+  ],
+  "$defs": {
+    "CapabilityDeclaration": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/EffectKind"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "limits": {
+          "$ref": "#/$defs/CapabilityLimits"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PermissionRequest"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "profiles",
+        "effect",
+        "permissions",
+        "limits"
+      ]
+    },
+    "CapabilityLimits": {
+      "description": "Requested upper bounds. The host must also enforce its own current limits.",
+      "type": "object",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "maxInputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxInputBytes",
+        "maxOutputBytes",
+        "concurrency",
+        "timeoutMs"
+      ]
+    },
+    "ComponentInstanceBinding": {
+      "description": "One actual component instance, independent of a selected contribution.\nThis is a claimed wire principal, not a grant or proof of package provenance.",
+      "type": "object",
+      "properties": {
+        "activationGeneration": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "componentId": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "packageDigest",
+        "instanceId",
+        "activationGeneration"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "EffectKind": {
+      "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+      "type": "string",
+      "enum": [
+        "read-only",
+        "proposal",
+        "external"
+      ]
+    },
+    "EncodedPayload": {
+      "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "utf8",
+        "sha256"
+      ]
+    },
+    "InvocationContext": {
+      "type": "object",
+      "properties": {
+        "attemptId": {
+          "type": "string"
+        },
+        "configurationDigest": {
+          "type": "string"
+        },
+        "dispatchId": {
+          "type": "string"
+        },
+        "environmentDigest": {
+          "type": "string"
+        },
+        "inputDigest": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "scopeDigest": {
+          "type": "string"
+        },
+        "scopeId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "projectId",
+        "operationId",
+        "attemptId",
+        "itemId",
+        "dispatchId",
+        "scopeId",
+        "inputDigest",
+        "scopeDigest",
+        "environmentDigest",
+        "configurationDigest"
+      ]
+    },
+    "InvocationOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "output": {
+              "$ref": "#/$defs/EncodedPayload"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "output"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "$ref": "#/$defs/EncodedPayload"
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "$ref": "#/$defs/EncodedPayload"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "error"
+          ]
+        }
+      ]
+    },
+    "InvocationRequest": {
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "context": {
+          "$ref": "#/$defs/InvocationContext"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "input": {
+          "$ref": "#/$defs/EncodedPayload"
+        },
+        "maxResultBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContractRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderBinding"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "context",
+        "provider",
+        "capability",
+        "input",
+        "outputSchema",
+        "errorSchema",
+        "maxResultBytes"
+      ]
+    },
+    "InvocationResult": {
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "context": {
+          "$ref": "#/$defs/InvocationContext"
+        },
+        "outcome": {
+          "$ref": "#/$defs/InvocationOutcome"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContractRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderBinding"
+        },
+        "resultId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "context",
+        "provider",
+        "capability",
+        "resultId",
+        "outcome"
+      ]
+    },
+    "PermissionRequest": {
+      "description": "These are requested permissions, never an authorization token.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "captured-input"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "staged-output"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "project-service"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "contract"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "destination": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "network"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "destination"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "program"
+          ]
+        }
+      ]
+    },
+    "PluginIdentity": {
+      "description": "Claimed package identity; a host must authenticate the actual package source.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisher",
+        "id",
+        "version"
+      ]
+    },
+    "ProcessActivation": {
+      "description": "A frozen declaration roster for one actual component channel. A Ready\nreceiver must compare the complete value to its original Activate. Echoing\nit is a handshake claim, never a grant or source proof.",
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProcessCapability"
+          },
+          "maxItems": 128,
+          "minItems": 1
+        },
+        "instance": {
+          "$ref": "#/$defs/ComponentInstanceBinding"
+        },
+        "services": {
+          "description": "Host-selected project services, resolved before component activation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ServiceBinding"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instance",
+        "capabilities",
+        "services"
+      ]
+    },
+    "ProcessBody": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ProcessActivation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "activate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ProcessActivation"
+            },
+            "kind": {
+              "type": "string",
+              "const": "ready"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/InvocationRequest"
+            },
+            "kind": {
+              "type": "string",
+              "const": "invoke"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/InvocationResult"
+            },
+            "kind": {
+              "type": "string",
+              "const": "result"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ServiceRequest"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service-request"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ServiceResponse"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service-response"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "dispatchId": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "dispatchId"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancel"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "dispatchId": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "dispatchId"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "instance": {
+                  "$ref": "#/$defs/ComponentInstanceBinding"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "instance"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "close"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "instance": {
+                  "$ref": "#/$defs/ComponentInstanceBinding"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "instance"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "closed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "nonce": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "nonce"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "ping"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "nonce": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "nonce"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "pong"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        }
+      ]
+    },
+    "ProcessCapability": {
+      "description": "One callable declaration in the Host-captured component roster.",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/CapabilityDeclaration"
+        },
+        "contributionId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contributionId",
+        "capability"
+      ]
+    },
+    "ProviderBinding": {
+      "description": "A claimed wire binding. Only the trusted host can compare it to the actual\nverified package and channel; constructing this value proves no authority.",
+      "type": "object",
+      "properties": {
+        "activationGeneration": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "componentId": {
+          "type": "string"
+        },
+        "contributionId": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "contributionId",
+        "packageDigest",
+        "instanceId",
+        "activationGeneration"
+      ]
+    },
+    "ServiceBinding": {
+      "description": "A Host-selected service descriptor, not a grant or a project/store handle.\nThe Host authenticates its provider, scope, configuration and live generation.",
+      "type": "object",
+      "properties": {
+        "activationGeneration": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "configurationDigest": {
+          "type": "string"
+        },
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/EffectKind"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "handleId": {
+          "type": "string"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "limits": {
+          "$ref": "#/$defs/CapabilityLimits"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "scopeId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "providerId",
+        "contract",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "effect",
+        "projectId",
+        "scopeId",
+        "activationGeneration",
+        "configurationDigest",
+        "limits"
+      ]
+    },
+    "ServiceRequest": {
+      "description": "The context is the original outer invocation. Its inputDigest describes that\ninvocation, while input.sha256 independently authenticates the service bytes.",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/InvocationContext"
+        },
+        "handleId": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/EncodedPayload"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "callId",
+        "handleId",
+        "context",
+        "input"
+      ]
+    },
+    "ServiceResponse": {
+      "description": "A response preserves failed/unknown outcomes. Matching it does not authorize\na mutation, validate its domain payload or prove that a child task finished.",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/InvocationContext"
+        },
+        "handleId": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/InvocationOutcome"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "callId",
+        "handleId",
+        "context",
+        "outcome"
+      ]
+    }
+  }
+}

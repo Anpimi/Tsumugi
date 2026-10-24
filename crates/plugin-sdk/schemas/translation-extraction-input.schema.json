@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslationExtractionInput",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapturedTextArtifact"
+      }
+    },
+    "importId": {
+      "type": "string"
+    },
+    "languageEvidence": {
+      "$ref": "#/$defs/TranslationLanguageEvidence"
+    },
+    "nativeScope": {
+      "$ref": "#/$defs/TranslationNativeScope"
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "sourceSetId": {
+      "type": "string"
+    },
+    "sourceSnapshotId": {
+      "type": "string"
+    },
+    "targetLanguage": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "importId",
+    "sourceSetId",
+    "sourceSnapshotId",
+    "targetLanguage",
+    "languageEvidence",
+    "nativeScope",
+    "artifacts"
+  ],
+  "$defs": {
+    "CapturedTextArtifact": {
+      "description": "Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "utf8"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "TranslationLanguageEvidence": {
+      "description": "Describes the caller's recorded explicit choice, not an execution/adoption\ngrant. Only the trusted application can establish that consent actually ran.",
+      "type": "string",
+      "enum": [
+        "user-confirmed"
+      ]
+    },
+    "TranslationNativeScope": {
+      "description": "Captured from the current adopted source. The plugin supplies canonical\nnative values under this exact policy; Core must never normalize them again.",
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "policy"
+      ]
+    }
+  }
+}

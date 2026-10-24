@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GenerationComponentInput",
+  "description": "Data supplied to the generation component after the Host prepared its\nread-only query inputs from the user's selected work plan.",
+  "type": "object",
+  "properties": {
+    "generation": {
+      "$ref": "#/$defs/GenerationServiceInput"
+    },
+    "preparedTools": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PreparedToolServiceCall"
+      },
+      "maxItems": 15
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "generation",
+    "preparedTools"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "EncodedPayload": {
+      "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+      "type": "object",
+      "properties": {
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "utf8",
+        "sha256"
+      ]
+    },
+    "GenerationServiceInput": {
+      "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+      "type": "object",
+      "properties": {
+        "attemptId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "taskId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "unitIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "taskId",
+        "attemptId",
+        "unitIds"
+      ]
+    },
+    "PreparedToolServiceCall": {
+      "description": "One query payload selected from the original work plan. These identities\ncarry data only and do not grant permission to invoke the selected tool.",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "handleId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        },
+        "input": {
+          "$ref": "#/$defs/EncodedPayload"
+        },
+        "toolHandle": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "callId",
+        "toolHandle",
+        "input"
+      ]
+    }
+  }
+}

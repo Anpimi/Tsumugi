@@ -1,0 +1,34 @@
+{
+  "profile": {
+    "id": "example.editorial-text",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "checker": "text-review-check",
+  "disposition": "advisory",
+  "supportingResources": [
+    "terms"
+  ],
+  "rules": [
+    {
+      "rule": {
+        "id": "example.preferred-form",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "requiresTranslation": true,
+      "title": "Preferred form",
+      "description": "Check the explicitly selected editorial preference."
+    },
+    {
+      "rule": {
+        "id": "example.source-note",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "requiresTranslation": false,
+      "title": "Source note",
+      "description": "Inspect source text even without a selected translation."
+    }
+  ]
+}

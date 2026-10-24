@@ -1,0 +1,41 @@
+{
+  "facts": [
+    {
+      "id": "literal-note",
+      "kind": "note",
+      "text": "Hello 👩🏽‍💻 é",
+      "origin": {
+        "kind": "extracted",
+        "sources": [
+          {
+            "artifactId": "captured-context",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 0,
+              "end": 25
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "interpretation",
+      "kind": "role",
+      "text": "Possibly a greeting",
+      "origin": {
+        "kind": "inferred",
+        "rationale": "Synthetic interpretation, not an established character role.",
+        "sources": [
+          {
+            "artifactId": "captured-context",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 0,
+              "end": 25
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "handleId": "service-handle-a",
+  "providerId": "example.project-service",
+  "contract": { "id": "example.project-generation", "schemaVersion": 1, "behaviorVersion": 1 },
+  "inputSchema": { "id": "example.service-input", "schemaVersion": 1, "behaviorVersion": 1 },
+  "outputSchema": { "id": "example.service-output", "schemaVersion": 1, "behaviorVersion": 1 },
+  "errorSchema": { "id": "example.service-error", "schemaVersion": 1, "behaviorVersion": 1 },
+  "effect": "proposal",
+  "projectId": "project-a",
+  "scopeId": "scope-a",
+  "activationGeneration": 1,
+  "configurationDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "limits": { "maxInputBytes": 4096, "maxOutputBytes": 4096, "concurrency": 1, "timeoutMs": 1000 }
+}

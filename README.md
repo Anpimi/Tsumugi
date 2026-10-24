@@ -59,6 +59,12 @@ Public extension contracts remain separate from internal storage and implementat
 
 This lets different localization domains share a workflow and a single source of truth.
 
+The [experimental plugin SDK](crates/plugin-sdk/README.md) provides independently
+buildable Rust data contracts, a conformance CLI, and generated JavaScript
+bindings. Its version and immutable source packages are separate from the desktop
+release. This checkout supplies the SDK without a plugin Host or desktop plugin
+loading workflow.
+
 ## AI
 
 AI is optional. It may produce translation candidates, review signals, comparisons, contextual findings, or other structured results.

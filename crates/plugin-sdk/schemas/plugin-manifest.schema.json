@@ -1,0 +1,461 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PluginManifest",
+  "type": "object",
+  "properties": {
+    "components": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ComponentDeclaration"
+      }
+    },
+    "contributions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContributionDeclaration"
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PermissionRequest"
+      }
+    },
+    "plugin": {
+      "$ref": "#/$defs/PluginIdentity"
+    },
+    "protocolVersion": {
+      "type": "integer",
+      "const": 1
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "plugin",
+    "permissions",
+    "components",
+    "contributions"
+  ],
+  "$defs": {
+    "CapabilityDeclaration": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/EffectKind"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "limits": {
+          "$ref": "#/$defs/CapabilityLimits"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PermissionRequest"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "profiles",
+        "effect",
+        "permissions",
+        "limits"
+      ]
+    },
+    "CapabilityDependency": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "selection": {
+          "$ref": "#/$defs/ProviderSelection"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "required",
+        "selection"
+      ]
+    },
+    "CapabilityLimits": {
+      "description": "Requested upper bounds. The host must also enforce its own current limits.",
+      "type": "object",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "maxInputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxInputBytes",
+        "maxOutputBytes",
+        "concurrency",
+        "timeoutMs"
+      ]
+    },
+    "ComponentDeclaration": {
+      "type": "object",
+      "properties": {
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapabilityDependency"
+          }
+        },
+        "entrypoint": {
+          "description": "Package-relative file. Actual opening and isolation are host responsibilities.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exit": {
+          "$ref": "#/$defs/ExitRequirements"
+        },
+        "id": {
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeKind"
+        },
+        "scope": {
+          "$ref": "#/$defs/ComponentScope"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "scope",
+        "runtime",
+        "dependencies",
+        "exit"
+      ]
+    },
+    "ComponentScope": {
+      "type": "string",
+      "enum": [
+        "application",
+        "project",
+        "attempt"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "ContributionDeclaration": {
+      "type": "object",
+      "properties": {
+        "componentId": {
+          "description": "Exactly one component owns activation and cleanup of this contribution.",
+          "type": "string"
+        },
+        "contribution": {
+          "$ref": "#/$defs/ContributionKind"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "componentId",
+        "contribution"
+      ]
+    },
+    "ContributionKind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "declaration": {
+              "$ref": "#/$defs/CapabilityDeclaration"
+            },
+            "kind": {
+              "type": "string",
+              "const": "capability"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "declaration"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "resource"
+            },
+            "path": {
+              "type": "string"
+            },
+            "schema": {
+              "$ref": "#/$defs/ContractRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "schema",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "skill"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "path"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ui"
+            },
+            "schema": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "slot": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "slot",
+            "schema"
+          ]
+        }
+      ]
+    },
+    "EffectKind": {
+      "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+      "type": "string",
+      "enum": [
+        "read-only",
+        "proposal",
+        "external"
+      ]
+    },
+    "ExitRequirements": {
+      "type": "object",
+      "properties": {
+        "cleanupTimeoutMs": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "stopTimeoutMs": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "stopTimeoutMs",
+        "cleanupTimeoutMs"
+      ]
+    },
+    "PermissionRequest": {
+      "description": "These are requested permissions, never an authorization token.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "captured-input"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "staged-output"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "project-service"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "contract"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "destination": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "network"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "destination"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "program"
+          ]
+        }
+      ]
+    },
+    "PluginIdentity": {
+      "description": "Claimed package identity; a host must authenticate the actual package source.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisher",
+        "id",
+        "version"
+      ]
+    },
+    "ProviderSelection": {
+      "description": "Multiple providers retain separate provenance. A later merge is another\nexplicitly selected capability, not registration-order precedence.",
+      "type": "string",
+      "enum": [
+        "single",
+        "collect-independent"
+      ]
+    },
+    "RuntimeKind": {
+      "type": "string",
+      "enum": [
+        "data",
+        "native-worker",
+        "javascript"
+      ]
+    }
+  }
+}

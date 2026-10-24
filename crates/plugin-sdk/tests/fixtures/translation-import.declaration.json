@@ -1,0 +1,23 @@
+{
+  "displayName": "Existing translations",
+  "profile": {
+    "id": "sample-translations",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "material": {
+    "logicalDirectory": "i18n",
+    "extension": "json",
+    "role": "translation",
+    "maxBytes": 131072
+  },
+  "extractor": "extract",
+  "checker": "source-check",
+  "semanticRules": [
+    {
+      "id": "sample.translation-semantics",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    }
+  ]
+}

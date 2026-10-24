@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslationImportDeclaration",
+  "type": "object",
+  "properties": {
+    "checker": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "extractor": {
+      "type": "string"
+    },
+    "material": {
+      "$ref": "#/$defs/TranslationMaterialDeclaration"
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "semanticRules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContractRef"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "displayName",
+    "profile",
+    "material",
+    "extractor",
+    "checker",
+    "semanticRules"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "TranslationMaterialDeclaration": {
+      "description": "Metadata describing one selected file relative to an explicitly granted\ndirectory. No glob, executable discovery or filesystem authority is implied.",
+      "type": "object",
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "logicalDirectory": {
+          "type": "string"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "logicalDirectory",
+        "extension",
+        "role",
+        "maxBytes"
+      ]
+    }
+  }
+}

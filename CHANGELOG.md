@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental standalone plugin SDK source with Rust data contracts, a conformance CLI, synthetic examples, and self-contained JavaScript bindings and generation tooling. SDK integration does not add a plugin Host or desktop plugin loading; existing immutable SDK archives remain unchanged.
+
 - Shared AI and Arena connection reuse, independent per-provider request rate limits, fair bounded scheduling, and durable request reservations with known usage and unknown exposure shown after reopening. Trusted Core child tasks inherit scope, connection settings, cancellation and ancestor budgets.
 
 - Added macOS desktop builds and local source, translation, glossary import and verified release export, with descriptor-based file authorization and Command-key editing shortcuts.

@@ -1,0 +1,62 @@
+{
+  "protocolVersion": 1,
+  "body": {
+    "kind": "request",
+    "data": {
+      "context": {
+        "projectId": "project-a",
+        "operationId": "operation-a",
+        "attemptId": "attempt-a",
+        "itemId": "item-a",
+        "dispatchId": "dispatch-a",
+        "scopeId": "scope-a",
+        "inputDigest": "ea2fa5b86ccca5df17f6a2e2dbc91374a6cf4fc6c1690e854ae8ddc10e0ff1cd",
+        "scopeDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "environmentDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "configurationDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "provider": {
+        "plugin": {
+          "publisher": "example",
+          "id": "synthetic-domain",
+          "version": "0.1.0-alpha.1"
+        },
+        "componentId": "domain-worker",
+        "contributionId": "extract-source",
+        "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "instanceId": "instance-a",
+        "activationGeneration": 1
+      },
+      "capability": {
+        "id": "example.extract",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "profile": {
+        "id": "smapi-i18n-flat",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "input": {
+        "schema": {
+          "id": "example.input",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "utf8": "{\"text\":\"中文 👩🏽‍💻 é\"}",
+        "sha256": "ea2fa5b86ccca5df17f6a2e2dbc91374a6cf4fc6c1690e854ae8ddc10e0ff1cd"
+      },
+      "outputSchema": {
+        "id": "example.output",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "errorSchema": {
+        "id": "example.error",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "maxResultBytes": 65536
+    }
+  }
+}

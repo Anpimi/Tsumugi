@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewDeclaration",
+  "type": "object",
+  "properties": {
+    "checker": {
+      "type": "string"
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ReviewRuleDeclaration"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "checker",
+    "rules"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "ReviewRuleDeclaration": {
+      "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+      "type": "object",
+      "properties": {
+        "requiresTranslation": {
+          "type": "boolean"
+        },
+        "rule": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "requiresTranslation"
+      ]
+    }
+  }
+}

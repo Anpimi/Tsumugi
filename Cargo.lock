@@ -4268,6 +4268,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsumugi-plugin-sdk"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "schemars 1.2.2",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

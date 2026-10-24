@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceImportDeclaration",
+  "description": "All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.",
+  "type": "object",
+  "properties": {
+    "checker": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "extractor": {
+      "type": "string"
+    },
+    "materials": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SourceMaterialDeclaration"
+      }
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "reviewResource": {
+      "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+      "type": "string"
+    },
+    "revisionPolicy": {
+      "$ref": "#/$defs/SourceRevisionPolicy"
+    },
+    "semanticRules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContractRef"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "displayName",
+    "profile",
+    "materials",
+    "extractor",
+    "checker",
+    "reviewResource",
+    "revisionPolicy",
+    "semanticRules"
+  ],
+  "$defs": {
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "SourceMaterialDeclaration": {
+      "type": "object",
+      "properties": {
+        "logicalPath": {
+          "type": "string"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "logicalPath",
+        "role",
+        "maxBytes"
+      ]
+    },
+    "SourceRevisionPolicy": {
+      "description": "Captured by the trusted policy owner before a proposal is received. Only\nthese exact block schemas contribute opaque bytes to source revisions.",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "revisionBasis": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "revisionBasis"
+      ]
+    }
+  }
+}
