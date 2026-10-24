@@ -92,6 +92,24 @@ it("keeps malformed or misbound build and delivery acknowledgements unknown with
   }
 });
 
+it("requires every immutable original build field and rejects mutable task projections", async () => {
+  const saved = fixture.responses.buildAttempt;
+  const variants = [
+    { ...saved, projectId: fixture.responses.releases[0].sourceSnapshotId },
+    { ...saved, choices: [...saved.choices].reverse() },
+    { ...saved, choices: saved.choices.slice(0, 1) },
+    { ...saved, choices: [{ ...saved.choices[0], fileName: "i18n/other.json" }, saved.choices[1]] },
+    { ...saved, expectedEligibilityBasis: "0".repeat(64) },
+    { ...saved, inputDigest: "not-a-digest" },
+    { ...saved, progress: { succeeded: 1 } },
+  ];
+  for (const response of variants) {
+    invoke.mockReset(); invoke.mockResolvedValue(response);
+    await expect(releaseCommands.buildAttempt(fixture.requests.build)).rejects.toThrow();
+    expect(invoke).toHaveBeenCalledTimes(1);
+  }
+});
+
 it("retains cancellation, explicit unknown delivery and backend rejection semantics", async () => {
   invoke.mockResolvedValueOnce(null);
   expect(await releaseCommands.choose(fixture.requests.session)).toBeNull();

@@ -240,7 +240,7 @@ struct ReleaseRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReleaseResponses {
-    build_attempt: Option<execution::AttemptDetail>,
+    build_attempt: Option<tsumugi_core::LocaleBuildStartReceipt>,
     delivery_action: Option<tsumugi_core::DeliveryView>,
     identity: tsumugi_core::execution::ExecutionId,
     releases: Vec<tsumugi_core::ReleaseView>,
@@ -256,6 +256,7 @@ struct ReleaseResponses {
 struct AiRequests {
     preview: execution::ai::AiPreviewRequest,
     start: execution::ai::AiStartRequest,
+    start_action: execution::ai::AiStartRequest,
     read: execution::ai::AiReadRequest,
 }
 #[derive(JsonSchema)]
@@ -265,6 +266,7 @@ struct AiResponses {
     prepared: execution::ai::AiPrepared,
     identity: tsumugi_core::execution::ExecutionId,
     view: execution::ai::AiView,
+    start_action: Option<tsumugi_core::ai::AiStartReceipt>,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]

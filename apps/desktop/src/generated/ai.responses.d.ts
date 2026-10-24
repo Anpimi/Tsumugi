@@ -11,6 +11,7 @@ export type RecoveryAction =
 export interface Responses {
   identity: ExecutionId;
   prepared: AiPrepared;
+  startAction: AiStartReceipt | null;
   view: AiView;
 }
 export interface AiPrepared {
@@ -63,6 +64,15 @@ export interface SharedTerm {
   revisionId: ExecutionId;
   source: string;
   target: string;
+}
+/**
+ * Immutable acknowledgement of the original direct translation request.
+ */
+export interface AiStartReceipt {
+  attemptId: ExecutionId;
+  digest: string;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface AiView {
   budget: ProviderBudget | null;

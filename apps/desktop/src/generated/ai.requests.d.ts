@@ -6,6 +6,7 @@ export interface Requests {
   preview: AiPreviewRequest;
   read: AiReadRequest;
   start: AiStartRequest;
+  startAction: AiStartRequest;
 }
 export interface AiPreviewRequest {
   config: AiConfig;

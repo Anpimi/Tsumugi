@@ -209,57 +209,19 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
-      "AdoptionState": {
-        "enum": [
-          "unapplied",
-          "committed",
-          "conflict",
-          "rejected"
-        ],
-        "type": "string"
-      },
-      "AttemptDetail": {
+      "BuildLocaleChoice": {
         "additionalProperties": false,
         "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/definitions/ItemView"
-            },
-            "type": "array"
-          },
-          "nextOffset": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "operation": {
+          "fileName": {
             "type": "string"
           },
-          "progress": {
-            "$ref": "#/definitions/Progress"
-          },
-          "recovery": {
-            "$ref": "#/definitions/RecoveryPlan"
-          },
-          "taskId": {
-            "$ref": "#/definitions/ExecutionId"
+          "locale": {
+            "type": "string"
           }
         },
         "required": [
-          "attemptId",
-          "taskId",
-          "operation",
-          "progress",
-          "items",
-          "recovery",
-          "nextOffset"
+          "locale",
+          "fileName"
         ],
         "type": "object"
       },
@@ -431,80 +393,43 @@
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
       },
-      "ExecutionState": {
-        "enum": [
-          "queued",
-          "dispatched",
-          "succeeded",
-          "failed",
-          "cancelled-before-dispatch",
-          "unknown"
-        ],
-        "type": "string"
-      },
-      "ItemStatus": {
+      "LocaleBuildStartReceipt": {
         "additionalProperties": false,
+        "description": "Immutable acknowledgement of the accepted original build request.",
         "properties": {
-          "adoption": {
-            "$ref": "#/definitions/AdoptionState"
-          },
-          "cancellationRequested": {
-            "type": "boolean"
-          },
-          "diagnostic": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "execution": {
-            "$ref": "#/definitions/ExecutionState"
-          },
-          "itemId": {
+          "attemptId": {
             "$ref": "#/definitions/ExecutionId"
           },
-          "retrySafe": {
-            "type": "boolean"
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/BuildLocaleChoice"
+            },
+            "type": "array"
           },
-          "validation": {
-            "$ref": "#/definitions/ValidationState"
+          "expectedEligibilityBasis": {
+            "type": "string"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
           }
         },
         "required": [
-          "itemId",
-          "execution",
-          "validation",
-          "adoption",
-          "cancellationRequested",
-          "retrySafe",
-          "diagnostic"
-        ],
-        "type": "object"
-      },
-      "ItemView": {
-        "additionalProperties": false,
-        "properties": {
-          "resultId": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ExecutionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "scope": {
-            "$ref": "#/definitions/Scope"
-          },
-          "status": {
-            "$ref": "#/definitions/ItemStatus"
-          }
-        },
-        "required": [
-          "status",
-          "scope",
-          "resultId"
+          "projectId",
+          "taskId",
+          "attemptId",
+          "operation",
+          "inputDigest",
+          "choices",
+          "expectedEligibilityBasis"
         ],
         "type": "object"
       },
@@ -536,165 +461,6 @@
           "expectedSha256",
           "currentSha256",
           "state"
-        ],
-        "type": "object"
-      },
-      "Progress": {
-        "additionalProperties": false,
-        "properties": {
-          "adopted": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "cancelled": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "failed": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "queued": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "running": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "succeeded": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "total": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "unknown": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "total",
-          "queued",
-          "running",
-          "succeeded",
-          "failed",
-          "cancelled",
-          "unknown",
-          "adopted"
-        ],
-        "type": "object"
-      },
-      "RecoveryAction": {
-        "enum": [
-          "resume-undispatched",
-          "retry-safe-failure",
-          "validate-output",
-          "adopt-result",
-          "query-outcome",
-          "view-receipt"
-        ],
-        "type": "string"
-      },
-      "RecoveryPlan": {
-        "additionalProperties": false,
-        "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "units": {
-            "items": {
-              "$ref": "#/definitions/RecoveryUnit"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "attemptId",
-          "units"
-        ],
-        "type": "object"
-      },
-      "RecoveryUnit": {
-        "additionalProperties": false,
-        "properties": {
-          "actions": {
-            "items": {
-              "$ref": "#/definitions/RecoveryAction"
-            },
-            "type": "array"
-          },
-          "blockedReason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "itemIds": {
-            "items": {
-              "$ref": "#/definitions/ExecutionId"
-            },
-            "type": "array"
-          },
-          "receiptId": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/ExecutionId"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "remainingItemIds": {
-            "items": {
-              "$ref": "#/definitions/ExecutionId"
-            },
-            "type": "array"
-          },
-          "resultIds": {
-            "items": {
-              "$ref": "#/definitions/ExecutionId"
-            },
-            "type": "array"
-          },
-          "scopes": {
-            "items": {
-              "$ref": "#/definitions/Scope"
-            },
-            "type": "array"
-          },
-          "unitId": {
-            "$ref": "#/definitions/ExecutionId"
-          }
-        },
-        "required": [
-          "unitId",
-          "itemIds",
-          "scopes",
-          "remainingItemIds",
-          "resultIds",
-          "actions",
-          "blockedReason",
-          "receiptId"
         ],
         "type": "object"
       },
@@ -820,45 +586,13 @@
           "entryCount"
         ],
         "type": "object"
-      },
-      "Scope": {
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "locale": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "kind",
-          "id",
-          "locale"
-        ],
-        "type": "object"
-      },
-      "ValidationState": {
-        "enum": [
-          "absent",
-          "pending",
-          "valid",
-          "invalid"
-        ],
-        "type": "string"
       }
     },
     "properties": {
       "buildAttempt": {
         "anyOf": [
           {
-            "$ref": "#/definitions/AttemptDetail"
+            "$ref": "#/definitions/LocaleBuildStartReceipt"
           },
           {
             "type": "null"

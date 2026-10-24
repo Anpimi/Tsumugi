@@ -422,6 +422,20 @@ pub struct DeliveryView {
     pub created_at: String,
 }
 
+/// Immutable acknowledgement of the accepted original build request.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocaleBuildStartReceipt {
+    pub project_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub operation: String,
+    pub input_digest: String,
+    pub choices: Vec<BuildLocaleChoice>,
+    pub expected_eligibility_basis: String,
+}
+
 impl ProjectStore {
     pub fn list_releases(
         &self,
@@ -733,6 +747,38 @@ impl ProjectStore {
             return Err(failure(ErrorCode::ResultMismatch, "build-attempt-request"));
         }
         Ok(Some(input))
+    }
+
+    /// Read the original fixed input, never mutable progress or current eligibility.
+    pub fn locale_build_start_receipt(
+        &self,
+        project_id: ExecutionId,
+        attempt_id: ExecutionId,
+        choices: &[BuildLocaleChoice],
+        expected_eligibility_basis: &str,
+    ) -> Result<Option<LocaleBuildStartReceipt>, ExecutionError> {
+        let connection = self.connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?;
+        let receipt = super::review::read_snapshot(connection, |_| {
+            let Some(input) = self.find_locale_build(
+                project_id, attempt_id, choices, expected_eligibility_basis,
+            )? else { return Ok(None); };
+            let manifest = BuildManifest::from_input(&input)?;
+            Ok(Some(LocaleBuildStartReceipt {
+                project_id: input.envelope().project_id,
+                task_id: input.envelope().task_id,
+                attempt_id: input.envelope().attempt_id,
+                operation: input.envelope().operation.clone(),
+                input_digest: input.digest().to_owned(),
+                choices: manifest.locales.into_iter().map(|locale| BuildLocaleChoice {
+                    locale: locale.locale, file_name: locale.file_name,
+                }).collect(),
+                expected_eligibility_basis: manifest.eligibility_basis,
+            }))
+        })?;
+        // Only a successful exact read can release a lost-commit guard.
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(receipt)
     }
 
     pub fn prepare_locale_build(
@@ -1094,5 +1140,96 @@ impl AdoptionHandler for ReleaseAdoptionHandler {
                 revision: Revision::new(1)?,
             }])
         }))
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    fn request(store: &ProjectStore, attempt: ExecutionId) -> (ExecutionId, Vec<BuildLocaleChoice>, String) {
+        let input = store.execution_input(attempt).unwrap();
+        let manifest = BuildManifest::from_input(&input).unwrap();
+        (manifest.project_id, manifest.locales.into_iter().map(|v| BuildLocaleChoice {
+            locale: v.locale, file_name: v.file_name,
+        }).collect(), manifest.eligibility_basis)
+    }
+    fn writes(store: &ProjectStore) -> i64 {
+        store.connection().unwrap().query_row("SELECT total_changes()", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn locale_build_start_receipt_is_historical_exact_and_read_only_after_reopen() {
+        let (temp, mut store, action) = super::super::review::tests::current_release_fixture(false);
+        let (project, choices, basis) = request(&store, action.attempt_id);
+        let input = store.execution_input(action.attempt_id).unwrap();
+        let expected = LocaleBuildStartReceipt {
+            project_id: project, task_id: input.envelope().task_id, attempt_id: action.attempt_id,
+            operation: BUILD_OPERATION.into(), input_digest: input.digest().into(),
+            choices: choices.clone(), expected_eligibility_basis: basis.clone(),
+        };
+        // Removing the original target and changing current eligibility cannot rewrite fixed input.
+        let revision = store.metadata().unwrap().metadata_revision();
+        store.set_target_locales(revision, &["fr-FR".into()]).unwrap();
+        let before = writes(&store);
+        let changes = serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap();
+        assert_eq!(store.locale_build_start_receipt(project, action.attempt_id, &choices, &basis).unwrap(), Some(expected.clone()));
+        assert_eq!(writes(&store), before);
+        assert_eq!(serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap(), changes);
+        drop(store);
+        let store = ProjectStore::open(temp.path().join("project")).unwrap();
+        let before = writes(&store);
+        assert_eq!(store.locale_build_start_receipt(project, action.attempt_id, &choices, &basis).unwrap(), Some(expected));
+        assert_eq!(writes(&store), before);
+    }
+
+    #[test]
+    fn locale_build_start_receipt_rejects_wrong_proof_and_preserves_unknown_guard() {
+        let (_temp, store, action) = super::super::review::tests::current_release_fixture(false);
+        let (project, choices, basis) = request(&store, action.attempt_id);
+        store.execution_unknown.store(true, Ordering::Release);
+        let before = writes(&store);
+        for wrong in [vec![], vec![BuildLocaleChoice { locale: "fr-FR".into(), ..choices[0].clone() }],
+            vec![BuildLocaleChoice { file_name: "i18n/other.json".into(), ..choices[0].clone() }],
+            vec![choices[0].clone(), choices[0].clone()]] {
+            assert!(store.locale_build_start_receipt(project, action.attempt_id, &wrong, &basis).is_err());
+            assert!(store.is_reconciling());
+        }
+        assert!(store.locale_build_start_receipt(project, action.attempt_id, &choices, &"a".repeat(64)).is_err());
+        assert!(store.locale_build_start_receipt(ExecutionId::new(), action.attempt_id, &choices, &basis).is_err());
+        assert_eq!(writes(&store), before);
+        assert!(store.is_reconciling());
+        assert!(store.locale_build_start_receipt(project, action.attempt_id, &choices, &basis).unwrap().is_some());
+        assert!(!store.is_reconciling());
+        assert_eq!(writes(&store), before);
+
+        let input = store.execution_input(action.attempt_id).unwrap();
+        let c = store.connection().unwrap();
+        c.execute("UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1", params![action.attempt_id.to_string(), "0".repeat(64)]).unwrap();
+        store.execution_unknown.store(true, Ordering::Release);
+        let before = writes(&store);
+        assert!(store.locale_build_start_receipt(project, action.attempt_id, &choices, &basis).is_err());
+        assert!(store.is_reconciling()); assert_eq!(writes(&store), before);
+        c.execute("UPDATE execution_attempts SET digest=?2 WHERE attempt_id=?1", params![action.attempt_id.to_string(), input.digest()]).unwrap();
+        let other: String = c.query_row("SELECT task_id FROM execution_tasks WHERE operation<>?1 LIMIT 1", [BUILD_OPERATION], |r| r.get(0)).unwrap();
+        c.execute("UPDATE execution_attempts SET task_id=?2 WHERE attempt_id=?1", params![action.attempt_id.to_string(), other]).unwrap();
+        let before = writes(&store);
+        assert!(store.locale_build_start_receipt(project, action.attempt_id, &choices, &basis).is_err());
+        assert!(store.is_reconciling()); assert_eq!(writes(&store), before);
+    }
+
+    #[test]
+    fn locale_build_start_absence_is_read_only_and_reconciles_only_success() {
+        let (_temp, store, action) = super::super::review::tests::current_release_fixture(false);
+        let (project, choices, basis) = request(&store, action.attempt_id);
+        store.execution_unknown.store(true, Ordering::Release);
+        let before = writes(&store);
+        assert_eq!(store.locale_build_start_receipt(project, ExecutionId::new(), &choices, &basis).unwrap(), None);
+        assert!(!store.is_reconciling()); assert_eq!(writes(&store), before);
+        let source: String = store.connection().unwrap().query_row("SELECT attempt_id FROM execution_attempts WHERE task_id IN (SELECT task_id FROM execution_tasks WHERE operation<>?1) LIMIT 1", [BUILD_OPERATION], |r| r.get(0)).unwrap();
+        store.execution_unknown.store(true, Ordering::Release);
+        assert!(store.locale_build_start_receipt(project, parse_id(source).unwrap(), &choices, &basis).is_err());
+        assert!(store.is_reconciling()); assert_eq!(writes(&store), before);
     }
 }

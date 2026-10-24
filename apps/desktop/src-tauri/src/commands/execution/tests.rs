@@ -1701,3 +1701,47 @@ fn arena_reveal_target_ipc_checks_visibility_not_individual_action_receipts() {
         json!({"projectId":project,"targetId":attempt,"targetKind":"attempt","visible":true}));
     arena_receipt_assert_no_runtime(&app);
 }
+
+#[test]
+fn ai_start_action_ipc_reads_original_input_without_runtime_or_provider() {
+    let (temp, app, webview, mut context) = setup();
+    let missing = request(&context, json!({"attemptId":ExecutionId::new(),"digest":"0".repeat(64),"confirmed":true}));
+    assert_eq!(call(&webview, "read_ai_start_action", missing).unwrap(), Value::Null);
+    arena_receipt_assert_no_runtime(&app);
+    let (unit, _) = arena_receipt_source(&app, &context);
+    let (input, digest) = app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let preview = store.preview_ai(tsumugi_core::ai::AiConfig { endpoint: "http://127.0.0.1:9".into(), model: "test-model".into(), credential_env: String::new(), ..Default::default() }, "zh-CN", &[unit]).unwrap();
+        (preview.fixed_input(store.metadata().unwrap().project_id()).unwrap(), preview.digest)
+    });
+    let mut original = request(&context, json!({"attemptId":input.envelope().attempt_id,"digest":digest,"confirmed":true}));
+    assert_eq!(call(&webview, "read_ai_start_action", original.clone()).unwrap(), Value::Null);
+    let expected = json!({"projectId":input.envelope().project_id,"attemptId":input.envelope().attempt_id,
+        "taskId":input.envelope().task_id,"digest":digest});
+    let task = input.envelope().task_id;
+    app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_mut().unwrap().store.enqueue_execution(&input).unwrap();
+    });
+    let sequence = arena_receipt_sequence(&app);
+    assert_eq!(call(&webview, "read_ai_start_action", original.clone()).unwrap(), expected);
+    assert_eq!(arena_receipt_sequence(&app), sequence);
+    arena_receipt_assert_no_runtime(&app);
+    for (field, value) in [("projectId",json!(ExecutionId::new())),("digest",json!("0".repeat(64))),
+        ("confirmed",json!(false)),("sessionToken",json!("retired-session"))] {
+        let mut wrong = original.clone(); wrong[field] = value;
+        assert!(call(&webview, "read_ai_start_action", wrong).is_err());
+    }
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        active.store.cancel_execution(task, ExecutionId::new()).unwrap();
+        active.execution_parts().unwrap().0.quiescing = true;
+    });
+    assert_eq!(call(&webview, "read_ai_start_action", original.clone()).unwrap(), expected);
+    app.state::<AppState>().sessions.with(|sessions| { sessions.active.as_mut().unwrap().execution = None; });
+    call(&webview, "close_project", json!({"sessionToken":context["sessionToken"]})).unwrap();
+    let reopened = call(&webview, "open_project", json!({"locator":temp.path().join("project")})).unwrap();
+    assert!(call(&webview, "read_ai_start_action", original.clone()).is_err());
+    context["sessionToken"] = reopened["sessionToken"].clone(); original["sessionToken"] = context["sessionToken"].clone();
+    assert_eq!(call(&webview, "read_ai_start_action", original).unwrap(), expected);
+    arena_receipt_assert_no_runtime(&app);
+}

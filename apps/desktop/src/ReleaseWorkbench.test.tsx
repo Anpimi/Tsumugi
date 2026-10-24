@@ -8,7 +8,7 @@ import type { DeliveryView, ReleaseView } from "./releaseCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
-import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import { createRef } from "react";
 import { WorkbenchCommands } from "./workbenchCommands";
 import type { ReleaseHandle } from "./ReleaseWorkbench";
@@ -77,23 +77,21 @@ async function readyExport() {
   return { user, ref, view };
 }
 
-const savedBuild = { ...executionFixture.detail, attemptId: fixtureIdentity(1), operation: "locale-build",
-  recovery: { ...executionFixture.detail.recovery, attemptId: fixtureIdentity(1) } };
+function savedBuild(request: { projectId: string; attemptId: string; choices: { locale: string; fileName: string }[]; expectedEligibilityBasis: string }) {
+  return { ...releaseFixture.responses.buildAttempt, projectId: request.projectId, attemptId: request.attemptId, choices: request.choices, expectedEligibilityBasis: request.expectedEligibilityBasis };
+}
 
 it.each(["en-US", "zh-CN"])("checks the original build after an unrelated ACK without submitting another attempt in %s", async locale => {
   await i18n.changeLanguage(locale);
   const { user, ref } = await readyBuild();
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "start_locale_build" ? Promise.resolve(fixtureIdentity(799))
-    : command === "read_locale_build_attempt" ? Promise.resolve(savedBuild) : original(command, args));
+  invoke.mockImplementation((command: string, args) => command === "start_locale_build" ? Promise.resolve(fixtureIdentity(799))
+    : command === "read_locale_build_attempt" ? Promise.resolve(savedBuild(args.request)) : original(command, args));
   await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
-  await screen.findByText(i18n.t("release.buildUnknown"));
-  expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeEnabled();
-  expect(await ref.current!.allowNavigate()).toBe(true);
-  await user.click(screen.getByRole("button", { name: i18n.t("release.checkBuild") }));
   await screen.findByText(i18n.t("release.started", { id: fixtureIdentity(1) }));
   expect(await ref.current!.allowLeave()).toBe(true);
+  expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeEnabled();
+  expect(await ref.current!.allowNavigate()).toBe(true);
   expect(invoke.mock.calls.filter(([c]) => c === "start_locale_build")).toHaveLength(1);
   const start = invoke.mock.calls.find(([c]) => c === "start_locale_build")![1];
   expect(invoke.mock.calls.find(([c]) => c === "read_locale_build_attempt")![1]).toEqual(start);
@@ -106,7 +104,7 @@ it("offers a same-build retry only after a successful lookup proves absence", as
   invoke.mockImplementation((command: string, args: unknown) => command === "start_locale_build" && ++starts === 1 ? Promise.reject({ code: "outcome-unknown" })
     : command === "read_locale_build_attempt" ? ++reads === 1 ? Promise.reject({ code: "storage-failed" }) : Promise.resolve(null) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Start build" }));
-  await user.click(await screen.findByRole("button", { name: "Check saved build task" }));
+  await screen.findByRole("button", { name: "Check saved build task" });
   await waitFor(() => expect(invoke.mock.calls.filter(([c]) => c === "read_locale_build_attempt")).toHaveLength(1));
   expect(screen.queryByRole("button", { name: "Retry the same build" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Check saved build task" }));
@@ -138,9 +136,10 @@ it("retains the original export after a lost ACK even when history also fails", 
   const { user, ref } = await readyExport();
   const original = invoke.getMockImplementation()!;
   const delivery = await original("export_release");
+  let lookups = 0;
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject({ code: "outcome-unknown" })
     : command === "list_deliveries" ? Promise.reject({ code: "storage-failed" })
-    : command === "read_delivery_action" ? Promise.resolve(delivery) : original(command, args));
+    : command === "read_delivery_action" ? lookups++ === 0 ? Promise.reject(new Error("Lease unavailable")) : Promise.resolve(delivery) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
   await screen.findByText(/These files may have been exported/);
   expect(await ref.current!.allowLeave()).toBe(false);
@@ -158,7 +157,6 @@ it("requires a fresh destination preview after an exact export lookup finds no a
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(new Error("Disconnected"))
     : command === "read_delivery_action" ? Promise.resolve(null) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
-  await user.click(await screen.findByRole("button", { name: "Check this export" }));
   await screen.findByText(/This export did not start/);
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(screen.queryByRole("button", { name: "Export these files" })).not.toBeInTheDocument();
@@ -203,13 +201,11 @@ it.each([
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(failure)
     : command === "read_delivery_action" ? Promise.resolve(delivery) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
-  await screen.findByText(/These files may have been exported/);
-  expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("alert")).toHaveTextContent("The action may have completed");
+  await screen.findByText("Export verified");
+  expect(await ref.current!.allowLeave()).toBe(true);
   expect(screen.getByRole("button", { name: "Back to overview" })).toBeEnabled();
   expect(await ref.current!.allowNavigate()).toBe(true);
   const originalRequest = invoke.mock.calls.find(([command]) => command === "export_release")![1].request;
-  await user.click(screen.getByRole("button", { name: "Check this export" }));
   expect(await screen.findByText("Export verified")).toBeInTheDocument();
   expect(await ref.current!.allowLeave()).toBe(true);
   expect(invoke.mock.calls.find(([command]) => command === "read_delivery_action")![1].request.actionId).toBe(originalRequest.actionId);
@@ -402,9 +398,10 @@ it.each(["en-US", "zh-CN"])("keeps an original unknown export when a newly autho
   await user.click(await screen.findByRole("button", { name: i18n.t("release.preview") }));
   await user.click(screen.getByRole("checkbox", { name: i18n.t("release.overwrite") }));
   const original = invoke.getMockImplementation()!;
+  let lookups = 0;
   invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(new Error("Lost ACK"))
     : command === "choose_delivery_folder" ? Promise.resolve({ selectionId: fixtureIdentity(799), folderName: "export" })
-    : command === "read_delivery_action" ? Promise.resolve(null) : original(command, args));
+    : command === "read_delivery_action" ? lookups++ === 0 ? Promise.reject(new Error("Original lease unavailable")) : Promise.resolve(null) : original(command, args));
   await user.click(screen.getByRole("button", { name: i18n.t("release.export") }));
   await user.click(await screen.findByRole("button", { name: i18n.t("release.reauthorizeFolder") }));
   await screen.findByText(i18n.t("release.reauthorizationLimit"));
@@ -413,7 +410,7 @@ it.each(["en-US", "zh-CN"])("keeps an original unknown export when a newly autho
   expect(await ref.current!.allowLeave()).toBe(false);
   expect(screen.queryByText(i18n.t("release.exportMissing"))).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: i18n.t("release.export") })).not.toBeInTheDocument();
-  expect(invoke.mock.calls.find(([command]) => command === "read_delivery_action")![1].request.selectionId).toBe(fixtureIdentity(799));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_delivery_action").map(([, args]) => args.request.selectionId)).toEqual([fixtureIdentity(704), fixtureIdentity(799)]);
   expect(invoke.mock.calls.find(([command]) => command === "export_release")![1].request.selectionId).toBe(fixtureIdentity(704));
   expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
 });
@@ -454,4 +451,40 @@ it("routes destination consent and immutable export through scoped Registry with
       selectionId:fixtureIdentity(704),previewId:fixtureIdentity(705),overwrite:true});
     expect(invoke.mock.calls.filter(([name])=>name==="read_review_eligibility"||name==="start_locale_build")).toHaveLength(0);
   } finally {dispatch.mockRestore();}
+});
+
+it.each(["en-US", "zh-CN"])("shows the bounded build and export read phases in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  const { user, view } = await readyBuild();
+  const original = invoke.getMockImplementation()!;
+  let resolveBuild!: (value: null) => void;
+  const buildRead = new Promise<null>(resolve => { resolveBuild = resolve; });
+  invoke.mockImplementation((name: string, args) => name === "start_locale_build" ? Promise.reject(new Error("Lost build ACK"))
+    : name === "read_locale_build_attempt" ? buildRead : original(name, args));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
+  await screen.findByText(i18n.t("release.checkingBuild"));
+  expect(screen.getByRole("button", { name: i18n.t("release.checkBuild") })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "start_locale_build")).toHaveLength(1);
+  await act(async () => { resolveBuild(null); });
+  await screen.findByText(i18n.t("release.buildMissing"));
+  expect(screen.getByRole("button", { name: i18n.t("release.retryBuild") })).toBeEnabled();
+  view.unmount();
+
+  // The export phase has its own existing destination authority and owner.
+  await i18n.changeLanguage("en-US");
+  const destination = await readyExport();
+  await i18n.changeLanguage(locale);
+  const exportOriginal = invoke.getMockImplementation()!;
+  let resolveDelivery!: (value: null) => void;
+  const deliveryRead = new Promise<null>(resolve => { resolveDelivery = resolve; });
+  invoke.mockImplementation((name: string, args) => name === "export_release" ? Promise.reject(new Error("Lost export ACK"))
+    : name === "read_delivery_action" ? deliveryRead : exportOriginal(name, args));
+  await destination.user.click(screen.getByRole("button", { name: i18n.t("release.export") }));
+  await screen.findByText(i18n.t("release.checkingDelivery"));
+  expect(screen.getByRole("button", { name: i18n.t("release.checkExport") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("release.reauthorizeFolder") })).toBeDisabled();
+  await act(async () => { resolveDelivery(null); });
+  await screen.findByText(i18n.t("release.exportMissing"));
+  expect(invoke.mock.calls.filter(([name]) => name === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_delivery_action")).toHaveLength(1);
 });

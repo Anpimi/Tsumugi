@@ -59,7 +59,11 @@ export const releaseCommands = {
   },
   buildAttempt: async (request: BuildRequest) => {
     const result = await checkedInvoke("read_locale_build_attempt", request, validators.validateResponseBuildAttempt);
-    requireConfirmation(result === null || (result.attemptId === request.attemptId && result.operation === "locale-build"));
+    requireConfirmation(result === null || (result.projectId === request.projectId && result.attemptId === request.attemptId
+      && result.operation === "locale-build" && /^[a-f0-9]{64}$/.test(result.inputDigest)
+      && result.expectedEligibilityBasis === request.expectedEligibilityBasis
+      && result.choices.length === request.choices.length && result.choices.every((choice, index) =>
+        choice.locale === request.choices[index].locale && choice.fileName === request.choices[index].fileName)));
     return result;
   },
   deliveryAction: async (request: ReconcileRequest) => {

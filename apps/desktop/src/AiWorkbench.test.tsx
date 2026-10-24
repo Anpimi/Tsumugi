@@ -246,13 +246,13 @@ async function preview(ref?:Ref<AiHandle>){const user=userEvent.setup();render(<
 it("requires exact sharing confirmation and invalidates it on configuration edits",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_ai_translation")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("keeps empty limits editable and rejects them before preview serialization",async()=>{const user=await preview();await user.click(screen.getByText("Budget and limits"));await user.clear(screen.getByRole("spinbutton",{name:"Maximum requests including retries"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("spinbutton",{name:"Maximum requests including retries"})).toHaveAttribute("aria-invalid","true");expect(invoke.mock.calls.filter(([c])=>c==="preview_ai_translation")).toHaveLength(1);expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
 it("saves a normal candidate without issuing a translation selection",async()=>{const user=await preview();await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await waitFor(()=>expect(invoke.mock.calls.some(([c])=>c==="adopt_execution")).toBe(true));expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision")).toBe(false);expect(screen.getAllByText(/Total usage/).length).toBeGreaterThan(0);});
-it("keeps an uncertain start identity and blocks leaving until reconciliation",async()=>{const user=await preview();const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="start_ai_translation"?Promise.reject({code:"outcome-unknown"}):original(command,args));await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/Start may have succeeded/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();await user.click(screen.getByRole("button",{name:"Check saved result"}));await waitFor(()=>expect(screen.queryByText(/Start may have succeeded/)).not.toBeInTheDocument());const calls=invoke.mock.calls.filter(([c])=>c==="start_ai_translation");expect(calls).toHaveLength(1);expect(calls[0][1].request.attemptId).toBe(aiAttempt);});
+it("keeps an uncertain start identity and blocks leaving until reconciliation",async()=>{const user=await preview();const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="start_ai_translation"?Promise.reject({code:"outcome-unknown"}):original(command,args));await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/The start response was not confirmed/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();await user.click(screen.getByRole("button",{name:"Check saved result"}));await waitFor(()=>expect(screen.queryByText(/The start response was not confirmed/)).not.toBeInTheDocument());const calls=invoke.mock.calls.filter(([c])=>c==="start_ai_translation");expect(calls).toHaveLength(1);expect(calls[0][1].request.attemptId).toBe(aiAttempt);});
 
 it("reconciles a well-formed acknowledgement for the wrong AI attempt without resending",async()=>{
  const user=await preview();const original=invoke.getMockImplementation()!;
  invoke.mockImplementation((command:string,args:unknown)=>command==="start_ai_translation"?Promise.resolve(fixtureIdentity(499)):original(command,args));
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
- await screen.findByText(/Start may have succeeded/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
+ await screen.findByText(/The start response was not confirmed/);expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
  await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText("你好");
  expect(invoke.mock.calls.filter(([c])=>c==="start_ai_translation")).toHaveLength(1);
  expect(invoke.mock.calls.find(([c])=>c==="read_ai_translation")?.[1].request.attemptId).toBe(aiAttempt);
@@ -314,12 +314,12 @@ it("restores an original unknown generation after actual consumer unmount withou
  rendered.rerender(<ToggleAiWorkbench project={project} mounted={false}/>);
  await act(async()=>{fail(new Error("Disconnected"));});
  rendered.rerender(<ToggleAiWorkbench project={project} mounted/>);
- await screen.findByText(/Start may have succeeded/);
+ await screen.findByText(/The start response was not confirmed/);
  expect(invoke.mock.calls.filter(([name])=>name==="start_ai_translation")).toHaveLength(1);
  expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
  await user.click(screen.getByRole("button",{name:"Check saved result"}));
  await screen.findByText("你好");
- expect(screen.queryByText(/Start may have succeeded/)).not.toBeInTheDocument();
+ expect(screen.queryByText(/The start response was not confirmed/)).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([name])=>name==="start_ai_translation")).toHaveLength(1);
 });
 
@@ -386,4 +386,15 @@ it("lets a pure source read leave the view without taking the AI business reserv
  await act(async()=>{finish(sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)}}));});
  expect(document.querySelector("section.ai-dialog")).toBeNull();
  expect(invoke.mock.calls.filter(([name])=>name==="start_ai_translation"||name==="adopt_execution")).toHaveLength(0);
+});
+
+beforeEach(() => {
+  const original = invoke.getMockImplementation()!; let checked = -1;
+  invoke.mockImplementation((command: string, payload: unknown) => {
+    if (command !== "read_ai_start_action") return original(command,payload);
+    const writes = invoke.mock.calls.filter(([name]) => name === "start_ai_translation").length;
+    if (checked !== writes) { checked = writes; return Promise.reject(new Error("Automatic start lookup unavailable")); }
+    return Promise.resolve({projectId:project.metadata.projectId,attemptId:prepared.attemptId,
+      taskId:aiViewFixture(item,prepared.preview.config).detail.taskId,digest:prepared.preview.digest});
+  });
 });

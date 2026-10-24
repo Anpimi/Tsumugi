@@ -820,3 +820,35 @@ fn direct_ai_auth_child() {
     assert_eq!(count.load(Ordering::SeqCst), 1);
     wire.join().unwrap();
 }
+
+#[test]
+fn ai_start_reads_original_fixed_input_without_provider_or_current_scope() {
+    let (_temp, mut store, rows) = source_project();
+    let preview = store.preview_ai(config("http://127.0.0.1:9".into()), "zh-CN", &[rows[0].unit_id.unwrap()]).unwrap();
+    let input = preview.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+    let project = input.envelope().project_id;
+    let attempt = input.envelope().attempt_id;
+    let sequence = store.execution_sequence().unwrap();
+    assert_eq!(store.ai_start_action_read(project, attempt, &preview.digest, true).unwrap(), None);
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    assert_eq!(store.ai_start_action_read(project, attempt, &preview.digest, false).unwrap_err().code, ErrorCode::Unauthorized);
+    store.enqueue_execution(&input).unwrap();
+    let expected = Some(AiStartReceipt { project_id: project, attempt_id: attempt,
+        task_id: input.envelope().task_id, digest: preview.digest.clone() });
+    assert_eq!(store.ai_start_action_read(project, attempt, &preview.digest, true).unwrap(), expected);
+    assert_eq!(store.ai_start_action_read(ExecutionId::new(), attempt, &preview.digest, true).unwrap_err().code, ErrorCode::ResultMismatch);
+    assert_eq!(store.ai_start_action_read(project, attempt, &"0".repeat(64), true).unwrap_err().code, ErrorCode::ResultMismatch);
+    // A different operation cannot stand in for the original AI input.
+    let wrong = SourceBundle::capture(br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#, br#"{"x":"Other"}"#, "en").unwrap()
+        .fixed_input(store.metadata().unwrap().project_id()).unwrap();
+    store.enqueue_execution(&wrong).unwrap();
+    assert!(store.ai_start_action_read(project, wrong.envelope().attempt_id, &preview.digest, true).is_err());
+    store.cancel_execution(input.envelope().task_id, ExecutionId::new()).unwrap();
+    replace_source(&mut store, br#"{"changed":"New source"}"#);
+    let sequence = store.execution_sequence().unwrap();
+    assert_eq!(store.ai_start_action_read(project, attempt, &preview.digest, true).unwrap(), expected);
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    let directory = store.directory().to_path_buf(); store.close().unwrap();
+    let reopened = ProjectStore::open(&directory).unwrap();
+    assert_eq!(reopened.ai_start_action_read(project, attempt, &preview.digest, true).unwrap(), expected);
+}

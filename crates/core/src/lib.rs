@@ -15,7 +15,7 @@ pub use persistence::{
     ArenaMergeActionRead, ArenaRevealTarget, ArenaRevealTargetKind, ComparisonView, MergeBasis,
 };
 pub use persistence::{
-    AttemptView, BuildLocaleChoice, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
+    AttemptView, BuildLocaleChoice, LocaleBuildStartReceipt, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
     CheckRuleResult, CheckRun, ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission,
     ContextRevision, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, Eligibility,
     EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite, GlossaryCapture,
