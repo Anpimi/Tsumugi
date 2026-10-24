@@ -1,0 +1,52 @@
+[package]
+name = "tsumugi-plugin-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Experimental bounded process channels for Tsumugi plugin contracts"
+
+[dependencies]
+tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.1" }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+tempfile = "=3.27.0"
+uuid = { version = "=1.26.1", features = ["v4"] }
+tokio = { version = "=1.53.1", features = ["rt", "macros", "process", "io-util", "sync", "time"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+tough = { version = "=0.24.0", default-features = false }
+url = "=2.5.8"
+jiff = { version = "=0.2.37", features = ["serde"] }
+futures-util = { version = "=0.3.34", features = ["io"] }
+tar = { version = "=0.4.46", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "=1.53.1", features = ["net"] }
+windows-sys = { version = "=0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+[[bin]]
+name = "tsumugi-process-conformance-worker"
+path = "tests/support/worker.rs"
+required-features = ["conformance-worker"]
+
+[features]
+conformance-worker = []
+javascript-conformance = []
+
+[dev-dependencies]
+aws-lc-rs = "=1.18.1"

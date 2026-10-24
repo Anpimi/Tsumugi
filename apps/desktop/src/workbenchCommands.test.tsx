@@ -183,6 +183,7 @@ describe("resource command payloads", () => {
     ["resource.open-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ captureId: "" }, { digest: null }]],
     ["resource.refresh-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ locale: false }]],
     ["resource.decide-entry", { kind: "resource-decision", captureId: "capture", digest: "digest", locale: "zh-CN", entryId: "entry", expectedRevisionId: null, decision: "keep", rowKind: "added", scopeUnitId: null }, [{ decision: "delete" }, { rowKind: "missing" }, { expectedRevisionId: undefined }, { scopeUnitId: undefined }]],
+    ["resource.check-pending", { kind: "resource-pending", pendingKind: "term", actionId: "action" }, [{ pendingKind: "picker" }, { actionId: "" }]],
     ["resource.retry-pending", { kind: "resource-pending", pendingKind: "term", actionId: "action" }, [{ pendingKind: "picker" }, { actionId: "" }]],
     ["resource.open-translation", { kind: "resource-translation", locale: "zh-CN", target: { unitId: "unit", sourceRevisionId: "source", key: "key", sourceText: "" }, evidenceKind: "tm", evidenceId: "revision", selectionId: null }, [{ target: null }, { target: { unitId: "unit" } }, { evidenceKind: "impact", selectionId: null }, { evidenceKind: "tm", selectionId: "selection" }]],
   ] as const)("validates %s before invoking its live handler", (id, payload, malformed) => {

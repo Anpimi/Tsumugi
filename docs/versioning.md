@@ -56,3 +56,20 @@ data enum variant requires downstream exhaustive Rust matches to be updated;
 this data choice establishes no Windows execution support. Review protocol and
 profile compatibility independently from SemVer. A source integration or local
 Cargo package verification does not publish to crates.io or update any release.
+
+## Standalone Host source profile
+
+The experimental `tsumugi-plugin-host` package inherits the workspace application
+version. Its independent source profile provides package/runtime inspection, local
+Store and offline trust management, and headless SDK process channels. It does
+not add Core execution adapters, application member execution, project schemas
+or desktop plugin loading. The private JavaScript Host workspace is an internal
+component runtime with a pinned production dependency, not another public SDK
+version source.
+
+This source-only integration keeps existing application/SDK versions, protocol
+and profile identities, frozen SDK/plugin/runtime pins and published assets.
+New local conformance runtimes are explicit test inputs, never replacements for
+old approved artifacts. A future distribution must select and verify the complete
+application/SDK/Host/plugin combination and advance the appropriate prerelease;
+this source integration does not designate or publish that snapshot.

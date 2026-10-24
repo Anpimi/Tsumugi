@@ -130,3 +130,27 @@ it("rejects a summary for another fixed scope or language while preserving valid
   invoke.mockResolvedValueOnce({ ...page, rows: [] });
   expect(await reviewCommands.summaryPage(request)).toEqual({ ...page, rows: [] });
 });
+
+for (const [kind, original, receipt, run] of [
+    ["decision", fixture.requests.decision.decision, fixture.responses.decision, () => reviewCommands.decisionAction(session, decisionRequest().decision)],
+    ["waiver", fixture.requests.waiver.waiver, fixture.responses.waiver, () => reviewCommands.waiverAction(session, fixture.requests.waiver.waiver)],
+    ["fallback", fixture.requests.fallback.fallback, fixture.responses.fallback, () => reviewCommands.fallbackAction(session, fixture.requests.fallback.fallback)],
+    ["check", Object.fromEntries(Object.entries(fixture.requests.check).filter(([key]) => key !== "sessionToken")), fixture.responses.check, () => reviewCommands.checkAction(fixture.requests.check)],
+] as const) it(`reads ${kind} only with a strict nullable complete original request echo`, async () => {
+  invoke.mockResolvedValueOnce({ request: original, receipt });
+  expect(await run()).toEqual(receipt);
+  invoke.mockResolvedValueOnce(null); expect(await run()).toBeNull();
+  for (const invalid of [undefined, {}, { request: original, receipt: undefined }]) {
+    invoke.mockResolvedValueOnce(invalid); await expect(run()).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  for (const [key, value] of Object.entries(original)) {
+    const altered = value === null ? "ffffffff-ffff-4fff-8fff-ffffffffffff" : typeof value === "boolean" ? !value
+      : typeof value === "number" ? value + 1 : Array.isArray(value) ? [...value, "changed"]
+      : typeof value === "string" && /^[0-9a-f-]{36}$/.test(value) ? "ffffffff-ffff-4fff-8fff-ffffffffffff" : `${value}-changed`;
+    invoke.mockResolvedValueOnce({ request: { ...original, [key]: altered }, receipt });
+    await expect(run(), key).rejects.toSatisfy(hasUnknownOutcome);
+    const missing = { ...original } as Record<string, unknown>; delete missing[key];
+    invoke.mockResolvedValueOnce({ request: missing, receipt });
+    await expect(run(), key).rejects.toSatisfy(hasUnknownOutcome);
+  }
+});

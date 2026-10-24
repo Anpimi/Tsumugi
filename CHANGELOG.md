@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Core adapters, application members and desktop plugin loading are not included; frozen runtime and plugin pins remain unchanged.
+
 - Experimental standalone plugin SDK source with Rust data contracts, a conformance CLI, synthetic examples, and self-contained JavaScript bindings and generation tooling. SDK integration does not add a plugin Host or desktop plugin loading; existing immutable SDK archives remain unchanged.
 
 - Shared AI and Arena connection reuse, independent per-provider request rate limits, fair bounded scheduling, and durable request reservations with known usage and unknown exposure shown after reopening. Trusted Core child tasks inherit scope, connection settings, cancellation and ancestor budgets.
@@ -51,6 +53,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Arena start, comparison creation, candidate selection and manual merges can confirm their original saved requests after uncertain acknowledgements without replaying writes. Identity reveal checks the original target visibility, retaining newer edits and requiring an explicit retry only when supported by the read result.
 
 - Resolve uncertain source and translation-import adoption, saved AI/Arena candidates, Task cancellation and continuation through read-only checks of the original request. Automatic checks do not repeat writes; retry remains explicit and is available only after the original result is confirmed absent.
+
+- Uncertain review decisions, built-in checks, terminology saves, context saves and captures, and file glossary decisions can be checked against the complete original request without replaying a write. Only a confirmed missing result enables an explicit retry; newer drafts and review evidence are preserved.
 
 - Confirm uncertain translation saves and revision selections through read-only checks of their complete original requests. Keep newer edits and unknown results available; a confirmed check can continue leaving without saving again.
 

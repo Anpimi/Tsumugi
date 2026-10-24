@@ -91,6 +91,7 @@ beforeEach(async () => {
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: "eligibility",
       ready: false, locales: [{ locale: "zh-CN", ready: false, blockers: [{ unitId: targets.first.unitId, nativeKey: "first", code: "qa-missing-or-stale", reference: null }],
         exceptions: [], checkedUnits: 1, blockerCount: 1, exceptionCount: 0 }] };
+    if (["read_review_decision_action", "read_review_waiver_action", "read_review_fallback_action", "read_review_check_action"].includes(command)) return null;
     throw new Error(command);
   });
 });

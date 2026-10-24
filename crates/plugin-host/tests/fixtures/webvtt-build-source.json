@@ -1,0 +1,157 @@
+{
+  "profile": {
+    "id": "webvtt-captions",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "sourceSetId": "captured-set-1",
+  "sourceLanguage": "en-US",
+  "artifacts": [
+    {
+      "id": "captured-artifact",
+      "logicalPath": "source.vtt",
+      "role": "source",
+      "sha256": "84f1c5f7a89a362460c731f8f5425a7bbd6ea336aa787c37c4768f2afeec8eda",
+      "utf8": "﻿WEBVTT\r\n\r\nKeep\r\n00:00.000 --> 00:01.000 align:center\r\nHello 世界\r\nWorld\r\n\r\nSecond\r\n00:01.000 --> 00:02.000\r\nWait\r\n"
+    }
+  ],
+  "units": [
+    {
+      "id": "cue-0",
+      "sourceRevisionId": "source-0",
+      "text": "Hello 世界\nWorld",
+      "occurrences": [
+        {
+          "id": "occurrence-0",
+          "source": {
+            "artifactId": "captured-artifact",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 57,
+              "end": 76
+            }
+          },
+          "nativeIdentity": {
+            "namespace": "webvtt:source",
+            "value": "keep",
+            "policy": {
+              "id": "webvtt-cue",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "display": {
+              "value": "Keep",
+              "source": {
+                "artifactId": "captured-artifact",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 13,
+                  "end": 17
+                }
+              }
+            }
+          }
+        }
+      ],
+      "protectedFragments": []
+    },
+    {
+      "id": "cue-1",
+      "sourceRevisionId": "source-1",
+      "text": "Wait",
+      "occurrences": [
+        {
+          "id": "occurrence-1",
+          "source": {
+            "artifactId": "captured-artifact",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 113,
+              "end": 117
+            }
+          },
+          "nativeIdentity": {
+            "namespace": "webvtt:source",
+            "value": "second",
+            "policy": {
+              "id": "webvtt-cue",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "display": {
+              "value": "Second",
+              "source": {
+                "artifactId": "captured-artifact",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 80,
+                  "end": 86
+                }
+              }
+            }
+          }
+        }
+      ],
+      "protectedFragments": []
+    }
+  ],
+  "order": [
+    "occurrence-0",
+    "occurrence-1"
+  ],
+  "relations": [],
+  "domainBlocks": [
+    {
+      "target": {
+        "kind": "occurrence",
+        "id": "occurrence-0"
+      },
+      "schema": {
+        "id": "webvtt.cue-basis",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "handling": "required",
+      "payloadUtf8": "{\"version\":1,\"policy\":\"webvtt-cue/1\",\"nativeId\":\"Keep\",\"timing\":\"00:00.000 --> 00:01.000 align:center\",\"settings\":[\"align:center\"],\"layoutDigest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+    },
+    {
+      "target": {
+        "kind": "occurrence",
+        "id": "occurrence-1"
+      },
+      "schema": {
+        "id": "webvtt.cue-basis",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "handling": "required",
+      "payloadUtf8": "{\"version\":1,\"policy\":\"webvtt-cue/1\",\"nativeId\":\"Second\",\"timing\":\"00:01.000 --> 00:02.000\",\"settings\":[],\"layoutDigest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+    },
+    {
+      "target": {
+        "kind": "occurrence",
+        "id": "occurrence-0"
+      },
+      "schema": {
+        "id": "tsumugi.source-context-facts",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "handling": "required",
+      "payloadUtf8": "{\"facts\":[{\"id\":\"time\",\"kind\":\"time\",\"text\":\"00:00.000 --> 00:01.000\",\"origin\":{\"kind\":\"extracted\",\"sources\":[{\"artifactId\":\"captured-artifact\",\"range\":{\"encoding\":\"utf8-byte\",\"start\":19,\"end\":42}}]}}]}"
+    },
+    {
+      "target": {
+        "kind": "occurrence",
+        "id": "occurrence-1"
+      },
+      "schema": {
+        "id": "tsumugi.source-context-facts",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "handling": "required",
+      "payloadUtf8": "{\"facts\":[{\"id\":\"time\",\"kind\":\"time\",\"text\":\"00:01.000 --> 00:02.000\",\"origin\":{\"kind\":\"extracted\",\"sources\":[{\"artifactId\":\"captured-artifact\",\"range\":{\"encoding\":\"utf8-byte\",\"start\":88,\"end\":111}}]}}]}"
+    }
+  ]
+}

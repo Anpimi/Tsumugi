@@ -1,17 +1,18 @@
 import { useSessionAlive } from "./SessionReadProvider";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
-import { executionCommands, executionContext } from "./executionCommands";
+import { executionCommands, executionContext, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { reviewCommands, type CheckRun, type FallbackDecision, type FallbackWrite, type ReviewDecision,
   type ReviewSummary, type ReviewTarget, type ReviewWrite, type Waiver, type WaiverWrite } from "./reviewCommands";
 
 type CheckRequest = { unitId: string; locale: string; expectedBasis: string; actionId: string };
-export type ReviewPending =
+type ReviewAction =
   | { kind: "decision"; request: ReviewWrite; submittedSeq: number }
-  | { kind: "check"; request: CheckRequest; submittedSeq: null }
+  | { kind: "check"; request: CheckRequest; submittedSeq: null; expectedCheckId: string | null }
   | { kind: "waiver"; request: WaiverWrite; submittedSeq: number }
   | { kind: "fallback"; request: FallbackWrite; submittedSeq: number };
+export type ReviewPending = ReviewAction & { session: SessionRequest };
 export type ReviewNotice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "cancelRequested" | null;
 export interface ReviewBatchStatus { applied: number; conflicted: number; failed: number; notStarted: number }
 
@@ -28,6 +29,8 @@ export interface ReviewDraftState {
   projection: ReviewTarget | null;
   chosen: Record<string, ReviewSummary>;
   pending: ReviewPending | null;
+  pendingCheckedMissing: boolean;
+  checkingAction: boolean;
   notice: ReviewNotice;
   reasonValue: CommandFailure;
   busyMutation: boolean;
@@ -55,6 +58,7 @@ interface ReviewSession {
   check: (currentRead: () => boolean) => Promise<void>;
   waive: (issueId: string, grant: boolean, expectedWaiverId: string | null, currentRead: () => boolean) => Promise<void>;
   fallback: (allow: boolean, currentRead: () => boolean) => Promise<void>;
+  checkPending: () => Promise<void>;
   retryPending: () => Promise<void>;
   cancelCheck: () => Promise<void>;
   approveBatch: () => Promise<void>;
@@ -74,7 +78,7 @@ function isConflict(error: unknown) { return (error as { code?: string } | null)
 export function ReviewDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
   const [state, setState] = useState<ReviewDraftState>(() => ({
     locale: project.metadata.targetLocales[0] ?? "", actor: "", drafts: {}, editSeq: {}, draftTargets: {}, selected: null, projection: null, chosen: {},
-    pending: null, notice: null, reasonValue: "", busyMutation: false, activeCheckId: null,
+    pending: null, pendingCheckedMissing: false, checkingAction: false, notice: null, reasonValue: "", busyMutation: false, activeCheckId: null,
     batchRunning: false, batchStatus: null, completionVersion: 0,
   }));
   const currentState = useRef(state);
@@ -169,14 +173,20 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     update(before => {
       if (before.pending !== action) return before;
       function withReceipt(target: ReviewTarget): ReviewTarget {
-        if (action.kind === "decision") return { ...target, currentDecision: receipt as ReviewDecision };
-        if (action.kind === "check") return { ...target, currentCheck: receipt as CheckRun };
+        if (action.kind === "decision") return target.currentDecision && target.currentDecision.decisionId !== action.request.expectedDecisionId
+          && target.currentDecision.decisionId !== (receipt as ReviewDecision).decisionId ? target : { ...target, currentDecision: receipt as ReviewDecision };
+        if (action.kind === "check") return target.currentCheck && target.currentCheck.runId !== action.expectedCheckId
+          && target.currentCheck.runId !== (receipt as CheckRun).runId ? target : { ...target, currentCheck: receipt as CheckRun };
         if (action.kind === "waiver") {
           const waiver = receipt as Waiver;
+          if (target.currentWaivers.some(value => value.issueId === waiver.issueId
+            && value.waiverId !== action.request.expectedWaiverId && value.waiverId !== waiver.waiverId)) return target;
           return { ...target, currentWaivers: action.request.grant
             ? [...target.currentWaivers.filter(value => value.issueId !== waiver.issueId), waiver]
             : target.currentWaivers.filter(value => value.waiverId !== action.request.expectedWaiverId) };
         }
+        if (action.kind === "fallback" && target.currentFallback && target.currentFallback.fallbackId !== action.request.expectedFallbackId
+          && target.currentFallback.fallbackId !== (receipt as FallbackDecision).fallbackId) return target;
         return { ...target, currentFallback: action.request.allow ? receipt as FallbackDecision : null };
       }
       const selected = matchingSelected(before, action) && before.selected ? withReceipt(before.selected) : before.selected;
@@ -193,30 +203,57 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       }
       const nextReason = reasonAfterReceipt({ ...before, draftTargets }, action);
       const checkOutcome = action.kind === "check" ? (receipt as CheckRun).outcome : null;
-      return { ...before, ...nextReason, selected, projection, chosen, pending: null,
+      return { ...before, ...nextReason, selected, projection, chosen, pending: null, pendingCheckedMissing: false, checkingAction: false,
         notice: checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : "saved",
         reasonValue: "", completionVersion: before.completionVersion + 1 };
     });
   }
-  async function dispatch(action: ReviewPending) {
-    if (!mounted.current) return;
-    update(before => ({ ...before, pending: action, notice: null,
-      activeCheckId: action.kind === "check" ? action.request.actionId : null }));
+  async function lookupPending(action: ReviewPending) {
+    if (!mounted.current || current().pending !== action) return;
+    update(before => ({ ...before, checkingAction: true, pendingCheckedMissing: false, notice: null, reasonValue: "" }));
     try {
-      const session = executionContext(projectRef.current);
+      const receipt = action.kind === "decision" ? await reviewCommands.decisionAction(action.session, action.request)
+        : action.kind === "waiver" ? await reviewCommands.waiverAction(action.session, action.request)
+        : action.kind === "fallback" ? await reviewCommands.fallbackAction(action.session, action.request)
+        : await reviewCommands.checkAction({ ...action.session, ...action.request });
+      if (!mounted.current || current().pending !== action) return;
+      if (receipt === null) update(before => ({ ...before, pendingCheckedMissing: true, notice: "unknown" }));
+      else confirmed(action, receipt);
+    } finally { update(before => before.pending === action ? { ...before, checkingAction: false } : before); }
+  }
+  async function checkPending() {
+    const action = current().pending, previousFailure = current().reasonValue;
+    if (!mounted.current || !action || running.current) return;
+    running.current = true; update(before => ({ ...before, busyMutation: true }));
+    try { await lookupPending(action); if (current().pending === action) update(before => ({ ...before, notice: "unknown", reasonValue: previousFailure })); }
+    catch (error) { if (current().pending === action) update(before => ({ ...before, notice: "unknown", reasonValue: commandFailure(error) })); }
+    finally { running.current = false; update(before => ({ ...before, busyMutation: false })); }
+  }
+  async function dispatch(action: ReviewPending, recovering = false) {
+    if (!mounted.current) return;
+    update(before => ({ ...before, pending: action, pendingCheckedMissing: false, notice: null,
+      activeCheckId: action.kind === "check" ? action.request.actionId : null }));
+    let writeFailure: CommandFailure = "";
+    try {
+      const session = action.session;
       if (action.kind === "decision") confirmed(action, await reviewCommands.decide(session, action.request));
       if (action.kind === "check") confirmed(action, await reviewCommands.check({ ...session, ...action.request }));
       if (action.kind === "waiver") confirmed(action, await reviewCommands.waive(session, action.request));
       if (action.kind === "fallback") confirmed(action, await reviewCommands.fallback(session, action.request));
+      return;
     } catch (error) {
+      const unknown = hasUnknownOutcome(error); writeFailure = commandFailure(error);
       update(before => before.pending !== action ? before : { ...before,
-        pending: hasUnknownOutcome(error) ? action : null,
-        notice: hasUnknownOutcome(error) ? "unknown" : isConflict(error) ? "conflict" : "error",
-        reasonValue: commandFailure(error) });
+        pending: unknown || recovering ? action : null,
+        notice: unknown || recovering ? "unknown" : isConflict(error) ? "conflict" : "error",
+        reasonValue: writeFailure });
+      if (!unknown) return;
     } finally { update(before => ({ ...before, activeCheckId: null })); }
+    try { await lookupPending(action); if (current().pending === action) update(before => ({ ...before, reasonValue: writeFailure, notice: "unknown" })); }
+    catch (error) { if (current().pending === action) update(before => ({ ...before, reasonValue: commandFailure(error), notice: "unknown" })); }
   }
   async function fresh(target: ReviewTarget, currentRead: () => boolean,
-    makeAction: (actionId: string, before: ReviewDraftState) => ReviewPending) {
+    makeAction: (actionId: string, before: ReviewDraftState) => ReviewAction) {
     const before = current();
     if (!mounted.current || running.current || before.pending || !localeAvailable(target.locale) || !currentRead()
       || (before.projection?.unitId === target.unitId && before.projection.locale === target.locale
@@ -232,7 +269,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         || latest.selected.basis !== target.basis
         || (latest.projection?.unitId === target.unitId && latest.projection.locale === target.locale
           && latest.projection.basis !== target.basis)) return;
-      await dispatch(makeAction(actionId, before));
+      await dispatch({ ...makeAction(actionId, before), session });
     } catch (error) { fail(error); }
     finally {
       running.current = false;
@@ -253,7 +290,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   async function check(currentRead: () => boolean) {
     const target = current().selected;
     if (!target) return;
-    await fresh(target, currentRead, actionId => ({ kind: "check", submittedSeq: null,
+    await fresh(target, currentRead, actionId => ({ kind: "check", submittedSeq: null, expectedCheckId: target.currentCheck?.runId ?? null,
       request: { actionId, unitId: target.unitId, locale: target.locale, expectedBasis: target.basis } }));
   }
   async function waive(issueId: string, grant: boolean, expectedWaiverId: string | null, currentRead: () => boolean) {
@@ -279,10 +316,10 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function retryPending() {
     const action = current().pending;
-    if (!mounted.current || !action || running.current) return;
+    if (!mounted.current || !action || running.current || !current().pendingCheckedMissing) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true, notice: null }));
-    try { if (current().pending === action) await dispatch(action); }
+    try { if (current().pending === action) await dispatch(action, true); }
     finally { running.current = false; update(before => ({ ...before, busyMutation: false, activeCheckId: null })); }
   }
   async function cancelCheck() {
@@ -310,7 +347,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         const request: ReviewWrite = { projectId: session.projectId, actionId,
           unitId: target.unitId, locale: target.locale, expectedBasis: target.basis,
           expectedDecisionId: target.currentDecision?.decisionId ?? null, actor: batchActor, kind: "approve", reason: "" };
-        action = { kind: "decision", request, submittedSeq: -1 };
+        action = { kind: "decision", request, submittedSeq: -1, session };
         const receipt = await reviewCommands.decide(session, request);
         update(value => {
           const chosen = { ...value.chosen };
@@ -328,8 +365,15 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
         result.applied++;
       } catch (error) {
         if (hasUnknownOutcome(error)) {
-          if (action) update(value => ({ ...value, pending: action, notice: "unknown", reasonValue: commandFailure(error) }));
-          result.failed++; processed++; break;
+          if (action) {
+            const original = action;
+            update(value => ({ ...value, pending: original, pendingCheckedMissing: false, notice: "unknown", reasonValue: commandFailure(error) }));
+            try { await lookupPending(original); }
+            catch (readError) { update(value => ({ ...value, notice: "unknown", reasonValue: commandFailure(readError) })); }
+            if (current().pending === original) { result.failed++; update(value => ({ ...value, notice: "unknown", reasonValue: value.reasonValue || commandFailure(error) })); }
+            else result.applied++;
+          } else result.failed++;
+          processed++; break;
         }
         if (isConflict(error)) result.conflicted++; else result.failed++;
       }
@@ -352,6 +396,6 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
 
   const owner: ReviewSession = { state, current, inFlight: () => running.current,
     setLocale, setActor, setSelected, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
-    decide, check, waive, fallback, retryPending, cancelCheck, approveBatch, stopBatch };
+    decide, check, waive, fallback, checkPending, retryPending, cancelCheck, approveBatch, stopBatch };
   return <ReviewContext.Provider value={owner}>{children}</ReviewContext.Provider>;
 }
