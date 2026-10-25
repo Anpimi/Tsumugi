@@ -92,6 +92,12 @@ where the trusted owner observed expiry; they do not prove that a component neve
 ran or that an unknown operation can be replayed safely. Existing limits and live
 authority checks still apply, and old generic timeout records remain readable.
 
+The member channel offers an optional in-memory `MemberRunObservation` through
+`run_member_observed`, while `run_member` retains the same execution behavior.
+Its fixed failure categories distinguish timeout, crash and channel failure at
+the last trusted phase. An observed phase does not establish a root cause or
+confirm cleanup; actual child reaping and handler draining remain required.
+
 `ProjectServiceBroker` supplies explicitly selected services to supported scoped
 channels. Missing required dependencies, incompatible effects, unselected handles
 and foreign invocation contexts are refused before author code runs. Service

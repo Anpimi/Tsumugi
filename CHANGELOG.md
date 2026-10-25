@@ -57,6 +57,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Member process failure history preserves whether the trusted Host observed a timeout, crash or channel failure and its execution phase. Unknown outcomes still require review and are never automatically replayed.
+
 - Plugin timeout history distinguishes dispatch admission, package staging, readiness, invocation and post-close result handling. Existing limits, authorization checks and uncertain-outcome handling remain in force.
 
 - Source and translation-import starts now record the complete native request with their fixed input. Uncertain acknowledgements are checked without repeating capture or execution; retry remains explicit and requires a confirmed missing start. Inputs without the original request binding cannot confirm that request.

@@ -37,7 +37,7 @@ use tsumugi_core::{
 };
 use tsumugi_plugin_host::{
     HostError,
-    member::{self as host_member, MemberHandler, MemberLaunchOptions},
+    member::{self as host_member, MemberHandler, MemberLaunchOptions, MemberRunObservation},
 };
 
 fn fail(code: ErrorCode, stage: &str) -> ExecutionError {
@@ -57,7 +57,10 @@ fn command_error(error: CommandError) -> ExecutionError {
     };
     fail(code, "member-owner")
 }
-fn host_error(error: HostError) -> ExecutionError {
+fn host_error(error: HostError, observation: &MemberRunObservation) -> ExecutionError {
+    let stage = observation
+        .failure_category(&error)
+        .unwrap_or("member-process");
     fail(
         match error {
             HostError::Cancelled | HostError::AuthorityRevoked => ErrorCode::Cancelled,
@@ -67,7 +70,7 @@ fn host_error(error: HostError) -> ExecutionError {
             HostError::OutputLimit => ErrorCode::LimitExceeded,
             _ => ErrorCode::OutputInvalid,
         },
-        "member-process",
+        stage,
     )
 }
 
@@ -464,7 +467,8 @@ impl MemberFactory {
         let live_cancel = cancellation.clone();
         let live_settings = settings_stop;
         let live_mcp = handler.captured.mcp.as_ref().map(|query| query.original.stop.clone());
-        let result = host_member::run_member(
+        let observation = MemberRunObservation::default();
+        let result = host_member::run_member_observed(
             &environment.artifact,
             &environment.runtime,
             &environment.staging_parent,
@@ -481,6 +485,7 @@ impl MemberFactory {
                     && live_mcp.as_ref().is_none_or(|stop| !stop.is_requested())
                     && live_request.check_service_dispatch().is_ok()
             }),
+            &observation,
         )
         .await;
         let cleanup = handler.drain().await;
@@ -488,7 +493,7 @@ impl MemberFactory {
             .join_failure
             .take()
             .or_else(|| handler.provider_failure.take());
-        let receipt = finish_run(result, cleanup, failure)?;
+        let receipt = finish_run(result, cleanup, failure, &observation)?;
         if receipt.turn_limit_reached {
             return Err(fail(ErrorCode::LimitExceeded, "member-turn-limit"));
         }
@@ -510,6 +515,7 @@ fn finish_run(
     process: Result<host_member::MemberRunReceipt, HostError>,
     cleanup: Result<(), ExecutionError>,
     failure: Option<ExecutionError>,
+    observation: &MemberRunObservation,
 ) -> Result<host_member::MemberRunReceipt, ExecutionError> {
     cleanup.map_err(|mut error| {
         // A process cancellation does not establish its nested producers'
@@ -521,7 +527,7 @@ fn finish_run(
     if let Some(error) = failure {
         return Err(error);
     }
-    process.map_err(host_error)
+    process.map_err(|error| host_error(error, observation))
 }
 impl MemberExecutor for MemberFactory {
     fn execute(
@@ -1565,6 +1571,7 @@ mod tests {
             Err(HostError::Cancelled),
             Err(fail(ErrorCode::Unauthorized, "owner-unavailable")),
             Some(fail(ErrorCode::LimitExceeded, "ai-budget")),
+            &MemberRunObservation::default(),
         )
         .err()
         .unwrap();
@@ -1574,9 +1581,14 @@ mod tests {
 
     #[test]
     fn member_cleanup_confirmed_producers_preserve_process_cancellation() {
-        let error = finish_run(Err(HostError::Cancelled), Ok(()), None)
-            .err()
-            .unwrap();
+        let error = finish_run(
+            Err(HostError::Cancelled),
+            Ok(()),
+            None,
+            &MemberRunObservation::default(),
+        )
+        .err()
+        .unwrap();
         assert_eq!(error.code, ErrorCode::Cancelled);
         assert_eq!(error.stage, "member-process");
 
@@ -1587,10 +1599,29 @@ mod tests {
                 Err(HostError::ResultMismatch),
                 Ok(()),
                 Some(provider.clone()),
+                &MemberRunObservation::default(),
             )
             .err()
             .unwrap(),
             provider,
         );
+    }
+
+    #[test]
+    fn member_process_failures_keep_fixed_categories_and_uncertain_outcomes() {
+        for (error, stage) in [
+            (HostError::Timeout, "member-timeout-admission"),
+            (HostError::Crashed, "member-crashed-admission"),
+            (HostError::ChannelFailed, "member-channel-admission"),
+        ] {
+            let error = finish_run(Err(error), Ok(()), None, &MemberRunObservation::default())
+                .err()
+                .unwrap();
+            assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+            assert_eq!(error.stage, stage);
+        }
+        let error = host_error(HostError::OutputLimit, &MemberRunObservation::default());
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.stage, "member-process");
     }
 }

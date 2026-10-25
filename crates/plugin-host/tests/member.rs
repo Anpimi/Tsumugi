@@ -28,7 +28,7 @@ use tsumugi_plugin_host::{
     HostError, HostLimits,
     member::{
         CapturedMemberArtifact, MemberArtifactManifest, MemberHandler, MemberLaunchOptions,
-        run_member,
+        MemberRunObservation, run_member, run_member_observed,
     },
 };
 
@@ -561,4 +561,124 @@ setInterval(()=>{},1000);"#.replace("MISMATCH", &format!("'{mismatch}'"));
         empty_stage(stage.path());
         assert!(handler.trace.lock().unwrap().events.is_empty());
     }
+}
+
+async fn observed_ready_failure(crash: bool, expected: HostError, category: &str) {
+    let runtime = runtime_fixture::approved_runtime();
+    // Keep the existing explicit production-artifact/runtime prerequisites.
+    // This smaller synthetic entry isolates the original Ready boundary.
+    let _ = artifact();
+    let fixture = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    std::fs::write(
+        fixture.path().join("manifest.json"),
+        serde_json::to_vec(&manifest()).unwrap(),
+    )
+    .unwrap();
+    let worker = r#"import {writeFileSync} from 'node:fs';
+let bytes=Buffer.alloc(0);let started=false;
+process.stdin.on('data',chunk=>{bytes=Buffer.concat([bytes,chunk]);if(started||bytes.length<4||bytes.length<4+bytes.readUInt32BE(0))return;started=true;
+const start=JSON.parse(bytes.subarray(4,4+bytes.readUInt32BE(0)).toString('utf8'));
+writeFileSync(start.body.input,String(process.pid));if(CRASH)process.exit(7);});
+setInterval(()=>{},1000);"#
+        .replace("CRASH", if crash { "true" } else { "false" });
+    std::fs::write(fixture.path().join("worker.mjs"), worker).unwrap();
+    let captured =
+        CapturedMemberArtifact::capture_directory(fixture.path(), &manifest(), || true).unwrap();
+    let pid_path = fixture.path().join("owned-child.pid");
+    let mut input = start();
+    if let MemberBody::Start { input, .. } = &mut input.body {
+        *input = pid_path.to_str().unwrap().into();
+    }
+    let mut handler = SyntheticHandler::new();
+    let observation = MemberRunObservation::default();
+    let result = run_member_observed(
+        &captured,
+        &runtime,
+        stage.path(),
+        input,
+        options(Cancellation::default()),
+        &mut handler,
+        Arc::new(|| true),
+        &observation,
+    )
+    .await;
+    assert_eq!(result.as_ref().err(), Some(&expected));
+    assert_eq!(observation.failure_category(&expected), Some(category));
+    let pid = std::fs::read_to_string(pid_path)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert_ne!(pid, std::process::id());
+    no_waitable_child(pid);
+    empty_stage(stage.path());
+    let trace = handler.trace.lock().unwrap();
+    assert!(trace.events.is_empty());
+    assert!(trace.prepares.is_empty());
+    assert!(trace.http.is_empty());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn member_failure_ready_timeout_survives_successful_owned_cleanup() {
+    observed_ready_failure(false, HostError::Timeout, "member-timeout-ready").await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn member_failure_ready_crash_survives_successful_owned_cleanup() {
+    observed_ready_failure(true, HostError::Crashed, "member-crashed-ready").await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn captured_member_ready_can_be_cancelled_before_any_provider_request() {
+    struct StopBeforeProvider {
+        stop: Cancellation,
+        called: bool,
+    }
+    impl MemberHandler for StopBeforeProvider {
+        fn cancellation(&self) -> Cancellation {
+            self.stop.clone()
+        }
+        fn handle(
+            &mut self,
+            call: MemberCall,
+        ) -> Pin<Box<dyn Future<Output = Result<MemberReply, ExecutionError>> + Send + '_>>
+        {
+            assert!(!matches!(call, MemberCall::Http { .. }));
+            self.called = true;
+            self.stop.request();
+            Box::pin(async { Err(ExecutionError::new(ErrorCode::Cancelled, "synthetic-stop")) })
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let observation = MemberRunObservation::default();
+    let mut handler = StopBeforeProvider {
+        stop: Cancellation::default(),
+        called: false,
+    };
+    let result = run_member_observed(
+        &artifact(),
+        &runtime_fixture::approved_runtime(),
+        directory.path(),
+        start(),
+        options(handler.stop.clone()),
+        &mut handler,
+        Arc::new(|| true),
+        &observation,
+    )
+    .await;
+    assert!(
+        handler.called,
+        "the captured member must pass Ready before calling its handler"
+    );
+    assert!(matches!(result, Err(HostError::Cancelled)));
+    assert_eq!(
+        observation.failure_category(&HostError::Timeout),
+        Some("member-timeout-run")
+    );
+    assert!(
+        std::fs::read_dir(directory.path())
+            .unwrap()
+            .next()
+            .is_none()
+    );
 }

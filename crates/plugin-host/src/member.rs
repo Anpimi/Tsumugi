@@ -6,7 +6,10 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
-    sync::{Arc, atomic::Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
     time::Duration,
 };
 
@@ -68,7 +71,62 @@ pub struct MemberRunReceipt {
     pub termination: CloseReceipt,
 }
 
-struct MemberProcess {
+/// One run's last trusted boundary, without payloads or process-cleanup claims.
+/// Use a fresh observation per run; a category never proves that work can be
+/// replayed or that its child was reaped.
+#[derive(Default)]
+pub struct MemberRunObservation {
+    phase: AtomicU8,
+}
+
+#[derive(Clone, Copy)]
+enum MemberPhase {
+    Admission = 0,
+    Staging = 1,
+    Spawn = 2,
+    Ready = 3,
+    Run = 4,
+    Close = 5,
+    Cleanup = 6,
+}
+
+impl MemberRunObservation {
+    fn enter(&self, phase: MemberPhase) {
+        self.phase.store(phase as u8, Ordering::Release);
+    }
+
+    /// Refine only fixed uncertain process failures. Child fault text and other
+    /// errors never become trusted categories through this observation.
+    pub fn failure_category(&self, error: &HostError) -> Option<&'static str> {
+        let phase = self.phase.load(Ordering::Acquire);
+        Some(match (error, phase) {
+            (HostError::Timeout, 1) => "member-timeout-staging",
+            (HostError::Timeout, 2) => "member-timeout-spawn",
+            (HostError::Timeout, 3) => "member-timeout-ready",
+            (HostError::Timeout, 4) => "member-timeout-run",
+            (HostError::Timeout, 5) => "member-timeout-close",
+            (HostError::Timeout, 6) => "member-timeout-cleanup",
+            (HostError::Timeout, _) => "member-timeout-admission",
+            (HostError::Crashed, 1) => "member-crashed-staging",
+            (HostError::Crashed, 2) => "member-crashed-spawn",
+            (HostError::Crashed, 3) => "member-crashed-ready",
+            (HostError::Crashed, 4) => "member-crashed-run",
+            (HostError::Crashed, 5) => "member-crashed-close",
+            (HostError::Crashed, 6) => "member-crashed-cleanup",
+            (HostError::Crashed, _) => "member-crashed-admission",
+            (HostError::ChannelFailed, 1) => "member-channel-staging",
+            (HostError::ChannelFailed, 2) => "member-channel-spawn",
+            (HostError::ChannelFailed, 3) => "member-channel-ready",
+            (HostError::ChannelFailed, 4) => "member-channel-run",
+            (HostError::ChannelFailed, 5) => "member-channel-close",
+            (HostError::ChannelFailed, 6) => "member-channel-cleanup",
+            (HostError::ChannelFailed, _) => "member-channel-admission",
+            _ => return None,
+        })
+    }
+}
+
+struct MemberProcess<'a> {
     pending: PendingChild,
     pipes: Pipes,
     session: ExecutionId,
@@ -78,8 +136,9 @@ struct MemberProcess {
     limits: HostLimits,
     cancellation: Cancellation,
     io_stop: Cancellation,
+    observation: &'a MemberRunObservation,
 }
-impl Drop for MemberProcess {
+impl Drop for MemberProcess<'_> {
     fn drop(&mut self) {
         self.io_stop.request();
         for task in &self.pipes.tasks {
@@ -88,7 +147,7 @@ impl Drop for MemberProcess {
         // PendingChild retains its directory unless this exact child is reaped.
     }
 }
-impl MemberProcess {
+impl MemberProcess<'_> {
     fn check(&mut self, authorized: &impl Fn() -> bool, deadline: Instant) -> HostResult<()> {
         if self.cancellation.is_requested() {
             return Err(HostError::Cancelled);
@@ -213,6 +272,7 @@ impl MemberProcess {
             if let Some(directory) = self.pending.directory.take() {
                 directory.keep();
             }
+            self.observation.enter(MemberPhase::Cleanup);
             return Err(HostError::Timeout);
         }
         Err(stopped)
@@ -271,6 +331,33 @@ pub async fn run_member(
     handler: &mut impl MemberHandler,
     authorized: Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> HostResult<MemberRunReceipt> {
+    let observation = MemberRunObservation::default();
+    run_member_observed(
+        artifact,
+        runtime,
+        staging_parent,
+        start,
+        options,
+        handler,
+        authorized,
+        &observation,
+    )
+    .await
+}
+
+/// The same owned run, with bounded failure attribution retained for its caller.
+/// Observation does not change deadlines, authority or cleanup requirements.
+pub async fn run_member_observed(
+    artifact: &CapturedMemberArtifact,
+    runtime: &CapturedRuntime,
+    staging_parent: &Path,
+    start: MemberFrame,
+    options: MemberLaunchOptions,
+    handler: &mut impl MemberHandler,
+    authorized: Arc<dyn Fn() -> bool + Send + Sync>,
+    observation: &MemberRunObservation,
+) -> HostResult<MemberRunReceipt> {
+    observation.enter(MemberPhase::Admission);
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (
@@ -333,6 +420,7 @@ pub async fn run_member(
         let parent = staging_parent.to_owned();
         let stage_authorized = authorized.clone();
         let stage_cancelled = options.cancellation.clone();
+        observation.enter(MemberPhase::Staging);
         let directory = tokio::task::spawn_blocking(move || {
             staging::materialize_member(
                 &parent,
@@ -348,6 +436,7 @@ pub async fn run_member(
         })
         .await
         .map_err(|_| HostError::StageFailed)??;
+        observation.enter(MemberPhase::Spawn);
         let package = directory.path().join("package");
         let mut command = ChildCommand::new(
             directory
@@ -376,6 +465,7 @@ pub async fn run_member(
             Err(error) => {
                 pending.rollback(options.limits.cleanup_timeout_ms).await;
                 if !matches!(pending.child.as_mut().unwrap().try_wait(), Ok(Some(_))) {
+                    observation.enter(MemberPhase::Cleanup);
                     return Err(HostError::Timeout);
                 }
                 return Err(error);
@@ -413,7 +503,9 @@ pub async fn run_member(
             limits: options.limits,
             cancellation: options.cancellation,
             io_stop,
+            observation,
         };
+        observation.enter(MemberPhase::Ready);
         let outcome = async {
             let handshake = deadline.min(
                 Instant::now() + Duration::from_millis(process.limits.handshake_timeout_ms.into()),
@@ -427,6 +519,7 @@ pub async fn run_member(
             ) {
                 return Err(HostError::HandshakeMismatch);
             }
+            observation.enter(MemberPhase::Run);
             let mut calls = 0u32;
             let mut turns = 0u32;
             let mut active = None;
@@ -449,8 +542,10 @@ pub async fn run_member(
                             .dispatch(handler, call.clone(), &|| authorized(), deadline)
                             .await?;
                         validate_reply(&call, &reply)?;
-                        if let (MemberCall::Prepare { .. }, MemberReply::Prepared { request_id, .. }) =
-                            (&call, &reply)
+                        if let (
+                            MemberCall::Prepare { .. },
+                            MemberReply::Prepared { request_id, .. },
+                        ) = (&call, &reply)
                         {
                             turns += 1;
                             if turns > max_turns || !seen_requests.insert(*request_id) {
@@ -487,6 +582,7 @@ pub async fn run_member(
                         {
                             return Err(HostError::ResultMismatch);
                         }
+                        observation.enter(MemberPhase::Close);
                         let termination = process.finish(&|| authorized(), deadline).await?;
                         return Ok(MemberRunReceipt {
                             messages,
@@ -511,6 +607,7 @@ pub async fn run_member(
                 process.pending.child.as_mut().unwrap().try_wait(),
                 Ok(Some(_))
             ) {
+                observation.enter(MemberPhase::Cleanup);
                 return Err(HostError::Timeout);
             }
         }
@@ -687,6 +784,92 @@ fn validate_reply(call: &MemberCall, reply: &MemberReply) -> HostResult<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn member_failure_categories_are_bounded_and_keep_other_errors_distinct() {
+        let observation = MemberRunObservation::default();
+        for (phase, categories) in [
+            (
+                MemberPhase::Admission,
+                [
+                    "member-timeout-admission",
+                    "member-crashed-admission",
+                    "member-channel-admission",
+                ],
+            ),
+            (
+                MemberPhase::Staging,
+                [
+                    "member-timeout-staging",
+                    "member-crashed-staging",
+                    "member-channel-staging",
+                ],
+            ),
+            (
+                MemberPhase::Spawn,
+                [
+                    "member-timeout-spawn",
+                    "member-crashed-spawn",
+                    "member-channel-spawn",
+                ],
+            ),
+            (
+                MemberPhase::Ready,
+                [
+                    "member-timeout-ready",
+                    "member-crashed-ready",
+                    "member-channel-ready",
+                ],
+            ),
+            (
+                MemberPhase::Run,
+                [
+                    "member-timeout-run",
+                    "member-crashed-run",
+                    "member-channel-run",
+                ],
+            ),
+            (
+                MemberPhase::Close,
+                [
+                    "member-timeout-close",
+                    "member-crashed-close",
+                    "member-channel-close",
+                ],
+            ),
+            (
+                MemberPhase::Cleanup,
+                [
+                    "member-timeout-cleanup",
+                    "member-crashed-cleanup",
+                    "member-channel-cleanup",
+                ],
+            ),
+        ] {
+            observation.enter(phase);
+            for (error, category) in [
+                HostError::Timeout,
+                HostError::Crashed,
+                HostError::ChannelFailed,
+            ]
+            .iter()
+            .zip(categories)
+            {
+                assert_eq!(observation.failure_category(error), Some(category));
+            }
+            for error in [
+                HostError::Cancelled,
+                HostError::AuthorityRevoked,
+                HostError::InvalidFrame,
+                HostError::HandshakeMismatch,
+                HostError::OutputLimit,
+                HostError::StageFailed,
+                HostError::SpawnFailed,
+            ] {
+                assert_eq!(observation.failure_category(&error), None);
+            }
+        }
+    }
 
     #[test]
     fn tool_execution_requires_the_original_admission_and_arguments() {
