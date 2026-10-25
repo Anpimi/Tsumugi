@@ -39319,7 +39319,7 @@ return errors === 0;
 
 export const validateResponseWorkPlan = validate906;
 const schema1192 = {"$id":"urn:tsumugi:ipc:ai:responses:workPlan","$ref":"urn:tsumugi:ipc:ai:responses#/properties/workPlan"};
-const schema832 = {"additionalProperties":false,"properties":{"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"digest":{"type":"string"},"locale":{"type":"string"},"maintenance":{"anyOf":[{"$ref":"#/definitions/MaintenancePlanBasis"},{"type":"null"}]},"memberPreviews":{"items":{"$ref":"#/definitions/TeamMemberPreviewView"},"type":["array","null"]},"options":{"$ref":"#/definitions/PlanOptions"},"planId":{"$ref":"#/definitions/ExecutionId"},"preview":{"anyOf":[{"$ref":"#/definitions/AiPreviewView"},{"type":"null"}]},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"teamDiscussionLimits":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionLimits"},{"type":"null"}]},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["planId","digest","locale","options","scope","preview","attemptId","checkers","tools","maintenance"],"type":"object"};
+const schema832 = {"additionalProperties":false,"properties":{"attemptId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"checkers":{"items":{"$ref":"#/definitions/WorkPlanCheckerView"},"type":"array"},"digest":{"type":"string"},"locale":{"type":"string"},"maintenance":{"anyOf":[{"$ref":"#/definitions/MaintenancePlanBasis"},{"type":"null"}]},"memberPreviews":{"items":{"$ref":"#/definitions/TeamMemberPreviewView"},"type":["array","null"]},"options":{"$ref":"#/definitions/PlanOptions"},"planId":{"$ref":"#/definitions/ExecutionId"},"preview":{"anyOf":[{"$ref":"#/definitions/AiPreviewView"},{"type":"null"}]},"scope":{"items":{"$ref":"#/definitions/PlanSelectionBasis"},"type":"array"},"teamDiscussionLimits":{"anyOf":[{"$ref":"#/definitions/TeamDiscussionLimits"},{"type":"null"}]},"teamWorkTimeoutMs":{"format":"uint32","maximum":4294967295,"minimum":0,"type":["integer","null"]},"tools":{"anyOf":[{"$ref":"#/definitions/WorkPlanTools"},{"type":"null"}]}},"required":["planId","digest","locale","options","scope","preview","attemptId","checkers","tools","maintenance"],"type":"object"};
 const schema891 = {"additionalProperties":false,"properties":{"maxArtifactBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxMembers":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPostBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxRoleVersionsPerMember":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"maxViewPosts":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"}},"required":["maxMembers","maxRoleVersionsPerMember","maxPosts","maxPostBytes","maxViewPosts","maxViewBytes","maxArtifactBytes"],"type":"object"};
 const schema834 = {"oneOf":[{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"kind":{"const":"ready","type":"string"},"plugin":{"$ref":"#/definitions/ReviewCheckerView"}},"required":["kind","checker","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/ReviewCheckerKey"},"error":{"$ref":"#/definitions/CommandError"},"kind":{"const":"unavailable","type":"string"}},"required":["kind","checker","error"],"type":"object"}]};
 const schema835 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"format","type":"string"},"plugin":{"$ref":"#/definitions/PluginReviewView"}},"required":["kind","plugin"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"advisory-text","type":"string"},"plugin":{"$ref":"#/definitions/PluginTextReviewView"}},"required":["kind","plugin"],"type":"object"}]};
@@ -46108,21 +46108,48 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.tools !== undefined){
-let data21 = data.tools;
+if(data.teamWorkTimeoutMs !== undefined){
+let data21 = data.teamWorkTimeoutMs;
 const _errs58 = errors;
-const _errs59 = errors;
-let valid12 = false;
+if((!(((typeof data21 == "number") && (!(data21 % 1) && !isNaN(data21))) && (isFinite(data21)))) && (data21 !== null)){
+validate907.errors = [{instancePath:instancePath+"/teamWorkTimeoutMs",schemaPath:"#/properties/teamWorkTimeoutMs/type",keyword:"type",params:{type: schema832.properties.teamWorkTimeoutMs.type},message:"must be integer,null"}];
+return false;
+}
+if(errors === _errs58){
+if((typeof data21 == "number") && (isFinite(data21))){
+if(data21 > 4294967295 || isNaN(data21)){
+validate907.errors = [{instancePath:instancePath+"/teamWorkTimeoutMs",schemaPath:"#/properties/teamWorkTimeoutMs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"}];
+return false;
+}
+else {
+if(data21 < 0 || isNaN(data21)){
+validate907.errors = [{instancePath:instancePath+"/teamWorkTimeoutMs",schemaPath:"#/properties/teamWorkTimeoutMs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+return false;
+}
+}
+}
+}
+var valid0 = _errs58 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.tools !== undefined){
+let data22 = data.tools;
 const _errs60 = errors;
-if(!(validate659(data21, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
+const _errs61 = errors;
+let valid12 = false;
+const _errs62 = errors;
+if(!(validate659(data22, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
 vErrors = vErrors === null ? validate659.errors : vErrors.concat(validate659.errors);
 errors = vErrors.length;
 }
-var _valid4 = _errs60 === errors;
+var _valid4 = _errs62 === errors;
 valid12 = valid12 || _valid4;
 if(!valid12){
-const _errs61 = errors;
-if(data21 !== null){
+const _errs63 = errors;
+if(data22 !== null){
 const err34 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err34];
@@ -46132,7 +46159,7 @@ vErrors.push(err34);
 }
 errors++;
 }
-var _valid4 = _errs61 === errors;
+var _valid4 = _errs63 === errors;
 valid12 = valid12 || _valid4;
 }
 if(!valid12){
@@ -46148,20 +46175,21 @@ validate907.errors = vErrors;
 return false;
 }
 else {
-errors = _errs59;
+errors = _errs61;
 if(vErrors !== null){
-if(_errs59){
-vErrors.length = _errs59;
+if(_errs61){
+vErrors.length = _errs61;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs58 === errors;
+var valid0 = _errs60 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }
@@ -55053,21 +55081,48 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.tools !== undefined){
-let data21 = data.tools;
+if(data.teamWorkTimeoutMs !== undefined){
+let data21 = data.teamWorkTimeoutMs;
 const _errs58 = errors;
-const _errs59 = errors;
-let valid12 = false;
+if((!(((typeof data21 == "number") && (!(data21 % 1) && !isNaN(data21))) && (isFinite(data21)))) && (data21 !== null)){
+validate610.errors = [{instancePath:instancePath+"/teamWorkTimeoutMs",schemaPath:"#/properties/teamWorkTimeoutMs/type",keyword:"type",params:{type: schema832.properties.teamWorkTimeoutMs.type},message:"must be integer,null"}];
+return false;
+}
+if(errors === _errs58){
+if((typeof data21 == "number") && (isFinite(data21))){
+if(data21 > 4294967295 || isNaN(data21)){
+validate610.errors = [{instancePath:instancePath+"/teamWorkTimeoutMs",schemaPath:"#/properties/teamWorkTimeoutMs/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"}];
+return false;
+}
+else {
+if(data21 < 0 || isNaN(data21)){
+validate610.errors = [{instancePath:instancePath+"/teamWorkTimeoutMs",schemaPath:"#/properties/teamWorkTimeoutMs/minimum",keyword:"minimum",params:{comparison: ">=", limit: 0},message:"must be >= 0"}];
+return false;
+}
+}
+}
+}
+var valid0 = _errs58 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
+if(data.tools !== undefined){
+let data22 = data.tools;
 const _errs60 = errors;
-if(!(validate659(data21, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
+const _errs61 = errors;
+let valid12 = false;
+const _errs62 = errors;
+if(!(validate659(data22, {instancePath:instancePath+"/tools",parentData:data,parentDataProperty:"tools",rootData}))){
 vErrors = vErrors === null ? validate659.errors : vErrors.concat(validate659.errors);
 errors = vErrors.length;
 }
-var _valid4 = _errs60 === errors;
+var _valid4 = _errs62 === errors;
 valid12 = valid12 || _valid4;
 if(!valid12){
-const _errs61 = errors;
-if(data21 !== null){
+const _errs63 = errors;
+if(data22 !== null){
 const err34 = {instancePath:instancePath+"/tools",schemaPath:"#/properties/tools/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err34];
@@ -55077,7 +55132,7 @@ vErrors.push(err34);
 }
 errors++;
 }
-var _valid4 = _errs61 === errors;
+var _valid4 = _errs63 === errors;
 valid12 = valid12 || _valid4;
 }
 if(!valid12){
@@ -55093,20 +55148,21 @@ validate610.errors = vErrors;
 return false;
 }
 else {
-errors = _errs59;
+errors = _errs61;
 if(vErrors !== null){
-if(_errs59){
-vErrors.length = _errs59;
+if(_errs61){
+vErrors.length = _errs61;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs58 === errors;
+var valid0 = _errs60 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }

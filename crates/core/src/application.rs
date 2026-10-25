@@ -954,6 +954,22 @@ impl WorkPlan {
         policy: TeamExecutionPolicy,
         inputs: Vec<TeamMemberInput>,
     ) -> Result<Self, ExecutionError> {
+        let root_limit = ai::settings(&self.fixed_input()?)?.config.max_requests;
+        // A member may perform several bounded requests within one EX item.
+        // Capture that allowance once; validation and recovery retain the saved
+        // value rather than recalculating historical work or renewing its grant.
+        let timeout_ms = policy.members().iter().fold(0_u64, |longest, member| {
+            let config = &member.config;
+            let allowance = (u64::from(config.timeout_seconds) * 1000 + 6000)
+                .saturating_mul(u64::from(config.max_retries) + 1)
+                .saturating_mul(u64::from(root_limit.min(config.max_requests)));
+            longest.max(allowance.min(600_000))
+        });
+        self.input
+            .as_mut()
+            .expect("validated executable plan")
+            .limits
+            .timeout_ms = timeout_ms as u32;
         self.options.team_execution = Some(policy);
         self.team_inputs = inputs;
         self.digest = self.computed_digest()?;

@@ -459,6 +459,8 @@ pub struct WorkPlanView {
     pub team_discussion_limits: Option<tsumugi_core::application::TeamDiscussionLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub member_previews: Option<Vec<TeamMemberPreviewView>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_work_timeout_ms: Option<u32>,
     pub scope: Vec<PlanSelectionBasis>,
     pub preview: Option<AiPreviewView>,
     pub attempt_id: Option<ExecutionId>,
@@ -511,6 +513,9 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
                     member_id: member.member_id, preview: member.preview.into(),
                 }).collect())
             } else { None },
+            team_work_timeout_ms: plan.input.as_ref()
+                .filter(|_| plan.options.team_execution.is_some())
+                .map(|input| input.limits.timeout_ms),
             scope: plan.selection_basis.clone(),
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),

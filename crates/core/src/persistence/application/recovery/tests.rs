@@ -808,3 +808,47 @@ fn team_recovery_expired_queued_work_does_not_starve_unrelated_work() {
             .original_deadline_available
     );
 }
+
+#[test]
+fn team_work_budget_does_not_renew_the_original_team_deadline_for_child_work() {
+    let (calls, received) = mpsc::channel();
+    let mut f = setup_with_expiry(Arc::new(Held { calls }), 30);
+    assert_eq!(f.root.input().envelope().limits.timeout_ms, 132_000);
+    f.runtime.tick(&mut f.store).unwrap();
+    let (root, release_root) = received.recv_timeout(Duration::from_secs(3)).unwrap();
+    let root_deadline = root.deadline().unwrap();
+    assert!(root_deadline <= Instant::now() + Duration::from_secs(30));
+    let author = f.store.capture_team_work_author(&root).unwrap();
+    let work = RequestTeamWork {
+        intent_id: ExecutionId::new(),
+        recipient_member_id: f.members[1].member_id,
+        target: author.target().clone(),
+        kind: TeamWorkKind::Review,
+        instructions: "Review within the original team lifetime.".into(),
+        post_ids: vec![],
+        cause_message_id: None,
+    };
+    let child = f.store.prepare_team_work(&author, &work).unwrap();
+    assert_eq!(child.input().envelope().limits.timeout_ms, 132_000);
+    assert_eq!(
+        f.store.team_runtime_identity(child.input()).unwrap().3,
+        f.store.team_runtime_identity(f.root.input()).unwrap().3,
+    );
+    f.runtime.submit_team_work(&mut f.store, &child).unwrap();
+    f.runtime.tick(&mut f.store).unwrap();
+    let (child, release_child) = received.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(child.deadline().unwrap() <= root_deadline);
+    release_root.send(()).unwrap();
+    release_child.send(()).unwrap();
+    let until = Instant::now() + Duration::from_secs(3);
+    while !f
+        .runtime
+        .team_recovery_state(&f.store, f.plan.plan_id)
+        .unwrap()
+        .producers_drained
+    {
+        f.runtime.tick(&mut f.store).unwrap();
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}

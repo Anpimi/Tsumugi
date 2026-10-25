@@ -2,6 +2,7 @@ use super::*;
 use crate::persistence::application::tests::{config, consent, fixture};
 
 mod human_guidance;
+mod work_budget;
 
 fn setup(
     no_progress: u32,

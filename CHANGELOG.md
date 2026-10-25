@@ -57,6 +57,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- New team plans capture a bounded total time budget for multi-round member work and disclose it before consent. Per-request timeouts, original permission deadlines and previously captured plans remain unchanged.
+
 - Member process failure history preserves whether the trusted Host observed a timeout, crash or channel failure and its execution phase. Unknown outcomes still require review and are never automatically replayed.
 
 - Plugin timeout history distinguishes dispatch admission, package staging, readiness, invocation and post-close result handling. Existing limits, authorization checks and uncertain-outcome handling remain in force.

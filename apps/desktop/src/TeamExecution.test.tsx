@@ -75,6 +75,16 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
+it.each(["en-US", "zh-CN"])("discloses the captured work timeout without recomputing historical budgets in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  const historical = { ...status.plan, teamWorkTimeoutMs: 66000 };
+  const view = render(<TeamExecutionDisclosure plan={historical}/>, project);
+  expect(screen.getByText(i18n.t("ai.team.workTimeout", { seconds: "66" }))).toBeVisible();
+  view.rerender(<TeamExecutionDisclosure plan={{ ...historical, teamWorkTimeoutMs: 600000 }}/>);
+  expect(screen.getByText(i18n.t("ai.team.workTimeout", { seconds: "600" }))).toBeVisible();
+  expect(screen.queryByText(i18n.t("ai.team.workTimeout", { seconds: "66" }))).not.toBeInTheDocument();
+});
+
 async function openTeam() {
   const user = userEvent.setup(); render(<Harness project={project}/>);
   await user.click(screen.getByRole("button", { name: "AI work" }));

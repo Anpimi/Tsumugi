@@ -1355,6 +1355,7 @@ export interface WorkPlanView {
   preview: AiPreviewView | null;
   scope: PlanSelectionBasis[];
   teamDiscussionLimits?: TeamDiscussionLimits | null;
+  teamWorkTimeoutMs?: number | null;
   tools: WorkPlanTools | null;
 }
 export interface PluginReviewView {
