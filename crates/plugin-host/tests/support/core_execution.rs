@@ -54,7 +54,12 @@ pub fn execute_all(
                     let id = store
                         .execution_current_result(input.envelope().attempt_id, item.item_id)
                         .unwrap()
-                        .unwrap();
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "captured execution ended without a result: {:?}",
+                                store.execution_attempt(input.envelope().attempt_id, true)
+                            )
+                        });
                     let result = store
                         .execution_result(input.envelope().attempt_id, id)
                         .unwrap();
