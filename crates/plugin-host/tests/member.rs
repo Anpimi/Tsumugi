@@ -628,7 +628,7 @@ async fn member_failure_ready_crash_survives_successful_owned_cleanup() {
     observed_ready_failure(true, HostError::Crashed, "member-crashed-ready").await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn captured_member_ready_can_be_cancelled_before_any_provider_request() {
     struct StopBeforeProvider {
         stop: Cancellation,
