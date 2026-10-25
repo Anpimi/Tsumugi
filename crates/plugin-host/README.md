@@ -86,6 +86,12 @@ transport profile admits only its documented read-only roster. Application
 lifetime consent and per-project execution grants remain the trusted embedding
 application's responsibility.
 
+The Core adapter retains fixed timeout categories for dispatch admission, package
+staging, process readiness, invocation and post-close result handling. These describe
+where the trusted owner observed expiry; they do not prove that a component never
+ran or that an unknown operation can be replayed safely. Existing limits and live
+authority checks still apply, and old generic timeout records remain readable.
+
 `ProjectServiceBroker` supplies explicitly selected services to supported scoped
 channels. Missing required dependencies, incompatible effects, unselected handles
 and foreign invocation contexts are refused before author code runs. Service

@@ -10,6 +10,7 @@ use tsumugi_core::execution::{
 };
 use tsumugi_plugin_sdk as sdk;
 
+use crate::session::LaunchCleanup;
 use crate::{
     CapturedNativeRuntime, CapturedRuntime, HostError, HostLimits, LaunchOptions, PackageImage,
     ProcessSession, ProjectServiceBroker, ReceivedResult, RuntimeLauncher, ScopeBinding,
@@ -247,7 +248,7 @@ impl RunnerProxy {
         let Some(factory) = &self.service_factory else {
             return Ok(None);
         };
-        require_live(request, permit, cancellation)?;
+        require_live_at(request, permit, cancellation, "plugin-timeout-selection")?;
         let mut selection = factory.capture(request.clone(), permit.clone(), cancellation.clone());
         let handshake_deadline = tokio::time::Instant::now()
             + Duration::from_millis(self.limits.handshake_timeout_ms.into());
@@ -258,14 +259,15 @@ impl RunnerProxy {
                 original.min(handshake_deadline)
             });
         loop {
-            require_live(request, permit, cancellation)?;
+            require_live_at(request, permit, cancellation, "plugin-timeout-selection")?;
             tokio::select! {
                 value = &mut selection => {
-                    require_live(request, permit, cancellation)?;
+                    require_live_at(request, permit, cancellation, "plugin-timeout-selection")?;
                     return value.map(Some);
                 }
                 _ = tokio::time::sleep_until(deadline) => {
-                    return Err(ExecutionError::new(ErrorCode::OutcomeUnknown, "plugin-service-selection-timeout"));
+                    require_live_at(request, permit, cancellation, "plugin-timeout-selection")?;
+                    return Err(ExecutionError::new(ErrorCode::OutcomeUnknown, "plugin-timeout-selection"));
                 }
                 _ = tokio::time::sleep(Duration::from_millis(10)) => {}
             }
@@ -321,7 +323,7 @@ impl RunnerProxy {
         permit: &PluginPermit,
         cancellation: &Cancellation,
     ) -> Result<FixedResult, ExecutionError> {
-        require_live(request, permit, cancellation)?;
+        require_live_at(request, permit, cancellation, "plugin-timeout-dispatch")?;
         let services = self.capture_services(request, permit, cancellation).await?;
         let project_id = request.input.envelope().project_id.to_string();
         let options = LaunchOptions {
@@ -348,33 +350,24 @@ impl RunnerProxy {
         let live_cancellation = cancellation.clone();
         let authority = move || is_live(&live_request, &live_permit, &live_cancellation);
         let launcher = self.runtime.launcher();
-        let launched = match services {
-            Some(broker) => {
-                ProcessSession::launch_with_services(
-                    &self.image,
-                    &self.capability.provider.contribution_id,
-                    &self.staging_parent,
-                    &launcher,
-                    options,
-                    broker,
-                    authority,
-                )
-                .await
-            }
-            None => {
-                ProcessSession::launch(
-                    &self.image,
-                    &self.capability.provider.contribution_id,
-                    &self.staging_parent,
-                    &launcher,
-                    options,
-                    authority,
-                )
-                .await
-            }
-        };
-        let mut session =
-            launched.map_err(|error| current_error(error, request, permit, cancellation))?;
+        let cleanup = LaunchCleanup::default();
+        let launched = ProcessSession::launch_inner(
+            &self.image,
+            &self.capability.provider.contribution_id,
+            &self.staging_parent,
+            &launcher,
+            options,
+            services,
+            Some(cleanup.clone()),
+            authority,
+        )
+        .await;
+        let mut session = launched.map_err(|error| {
+            timeout_at(
+                current_error(error, request, permit, cancellation),
+                cleanup.timeout_stage(),
+            )
+        })?;
 
         // Every path after a successful launch closes the owned session, even
         // if request construction, invocation, or evidence validation fails.
@@ -389,7 +382,7 @@ impl RunnerProxy {
             ));
         }
         let received = outcome?;
-        require_live(request, permit, cancellation)?;
+        require_live_at(request, permit, cancellation, "plugin-timeout-result")?;
         FixedResult::capture_plugin(
             &request.input,
             request.item_id,
@@ -409,7 +402,7 @@ impl RunnerProxy {
         permit: &PluginPermit,
         cancellation: &Cancellation,
     ) -> Result<ReceivedResult, ExecutionError> {
-        require_live(request, permit, cancellation)?;
+        require_live_at(request, permit, cancellation, "plugin-timeout-invoke")?;
         let channel = session.channel();
         let provider = channel
             .provider(&self.capability.provider.contribution_id)
@@ -426,7 +419,7 @@ impl RunnerProxy {
         invocation.max_result_bytes = invocation
             .max_result_bytes
             .min(self.limits.max_frame_bytes as u32);
-        require_live(request, permit, cancellation)?;
+        require_live_at(request, permit, cancellation, "plugin-timeout-invoke")?;
         let received = session
             .invoke(
                 &invocation,
@@ -434,8 +427,13 @@ impl RunnerProxy {
                 || is_live(request, permit, cancellation),
             )
             .await
-            .map_err(|error| current_error(error, request, permit, cancellation))?;
-        require_live(request, permit, cancellation)?;
+            .map_err(|error| {
+                timeout_at(
+                    current_error(error, request, permit, cancellation),
+                    "plugin-timeout-invoke",
+                )
+            })?;
+        require_live_at(request, permit, cancellation, "plugin-timeout-invoke")?;
         let actual = received.channel();
         // These independent receipt fields are supplied by Host, never copied
         // from the result's claimed identity.
@@ -487,6 +485,7 @@ impl Runner for RunnerProxy {
         self.check_request(&request)
             .map_err(|error| error.for_item(request.item_id))?;
         require_live(&request, &permit, &cancellation)
+            .map_err(|error| timeout_at(error, "plugin-timeout-dispatch"))
             .map_err(|error| error.for_item(request.item_id))?;
         // Core invokes Runner on its worker thread. All process IO and child
         // cleanup stay on the runtime owned by this dispatch.
@@ -512,6 +511,7 @@ impl Runner for RunnerProxy {
             result
         };
         require_live(&request, &permit, &cancellation)
+            .map_err(|error| timeout_at(error, "plugin-timeout-result"))
             .map_err(|error| error.for_item(request.item_id))?;
         // Core checks current authority again at durable acceptance. This send
         // does not create an adoption grant or claim that external effects can
@@ -565,6 +565,24 @@ fn require_live(
         ));
     }
     Ok(())
+}
+
+fn timeout_at(mut error: ExecutionError, stage: &'static str) -> ExecutionError {
+    // Only refine this owner's timeout. Cancellation, revocation and every
+    // other failure keep their original code, priority and bounded category.
+    if error.code == ErrorCode::OutcomeUnknown && error.stage == "plugin-timeout" {
+        error.stage = stage.into();
+    }
+    error
+}
+
+fn require_live_at(
+    request: &DispatchRequest,
+    permit: &PluginPermit,
+    cancellation: &Cancellation,
+    stage: &'static str,
+) -> Result<(), ExecutionError> {
+    require_live(request, permit, cancellation).map_err(|error| timeout_at(error, stage))
 }
 
 fn current_error(

@@ -19,9 +19,24 @@ use tokio::{
 use tsumugi_plugin_sdk::*;
 
 /// Process-owner evidence for a launch that may fail before returning a session.
-/// Only successful spawn and the original wait/try_wait observations change it.
+/// Only successful spawn and original wait/try_wait observations change cleanup
+/// state. The independent phase records diagnostic attribution, never reap proof.
 #[derive(Clone, Default)]
-pub(crate) struct LaunchCleanup(Arc<AtomicU8>);
+pub(crate) struct LaunchCleanup(Arc<LaunchObservation>);
+#[derive(Default)]
+struct LaunchObservation {
+    cleanup: AtomicU8,
+    phase: AtomicU8,
+}
+/// The last entered launch boundary is diagnostic attribution only. It never
+/// proves that a child was spawned, stopped or reaped.
+#[derive(Clone, Copy)]
+pub(crate) enum LaunchPhase {
+    Selection = 0,
+    Staging = 1,
+    Spawn = 2,
+    Ready = 3,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LaunchCleanupState {
     NotSpawned,
@@ -30,7 +45,7 @@ pub(crate) enum LaunchCleanupState {
 }
 impl LaunchCleanup {
     pub(crate) fn state(&self) -> LaunchCleanupState {
-        match self.0.load(Ordering::Acquire) {
+        match self.0.cleanup.load(Ordering::Acquire) {
             0 => LaunchCleanupState::NotSpawned,
             2 => LaunchCleanupState::Reaped,
             _ => LaunchCleanupState::Unconfirmed,
@@ -39,11 +54,23 @@ impl LaunchCleanup {
     pub(crate) fn confirmed(&self) -> bool {
         self.state() != LaunchCleanupState::Unconfirmed
     }
+    fn enter(&self, phase: LaunchPhase) {
+        self.0.phase.store(phase as u8, Ordering::Release);
+    }
+    #[cfg(feature = "core-adapter")]
+    pub(crate) fn timeout_stage(&self) -> &'static str {
+        match self.0.phase.load(Ordering::Acquire) {
+            1 => "plugin-timeout-staging",
+            2 => "plugin-timeout-spawn",
+            3 => "plugin-timeout-ready",
+            _ => "plugin-timeout-selection",
+        }
+    }
     fn spawned(&self) {
-        self.0.store(1, Ordering::Release);
+        self.0.cleanup.store(1, Ordering::Release);
     }
     fn reaped(&self) {
-        self.0.store(2, Ordering::Release);
+        self.0.cleanup.store(2, Ordering::Release);
     }
 }
 
@@ -353,7 +380,7 @@ impl ProcessSession {
         )
         .await
     }
-    async fn launch_inner(
+    pub(crate) async fn launch_inner(
         image: &PackageImage,
         contribution_id: &str,
         staging_parent: &Path,
@@ -363,6 +390,9 @@ impl ProcessSession {
         cleanup: Option<LaunchCleanup>,
         authorized: impl Fn() -> bool + Send + Sync + 'static,
     ) -> HostResult<Self> {
+        if let Some(cleanup) = &cleanup {
+            cleanup.enter(LaunchPhase::Selection);
+        }
         options.limits.validate()?;
         if !options.allow_unsandboxed_execution {
             return Err(HostError::ExecutionNotAuthorized);
@@ -455,6 +485,9 @@ impl ProcessSession {
             let captured = image.clone();
             let parent = staging_parent.to_owned();
             let stage_runtime = runtime.clone();
+            if let Some(cleanup) = &cleanup {
+                cleanup.enter(LaunchPhase::Staging);
+            }
             let directory = tokio::task::spawn_blocking(move || {
                 captured.stage(&parent, stage_runtime.as_ref(), || {
                     stage_guard()
@@ -467,6 +500,9 @@ impl ProcessSession {
             })
             .await
             .map_err(|_| HostError::StageFailed)??;
+            if let Some(cleanup) = &cleanup {
+                cleanup.enter(LaunchPhase::Spawn);
+            }
             let package_directory = directory.path().join("package");
             let entry = package_directory.join(
                 component
@@ -615,6 +651,9 @@ impl ProcessSession {
                 stop_ms,
                 cleanup_ms,
             };
+            if let Some(cleanup) = &session.launch_cleanup {
+                cleanup.enter(LaunchPhase::Ready);
+            }
             let result = async {
                 session.send(ProcessBody::Activate(session.activation.clone()))?;
                 let ready = session
@@ -1246,6 +1285,20 @@ fn release_or_keep(child: &mut OwnedChild, directory: &mut Option<StagedDirector
 mod lifetime_tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn timeout_stage_observation_cannot_confirm_child_cleanup() {
+        let observation = LaunchCleanup::default();
+        assert_eq!(observation.state(), LaunchCleanupState::NotSpawned);
+        observation.enter(LaunchPhase::Staging);
+        assert_eq!(observation.state(), LaunchCleanupState::NotSpawned);
+        observation.spawned();
+        observation.enter(LaunchPhase::Ready);
+        assert_eq!(observation.state(), LaunchCleanupState::Unconfirmed);
+        assert!(!observation.confirmed());
+        observation.reaped();
+        assert_eq!(observation.state(), LaunchCleanupState::Reaped);
+    }
 
     fn runtime() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread()

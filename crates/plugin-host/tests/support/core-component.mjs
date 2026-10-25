@@ -1,11 +1,13 @@
 import { readFile, writeFile } from 'node:fs/promises';
 const mode = await readFile(new URL('./behavior.txt', import.meta.url), 'utf8');
 export default {
-  activate(api) {
+  async activate(api) {
+    if (mode === 'wait-ready') await new Promise(() => {});
     api.onDispose(async () => {});
     for (const contribution of api.contributions) {
       api.register(contribution.id, async input => {
         const item = JSON.parse(input.utf8);
+        if (mode === 'wait-invoke') await new Promise(() => {});
         if (mode === 'crash') throw new Error('synthetic channel failure');
         if (mode === 'failed' || mode === 'unknown') return { kind: mode, utf8: '{\r\n"reason":"synthetic"\r\n}' };
         if (mode === 'late') {

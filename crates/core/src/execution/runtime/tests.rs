@@ -7,6 +7,32 @@ mod application_lifecycle;
 mod dependency_slots;
 mod package_quiesce;
 
+#[test]
+fn timeout_stage_categories_are_bounded_and_keep_legacy_history() {
+    for stage in [
+        "plugin-timeout",
+        "plugin-timeout-dispatch",
+        "plugin-timeout-selection",
+        "plugin-timeout-staging",
+        "plugin-timeout-spawn",
+        "plugin-timeout-ready",
+        "plugin-timeout-invoke",
+        "plugin-timeout-result",
+    ] {
+        assert_eq!(
+            runner_failure(&ExecutionError::new(ErrorCode::OutcomeUnknown, stage)),
+            stage
+        );
+    }
+    assert_eq!(
+        runner_failure(&ExecutionError::new(
+            ErrorCode::OutcomeUnknown,
+            "plugin-timeout-untrusted-detail"
+        )),
+        "runner-failed"
+    );
+}
+
 struct Call {
     request: DispatchRequest,
     release: mpsc::Sender<ExecutionState>,

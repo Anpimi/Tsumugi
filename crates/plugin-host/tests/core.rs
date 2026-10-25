@@ -914,6 +914,110 @@ fn failed_unknown_and_crashed_processes_keep_distinct_nonpassing_evidence() {
 }
 
 #[test]
+fn timeout_stage_preserves_ready_and_invoke_expiry_in_durable_unknown_history() {
+    for (mode, expected) in [
+        ("wait-ready", "plugin-timeout-ready"),
+        ("wait-invoke", "plugin-timeout-invoke"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path());
+        let proxy = Arc::new(
+            RunnerProxy::new(
+                image(mode, None),
+                "proposal.call",
+                runtime_fixture::approved_runtime(),
+                dir.path(),
+                HostLimits {
+                    handshake_timeout_ms: 3000,
+                    invocation_timeout_ms: 100,
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        let mut envelope = input(&mut store, &proxy).envelope().clone();
+        envelope.limits.timeout_ms = 30000;
+        let input = FixedInput::capture(envelope).unwrap();
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register(proxy).unwrap();
+        authorize(&runtime, &mut store, &input);
+        runtime.submit(&mut store, &input).unwrap();
+        finish(&mut runtime, &mut store, &input);
+        let state = store
+            .execution_attempt(input.envelope().attempt_id, false)
+            .unwrap();
+        assert_eq!(state.items[0].execution, ExecutionState::Unknown);
+        assert_eq!(state.items[0].validation, ValidationState::Absent);
+        assert_eq!(state.items[0].adoption, AdoptionState::Unapplied);
+        assert_eq!(state.items[0].diagnostic.as_deref(), Some(expected));
+        assert!(!state.items[0].retry_safe);
+        assert!(
+            store
+                .execution_current_result(
+                    input.envelope().attempt_id,
+                    input.envelope().items[0].item_id
+                )
+                .unwrap()
+                .is_none()
+        );
+        drop(runtime);
+        store.close().unwrap();
+        let reopened = ProjectStore::open(dir.path().join("project")).unwrap();
+        assert_eq!(
+            reopened
+                .execution_attempt(input.envelope().attempt_id, false)
+                .unwrap()
+                .items[0]
+                .diagnostic
+                .as_deref(),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn timeout_stage_keeps_original_deadline_and_cancellation_priority_before_launch() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store(dir.path());
+    let proxy = proxy("normal", dir.path(), None);
+    let mut envelope = input(&mut store, &proxy).envelope().clone();
+    envelope.limits.timeout_ms = 20;
+    let input = FixedInput::capture(envelope).unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy.clone()).unwrap();
+    authorize(&runtime, &mut store, &input);
+    store.enqueue_execution(&input).unwrap();
+    let dispatch = store
+        .dispatch_execution_item(
+            input.envelope().attempt_id,
+            input.envelope().items[0].item_id,
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(25));
+    assert!(Instant::now() >= dispatch.deadline().unwrap());
+    let (results, receiver) = result_channel();
+    let error = proxy
+        .run(dispatch.clone(), Cancellation::default(), results)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+    assert_eq!(error.stage, "plugin-timeout-dispatch");
+    assert!(receiver.try_recv().is_err());
+    let cancellation = Cancellation::default();
+    cancellation.request();
+    let (results, _) = result_channel();
+    let error = proxy.run(dispatch, cancellation, results).unwrap_err();
+    assert_eq!(error.code, ErrorCode::Cancelled);
+    assert_eq!(error.stage, "plugin-cancelled");
+    assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("plugin-instance-")
+    }));
+}
+
+#[test]
 fn altered_installer_environment_is_rejected_before_staging() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store(dir.path());
@@ -1641,6 +1745,10 @@ fn unfinished_service_selection_is_bounded_and_never_launches_a_child() {
         .execution_attempt(input.envelope().attempt_id, false)
         .unwrap();
     assert_eq!(attempt.items[0].execution, ExecutionState::Unknown);
+    assert_eq!(
+        attempt.items[0].diagnostic.as_deref(),
+        Some("plugin-timeout-selection")
+    );
     assert_eq!(factory.selected.lock().unwrap().len(), 1);
     assert!(factory.calls.lock().unwrap().is_empty());
     assert_eq!(
@@ -1683,6 +1791,7 @@ fn service_selection_keeps_the_original_dispatch_deadline_without_another_core_t
         .run(dispatch, Cancellation::default(), results)
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+    assert_eq!(error.stage, "plugin-timeout-selection");
     assert!(Instant::now() >= original_deadline);
     assert!(start.elapsed() < Duration::from_secs(1));
     assert_eq!(factory.selected.lock().unwrap().len(), 1);

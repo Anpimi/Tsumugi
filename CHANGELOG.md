@@ -57,6 +57,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Plugin timeout history distinguishes dispatch admission, package staging, readiness, invocation and post-close result handling. Existing limits, authorization checks and uncertain-outcome handling remain in force.
+
 - Source and translation-import starts now record the complete native request with their fixed input. Uncertain acknowledgements are checked without repeating capture or execution; retry remains explicit and requires a confirmed missing start. Inputs without the original request binding cannot confirm that request.
 - Uncertain builds now check their complete original fixed request once, preserving later edits and allowing an explicit same-request retry only after confirmed absence. Uncertain exports and result checks share one automatic read and manual recovery, preserve every confirmed file result, and retain directory authorization without replaying writes or reopening a picker.
 - Recover uncertain direct AI starts by checking the original saved request without starting a runtime or sending another generation; retry is offered only after an explicit absent result.

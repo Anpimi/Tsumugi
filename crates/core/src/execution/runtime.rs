@@ -82,6 +82,13 @@ fn runner_failure(error: &ExecutionError) -> &'static str {
     match error.stage.as_str() {
         "plugin-crashed" => "plugin-crashed",
         "plugin-timeout" => "plugin-timeout",
+        "plugin-timeout-dispatch" => "plugin-timeout-dispatch",
+        "plugin-timeout-selection" => "plugin-timeout-selection",
+        "plugin-timeout-staging" => "plugin-timeout-staging",
+        "plugin-timeout-spawn" => "plugin-timeout-spawn",
+        "plugin-timeout-ready" => "plugin-timeout-ready",
+        "plugin-timeout-invoke" => "plugin-timeout-invoke",
+        "plugin-timeout-result" => "plugin-timeout-result",
         "plugin-cleanup" => "plugin-cleanup",
         _ => match error.code {
             ErrorCode::Cancelled => "runner-cancelled",
