@@ -83,6 +83,8 @@ it.each(["en-US", "zh-CN"])("discloses the captured work timeout without recompu
   view.rerender(<TeamExecutionDisclosure plan={{ ...historical, teamWorkTimeoutMs: 600000 }}/>);
   expect(screen.getByText(i18n.t("ai.team.workTimeout", { seconds: "600" }))).toBeVisible();
   expect(screen.queryByText(i18n.t("ai.team.workTimeout", { seconds: "66" }))).not.toBeInTheDocument();
+  view.rerender(<TeamExecutionDisclosure plan={{ ...historical, teamWorkTimeoutMs: null }}/>);
+  expect(screen.queryByText(i18n.t("ai.team.workTimeout", { seconds: "600" }))).not.toBeInTheDocument();
 });
 
 async function openTeam() {

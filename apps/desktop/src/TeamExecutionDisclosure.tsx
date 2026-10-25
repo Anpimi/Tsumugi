@@ -13,7 +13,7 @@ export function TeamExecutionDisclosure({ plan }: { plan: WorkPlanView }) {
     <h4>{t("ai.team.capturedTitle")}</h4><p>{t("ai.team.capturedHelp")}</p><p>{t("ai.team.sharedBudget")}</p>
     <p>{t("ai.team.capturedLimits", { activations: String(policy.limits.maxActivations), concurrency: String(policy.limits.maxConcurrency), noProgress: String(policy.limits.maxNoProgress) })}</p>
     <p>{t("ai.team.completionLimitHelp")}</p>
-    {plan.teamWorkTimeoutMs !== undefined ? <p>{t("ai.team.workTimeout", { seconds: String(plan.teamWorkTimeoutMs / 1000) })}</p> : null}
+    {plan.teamWorkTimeoutMs != null ? <p>{t("ai.team.workTimeout", { seconds: String(plan.teamWorkTimeoutMs / 1000) })}</p> : null}
     <p>{t("ai.team.capturedInitial", { member: policy.members.find(member => member.memberId === policy.initialMemberId)?.displayName ?? "", entry: names.get(policy.initialUnitId) ?? "", locale: plan.locale })}</p>
     <TeamDiscussionDisclosure plan={plan} destinations={policy.members.map(member => ({ name: member.displayName, endpoint: member.config.endpoint, model: member.config.model }))}/>
     {policy.members.map(member => {
