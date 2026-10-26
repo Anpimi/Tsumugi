@@ -1,43 +1,23 @@
 # Experimental Mac prerelease
 
-`0.2.0-alpha.1` is an experimental, unsigned Apple silicon Mac application for
-macOS 13.5 or later. The archive includes the fixed Node 26.10.0 component Host,
-Pi member runtime, and independent WebVTT and SMAPI `0.1.0-alpha.1` packages.
-The application catalog fixes their source, SDK and complete package identities.
-Plugin approval, installation, enablement and each execution decision remain
-separate actions. Installing this application does not replace an existing
-project binding or grant execution permission.
+`0.2.0-alpha.1` is an experimental, unsigned prerelease for Apple silicon Macs running macOS 13.5 or later.
 
-The application is named **Tsumugi Experimental** and uses the separate
-`com.tsumugi.experimental` application-data identity. It does not automatically
-open another build's profile. To build this flavor after preparing the fixed
-resources, layer the experimental identity over the runtime profile:
+## Bundled components and profile isolation
+
+The archive bundles the fixed Node `26.10.0` component Host, the Pi member runtime, and the standalone WebVTT and Stardew SMAPI `0.1.0-alpha.1` packages. Their source, SDK, and package identities are pinned in the application catalog. Installing the application does not alter existing project bindings or grant plugin execution permissions—approving, installing, enabling, and running a plugin remain separate actions inside the app.
+
+The app is named **Tsumugi Experimental** and uses the dedicated `com.tsumugi.experimental` application-data identifier so it stays isolated from other builds' profiles. After preparing the bundled runtime resources, you can build this flavor locally by layering the experimental config over the runtime config:
 
 ```sh
 CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json --config src-tauri/tauri.experimental.conf.json --no-sign -- --locked --offline
 ```
 
-Use synthetic or disposable projects first. Only the current project schema 61
-is supported. Earlier development directories are refused without application
-migration or reset; preserve them and reimport original source into a new
-project. See [supported integrations](integrations.md) and the
-[changelog](../CHANGELOG.md) for format and workflow limits.
+## Project compatibility and model connections
 
-This prerelease is not code-signed with an Apple developer identity or notarized.
-Its downloadable manifest and checksums identify the supplied bytes; they do not
-establish Apple approval, authenticated plugin updates or a production TUF
-repository. No automatic updater is included. Do not change system security or
-Keychain permissions as part of testing this release.
+- **Database schema**: Test with synthetic or disposable projects first. This build supports only project database schema `61`. Projects created with earlier development schemas are refused without automatic migration or reset; keep those directories intact and reimport your original source files into a new project. See [supported integrations](integrations.md) and the [changelog](../CHANGELOG.md) for format details and workflow limits.
+- **Model connections**: This snapshot includes the API-key connection workflow (the experimental ChatGPT account sign-in flow is omitted). No model requests are made during installation or startup, and every provider dispatch requires explicit scope, data-sharing, and budget consent.
 
-Remaining acceptance limits include real-provider translation quality, measured
-usage and cost, independent human evaluation, and clean-system offline first use.
-Large projects, Windows execution, Intel Macs and other untested platforms are
-outside this artifact's supported scope. Detailed screen-reader, IME, exact
-text-size/viewport, controlled system-appearance and physical IPC/saturated-exit
-cases have not all been verified. Shipping this experimental snapshot does not
-assert completion of those checks or of the complete refactor.
+## Signing and current limitations
 
-The experimental ChatGPT account connection is not included in this snapshot.
-The existing API-key connection workflow remains available; any real provider
-request requires the application's own scope, data-sharing and budget consent.
-No model request runs on installation or startup.
+- **Unsigned distribution**: This prerelease is neither code-signed with an Apple Developer identity nor notarized. The accompanying manifest and checksums verify archive integrity only; they do not provide Apple notarization, authenticated plugin updates, an automatic updater, or a production TUF repository. Do not weaken system security settings or modify Keychain permissions when testing this build.
+- **Scope and verification boundaries**: This snapshot targets Apple silicon macOS only; Intel Macs, Windows, and large-scale production projects are out of scope. In addition, end-to-end provider translation quality, live token/cost accounting, independent human evaluation, clean-machine offline first launch, and comprehensive accessibility/platform edge cases (screen readers, IME composition, viewport/text-scaling extremes, forced system appearance transitions, and physical IPC saturation on exit) have not yet been fully verified.

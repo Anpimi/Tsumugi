@@ -1,502 +1,140 @@
 # Fixed application work plans
 
-Each Agent tool retains its complete captured execution binding in the plan.
-Project/Attempt scope is part of the plan/input digest and independent process
-consent; an Attempt uses the actual tool child attempt rather than the root or
-Agent scope handle. Generation components may also use Attempt scope through the
-existing service adapter. The service retains the exact outer input/dispatch,
-original grant, absolute deadline and accepted-child association. Channel closure
-is not child rollback or new authority; replay returns the original receipt and
-never reserves another child or resets the shared budget. Application execution
-and unsupported service dependencies remain refused.
+A `WorkPlan` is Tsumugi Core's internal contract (`crates/core/src/application`) for scoping, authorizing, and tracking manual or AI-assisted translation workflows across a fixed set of source entries. Work plans are an internal application mechanism rather than a public plugin SDK API, and plugins or models never receive direct access to human-authorization methods, `ProjectStore`, or the raw execution runtime.
 
-The Core `application` module owns the initial work-plan representation. The
-current API prepares and verifies plans from a project's existing source,
-translation and resource authorities. Both operations are read-only and use one
-SQLite snapshot. The plan is an internal application contract, not a stable plugin
-SDK or permission grant.
+## Preparing and verifying a work plan
 
-`ProjectStore::prepare_work_plan` accepts an optional `AiConfig`, one target
-locale, a bounded set of source unit IDs and `PlanOptions`. It returns a `WorkPlan`
-with a new plan identity, captured source revisions and selection identities,
-explicit stage choices and a canonical digest. A manual plan requires no model
-configuration and carries no execution input or permission. An assisted generation
-plan includes fixed execution input; re-reading it preserves the task, attempt,
-item and adoption-unit identities. Unused model configuration is refused for
-manual generation so it cannot accidentally acquire a provider scope.
+### Plan preparation (`ProjectStore::prepare_work_plan`)
 
-Stages cover understanding, resources, generation, checks and delivery. Each
-stage can be manual, assisted or skipped; the requested list may omit stages. The
-library default requests candidate generation and keeps other stages manual.
-New Desktop workbench drafts explicitly recommend candidate generation with
-authorized assisted checks while keeping candidate selection manual. Captured
-plans retain their choices. Optional selection, resource adoption and delivery
-effects require explicit plan settings.
-An automatic policy does not represent human language-review approval. Preparing
-a plan makes no provider call, enqueues no work and changes no project facts.
+`ProjectStore::prepare_work_plan` is a read-only operation against a single SQLite snapshot. It takes an optional `AiConfig`, a target locale, a bounded set of source unit IDs, and `PlanOptions`, and returns a `WorkPlan` (internal format version `3`, including a nullable maintenance basis; see the [development format boundary](../README.md)) containing:
+- A unique plan ID and canonical digest
+- Captured source revisions and current translation selection IDs
+- Explicit stage modes (`manual`, `assisted`, or `skipped`) across five stages: **understanding**, **resources**, **generation**, **checks**, and **delivery**
 
-The fixed input contains the exact provider destination, model and configuration,
-request limits, selected sharing categories, source revisions, included terms and
-context, and omission information. Credential environment-variable names are
-configuration; credential values are never included in the plan. The plan's
-digest also binds its requested effects and observed selections. Unknown fields,
-duplicate scopes or stages, inconsistent effect settings and modified plans are
-refused.
+By default, the Core library enables assisted candidate generation while keeping other stages manual; new drafts in the Desktop AI workbench recommend assisted candidate generation paired with assisted checks and manual selection.
 
-`ProjectStore::verify_work_plan` compares the captured evidence with the current
-project. It refuses another project, changed source content or relevant shared
-resources, and changed translation selections. An empty shared query remains
-relevant: newly added matching context changes the evidence. Unrelated project
-renames and global resource-clock increments do not invalidate a plan whose
-actual scoped evidence is unchanged. A successful comparison is evidence
-validation, not execution or mutation authorization.
+- **Manual plans** require no `AiConfig` (passing an unused `AiConfig` to a manual plan is rejected so it cannot accidentally acquire provider scope).
+- **Assisted generation plans** lock the execution input: provider destination, model and parameters, request budgets, selected data-sharing categories, source revisions, included glossary terms and context, omission metadata, and requested post-generation effects. Only credential environment-variable names are stored in the plan—secret values are never included.
 
-The current schema stores plan authority, control generations, action receipts,
-execution associations, checked selection receipts and unit protection beside
-the existing execution ledger. The current-only project format follows the
-[development format boundary](../README.md); unsupported development projects
-are preserved and refused. Current work plans use internal format 3, including
-the required nullable maintenance basis; earlier development plan formats are
-not migrated.
+### Evidence verification (`ProjectStore::verify_work_plan`)
 
-The experimental Core project-service adapter can capture an actual component
-invocation, its selected SDK service descriptor, ordinary plugin permit and
-original absolute deadline against an existing WorkPlan Agent scope. Its child
-generation proposal contains only child identities and the original source
-subset. The same enqueue transaction saves the origin association and original
-ancestor budget; every dispatch, HTTP reservation, HTTP send, candidate adoption
-and selection rechecks that authority. HTTP waiting is narrowed to the original
-remaining deadline without changing captured model settings. The component's
-outer input has no automation lease and cannot use the read-only tool delegation
-path to acquire generation permission.
+`ProjectStore::verify_work_plan` is a read-only check that compares a captured plan against the project's current state. It rejects the plan if:
+- The project identity does not match,
+- Any targeted source entry was modified,
+- Relevant shared resources changed (even if an earlier query returned zero matches, newly added matching context changes the evidence), or
+- A targeted entry's selected translation changed.
 
-The public SDK [generation service contract](../crates/plugin-sdk/docs/generation.md)
-owns its schema/behavior 1/1 input, acknowledgement and finite error shapes. Core
-uses that SDK parser and requires the exact selected contract/schema versions
-and External effect. Only child task/attempt identities and 1–100 distinct source
-unit IDs enter the request. The acknowledgement exposes child identities and
-their captured input digest, with no grant or authorization handle.
+Unrelated project renames or global resource-clock increments that do not affect the plan's scoped evidence do not invalidate the plan.
 
-Desktop's `read_plugin_generation_component` observes one installed generation
-component through the existing package and approved-runtime owner. The request
-contains the complete provider identity, an explicit profile (`null` only for
-a profile-independent declaration) and the exact environment digest. Selection
-requires a Project- or Attempt-scoped JavaScript component, a required Single dependency on
-the canonical generation service, matching ProjectService permission, External
-effect and the exact SDK input/receipt/error references. The response keeps the
-actual binding, settings revision and package/runtime provenance. This read does
-not open a WorkPlan scope, issue an execution grant or run a component.
+## Authorizing and controlling execution
 
-The experimental Desktop commands `prepare_work_plan_generation_component`,
-`start_work_plan_generation_component` and `discard_work_plan_generation_component`
-use that same installed selection and the already opened WorkPlan scope. Read-only
-preparation fixes one ordinary outer attempt, explicit child identities and source
-subset. Start requires its own unsandboxed execution consent and ordinary plugin
-grant; the outer input has no automation lease. The component cannot replace the
-fixed generation proposal, model, destination, effects or original parent budget.
-The canonical receipt/error payload limit and the complete result-frame allowance
-are separate; frame identity and digest metadata do not consume the payload limit.
+### Human authorization (`authorize_work_plan`)
 
-The AI workbench exposes installed component generation beside the existing
-captured-material continuation. Users explicitly select the full component,
-profile (including an explicit no-profile choice) and approved JavaScript
-environment, prepare the chosen original entries and review captured material,
-permissions and shared budget before confirming local execution. Preparing supplies
-the outer task identity for observation; it grants no execution. The original
-scope opener and strict generated IPC remain shared with the bounded consumer.
+`authorize_work_plan` records human consent inside the store's write transaction. It requires explicit confirmation, the exact plan digest, the requested effect set, and an expiration timestamp within 24 hours.
 
-Execution observation first checks each exact task's existing attempt pages.
-An empty page preserves the waiting or uncertain action without calling the
-non-null detail API. A recorded child must match the original task, attempt,
-unit subset and target language before opening the existing AI result view.
-Unknown starts and discards retain their original preparation for read-only
-checking. An explicit retry of a definitively rejected start keeps the same
-grant and expiry. Changed plan authority prevents start; unused preparations
-have a confirmed discard path. Closing a settled component review keeps the
-execution records and never repeats generation or adoption.
-Discard confirms that an unused preparation is absent, including a repeat after
-a lost reply or owner shutdown; it refuses the original started action and
-does not cancel execution, release child authority or erase ledger records.
+Authorization returns an execution input carrying an `AutomationLease` that references the stored grant in SQLite (alongside control generations, action receipts, execution associations, checked selection receipts, and unit protection). Supported automatic effects are:
+- `SaveCandidate`: Saves generated translation candidates through the standard adoption ledger (`saved`).
+- `RunChecks`: Runs the captured set of domain/Core checkers on saved candidates and records the check evidence (`checked`) without selecting the candidate as the active translation.
+- Selection policy (`checked-selection-3`): Automatically selects passing candidates (either for missing translations only, or replacing the captured selection); requires `RunChecks`.
 
-The independent Philosophy package's
-[Generation service client](https://github.com/Anpimi/tsumugi-plugins/blob/main/examples/philosophy/README.md#generation-service-client)
-is a concrete author example for this path. Its Attempt-scoped
-`generation-delegate` contribution forwards the original bounded request to the
-Core service and preserves its receipt or finite failure/unknown result. Its
-separate knowledge component retains read-only query/check permissions and does
-not require the generation service. The package declares the union of requested
-permissions; each capability still has its own exact permission boundary.
+In the Desktop AI workbench, authorization and task start are separate steps: if saving an authorization succeeds but enqueueing the initial task fails, the saved authorization remains available to start or stop explicitly without re-prompting.
 
-A missing required service descriptor blocks that generation component before
-activation. An actual model backend failure after enqueue belongs to the saved
-child attempt and original shared budget. Receiving a successful enqueue receipt
-does not mean that child generated a candidate, completed successfully or adopted
-anything. Neither failure changes the package's independent knowledge capability
-or grants permission to repeat the original model request. This example cannot
-add model settings, prompts, extra context or source units to the fixed request.
-Pausing a plan can leave a completed in-flight response and known usage readable
-in the original history. Its automatic candidate save remains revoked, and the
-consumed dispatch budget is retained.
+### Pause, stop, takeover, and continuation
 
-The original project executor supplies a weak callback and the original installation
-owner. Cached capability runners keep a scope-neutral service factory. Every actual
-Core dispatch captures its original session/runtime generation, fixed input, permit,
-settings revocation signal and absolute deadline. Its actual Host service caller
-enters a short owner operation: reconcile the durable original call first, or prepare
-sealed Core child input and Desktop effect identities before the guarded atomic
-enqueue. It never waits for model completion. Full checker/tool consents share one
-settings guard; a fresh settings read cannot renew an old signal or grant.
+Users can **pause**, **stop**, **take over manually**, or **continue** a plan at any time:
+- **Pause, stop, and takeover** increment the persisted control generation, cancel queued tasks, and signal running workers. Every enqueue, dispatch, HTTP reservation, HTTP send, candidate save, and selection re-checks the active authority. Closing a project automatically pauses all active grants and signals running workers; when a new project host starts, it pauses any crash-surviving grants before opening the session.
+- **Budget accounting**: Child tasks are submitted with `parent_task` so all requests charge the root plan's shared budget. Each child item must preserve the parent's item scope, payload, and ordered dependencies. Control transitions never refund consumed request budgets, erase uncertain external exposure, or roll back already committed candidates. Use `work_plan_status` to inspect live state and budget consumption.
+- **Continuation**: Resuming a paused or reopened plan requires a fresh human confirmation, a new expiration time, and a valid plan basis. Selections made by the plan's own `checked-selection-3` policy count as valid progress, whereas manual edits or selections from another plan change the basis and require preparing a new plan.
 
-Unknown authorization/enqueue only reconciles the same identity. Known rejected
-enqueues can reuse an already authorized original grant within its original deadline;
-no new consent or deadline is inferred. The child uses the original AI runner,
-ancestor budget and ordinary candidate/check/selection owner. Process closure or
-idle execution does not release a child's association: execution, owned retired
-producers/computations and authorized effects/checkers must all settle. Unknown
-outcomes, retryable effects and storage errors retain the original association.
-An unreadable acknowledgement after enqueue remains unknown. Confirmed terminal
-release preserves the completed effect view; historical receipts never rebuild
-live effect tracking. Full workbench/native
-product acceptance and wider autonomous orchestration remain in development.
+## Scoped Agent execution and reference tools
 
-Before the first service child enqueue, the trusted caller can check its sealed
-Core preparation without writing execution or budget records. An already accepted
-child is refused at this preparation boundary; reconcile its durable receipt
-instead of reconstructing session-local effect authority. Desktop effect tracking
-supports preparing all fallible reads and action identities under its exclusive
-owner before enqueue. After acceptance the trusted caller commits only the
-in-memory tracking state.
+For an active, authorized plan with a registered task budget, the application host can open a session-bound Agent scope. This scope locks the `AutomationLease` and shared budget anchor and exposes a narrow set of operations to the Agent: preparing and starting candidate generation or read-only tool queries for subsets of the planned source units, and reading back its own dispatched tool outputs.
 
-A short service receipt does not mean model completion or candidate adoption.
-Channel closure and outer completion do not release a child's original grant.
-The trusted application retains installed-settings revocation until the child's
-execution and authorized effects are terminal. Repeating a call identity only
-reads its original receipt; generic retry cannot replace its attempt to lose the
-origin. Reopening preserves historical associations but cannot reconstruct live
-authority or renew deadlines. This Core adapter requires the matching Process-3
-SDK and Host; production Desktop execution and service binding remain separate
-integration.
+### Reference tool queries in a work plan
 
-Core origin capture requires the installation owner's original one-way
-revocation signal. Every child authority check reads it directly, including
-before the real HTTP send after a reservation. Channel completion does not
-detach this signal or make settings changes wait for a project runtime tick.
+An assisted plan can include read-only reference tools configured in the AI workbench:
+- **Preparation (`prepare_work_plan_with_tools`)**: Each configured provider row binds an opaque tool handle, the SDK capability binding, an approved runtime environment, the installed settings revision, package/runtime origins, and query target/category options. All rows in the plan share a single total tool invocation limit across all attempts and continuations.
+- **Unsandboxed execution consent (`query-tools`)**: Authorizing tool execution in a work plan requires a separate human confirmation for unsandboxed local execution. The tool execution window is capped at the earlier of 10 minutes or the overall plan expiration; recovering or replaying an action does not extend this timer, and reopening a project requires a new `Continue` confirmation to run tools again.
+- **Dispatched tool calls**: An Agent tool proposal passes only child task/attempt IDs, a pre-captured tool handle, and a non-empty subset of the plan's source units. Core constructs the literal SDK query payload from the captured source text, re-verifies the runtime and settings revision, and commits the delegated grant and shared budget reservation in a single ledger transaction (one invocation per item). Each tool attempt uses its own child attempt ID as its `Attempt` component scope.
+- **Reading tool results (`readToolAttempt` and `readToolOutput`)**: The Agent can poll progress and read structured reference outputs for its own enqueued tool attempts while the scope remains active. Tool outputs stay unapplied—they are not automatically injected into model prompts or adopted into project terminology—and remain readable in the workbench across plan control changes.
 
-`authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
-confirmation, the exact plan digest, the exact supported effect set and an expiry
-within the next 24 hours. It rechecks the plan inside the existing write
-transaction. Semantic answers do not form part of this permission request. The
-returned execution input carries an `AutomationLease`; the lease refers to stored
-authority and cannot grant effects itself. The effect set includes candidate
-saving and, when explicitly requested, checks for those candidates. A selection
-policy adds its separate selection effect and requires the assisted check stage.
-Resource adoption and delivery retain separate mutation contracts.
+## Generation components and the generation service
 
-Pause, stop and takeover advance a persisted generation and cancel old queued
-work. The runtime signals running workers; enqueue, dispatch, HTTP reservation
-and adoption recheck authority. Late outputs and uncertain request reservations
-remain evidence. A new action identity cannot regain a stopped input's authority.
-Continue requires a new explicit confirmation, an expiry and a current plan
-basis. The plan's own checked selections count as progress; a later manual or
-other-plan selection changes the basis and requires a new plan. After initial
-enqueue its returned work is a child of the original task:
-submit it with the returned `parent_task` so all ancestor budgets remain charged.
-Each child item must retain the parent's captured item scope, payload and exact
-dependency identities and expected revisions. Adding, removing or changing a
-dependency is refused before enqueue; canonical dependency ordering is preserved.
-The desktop workbench displays the original plan budget across these attempts,
-including earlier request usage and unresolved reservations.
-Control never refunds requests, resets unknown exposure or rolls back committed
-facts. An old action returns its original receipt; use `work_plan_status` for the
-current state. Cancelling an automated root task also stops its plan in the same
-transaction. Continuing explicitly acknowledges that original root cancellation
-baseline; a newer root cancellation or cancellation of a child still prevents
-requests. Closing the project pauses all active grants, including grants without
-queued work, and signals their workers. Reopening requires explicit continuation.
+In addition to built-in model continuation, a work plan can run an installed JavaScript generation component (in `Project` or `Attempt` scope) that delegates model requests back to Core's [generation service contract](../crates/plugin-sdk/docs/generation.md) (`schemaVersion: 1`, `behaviorVersion: 1`, `External` effect).
 
-The trusted application host can open a session-bound Agent scope for an active,
-authorized plan whose original task budget is already registered. The scope
-fixes the original lease and budget anchor; it cannot issue or renew authority.
-An Agent generation proposal supplies only stable child task/attempt identities
-and a nonempty subset of captured source units. Core derives exact child input
-bytes from the plan, preserving model, destination, sharing, payload, dependencies,
-output limits and effects. Preparation is read-only. Starting requires the exact
-prepared digest, uses the original runtime and Provider service, and retains the
-same candidate/check/selection service and independent checker consent.
-Starting a child rechecks the complete checker identities and the original
-installed-settings revision under the same guard used by plan authorization.
-Changed settings reject the start before the child is enqueued.
-All HTTP requests charge the original ancestors. Pause, stop, takeover, expiry
-or closing the project invalidates the scope; explicit Continue needs a new
-scope and retains the original cumulative budget. An old scope cannot cross
-project-open sessions. The bounded Agent adapter exposes generation and tool
-preparation and starting, plus reads of its own dispatched tool results. The
-trusted scope opener and human authorizer/control methods remain outside it.
-This is a bounded application consumer, rather than
-a complete autonomous model loop.
+### Component discovery and lifecycle
 
-An assisted plan can additionally capture read-only reference tools through
-the AI workbench's explicit provider rows. Add a row for each intended source,
-choose its installed provider and approved environment, then review that row's
-target and query options. Remove rows that are no longer needed. Unavailable or
-duplicate provider/environment choices must be corrected before preparation;
-refreshing metadata retains the entered options. All rows share one total tool
-invocation allowance. Results keep independent captured provenance and are not
-automatically combined or adopted.
+1. **Discovery (`read_plugin_generation_component`)**: Verifies that the installed JavaScript component declares a required `Single` dependency on the canonical generation service, matching `ProjectService` permission, `External` effect, and exact SDK input/receipt/error contracts, and pairs it with an approved JavaScript runtime.
+2. **Preparation (`prepare_work_plan_generation_component`)**: Binds an outer plugin attempt, child task/attempt identities, and a subset of 1–100 distinct source unit IDs within the active `WorkPlan` scope.
+3. **Execution (`start_work_plan_generation_component`)**: Requires explicit consent for unsandboxed plugin execution and an ordinary plugin grant. The outer plugin invocation carries no `AutomationLease` of its own; instead, when the component calls the Host generation service, the service validates the request against the parent `WorkPlan` scope, locks the ancestor budget and remaining deadline, and atomically enqueues the child model task.
+4. **Discard (`discard_work_plan_generation_component`)**: Discards an unstarted component preparation without cancelling active runs or erasing ledger records.
 
-The same captured collection uses
-`prepare_work_plan_with_tools`. Each entry fixes an opaque handle, the actual
-SDK binding and approved environment, installed settings revision, package and
-runtime origins, and explicit query target and category choices. The plan fixes
-one total invocation limit across all entries, attempts and control generations.
-Preparing this metadata grants no execution. The Desktop captures it from
-selected installed tools and displays the exact package, runtime, permissions,
-options and invocation limit before authorization.
+### Service semantics and example implementation
 
-`query-tools` requires a separate human confirmation of unsandboxed local
-execution. The host captures its original wall-clock expiry and monotonic
-deadline when the human request is accepted. The tool deadline is the earlier
-of the plan expiry and ten minutes; a longer model-plan duration does not extend
-it. Replaying or recovering the same action cannot refresh either deadline.
-Only a new explicit Continue can confirm another tool period, within the
-original cumulative invocation limit. A project reopen restores history without
-restoring local execution consent. Model sharing and checker consent remain
-independent of this tool permission.
+The generation service returns an enqueue receipt containing the child identities and captured input digest (without exposing any grant handle), and does not wait for the model HTTP call to finish:
+- **Receipt vs. completion**: An enqueue receipt only confirms that the child model task was accepted into the queue; actual model execution, candidate saving, and checks happen asynchronously under the child attempt and shared plan budget.
+- **Settings and authority tracking**: Core attaches the installation owner's one-way settings revocation signal to the child origin and checks it before every dispatch, HTTP reservation, and HTTP send. The child association stays active until child execution, retired producers, and authorized effects/checkers all settle.
+- **Reference example**: The Philosophy plugin's [Generation service client](https://github.com/Anpimi/tsumugi-plugins/blob/main/examples/philosophy/README.md#generation-service-client) (`generation-delegate`) demonstrates an Attempt-scoped generation component alongside an independent read-only knowledge query/check component in the same package.
 
-An Agent tool proposal contains only stable task/attempt identities, a captured
-tool handle and a nonempty subset of the plan's units. Core creates the caller
-identity, derives literal source text from the captured plan and builds the
-original SDK query payload. It refuses arbitrary payload, destination, target,
-options, caller, grant, expiry or permission substitutions. Preparation is
-read-only. Starting rechecks the exact installed environment and original
-consent, then commits the delegated grant, fixed input, execution association
-and shared invocation reservation in one original ledger transaction. Each
-accepted item uses one invocation; control, failure, cancellation or uncertain
-acknowledgements do not refund reservations. Exact recovery preserves the
-original attempt and grant rather than issuing new authority.
+## Automatic selection and entry protection
 
-The bounded consumer's `readToolAttempt` and `readToolOutput` accept only a tool
-preparation created by that consumer. Each read checks the original active scope,
-session epoch, caller, lease/generation, tool and immutable enqueued input in one
-read snapshot. Attempt pages retain the original progress and item states;
-outputs require the exact item/result pair. A tool not yet enqueued is explicitly
-refused, rather than presented as an empty result. A successful query with no
-matches remains an ordinary completed output. Reads do not dispatch work,
-reserve budget, adopt facts or share output with a model.
+### Entry protection (`set_work_protection`)
 
-An ended, expired, revoked or reopened scope cannot use this consumer to read
-history. A still active scope may read its already accepted output after the
-individual execution permit retires or source facts change. The human workbench
-and Task history retain their separate project access; they do not revive an
-old Agent handle.
+To prevent background automation from overwriting a translator's active work, the translation editor records persistent unit protection before making an entry editable:
+- Opening an unprotected entry in the editor calls `set_work_protection` first; the draft remains read-only until the protection write and current state read complete.
+- Manual saves and manual translation selections also record unit protection in the same transaction.
+- Protected entries cannot be overwritten by automatic selection policies. Protection persists across project restarts until you explicitly release it (which checks the current entry, locale, source revision, selection identity, and protection revision, and blocks if the editor has unsaved changes).
 
-Tools run through the original `RunnerProxy`, worker channel and live grant
-checks. Source changes cancel only the affected delegated tool, while unrelated
-work continues. Pause, stop, takeover, expiry and root cancellation prevent new
-dispatch and signal active workers. Completed read-only tool permits retire
-after their original attempt settles; ordinary producer/checker permits retain
-their existing adoption lifecycle. Stored tool output stays unapplied and binds
-the original durable grant identity even after expiry or reopen. It does not
-create terms, translations, checks, selections or human approval.
+### Checked automatic selection (`checked-selection-3`)
 
-The Desktop's bounded Agent controls explicitly select captured units, query
-references, display escaped SDK reference columns or empty matches, and generate
-another candidate for that subset using the original model service. Reference
-output is displayed separately and is not automatically shared with the model.
-An uncertain start retains its original prepared identity and exposes read-only
-reconciliation without resending the request. Result-read failures can be
-refreshed. Tool results remain visible across plan control changes.
-
-Manual saves and manual selections protect the unit in the same transaction.
-Protection survives project reopen. Explicit release requires confirmation and
-matching protection revision, source revision and selection identity. Historical
-release receipts report their original result without clearing newer protection.
-Saving a candidate does not select it or give human language-review approval.
-The existing effect service also honors candidate-only plans with explicit
-`SaveCandidate` authorization. With manual checks it uses the ordinary candidate
-adoption boundary and finishes with `saved`. With separately authorized
-`RunChecks`, it runs the captured checker set and records complete candidate
-evidence as `checked`, without selecting or creating current QA. Failed saves
-retain the original action for explicit recovery; stopped authority prevents
-new saves. A prepared plan alone never starts this effect.
-
-
-`prepare_automatic_selection` accepts a saved AI revision from this plan generation
-and returns an opaque, store-created capture. The normal host runs the exact
-adopted checker through independently consented original plugin execution, then
-computes the complete Core/domain check union from the saved ledger evidence
-outside a SQLite transaction. `commit_automatic_selection` rechecks the current grant,
-source, selection, shared resources, scoped resource changes and protection in a
-short transaction. A candidate from another plan, revoked generation, cancelled
-attempt or changed basis cannot acquire selection authority. Selecting one entry
-does not invalidate untouched entries of the same plan.
-
-The current `checked-selection-3` policy also records candidate-only checks in
-the original policy action receipt. Such a receipt has its true candidate
-revision and no selection identity, selected translation, current CheckRun or
-blocked-selection reason. Its rules and execution evidence retain failures and
-unknown outcomes; `checked` means evidence was recorded, not that all checks
-passed. Historical receipt reads do not restore authority. Later manual selection
-and current QA retain their own boundaries.
-
-Selecting policies support missing-only selection or explicit replacement of the
-captured selection. Protection always prevents selection;
-missing-only also preserves existing selections. Incomplete checks, findings,
-failed or unavailable rules prevent selection, even when a warning could be
-waived manually elsewhere. The action receipt keeps the candidate check evidence
-and its blocked outcome without deleting the candidate or attaching those results
-to a different current translation. Successful selection and the ordinary QA
-record for its new basis commit together. Policy identity, plan lease, observed
-protection and immutable receipt remain separate from human review decisions;
-selection never transfers approval or makes a release eligible.
-
-A human-facing host must record protection through `set_work_protection` before
-accepting an editable draft. This uses the existing persistent protection gate;
-draft text is not sent to automation. Hosts must retain unknown protection writes
-and keep input read-only until reconciliation. The required check set is the
-adopted Core/domain policy union. Synchronous bundled check fixtures are
-test-host-only; a reference query cannot substitute for required checker evidence
-or certify external model quality.
-
-The desktop command API uses the existing project session and execution runtime
-for plan preparation, authorization, start, control, status and action recovery,
-and protection reads/writes. Authorization and start are separate operations: a
-saved authorization is not reported as a failed authorization when later enqueue
-cannot run. Start uses the stored receipt and current grant, rather than accepting
-raw execution input from the client. Historical acknowledgements cannot reactivate
-a stopped generation. The desktop AI workbench prepares manual or assisted generation plans, shows
-captured scope and sharing, and requires explicit confirmation and an authorization
-duration before candidate generation. It exposes pause, stop, manual takeover and
-renewed continuation. Reopening an attempt reads its stored plan association and
-current authority; it sends no provider request. Lost control or authorization
-responses retain their original action identity for receipt reconciliation. A saved
-authorization whose enqueue fails remains available to start or stop explicitly.
-The translation editor shows persistent protection and confirms release against
-the current entry, language, source, selection and protection revision. Dirty or
-unresolved saves block release. Opening an unprotected entry records protection
-before enabling draft input. Until that write and a current protection read are
-confirmed, the draft remains read-only. Failed reads can be refreshed; uncertain
-writes retain their original action. If selection changed before protection,
-discard any suggested draft and refresh the current entry before retrying.
-Explicit release leaves the entry read-only until it is protected again. Saves
-and subsequent reads keep an already protected editor editable, preserving newer
-input. Composition prevents save shortcuts and entry/project navigation until
-it ends.
-
-The desktop exposes candidate-only work, selection of missing translations, or
-explicit replacement of the captured translations. Choosing a selection policy
-also enables the mechanical check stage; the sharing confirmation authorizes the
-exact corresponding effect set. The host saves ordinary candidates through the
-existing adoption ledger, computes mechanical checks on at most two background
-threads, and commits through the same Core policy service. Workers own values and
-cancellation signals, with no store or session handles. Pause, stop, takeover and
-project close prevent subsequent automatic commits. A fresh project host pauses
-crash-surviving grants before exposing its new session.
-
-Each result shows its saved candidate and automatic phase, blocked reason or
-sanitized failure. Historical policy receipts retain mechanical evidence and are
-labelled as past work, without asserting the current selection or human approval.
-A permitted storage retry first reads the saved result, then reuses the original
-candidate and selection action identities; it never generates another provider
-request. Opening an old attempt reads durable receipts without starting work.
-Incomplete automatic effects are inactive after reopen and require an explicitly
-renewed plan; they cannot silently resume an earlier grant. Candidate-only plans
-retain explicit manual candidate saving. Standalone automated checks, resource
-adoption and delivery remain unavailable. The API is not a stable plugin SDK. A model or plugin must not receive unrestricted access to human-authorization
-methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
-and parent identity through the scoped application entry points.
-
-Completed automation views are historical facts: pausing or withdrawing their
-plan preserves a saved result and a settled failure's original diagnostic.
-Only work that still needs authority transitions on revocation. Uncertain
-commits still reconcile their durable receipt, and pending workers and checker
-channels still drain before the original service origin can be released.
+When a plan is authorized with `RunChecks` or an automatic selection policy:
+1. Saved candidates are checked on background worker threads using the independently approved domain and Core checkers (`prepare_automatic_selection`).
+2. `commit_automatic_selection` re-verifies the active plan grant, source revision, current selection, scoped shared resources, and unit protection in a short SQLite transaction.
+3. For candidate-only check plans, the receipt records the `checked` status and full rule evidence without changing the entry's active translation.
+4. For selection policies (`missing-only` or explicit replacement), all required checks must complete with zero errors, warnings, or unavailable rules—even if a warning could be manually waived in the review UI. If any check fails or the unit is protected, the candidate remains saved with its check report and blocked reason recorded on the receipt. When all checks pass, the candidate is selected and its QA record is committed atomically. Automatic selection never marks an entry as human-reviewed or release-approved.
 
 ## Installed generation-client conformance
 
-On macOS/aarch64, the `generation_tests::philosophy_generation` desktop tests
-run the actual independent package through registered commands, the original
-generation factory/broker and synthetic local HTTP responses. Set
-`TSUMUGI_TEST_GENERATION_PACKAGE` / `TSUMUGI_TEST_GENERATION_DIGEST` to a newly
-prepared, packaged and reviewed Philosophy Generation client, and
-`TSUMUGI_TEST_PLUGIN_PACKAGE` / `TSUMUGI_TEST_PLUGIN_DIGEST` to the compatible
-WebVTT package. Supply `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST`
-and `TSUMUGI_TEST_RUNTIME_APPROVAL` as described in the
-[Host conformance documentation](../crates/plugin-host/README.md).
+On Apple silicon macOS (`aarch64`), the `generation_tests::philosophy_generation` test suite exercises the Philosophy generation client plugin end-to-end through registered desktop commands, the generation service broker, and synthetic local HTTP responses.
+
+Prepare and inspect both the Philosophy package and the WebVTT package, set their paths and digests alongside the approved JavaScript runtime environment variables (see the [Host conformance documentation](../crates/plugin-host/README.md)), and run:
 
 ```sh
 cargo test -p tsumugi-desktop --bin tsumugi-desktop --features execution-test-host \
   generation_tests::philosophy_generation --locked -- --test-threads=1
 ```
 
-These tests distinguish a successful enqueue receipt from child completion,
-retain original service origins and shared budgets through success, network
-disconnection and in-flight pause, and exercise independent manual knowledge
-queries and review checks. They use temporary profiles and make no external
-model calls. They do not establish a rendered native workflow or other platforms.
+Required environment variables:
+- `TSUMUGI_TEST_GENERATION_PACKAGE` and `TSUMUGI_TEST_GENERATION_DIGEST` (Philosophy generation package)
+- `TSUMUGI_TEST_PLUGIN_PACKAGE` and `TSUMUGI_TEST_PLUGIN_DIGEST` (WebVTT package)
+- `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST`, and `TSUMUGI_TEST_RUNTIME_APPROVAL`
+
+The suite verifies enqueue receipt handling versus child completion, shared budget tracking across success, network disconnects, and in-flight pauses, and independent manual knowledge queries and review checks in temporary profiles without calling external model APIs.
 
 ## Installed shared-query conformance
 
-On macOS/aarch64, the desktop test
-`installed_conflicting_knowledge_choices_share_manual_batch_and_agent_queries`
-uses registered Tauri commands, actual installed packages and captured
-JavaScript workers. It requires the explicit package/digest variables
-`TSUMUGI_TEST_PLUGIN_PACKAGE` / `TSUMUGI_TEST_PLUGIN_DIGEST` for WebVTT,
-`TSUMUGI_TEST_KNOWLEDGE_PACKAGE` / `TSUMUGI_TEST_KNOWLEDGE_DIGEST` for the public
-philosophy example, and `TSUMUGI_TEST_SECOND_KNOWLEDGE_PACKAGE` /
-`TSUMUGI_TEST_SECOND_KNOWLEDGE_DIGEST` for a controlled `philosophy-alternative`
-copy. Select a compatible public SDK and use the plugin repository's public
-preparation and packaging tools; inspect each resulting package before supplying
-its exact directory and digest.
+On Apple silicon macOS (`aarch64`), the `installed_conflicting_knowledge_choices_share_manual_batch_and_agent_queries` test verifies manual single/batch queries and work-plan Agent tool queries across multiple installed knowledge plugins with conflicting terminology preferences.
 
-For the second copy, keep the original query/check engine and public contracts.
-Change the terminology revision to `independent-editorial-2` and the selected
-soundness preference from `可靠性` to `健全性`; regenerate Resource pins using
-the example's original preparer. Then change the generated plugin ID and its
-text checker's own-package guard to `philosophy-alternative`. Retain the full
-identity and Resource checks. Package this copy separately, without rerunning
-the original preparer after changing its plugin identity.
-
-Supply `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST` and
-`TSUMUGI_TEST_RUNTIME_APPROVAL` for the compatible captured runtime artifacts
-and descriptor, as described by the public Host conformance documentation. Run:
+To prepare the test fixtures:
+1. Build and inspect the standard WebVTT (`TSUMUGI_TEST_PLUGIN_PACKAGE` / `TSUMUGI_TEST_PLUGIN_DIGEST`) and Philosophy (`TSUMUGI_TEST_KNOWLEDGE_PACKAGE` / `TSUMUGI_TEST_KNOWLEDGE_DIGEST`) packages.
+2. Create a second controlled copy of the Philosophy plugin (`TSUMUGI_TEST_SECOND_KNOWLEDGE_PACKAGE` / `TSUMUGI_TEST_SECOND_KNOWLEDGE_DIGEST`):
+   - Keep the query/check engine and public contracts unchanged.
+   - Change the terminology revision to `independent-editorial-2` and change the soundness term preference from `可靠性` to `健全性`, then regenerate the Resource pins with the example's preparer script.
+   - Update the generated plugin ID and the text checker's own-package guard to `philosophy-alternative`, and package that copy into a separate directory without re-running the preparer script afterward.
+3. Provide the approved runtime paths (`TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST`, and `TSUMUGI_TEST_RUNTIME_APPROVAL`) and run:
 
 ```sh
 cargo test --locked -p tsumugi-desktop --features execution-test-host installed_conflicting_knowledge_choices_share_manual_batch_and_agent_queries -- --test-threads=1
 ```
 
-The synthetic projects exercise both installation orders. Literal single-item
-and batch inputs use the original public query presentation; the scoped Agent
-derives the same payload from captured source. Conflicting results keep their
-own selected provider and Resource provenance, remain unadopted, and do not
-alter the model budget or current translation. The test also covers independent
-tool/model budget boundaries, duplicate-start reconciliation, disabling one package and reading
-the original results after reopening. Its only model response comes from a
-credential-free loopback fixture. The Tauri window is a mock; this establishes
-backend/process conformance, not rendered editor navigation, native GUI behavior,
-model quality or release readiness.
+The test exercises both installation orders, verifies that conflicting query outputs preserve their distinct provider and Resource provenance without mutating translations or model budgets, and checks independent tool/model budget enforcement, duplicate-start reconciliation, package disabling, and project reopen behavior against a local loopback model fixture.
 
 ## Directed human guidance
 
-New team plans explicitly disclose human-submitted guidance in their original
-preparation, destination-specific sharing and message authorization. A local
-user selects a currently approved member and source entry, reviews the member's
-role, model destination and complete text, then explicitly sends that text.
-The first human-message profile accepts a body and exact recipient/role/target;
-it does not add references, wake idle members or start another work item.
+Team work plans allow a user to send targeted guidance messages to an active team member during execution:
+1. When preparing and authorizing a team plan, the plan discloses whether human-submitted guidance is enabled for each model destination.
+2. During execution, select an approved team member and a planned source entry, review the member's role, model destination, and your message text, and confirm sending. (This profile sends a plain message body to a specific recipient/role/target; it does not attach external files, wake idle members, or spawn new work items.)
+3. Tsumugi records the message in the team ledger with a stable identity and returns a local receipt.
+4. The next authorized model request for that member includes the message through Core's frozen context view and records that the message was consumed by that exact request ID (requests that were already captured in flight are unaffected).
 
-The message uses the existing team record and stable identity. Its sender is a
-tagged member or trusted human author. A receipt confirms local reception. A
-subsequent authorized provider request includes the message through Core's
-frozen view and records consumption against that exact request identity. An
-already captured request is unchanged. Shared request budgets, item scopes,
-expiry and control generations still apply.
-
-The trusted Desktop sender and exact action lookup compare the original lease,
-recipient role, target, body and message identity. Exact accepted receipts remain
-readable after stopping or reopening without restoring permission. An empty
-lookup does not prove an uncertain submission can never arrive; preserve its
-identity and reconcile or explicitly retry the same request. Pause, stop and
-takeover remain available. New guidance is refused when no future authorized
-request budget remains, while the last lawful in-flight result keeps its
-original finalization rules.
+Every guidance submission is checked against the active `AutomationLease`, recipient role, target entry, and remaining model request budget—if no future request budget remains, new guidance is rejected while in-flight requests finish normally. If a submission acknowledgement is lost, look up or retry the original action identity rather than sending a duplicate message. Saved messages and receipts remain readable after stopping or reopening a project.

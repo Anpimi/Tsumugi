@@ -1,125 +1,64 @@
-# Experimental captured runtime description
+# Runtime Environment Descriptors
 
-`RuntimeEnvironmentDescriptor` is data, not a runtime loader or an execution
-grant. Environment protocol `1` has one profile, `node-system-libraries-v1`.
-The current SDK validates its own exact SDK version and process protocol `3`.
-Unknown profiles, fields and protocols are refused; omitted fields have no
-defaults. This experimental contract has no historical-format decoder.
+`ExecutionEnvironmentDescriptor` describes the verified runtime environment used to execute a plugin component under environment protocol `1` and process protocol `3`. It supports two distinct profiles:
 
-The descriptor records:
+- `node-system-libraries-v1` (`RuntimeEnvironmentDescriptor`) for JavaScript components running on an approved Node.js distribution and JavaScript Host tree.
+- `native-application-host-v1` (`NativeHostEnvironmentDescriptor`) for native Rust components launched directly by the application Host.
 
-- `platform.operatingSystem`: `macos`, `linux` or `windows`.
+Parsers reject unknown profiles, unknown or duplicate JSON fields, missing fields, and unsupported protocol or SDK versions.
+
+## Node Runtime Profile (`node-system-libraries-v1`)
+
+`RuntimeEnvironmentDescriptor` records:
+
+- `platform.operatingSystem`: `macos`, `linux`, or `windows`.
 - `platform.architecture`: `aarch64` or `x86_64`.
-- `protocolVersion`, exact `sdkVersion`, and `processProtocol`.
-- The fixed `profile` and SemVer `toolVersion`.
-- `tool` and `host`, each with a complete `treeDigest` and logical `entrypoint`.
+- `protocolVersion` (`1`), exact `sdkVersion`, and `processProtocol` (`3`).
+- `profile`: `"node-system-libraries-v1"` and SemVer `toolVersion`.
+- `tool` and `host`: each containing a full `treeDigest` and logical relative `entrypoint` (such as `bin/node` and `dist/main.js`).
 
-The tool is an independently approved Node distribution. The Host artifact
-contains the compiled bootstrap and every runtime dependency, metadata and
-license required by that bootstrap. `bin/node` and `dist/main.js` are example
-logical entrypoints, not defaults. The descriptor contains no machine paths,
-credentials or inherited permissions. The installer must establish that the
-approved tool distribution uses only the supported platform's system libraries;
-arbitrary Homebrew/npm installations do not satisfy that premise. The OS and
-system-library contents remain outside the captured artifacts.
+The `tool` tree is a standalone Node distribution linked only against the target operating system's standard system libraries, and the `host` tree contains the compiled JavaScript Host bootstrap alongside its bundled runtime dependencies and license notices. Logical executable flags (including on `.exe` files for `windows`) are recorded as artifact metadata.
 
-`validate()` checks this data contract. It does not prove filesystem containment,
-dependency closure, tool availability or publisher identity. The capture owner
-must independently approve the expected descriptor, read the actual bytes,
-reject links, portable aliases and observed replacement, check the platform and
-profile, and compare both complete artifact digests. An artifact's entrypoint
-must be present, and the tool entrypoint must be executable. Invocation must
-retain those immutable bytes rather than reopen a mutable installation.
+When staging a runtime, the Host independently verifies the platform and profile, rejects symlinks and case-aliasing collisions, confirms that the tool entrypoint is marked executable, and recomputes both complete tree digests against the approved descriptor before launching a worker.
 
-Windows is a data-contract choice for independently approved captured Node
-artifacts. Logical executable flags remain artifact data, including for `.exe`
-entrypoints; a filename does not grant execution permission. Host archive
-capture validates the exact current platform and both approved artifact digests.
-This does not establish a Windows distribution's DLL closure, filesystem capture,
-installation or process execution support. The native Host profile below still
-accepts only its existing macOS/Linux identity algorithms and rejects Windows.
-Older immutable SDK artifacts retain their original supported platform values;
-a consumer of this addition must explicitly select and verify a matching newer
-SDK artifact. The SDK version label alone is not an artifact identity.
+### Artifact Digest Calculation (`runtime_artifact_digest`)
 
-## Artifact digest profile
+`runtime_artifact_digest` takes an ordered map of logical relative paths to `RuntimeArtifactFile { bytes, executable }`. It rejects empty file trees, trees exceeding 2,048 files or 256 MiB of aggregate content, and invalid package-relative paths. Every file in the directory tree—including transitive dependencies and licenses—participates in the hash; empty directories are omitted.
 
-`runtime_artifact_digest` accepts an ordered map of logical paths to
-`RuntimeArtifactFile { bytes, executable }`. It rejects empty trees, more than
-2,048 files, more than 256 MiB of contents, and invalid SDK package paths.
-These bounds are separate from plugin package limits. The filesystem capture
-owner also bounds directory count, depth and observation time.
+The SHA-256 digest is computed over the following byte stream (all integers are unsigned 64-bit big-endian):
 
-SHA-256 is calculated from the following bytes, with integers encoded as
-unsigned 64-bit big endian:
+1. The ASCII domain tag `tsumugi-runtime-artifact-v1` followed by a `0x00` byte.
+2. For each file in ascending lexicographical path order:
+   - Path UTF-8 byte length (`u64`) and path UTF-8 bytes.
+   - Executable flag byte (`0` or `1`).
+   - Content byte length (`u64`) and raw content bytes.
 
-1. ASCII `tsumugi-runtime-artifact-v1` followed by a zero byte.
-2. For each file in ascending path order: path UTF-8 byte length, path bytes,
-   one executable byte (`0` or `1`), content byte length, and actual content bytes.
+### Node Environment Digest (`descriptor.digest()`)
 
-The whole tree participates, including transitive dependency files and licenses.
-Hashing only the bootstrap, a lockfile, or the tool's launcher is insufficient.
-Directory names participate through file paths; empty directories are not part
-of this digest. Artifact and plugin package digests use separate domain tags.
+`descriptor.digest()` validates the `RuntimeEnvironmentDescriptor` and computes SHA-256 over:
 
-## Environment digest profile
+1. The ASCII domain tag `tsumugi-runtime-environment-v1` followed by a `0x00` byte.
+2. The unsigned 64-bit big-endian byte length of the canonical UTF-8 JSON.
+3. The canonical UTF-8 JSON bytes (no whitespace, with top-level keys ordered as `protocolVersion`, `platform`, `sdkVersion`, `processProtocol`, `profile`, `toolVersion`, `tool`, `host`; `platform` ordered as `operatingSystem`, `architecture`; and each artifact ordered as `treeDigest`, `entrypoint`).
 
-`descriptor.digest()` first validates the descriptor, then computes SHA-256 over:
+Consumers always parse and validate incoming JSON before computing the canonical digest rather than hashing raw wire text. The resulting `environmentDigest` is carried in `InvocationRequest` contexts to correlate responses with the exact runtime configuration.
 
-1. ASCII `tsumugi-runtime-environment-v1` followed by a zero byte.
-2. The unsigned 64-bit big endian byte length of the canonical UTF-8 JSON.
-3. The canonical UTF-8 JSON bytes.
+## Native Application Host Profile (`native-application-host-v1`)
 
-The SDK serializes its struct with fields ordered as `protocolVersion`,
-`platform`, `sdkVersion`, `processProtocol`, `profile`, `toolVersion`, `tool`,
-`host`. Platform fields are ordered `operatingSystem`, `architecture`; each
-artifact orders `treeDigest`, `entrypoint`. JSON has no whitespace, omitted
-fields or map-dependent order. Consumers must decode and validate incoming
-descriptors before deriving their canonical digest, rather than hash incoming
-JSON text. Changing any fixed platform, tool, Host or profile choice changes the
-environment digest.
+For native worker components, `NativeHostEnvironmentDescriptor` records the identity of the parent Host executable rather than Node and JavaScript Host trees. It supports `macos` and `linux` (`windows` is rejected for this profile) and contains:
 
-The SDK's existing invocation context carries this derived `environmentDigest`.
-Matching a result to that value proves correlation only. Trusted Host capture,
-actual channel evidence, live execution consent, semantic validation and
-explicit project adoption remain separate responsibilities. This data module
-does not by itself replace a Host's mutable launcher or implement runtime
-installation, distribution, sandboxing or trusted updates.
+- `protocolVersion` (`1`), `platform` (`operatingSystem`, `architecture`), exact `sdkVersion`, and `processProtocol` (`3`).
+- `profile`: `"native-application-host-v1"` and SemVer `hostVersion`.
+- `executable`: a tagged `{ kind, value }` pair observed from the running Host process:
+  - `darwin-code-directory-hash-v1` (macOS): the process's 20-byte Mach-O CodeDirectory hash as 40 lowercase hex characters.
+  - `linux-executable-sha256-v1` (Linux): the SHA-256 digest (via `native_host_executable_sha256`) of the complete executable read from `/proc/self/exe` (nonempty, up to 256 MiB) as 64 lowercase hex characters.
 
-## Native application Host profile
+All-zero hashes and mismatched OS/algorithm pairs are rejected. The native worker binary itself is hashed separately as part of the plugin's `PackageImage` and `ProviderBinding`.
 
-`ExecutionEnvironmentDescriptor` selects either the existing captured Node
-descriptor or a strict `NativeHostEnvironmentDescriptor`. They have distinct
-`profile` values and field sets; Node serialization and digest rules above are
-unchanged. There is no historical decoder or missing-field default.
+### Native Environment Digest
 
-Native environment protocol 1 uses `native-application-host-v1`, exact SDK and
-process versions, platform/architecture, SemVer `hostVersion` and `executable`.
-The application Host observes its own executable identity independently of the
-worker. The executable is a tagged `{kind, value}`:
+The canonical digest for `NativeHostEnvironmentDescriptor` is the SHA-256 of:
 
-- `darwin-code-directory-hash-v1`: the actual process's 20-byte CodeDirectory
-  hash, encoded as 40 lowercase hexadecimal characters, on macOS.
-- `linux-executable-sha256-v1`: SHA-256 of the complete executable opened through
-  the kernel's `/proc/self/exe` handle, encoded as 64 lowercase hexadecimal
-  characters, on Linux. The complete nonempty bytes are bounded to 256 MiB.
-
-All-zero identities, wrong algorithm/platform pairs, unknown or duplicate
-fields and unsupported versions are refused. `native_host_executable_sha256`
-only hashes data; stable OS-handle capture remains the Host's responsibility.
-No tool/Node/bootstrap artifacts, mutable executable pathname, claimed worker
-identity, approval flag or caller-supplied environment digest belongs here.
-The separate provider still fixes the entire plugin package and native entrypoint.
-
-The native descriptor digest is SHA-256 of ASCII
-`tsumugi-native-host-environment-v1`, a zero byte, the unsigned 64-bit big-endian
-canonical JSON byte length, then its UTF-8 bytes. The exact struct field order is
-`protocolVersion`, `platform`, `sdkVersion`, `processProtocol`, `profile`,
-`hostVersion`, `executable`. Platform orders `operatingSystem`, `architecture`;
-executable orders `kind`, `value`. There is no JSON whitespace. Consumers decode,
-validate and derive the canonical digest rather than hashing incoming JSON text.
-
-This observation identifies the application Host, not its publisher. It captures
-neither OS/dynamic-library contents nor an OS sandbox. Independent approval,
-package capture, exact current consent, real channel provenance, semantic checks
-and explicit adoption remain separate responsibilities.
+1. The ASCII domain tag `tsumugi-native-host-environment-v1` followed by a `0x00` byte.
+2. The unsigned 64-bit big-endian byte length of the canonical UTF-8 JSON.
+3. The canonical UTF-8 JSON bytes (no whitespace, with keys ordered as `protocolVersion`, `platform`, `sdkVersion`, `processProtocol`, `profile`, `hostVersion`, `executable`; `platform` ordered as `operatingSystem`, `architecture`; and `executable` ordered as `kind`, `value`).

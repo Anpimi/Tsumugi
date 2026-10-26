@@ -1,111 +1,53 @@
-# Review protocol
+# Quality Evaluation Review Protocol
 
-This protocol defines how to use the fixed corpus. It reports no observed
-review, model output or quality result. The current model request budget is 0.
-The drill files are authored examples only.
+This document defines the procedure for running blinded translation evaluations and upstream maintenance assessments with the [two-domain quality evaluation corpus](README.md). The checked-in files in `drill/` are synthetic examples for testing the review workflow offline (the default model request budget in the repository is `0`, and live model runs are marked `NOT-RUN` unless explicitly executed).
 
-## Freeze the inputs before collecting outputs
+## 1. Freeze Inputs Before Generating Candidates
 
-Record the corpus edition, domain, generation, exact keys and languages, selected
-plugin/runtime identities, complete source artifacts and resulting capture
-references. Retain the supplied literal extraction oracle independently of the
-worker output. Do not tune the corpus or its criteria after seeing a scheme's
-results; create a new edition for a changed evaluation question.
+Before collecting any candidate translations:
 
-Freeze the approved terms and explicitly targeted human context alongside each
-evaluation case. Record which of those resources were actually adopted and
-shared in the original preview. A context note in `cases.json` is neither an
-extracted source fact nor permission to send it. Do not promote subtitle timing
-to a speaker, role or scene, or infer a project language from a filename.
+1. **Pin Corpus & Runtime Provenance**: Record the corpus edition, domain, generation (`S1` or `S2`), entry keys, source and target languages (`en` → `zh-CN`), plugin package digests, runtime environment digest, and raw source artifact digests alongside the extraction oracle. Do not modify corpus entries or evaluation criteria after inspecting outputs; bump the corpus edition if the evaluation design changes.
+2. **Pin Adopted Resources**: Record which `terms` and `contexts` entries from `cases.json` were actually adopted into the project and selected for sharing in the execution preview.
+3. **Pin Model & Arena Configuration**: For live model runs, record the complete `AiConfig` / `ArenaConfig` snapshot from the execution preview—non-secret endpoint and model identifiers, output-token parameters and limits, request/retry/timeout ceilings, concurrency, selected units, and disclosed shared context (never include API keys or credentials in evaluation packets). Any unconfigured run remains `NOT-RUN`.
 
-For future generation, record the complete supported `AiConfig`/`ArenaConfig`
-captured by the existing preview: actual non-secret connection provenance,
-endpoint/model, output-token parameter, output limit, request/retry/time limits,
-concurrency, selected entries, sharing choices and complete disclosed input.
-Record the actual transport and artifacts used. Credentials are never part of
-the packet. Do not invent unsupported temperature/seed controls or claim a
-model name makes outputs deterministic. Unknown configuration keeps the run
-NOT-RUN; it is not replaced with a fake runnable profile. Only the original
-preview, budget and explicit consent can authorize physical requests.
+## 2. Blind the Reviewer Packet (`packet.json` vs. `reveal.json`)
 
-## Separate the reviewer packet from the reveal
+To prevent producer bias during human evaluation, separate operator provenance from the reviewer's materials:
 
-The operator retains the full captured input/output, candidate provenance and
-label mapping. Give an independent reviewer only the source, target language,
-approved terms, relevant context and candidate texts under stable neutral
-labels. Do not include endpoint/model, scheme name, generation order, task IDs,
-origin-kind fields, resource-strategy names or filenames encoding those facts
-in the reviewer packet or its review form. Displaying the source being
-translated is necessary; exposing the candidate's producer is not.
+- **Reviewer Packet (`drill/packet.json`)**: Contains only the source text, target language, approved glossary terms, applicable context notes, and candidate translations under neutral labels. Omit model/endpoint names, scheme labels, generation order, task IDs, origin types, resource-strategy names, or identifying filenames.
+- **Candidate Reveal (`drill/reveal.json`)**: Maps each neutral candidate label back to its producer, configuration, and capture digests. Keep `reveal.json` hidden from the reviewer until their evaluation record (`drill/review-example.json`) is finalized and frozen.
+- **Role Separation**: In [offline Arena comparisons](../../../../../docs/ai-translation.md#arena-comparison), candidates can be reviewed under anonymous labels before triggering the reveal step. Because the operator who runs the generation preview sees the target endpoints, that operator cannot act as a blinded reviewer. If a reviewer's record is later amended after reveal, keep the pre-reveal record intact alongside the amendment and note any accidental unblinding or exclusions.
 
-The existing [offline Arena comparison](../../../../../docs/ai-translation.md#arena-comparison)
-can preserve anonymous labels and an explicit reveal for saved candidates
-without a model request. Its normal generation preview reveals destinations to
-the operator. An operator who has seen that preview or the mapping is not a
-blinded reviewer. Keep roles and mapping custody explicit; do not call this a
-scientific double-blind experiment or infer general quality from the drill.
+## 3. Record Five Independent Dimensions
 
-Freeze each review record before revealing producer identities. Preserve the
-original record if the reviewer later changes their opinion. Record reveal
-status and exclusions, including accidentally exposed identities or insufficient
-context. Do not quietly replace missing ratings with “pass”.
+Evaluate each candidate across five distinct dimensions rather than collapsing results into a single weighted score:
 
-## Record separate dimensions
-
-For every candidate, retain the exact text and record observations separately:
-
-| Dimension | Required observation |
+| Dimension | What to Record |
 | --- | --- |
-| Structure | Original extractor/checker evidence and format-specific constraints; placeholder and raw-artifact preservation. A structural pass alone makes no semantic claim. |
-| Terminology | Use of the explicitly approved term at every applicable occurrence, or a reasoned discrepancy. No global string-replacement score. |
-| Context and meaning | The intended river-bank sense, exact quantities, action intent and other targeted facts; record ambiguity or missing evidence rather than guessing. |
-| Human editing | Candidate before editing, resulting text, reviewer explanation and separately reported elapsed time/edit count with its measurement basis. |
-| Maintenance reuse | What was retained, rechecked, replaced, retired or explicitly matched after S2, tied to the original entry and source basis. |
+| **Structure** | Extractor and semantic checker results, format constraints, inline placeholder preservation, and raw artifact byte fidelity. |
+| **Terminology** | Whether every applicable occurrence uses the approved glossary translation, or the reviewer's rationale when a departure is appropriate. |
+| **Context & Meaning** | Accuracy on context-dependent senses (such as "bank" as river bank), exact counts, and UI action intent; note any source ambiguity explicitly. |
+| **Human Editing** | Pre-edit candidate text, final edited text, reviewer notes, and (when measured) elapsed editing time and character edit distance. |
+| **Maintenance Reuse (`S2`)** | Which `S1` translations were retained, re-verified, updated, retired, or explicitly linked to a renamed key after adopting `S2`. |
 
-There is no weighted total, automatic winner or universal reference translation.
-The approved term and intended facts constrain the task; other faithful target
-wording can be acceptable. A preference must include reasons and may be “no
-preference” or “insufficient evidence”. The original Review/QA, selection and
-approval owners still determine product eligibility; a human comparison cannot
-waive mandatory checks or approve a release.
+When reporting human editing metrics:
 
-Editing time and modified-character count are manual reports, not system
-telemetry. State whether time includes source/context reading, pauses and
-revision. If reporting an edit count, use the same stated convention for all
-compared schemes: inserted plus deleted Unicode code points, counting a
-replacement as deletion plus insertion. Preserve before/after text so that the
-report remains interpretable; do not silently normalize Unicode or claim that
-code points are graphemes. Missing or unmeasured values stay null/NOT-RUN. The
-drill's example edit is illustrative and has no measured time or edit count.
+- State the timing convention clearly (e.g., whether reading context and pauses are included) and keep unmeasured values as `null` / `NOT-RUN`.
+- Compute character edit distance consistently across all schemes as `inserted + deleted` Unicode code points (treating a replacement as a deletion plus an insertion) on the unnormalized before/after strings.
 
-## Assess S2 without rewriting S1
+## 4. Evaluate `S2` Maintenance Without Overwriting `S1`
 
-Keep original S1 candidates, judgments and source evidence. Read the maintenance
-relationships before deciding reuse. Unchanged text does not by itself establish
-current applicability; the original source/resource/selection checks still
-apply. The count changes from two to three. A timing-only caption change keeps
-the payload text but requires evaluation of the new source/timing basis; it is
-not permission to rewrite the source timing from a translation.
+Preserve all `S1` candidates, review records, and source evidence when evaluating the `S2` update:
 
-`panel-old` to `panel-new` is only a proposed continuation of the same “Open”
-action. Require an explicit identity decision; equal text or array position is
-not proof. `obsolete` is removed and `newcomer` is a new message with different
-meaning. Do not automatically transfer the old translation or approval.
+- **Unchanged Text & Timing Updates**: Re-run applicable source, resource, and review checks against `S2`. In WebVTT, a cue whose timestamp changed (`river`) keeps its payload text but must be verified against the updated cue timing.
+- **Numeric Updates**: Verify that the updated count (`2` → `3`) is reflected in the `S2` translation.
+- **Key / Cue Renames (`panel-old` → `panel-new`)**: Require an explicit human identity match decision rather than auto-linking by identical source text (`"Open"`) or file position.
+- **Deletions & Additions (`obsolete` / `newcomer`)**: Retire `obsolete` and treat `newcomer` as a fresh unit without carrying over `obsolete`'s translation or approval state.
 
-For each relationship, record the actual decision, evidence, resulting candidate
-and any fresh check or human action. “Task completed” is not “issue resolved”,
-and a retained candidate is not a selected, approved or published translation.
+## 5. Reporting Results
 
-## Report only the evidence obtained
+A complete evaluation report lists:
 
-Two distinct checks are useful before a real quality run: complete consumption
-of S1/S2 by the actual source extractor plus independent source checker, and an
-offline exercise of packet/record/reveal separation. Neither proves semantic
-quality, Core maintenance adoption or independent human assessment.
-
-A real report must separately identify actual outputs and parameters, structural
-results, reviewer observations, human self-reports, maintenance decisions and
-known/unknown usage and fees. Failed, excluded and NOT-RUN cases remain visible.
-Do not turn anonymous Arena votes, synthetic responses or missing usage into a
-quality or billing claim. No model request, native workflow or release is
-authorized by this protocol.
+1. The frozen configuration, package/runtime digests, and `S1`/`S2` extractor + semantic checker verification results.
+2. Per-candidate structural results, reviewer dimension records, human edit logs, and `S2` maintenance decisions.
+3. Actual provider token usage and fee receipts (keeping missing usage fields or unrun cases explicitly marked as unknown or `NOT-RUN`).

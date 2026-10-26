@@ -1,12 +1,8 @@
 # Inspect capability declaration compatibility
 
-Use the public package tool to compare a prebuilt package with the exact
-capability contract and profile expected by your consumer. The SDK's existing
-matcher owns both provider resolution and these diagnostics. A package SemVer
-or structurally valid JSON does not establish a match.
+You can use `tsumugi-plugin-package diagnose` to check whether a prebuilt plugin package matches the exact capability contract and profile your consumer expects. The command uses the same SDK matcher that handles runtime provider resolution. Matching package versions or structurally valid JSON alone do not guarantee compatibility.
 
-From the matching Tsumugi source snapshot, this example checks the independently
-built WebVTT package from the [authoring walkthrough](plugin-authoring.md):
+From a matching Tsumugi source checkout, you can test the prebuilt WebVTT package from the [authoring walkthrough](plugin-authoring.md):
 
 ```sh
 cargo run --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package -- \
@@ -14,75 +10,50 @@ cargo run --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package -- \
   '{"contributionId":"extract-source","contract":{"id":"webvtt.extract","schemaVersion":1,"behaviorVersion":1},"profile":{"id":"webvtt-captions","schemaVersion":1,"behaviorVersion":1}}'
 ```
 
-Supply the expected values from the consuming contract or workbench. Copying a
-package's own declaration into the request only compares that declaration to
-itself. Keep the selected package and matching SDK/Host snapshot fixed while
-investigating a version difference.
+Always pass the expected values from the consuming contract or workbench rather than copying the package's own declaration (which would only compare the package against itself). Keep the target package and your SDK/Host checkout fixed while investigating version mismatches.
 
-The last argument is a UTF-8 JSON value bounded to 4,096 bytes. It has
-`contributionId`, `contract` and an optional `profile`. Contract/profile values
-contain `id`, positive `schemaVersion` and positive `behaviorVersion`. Use only
-non-secret declaration metadata. Unknown or duplicate typed fields, invalid
-identifiers, malformed input and excess bytes are refused before package capture.
-An omitted or null profile requests an unprofiled capability; it does not choose
-one of the package's profiles.
+### Request format
+
+The final argument is a UTF-8 JSON object up to 4,096 bytes containing:
+
+- `contributionId`: The target contribution identifier.
+- `contract`: An object with `id` and positive integers for `schemaVersion` and `behaviorVersion`.
+- `profile` (optional): An object with `id`, `schemaVersion`, and `behaviorVersion`. Omitting `profile` or setting it to `null` requests an unprofiled capability rather than defaulting to one of the package's declared profiles.
+
+Include only non-secret declaration metadata. The tool rejects unknown or duplicate fields, invalid identifiers, malformed JSON, and oversized inputs before reading the package directory.
 
 ## Results and exit status
 
-Successful diagnosis writes one JSON object containing:
+When diagnosis runs, it prints a single JSON object with two top-level fields:
 
-- `package`: the original five-field inspection (`plugin`, `packageDigest`,
-  `manifestSha256`, `fileCount`, `byteCount`).
-- `compatibility`: the complete independent `request`, a `status`, the owning
-  `componentId`, `declaredContract` and all `declaredProfiles`. Unavailable
-  component/contract values are explicit nulls.
+- `package`: The standard five-field package summary (`plugin`, `packageDigest`, `manifestSha256`, `fileCount`, `byteCount`).
+- `compatibility`: Your `request`, the resulting `status`, the owning `componentId`, `declaredContract`, and all `declaredProfiles`. When a component or contract is unavailable, those fields are `null`.
 
-Both parts describe one immutable capture. The tool reuses the original bounded
-directory reader and does not reopen a source manifest to assemble a second
-observation. Capture limitations and fingerprints have the same meaning as
-[ordinary inspection](../crates/plugin-host/README.md#captured-package-and-actual-channel).
+Both sections are produced from a single immutable read of the package directory. Directory limits and fingerprints work the same way as in [ordinary inspection](../crates/plugin-host/README.md#captured-package-and-actual-channel).
 
 | Exit code | Meaning |
 |---|---|
-| `0` | Diagnosis completed and the capability declaration/profile matches. |
-| `2` | Diagnosis completed and the declaration/profile does not match; inspect the JSON status and declared values. |
-| `1` | Invalid request, unsupported arguments or failed package capture; an error is written to stderr. No diagnostic JSON is produced. |
+| `0` | Diagnosis succeeded and the capability declaration and profile match. |
+| `2` | Diagnosis succeeded, but the declaration or profile does not match. Check `status` and the declared values in the JSON output. |
+| `1` | Invalid request, unsupported arguments, or failed package read. An error is printed to stderr and no JSON output is produced. |
 
-`cargo run` can itself fail before the tool starts. To consume the tool's exit
-codes directly, build it once with `cargo build --locked -p tsumugi-plugin-host
---bin tsumugi-plugin-package` and invoke the actual binary in your Cargo target.
-The existing `inspect <prebuilt-directory>` command keeps its original output
-and exit behavior.
+Note that `cargo run` itself can return exit code `1` if compilation fails. If you are scripting against these exit codes, build the binary first with `cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package` and invoke the compiled executable directly. The standard `inspect <prebuilt-directory>` subcommand retains its existing output format and exit codes.
 
 | Diagnostic status | Meaning |
 |---|---|
-| `compatible` | Exact contract and requested profile match. |
-| `contribution-missing` | The requested contribution ID is absent. |
-| `not-callable` | That contribution exists but is not a callable capability. |
-| `contract-id-mismatch` | The callable declares a different contract ID. |
-| `contract-schema-mismatch` | Contract IDs match, but schema versions differ. |
-| `contract-behavior-mismatch` | Contract IDs and schema versions match, but behavior versions differ. |
-| `profile-required` | The callable declares profiles and the request selected none. |
-| `profile-unsupported` | The exact requested profile is absent from the declared profiles. |
+| `compatible` | The declared contract and requested profile match. |
+| `contribution-missing` | The requested `contributionId` does not exist in the manifest. |
+| `not-callable` | The contribution exists, but it is not a callable capability. |
+| `contract-id-mismatch` | The capability declares a different contract ID. |
+| `contract-schema-mismatch` | Contract IDs match, but `schemaVersion` differs. |
+| `contract-behavior-mismatch` | Contract IDs and `schemaVersion` match, but `behaviorVersion` differs. |
+| `profile-required` | The capability declares profiles, but the request omitted `profile`. |
+| `profile-unsupported` | The requested profile is not among the capability's declared profiles. |
 
-For example, keeping `webvtt.extract` schema version 1 but requesting behavior
-version 2 reports `contract-behavior-mismatch` against the example's 1/1
-declaration. Identical JSON field types cannot erase that difference. The report
-retains all declared profiles without selecting a first or nearest version.
-Correct the consumer expectation or use an actually matching implementation;
-changing declaration numbers alone cannot implement another behavior contract.
+For example, if you keep `webvtt.extract` at `schemaVersion: 1` but request `behaviorVersion: 2` against the example package's `1`/`1` declaration, the tool returns `contract-behavior-mismatch` even if the JSON schemas are identical. All declared profiles are listed in the output without picking a fallback or nearest version. To resolve a mismatch, update the consumer's expectation or use a package that implements the target version—bumping version numbers in the manifest alone does not make a plugin compatible with a new behavior contract.
 
 ## Scope of the check
 
-This operation checks the selected capability's contract and profile references.
-Input/output/error schema compatibility, SDK artifact provenance, process
-protocol, runtime availability, domain semantics and real Host execution require
-their respective checks. An unsupported manifest protocol fails during strict
-package capture before a compatibility report exists. See the
-[SDK declarations](../crates/plugin-sdk/docs/declarations.md) and
-[authoring support boundaries](plugin-authoring.md#compatibility-and-support-boundary).
+`diagnose` only verifies the capability's contract and profile declarations. If the package uses an unsupported manifest protocol, reading the package fails before a compatibility report can be generated.
 
-Inspection starts no component or installation script and creates no Store,
-installation, execution grant or project mutation. A `compatible` result is a
-declaration diagnosis; installation, current environment selection and each
-execution still use their original independent approval boundaries.
+This check is purely static: it does not execute plugin code or installation scripts, and it does not modify the package store, installations, execution grants, or project data. Input/output/error schema validation, SDK artifact provenance, process protocol compatibility, runtime availability, and domain semantics are verified separately. For details, see [SDK declarations](../crates/plugin-sdk/docs/declarations.md) and [authoring support boundaries](plugin-authoring.md#compatibility-and-support-boundary).

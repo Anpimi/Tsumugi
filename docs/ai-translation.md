@@ -1,301 +1,133 @@
 # Direct AI translation
 
-For advisory meaning/style review of selected saved translations, use the
-separate [AI review workflow](review-qa.md#ai-meaning-and-style-review).
-It reuses the Provider and Task controls with independent preview and consent,
-and does not turn review findings into translation candidates or approvals.
+The **AI translation** and **Arena comparison** views in the sidebar let you prepare model-assisted translation candidates, compare multiple generation schemes, and manage context strategies. For advisory meaning and style review of existing translations, use the separate [AI review workflow](review-qa.md#ai-meaning-and-style-review), which shares the same provider and task controls under an independent preview and consent flow without turning review findings into translation candidates or approvals.
 
-**Maintain changed work** assesses one explicit window of at most 100 current
-source occurrences. It reuses source correspondence, resource changes, current
-review evidence and manual protection. Keep applicable work, request a current
-review, mark unresolved work, or choose repair candidates; protected entries and
-unresolved mappings are excluded from automatic maintenance. Capturing or
-refreshing an assessment does not grant execution or approve a translation.
-Historical and external query coverage remains unknown; literal resource
-matches are possible dependencies, not a proven minimal affected set. Full
-manual review and source correspondence remain available through their existing
-workspaces. Repair choices feed a new ordinary WorkPlan preview, budget and
-consent flow. A changed protection revision blocks the captured maintenance
-plan at preparation, authorization, continuation and dispatch. Other ordinary
-plans can still offer candidates for protected entries under their existing
-rules. Current rechecks use Review; candidate checks retain their own saved
-evidence without becoming current QA.
-Current reads do not overwrite captured choices, model settings or manual drafts.
-Task completion never closes a finding in place of current QA or build evidence.
+## Preparing a translation workflow
 
-Use **Compare saved translations** beside a revision in editor history, or while
-reviewing a saved AI candidate, to open that exact entry and language in Arena.
-The application rechecks the current source and the selected historical revision
-before opening offline choices. This does not create a comparison, contact a
-model, select a translation or replace your manual draft. Choose a second saved
-revision and explicitly start the comparison. Unfinished comparison choices,
-merge drafts and unconfirmed actions must be resolved before replacing them.
+Open a project with current source content and select **AI translation**. You can configure the working mode for each stage of the pipeline: understanding, resources, translation, checks, and delivery:
 
-Rejected candidates remain readable in saved comparisons. Their current rejection
-status prevents direct selection until you explicitly restore them through the
-translation history or saved AI candidate review. Status alone is shown in blind
-comparisons, preserving hidden model identities. **Manual merge** remains an
-explicit new revision with all contributor references; it neither restores nor
-directly selects a rejected contributor. **Return to the original work area**
-returns to the editor or AI preparation with its retained draft and settings.
+- **Manual and skipped stages** require no model connection. Selecting manual translation hides connection and data-sharing settings; **Prepare manual plan** records the selected entries and target language and opens their manual editors. Other manual stages are handled in **Glossary and context**, **Review and QA**, and **Build and export**.
+- **AI-assisted stages** generate translation candidates. By default, new preparations save candidates alongside their authorized checks while keeping candidate selection manual. You can also keep checks manual, or choose an automatic selection policy (**Save candidates; choose manually**, **Choose only entries without a translation**, or **Allow replacing the translations shown in this scope**). The automatic selection policies require assisted checks and include that selection effect in the authorization summary. Automatic selection only applies when checks pass cleanly, the source, resources, and current selection remain unchanged, and the entry is not manually protected. Human approval, resource adoption, and release export remain manual actions.
 
-AI translation and Arena comparison are working areas in the sidebar. Connection configuration can be folded away while preparing a task; validation errors in connection fields reveal those settings again. The selected scope, sharing choices and budget remain part of the explicit preview and consent flow. Moving between working areas keeps local preparation state through the existing leave decision, and Tasks retains persisted attempts.
+While preparing a task, you can collapse the connection configuration panel; any validation errors in connection fields automatically expand it again. Switching between sidebar working areas preserves your local preparation draft through the leave prompt, while **Tasks** retains persisted execution attempts.
 
-Open a project with current source content and choose **AI translation**. Choose the working mode of each stage: understanding, resources, translation, checks and delivery. Manual and skipped stages require no model. Choosing manual translation hides connection and sharing settings; **Prepare manual plan** captures the selected entries and language and offers their manual editors. Glossary and context, Review and QA, and Build and export provide the other manual stages. AI assistance generates candidates. New preparations recommend saving candidates with their authorized checks while keeping selection manual. Checks can also be manual; an explicit selection policy separately permits choosing eligible translations. Resource adoption and delivery remain separate manual actions.
+## Model connections and budgets
 
-For AI-assisted translation, choose a saved model connection or configure an
-API-key connection. On macOS, Settings also offers **Continue with ChatGPT**.
-Sign in and authorize Tsumugi in your system browser, then explicitly refresh
-the selected account's model list and save a connection using that account.
-Each account or workspace registration remains distinct, including registrations
-with the same email. Returning sign-in reuses its registration. A new login does
-not revive an older prepared request; select the new account and prepare again.
-Credentials stay in macOS Keychain, outside projects, plugins and the member
-runtime. Signing out stops local account use and attempts remote revocation;
-if revocation cannot be confirmed, disconnect Tsumugi in ChatGPT Settings.
-If a secure-store write fails, the account stays unavailable. After restoring access,
-use **Retry account storage** to save the withdrawn state, then sign in again.
-Reading account status alone does not write storage or restore the old account.
-A failed status refresh does not confirm an earlier cached account or model list.
+### ChatGPT account connection (macOS)
 
-ChatGPT connections consume your authorized plan allowance and applicable
-credits. They use the official public Responses endpoint and have **no hard
-output-token cap**. Request count, concurrency, timeout and encoded input/output
-limits still apply; automatic retries are disabled. Reported tokens are recorded,
-but do not prove a dollar charge or unlimited access. Review and manage app usage
-in [ChatGPT Settings](https://chatgpt.com/#settings). Signing in or seeing a model
-in the directory does not prove that a particular request will be permitted.
+On macOS, **Settings** offers **Continue with ChatGPT**. After signing in and authorizing Tsumugi in your system browser, refresh the selected account's model list and save a connection for that account:
 
-For an API-key connection, select a preset or enter a custom full Chat Completions
-URL, model and credential environment variable name. Presets supply editable
-defaults; choose a model explicitly. For a service without authentication, clear
-the environment variable name. Set credentials in the environment before launching
-the desktop application; never paste a key into a URL or into the name field.
+- Each account or workspace registration is stored separately, even if multiple registrations share the same email address. Signing in again reuses the existing registration. Signing into a new account does not update earlier prepared requests—select the new account and prepare the request again.
+- Credentials are stored in the macOS Keychain outside projects, plugins, and the member runtime. If a Keychain write fails, the account remains unavailable; after restoring Keychain access, use **Retry account storage** to record the withdrawn state before signing in again. Reading account status or failing a status refresh does not modify storage or confirm a previously cached account or model list.
+- Signing out stops local account usage and attempts remote token revocation. If remote revocation cannot be confirmed, disconnect Tsumugi directly in [ChatGPT Settings](https://chatgpt.com/#settings).
+- ChatGPT connections use the official public Responses endpoint and draw from your plan allowance and applicable credits. They impose **no hard output-token cap**, though request count, concurrency, timeout, and encoded input/output size limits still apply, and automatic retries are disabled. Reported token counts are recorded for reference but do not represent exact billing or unlimited quota.
 
-Remote endpoints require HTTPS. HTTP is allowed only for loopback endpoints. URL credentials, query strings, fragments and redirects are rejected. Choose the token field expected by the service: `max_tokens` or `max_completion_tokens`; the client does not silently switch fields or providers.
+### API-key connections
 
-The API-key default budget is 20 selected units, concurrency 1, at most 20 requests, 2,000 output tokens per request, no automatic retries and a 60-second request timeout. You can edit the limits within the bounds shown in the form. Retries are limited to 429 and 503 responses and consume the same persistent request budget. Valid Retry-After delta seconds and HTTP dates are honored up to five seconds; a longer delay stops this attempt rather than sending early. Other retry delays use bounded exponential backoff and jitter. A network interruption or timeout is recorded as an unknown outcome and is never automatically retried. Cost and complete usage may be unknown even when a candidate succeeds.
+To use an API-key provider, select a preset or enter a custom full Chat Completions URL, model identifier, and credential environment variable name:
 
-Connections are reused across AI and Arena requests with the same endpoint, timeout and proxy environment. Credentials are resolved for each dispatched request and attached only to that request. The current compatibility profile supports Chat Completions JSON text with the explicitly chosen token field, a 32 KiB shared prompt, 64 KiB response and 32 KiB embedded model output. Model context capacity is unknown; remote cancellation and remote outcome queries are unavailable.
+- Presets provide editable defaults, and you must choose a model identifier. Set the API key in your environment before launching the desktop app (or clear the variable name for local services that require no authentication). Never paste a secret key into the URL or variable name field.
+- Remote endpoints must use HTTPS; HTTP is permitted only for loopback addresses. URLs containing embedded credentials, query strings, or fragments are rejected, and HTTP redirects are not followed.
+- Select the token limit parameter expected by your provider (`max_tokens` or `max_completion_tokens`). The client uses your chosen field as-is without switching parameters or providers behind the scenes.
 
-The provider origin has a two-request-per-second rolling limit independent of the global two-worker concurrency limit. The waiting queue admits up to 128 attempts and 2,000 expanded items, preserving the existing per-operation limits. Each free slot rotates between attempts. If the queue is full, wait for current work to finish or reduce the scope before sending again; rejected admission does not start a new task.
+By default, an API-key budget covers 20 selected units, concurrency 1, up to 20 requests, 2,000 output tokens per request, 0 automatic retries, and a 60-second request timeout. You can adjust these limits within the bounds shown in the form. When retries are enabled, they apply only to HTTP `429` and `503` responses and draw from the same persistent request budget. Valid `Retry-After` delta seconds or HTTP dates up to 5 seconds are honored (longer delays abort the attempt rather than dispatching early); other retries use exponential backoff with jitter. Network interruptions and timeouts are recorded as unknown outcomes and are never automatically retried.
 
-Requests reserve durable budget before network dispatch. The saved summary distinguishes reserved requests, unresolved outcomes, unknown usage and reported token totals. Reservations survive cancellation, timeout and project reopening; unknown requests are not free. Successful responses without usage also retain unknown usage. Local trusted child tasks share every ancestor limit and cannot expand the captured scope or connection and sharing configuration; this is a Core scheduling API, not a shipped autonomous Agent interface.
+### Transport, queueing, and budget reservation
 
-Select the target language and source units. New AI workbench drafts recommend including applicable adopted terms and saved human context. Turn either category off to omit it; explicit choices survive connection changes, budget resets and workspace returns. A confirmed full draft discard starts a new draft with the recommendations. These initial choices grant no permission to send data and do not change previously captured plans or Arena schemes. **Preview what will be sent** shows the full source text, destination, budget, selected resources and omissions. Changing inputs invalidates the preview and consent. Confirm sharing and choose an authorization duration of 1–1440 minutes before sending. Choose **Save candidates; choose manually**, **Choose only entries without a translation**, or **Allow replacing the translations shown in this scope**. Candidate-only plans can run their separately authorized checks or keep checks manual. The latter two selection policies require assisted checks and add that exact selection effect to the displayed authorization. Only clean checks, unchanged source/resources/selection and unprotected entries permit selection. Approval, resource adoption and export remain separate manual actions.
+Connections with identical endpoint, timeout, and proxy settings are reused across AI translation and Arena requests, while credentials are resolved per dispatched request. The client supports Chat Completions JSON text with a 32 KiB shared prompt limit, 64 KiB response limit, and 32 KiB embedded model output limit. Remote cancellation and remote outcome queries are not supported by the transport profile.
 
-**Source observations** separately offers extracted source facts, source inferences
-with their rationale, and adjacent original text. A new AI draft can capture an
-adopted project/language context strategy; otherwise all three start off. These
-choices remain independent of terms and saved human context. The preview preserves fact origins
-and original references locally; inferences remain hypotheses. Missing, explicitly
-empty and unsupported facts remain distinguishable. Selecting facts that require
-an unavailable interpreter blocks preparation; neighbors can be selected without
-interpreting those facts.
+Dispatching enforces a rolling limit of 2 requests per second per provider origin, alongside a global limit of 2 concurrent workers. The waiting queue accepts up to 128 attempts and 2,000 expanded items, rotating free slots across active attempts. If the queue is full, wait for running work to finish or reduce the batch scope before submitting.
 
-The source-observation budget defaults to 16,384 encoded bytes and 128 entries per
-original. It accepts 27–16,384 bytes and 1–128 entries, counting the complete JSON
-entries and their array container. Facts follow their original block order before
-adjacent text; an entry that does not fit is omitted whole. The preview shows
-omission categories, reasons, up to eight reference samples and the remaining
-unlisted count. Provider requests include only the chosen fact kind, text,
-origin and inference rationale, or adjacent text and relative direction.
-Source coordinates, artifact identities and revision evidence stay local.
-Accepted execution and recovery retain the original capture, sharing choices and
-deadlines; editing a choice requires a new preview and confirmation.
+Requests reserve durable budget before network dispatch. Reservations persist across cancellation, timeouts, and project reopening, and the saved summary tracks reserved requests, unresolved outcomes, unknown usage, and reported token totals separately. Direct requests send only text: a fixed translation instruction and a user message containing JSON text (no files, images, audio, or tools). ChatGPT connections require a `response.completed` event, and Chat Completions require a single assistant choice with `finish_reason: "stop"`. Both must return JSON containing matching `unitId`, `targetLocale`, and `text` fields, which are validated locally without requesting server-side JSON Schema enforcement.
 
-Direct requests contain text only: a fixed translation instruction and a user message containing JSON text. No files, images, audio or tools are sent. ChatGPT subscriptions must reach a successful `response.completed` event; Chat Completions must return a single assistant choice with `finish_reason: "stop"`. Both require JSON content containing exactly `unitId`, `targetLocale` and `text`, copying the supplied identity and locale. The client validates output locally; it does not request a server-side JSON Schema mode.
+## Context sharing, source observations, and preview
 
-Results are saved per unit. **Save candidate** adds an immutable AI revision to the ordinary translation history without selecting it or approving it. **Compare and select in editor** lets you compare, select, edit and run the normal checks. Manual saves and selections protect the entry from automatic selection. The editor displays this protection and requires a separate, scoped confirmation to release it; unsaved drafts and pending saves block release. Changed source or removed target languages prevent stale candidate adoption. Automatic plans show saving, checking, checked, selected or blocked states beside each result. Checked candidates retain complete findings and execution evidence without changing the selected translation, current QA or human approval. Checking completed does not mean all checks passed. Protected entries and check findings retain the candidate and mechanical evidence. Policy receipts describe past work without asserting the current selection or human approval. A permitted storage retry checks durable evidence and reuses its original action identities, without another provider request.
+After selecting the target language and source units, configure what project context to include:
 
-From an AI result, open human Review for the exact entry and target language
-using its current selected translation. The application reads the current source
-and Review target before navigating; an unselected AI candidate or its saved
-checks cannot supply that selection. With no selected translation, keep the
-result and use the ordinary editor to choose or edit one. Read failures or changed
-source keep the AI workspace available for recovery. Existing Review reasons,
-checked bases and unresolved actions are preserved, and returning retains the AI
-position and preparation. This navigation performs no selection, QA, approval or
-model request.
+- **Terms and human context**: New AI workbench drafts enable applicable adopted terms and saved human context by default. Toggling either option persists across connection edits, budget resets, and workspace switches; discarding the full draft resets to the defaults.
+- **Source observations**: You can independently include extracted source facts, source inferences (with rationale), and adjacent original text. If the project and target language have an adopted context strategy, new drafts initialize from that strategy; otherwise all three options start turned off. Inferences remain marked as hypotheses, and missing, empty, or unsupported facts remain distinct. Selecting facts that depend on an unavailable interpreter blocks preparation, though adjacent text can still be shared without interpreting those facts.
 
-Tasks retains input, recipe, model, output and adoption receipts after reopening a project. Reopening does not send requests. Use **Pause automation**, **Stop this plan** or **Take over manually** to invalidate old permissions and stop new work. In-flight requests may still execute or be billed. Pause and takeover can continue only after renewed explicit consent and a new expiry; continuation uses the original remaining shared budget, including unknown exposure. Changed source, selection or shared resources require a new plan. A stopped plan requires a new plan. A prior AI attempt cannot use generic resume or retry actions to bypass these permissions.
+The source-observation budget defaults to 16,384 encoded bytes and 128 entries per source unit (adjustable between 27–16,384 bytes and 1–128 entries, counting the complete JSON array and entries). Extracted and inferred facts are packed in original block order before adjacent text, and any entry that exceeds the remaining budget is omitted in full. The preview reports omission categories, reasons, up to 8 reference samples, and the remaining omitted count. Only the chosen fact kind, text, origin, inference rationale, or adjacent text and relative direction are sent to the provider; source coordinates, artifact identities, and revision metadata stay local.
 
-If authorization or control has an uncertain result, check the original action receipt before retrying that same request. Historical receipts do not override newer control state. A saved authorization is retained if queue admission fails, so **Start authorized work** retries the existing grant instead of creating a new budget. If a start or adoption response is lost, check the saved attempt or receipt before retrying. Closing a project pauses active grants and preserves evidence. A fresh host also pauses grants retained after an unexpected exit; reopening requires explicit continuation.
+Choose **Preview what will be sent** to inspect the exact source text, destination, budget, included resources, and omissions. Editing any input invalidates the current preview and consent. To dispatch, confirm the data-sharing summary and choose an authorization duration between 1 and 1,440 minutes.
 
-## Tool guidance
+## Handling results, protection, and review
 
-Within an authorized plan's bounded tool controls, inspect guidance attached to
-one of its captured tools. The initial directory shows the original tool,
-package, permission summary and declared members without loading their text.
-Explicitly load the attached Skill, then a supporting Resource when needed.
-Tools without a Skill or references report that absence. No arbitrary file path,
-URL or undeclared member can be requested.
+Generated translations are saved per source unit:
 
-Skill and reference bodies are untrusted plain text, limited to 64 KiB of UTF-8
-per read. They do not execute Markdown, links or scripts, add tools, share data
-with a model, consume execution budget or renew permission. Missing, mismatched,
-unsupported or oversized content reports an error rather than silently changing
-the requested source. Each read requires the original active scope and captured
-tool identity; stopping, expiry, a new control generation or reopening rejects
-the old scope. Reconcile unresolved original actions through their existing
-controls before preparing or continuing work.
+- **Save candidate** appends an immutable AI revision to the unit's translation history without selecting or approving it.
+- **Compare and select in editor** opens the unit in the translation editor to compare revisions, edit text, select a translation, and run checks.
+- **Manual protection**: Saving or selecting a translation manually marks the entry as protected against automatic AI selection. The editor displays this protection status and requires a separate confirmation to release it (blocked while unsaved drafts or pending saves exist). Stale candidates are also blocked if the source text changes or the target language is removed.
+- **Navigating to Review**: From an AI result, you can open **Review and QA** for that entry and target language using its currently selected translation. If no translation is selected yet, use the editor to choose or edit one first. Returning from Review preserves your AI workspace position and preparation state.
 
-## Child Agent scopes
+### Rejecting and restoring saved AI candidates
 
-An active authorized plan can delegate a selected subset of its captured entries
-and tools to a child Agent. A child cannot delegate again or add entries, tools,
-permissions, model settings, sharing choices or time. Every child shares the
-original plan's cumulative execution budget and tool invocation limit.
+In the translation workspace's revision history, you can record an explicit rejection for an unselected AI candidate that matches the current source basis. Enter your reviewer name and reason, then choose **Reject AI candidate**.
 
-Keep the child consumer that prepared each operation to inspect that operation's
-results. Generation and tool results retain their original caller, input and
-item identities; a parent or sibling cannot substitute its own scope to read
-them. Guidance is limited to tools included in that child's captured subset.
-Creating a child does not itself execute a model or tool.
+- Rejecting a candidate records the candidate revision, source revision, current selection, and prior decision. It prevents the candidate from being selected manually or automatically while keeping its text and provenance readable.
+- To make the candidate selectable again, choose **Restore AI candidate** and record a new human decision; source updates never restore rejected candidates automatically.
+- If a rejection or restoration response is lost, the pending decision retains its actor and reason. Check the saved action before retrying with the same identity and payload; project close and other translation edits remain blocked until the pending decision settles.
 
-A changed or expired plan invalidates the old child scope. Uncertain starts keep
-their original request for reconciliation, and newer preparation edits remain
-available. Use the existing explicit task-history action when human recovery is
-needed; rejected child reads do not automatically fall back to project history
-or renew permission.
+### Proposing terms from manual corrections
 
-Tasks retains input, recipe, model, output and adoption receipts after reopening a project. Reopening does not send requests. A prior AI attempt cannot use generic resume or retry actions to bypass its budget; create and confirm a new preview for additional generation. If a start acknowledgement is lost, invalid or uncertain, the app automatically checks the original fixed request once; the manual start check uses the same read-only lookup without initializing execution or generating output. Only an explicit missing result permits retrying that same request. Read failure or missing proof keeps the outcome uncertain and does not enable retry. If an adoption response is lost, check its saved receipt before retrying the same action. Closing a project with running work uses the existing stop-and-preserve workflow.
+When you save a manual edit that replaces a previously selected translation, you can use that before/after revision pair to propose a glossary term for the entry and target language. Review the recorded source and revision pair, then enter the source term, preferred target form, and reason. Adopting a proposed term runs the standard term conflict check and records provenance under the entry or language scope. If the underlying revisions have changed since the proposal was captured, capture a fresh proposal from the current saved correction.
 
-If creating the child returned no confirmation, you may explicitly end that
-preparation after its original deadline has passed or the plan was stopped. The
-child might have been created; ending this preparation does not renew its
-permission. This closes only that preparation; possibly started generation or
-tool work still requires its own reconciliation.
+### Maintaining changed work
 
-Explicitly stop or take over the original plan before reconciling an uncertain
-start that was not accepted. Reaching its deadline alone does not settle that
-uncertainty. If the project engine confirms that the exact request was never
-enqueued after the plan ended, you can end that preparation. An accepted request
-keeps its task history and budget record; a read failure never establishes that
-work was not accepted.
+**Maintain changed work** evaluates an explicit window of up to 100 current source occurrences using source correspondence, resource changes, current review evidence, and manual protection status. For each item, you can keep applicable work, request a current review, mark work as unresolved, or select repair candidates. Protected entries and unresolved source mappings are excluded from automatic maintenance, and if an entry's protection revision changes, the captured maintenance plan is blocked at preparation, authorization, continuation, and dispatch. Repair selections feed into an ordinary WorkPlan preview, budget, and consent flow, while literal resource matches are surfaced as possible dependencies for human review.
+
+## Execution control and recovery
+
+**Tasks** retains the input, recipe, model, output, and adoption receipts across project restarts. To halt active automation, use **Pause automation**, **Stop this plan**, or **Take over manually**. These actions revoke active execution permissions and prevent further dispatches (requests already in flight on the network may still complete or incur provider charges). Resuming after a pause or takeover requires a new consent confirmation and expiry window using the remaining shared budget; a stopped plan or any change to source, selection, or shared resources requires preparing a new plan. Closing the project or recovering from an unexpected exit automatically pauses active grants.
+
+When a start, control, or adoption acknowledgement is lost or uncertain:
+
+1. The application checks the original action receipt once in read-only mode before allowing a retry.
+2. **Start authorized work** reuses a saved authorization grant if initial queue admission failed, rather than allocating a new budget.
+3. Only a confirmed missing start allows retrying the exact same request. If a read fails or cannot prove whether the request was accepted, the outcome remains uncertain and automatic retry stays disabled.
+4. For storage retries on already generated results, the application verifies durable evidence and reuses the original action identities without dispatching a new provider request.
+
+## Tool guidance and child Agent scopes
+
+### Tool guidance
+
+Within an authorized plan's tool controls, you can inspect documentation attached to captured tools. The initial listing shows the tool, package, permission summary, and declared members without loading their contents. You can then load the attached Skill and supporting Resources on demand:
+
+- Guidance bodies are treated as untrusted UTF-8 plain text (capped at 64 KiB per read). Markdown rendering, links, and scripts are not executed, and reading guidance does not invoke tools, share data with a model, or consume execution budget.
+- Only declared members within the active plan scope and captured tool identity can be read. Missing, mismatched, or oversized content returns an error, and expired, stopped, or reopened plans reject reads against old scopes.
+
+### Child Agent scopes
+
+An active authorized plan can delegate a subset of its captured entries and tools to a child Agent:
+
+- A child scope cannot sub-delegate or expand entries, tools, permissions, model settings, sharing choices, or expiration times. All child scopes share the parent plan's cumulative execution budget and tool invocation limits.
+- Generation and tool results remain bound to the specific child consumer, caller, and input identities that produced them; parent or sibling scopes cannot substitute their own scope to read those results.
+- Local trusted child tasks use a Core scheduling API (`ExecutionRuntime` / `ProjectStore`) rather than an autonomous agent interface.
+- If creating a child scope returns no confirmation, you can close the preparation once the original deadline has passed or after stopping the parent plan, and reconcile any uncertain generation or tool execution through task history.
 
 ## Context strategy experiments
 
-Open **Context strategies** in the AI workbench or Arena comparison.
-A saved manual correction can propose a source-context strategy for its current
-project and target language. The proposal retains the exact before/after source
-and translation evidence, a reason, exceptions and an immutable candidate
-identity. Saving a correction or proposal does not adopt it, contact a model or
-change another project. This profile controls the existing source-observation
-selection; connections, request limits and consent retain their own controls.
+Open **Context strategies** in the AI workbench or Arena comparison to evaluate whether a specific source-observation profile improves translation results for a project and target language:
 
-Capture fixed calibration and held-out entries before preparing an experiment.
-Choose 2–20 current entries with at least one in each group. The original
-correction can be used for calibration and cannot be held out. The captured
-suite retains the source, resources and mandatory checker policy; a candidate
-cannot replace the suite or weaken its checks.
+1. **Propose a strategy**: From a saved manual correction, record a strategy proposal containing the before/after source and translation evidence, reason, exceptions, and source-observation settings.
+2. **Capture an evaluation suite**: Select 2 to 20 current entries divided into calibration and held-out groups (with at least one entry in each group; the original correction entry may be used in calibration but cannot be held out). The suite locks the source text, resources, and mandatory checker policy.
+3. **Run the comparison**: The experiment runs a two-scheme Arena round sharing one connection and request budget. Both schemes disable optional terms and saved human context; the baseline disables all source observations, while the candidate enables only the proposed source-observation settings.
+4. **Evaluate and adopt**: Save the generated outputs as unselected candidates, run their authorized checks, and record a preference and explanation for every held-out pair. Adopting the strategy as the new project/language default requires passing all mandatory checks for both schemes across the suite, completing all held-out judgments, recording zero preferences for the baseline, and recording at least one preference for the candidate.
 
-The experiment uses an ordinary two-scheme Arena round with the same connection
-and request limits. The direct baseline disables optional terms, saved human
-context and source observations. The candidate changes only the source
-observations; terms and saved human context stay disabled in both schemes.
-Review the actual captured text, destinations and shared budget, then explicitly
-consent before starting. Preparing, viewing or reopening an experiment does not
-authorize or resume execution.
-
-Save outputs as ordinary unselected candidates, preview their independent
-checks, and separately authorize those checks. Experiment checks retain their
-original evidence without selecting a translation or becoming its current QA.
-Record a preference and explanation for every held-out pair. Human-reported
-time and modification figures remain distinct from Provider-reported usage and
-unknown cost; a preference is not a measured accuracy or speed improvement.
-
-Adoption requires all captured mandatory checks for both schemes on every suite
-entry, complete held-out judgments, no preference for the baseline and at least
-one preference for the candidate. Core also rechecks the original current basis
-and the observed default revision. Explicit adoption creates a new default
-revision for this project/language. Withdrawal changes that future default and
-preserves candidates, evaluations, results and history.
-
-New AI drafts and full draft resets can capture the adopted context strategy.
-Budget resets, existing drafts and accepted work keep their original choices.
-Editing the strategy's choices detaches its reference and requires a new
-preview; other connection, budget and sharing choices remain independent. A
-late default read cannot replace newer input. Historical inputs keep their
-original strategy revision even after another default is adopted or withdrawn.
-Unknown saves retain their original action for reconciliation instead of
-blindly repeating the action with a new identity.
-
-The recorded comparison covers its fixed model, inputs and evaluation
-conditions. It does not establish quality on other material, automatic training,
-cross-project learning or a general improvement claim.
+Once adopted, new AI drafts and full draft resets use the strategy by default, while existing drafts and historical tasks keep their original settings. Withdrawing an adopted strategy updates future defaults while preserving past evaluations and history.
 
 ## Arena comparison
 
-Choose **Arena comparison** to generate two to four schemes for the same selected original strings and one target language. Each scheme has its own endpoint, model, output token parameter, timeout, retry limit, terms/human-context sharing and source-observation selection and budget. The whole round shares one request and concurrency budget. Defaults are two schemes, up to 20 original strings, 40 requests including retries and concurrency 1. At most 100 expanded string × scheme items are allowed; requests are bounded to 300 and concurrency to 2. An initial request count larger than the chosen budget is rejected.
+Choose **Arena comparison** to evaluate 2 to 4 generation schemes side by side for the same source entries and target language:
 
-Preview every scheme's destination, complete text, actual resources and parameters, then explicitly confirm the shared budget. Changing a scheme, source or relevant resources requires a new preview. Each result remains bound to its scheme even if responses arrive out of order or have identical text. The display identifies differing inputs or parameters and repeated sampling. Reported token totals cover only the known portion; missing usage and uncertain requests remain unknown.
-
-**Hide candidate identities until revealed** assigns fixed anonymous A–D labels. Refreshing or reopening keeps the labels. **Reveal candidate identities** persists the reveal; it does not erase provenance. Destinations remain visible in the sharing preview, so this is a convenience for human comparison rather than a scientific double-blind experiment.
-
-Save successful outputs as ordinary candidates. Saving does not select or approve them and preserves a translation selected while generation was running. Cancel stops undispatched work; an in-flight request may already have run or been billed. Unsaved results from the canceled round remain readable but cannot be adopted. A terminal round can prepare a new round with a fresh preview and consent; reopening or generic task recovery never sends extra requests.
-
-To compare offline, choose an original string and language under **Compare saved candidates**, load its history, select two to four revisions and start a comparison. No connection or AI request is needed. Reopen saved comparisons from the same panel. The current selection shows its actual text, including a manual merge or another revision outside the compared candidates. Historical candidates may use different source or resource evidence and are marked for reassessment.
-
-**Use this translation** checks the observed current selection. **Edit a manual merge** lets you combine all compared revisions into new text. **Save merge and select** creates one manual revision, records its contributing revision references and selects it atomically. It does not modify the parents or carry their approvals forward. Old-source contributors need a current-source revision in the normal editor first. Relevant source, resources or selection changes reject a stale save; **Review current basis and keep draft** preserves the text while refreshing the evidence. Continue with normal Review and QA before building a SMAPI language file or WebVTT subtitle.
-
-During a save you can continue editing. A successful older save does not discard newer text. If a response is lost, **Check saved result** uses the original action identity, including when another selection has since been made. Retry only that same action after checking. Keep or explicitly discard an unsaved settings or merge draft when leaving; unresolved actions must be reconciled first.
+- **Configuration and limits**: Each scheme specifies its own endpoint, model, output token parameter, timeout, retry limit, term/context sharing, and source-observation settings. All schemes in a round share a single request and concurrency budget. By default, a round compares 2 schemes across up to 20 source strings with 40 total requests (including retries) and concurrency 1. The maximum scope is 100 expanded `string × scheme` items, 300 total requests, and concurrency 2.
+- **Preview and execution**: Preview every scheme's destination, prompt text, included resources, and parameters before confirming the shared budget. Results stay bound to their originating scheme regardless of response arrival order. You can enable **Hide candidate identities until revealed** to assign persistent anonymous labels (`A`–`D`) during evaluation, and click **Reveal candidate identities** when ready.
+- **Offline comparison**: Under **Compare saved candidates** (or via **Compare saved translations** in the editor history or AI candidate review), you can compare 2 to 4 existing revisions for an entry and language without making any network requests. Rejected candidates remain readable in comparisons, display their rejected status in blind mode without exposing model identity, and cannot be selected unless restored first.
+- **Selecting or merging**: In a comparison, choose **Use this translation** to select an eligible candidate, or choose **Edit a manual merge** and **Save merge and select** to combine compared revisions into a new manual revision that records all contributing revision references. Saving a merge does not alter the parent revisions, carry forward their approvals, or restore a rejected contributor.
 
 ## Development interface migration
 
-The internal Rust and desktop IPC interfaces remain experimental. Producer callers now obtain `DispatchRequest` from the execution runtime or store dispatch boundary rather than constructing its fields directly; the runtime supplies the private durable-budget channel. `ExecutionRuntime::register` and `ProjectStore::enqueue_execution` conservatively record `external-unknown` effects. A trusted host must explicitly use `register_read_only` / `enqueue_read_only_execution`, or `register_with_policy` for another reviewed effect contract. A producer's own claim or operation name cannot authorize replay. Persisted policies cannot be changed by resubmitting the same identity.
+Internal Rust and desktop IPC interfaces are experimental:
 
-Current development projects support only the
-[current database schema](../README.md#development). Durable budgets, reservations,
-ancestry, effect policies and exact continuation identities retain their original
-owners. Other development schemas are refused before application schema changes,
-without an automatic upgrade, rebuild or reset; SQLite may complete its own
-hot-journal recovery. Preserve those directories and create a new project to
-reimport original source files. Existing
-attempts retain their captured host-reviewed policy. See
-[work plans](work-plans.md) for the human-control boundaries.
-
-The Tasks view keeps an explicit resume/retry intent, selected items and original
-cancellation basis after a lost acknowledgement. Exact lookup or the same request
-returns the stored continuation without another enqueue or model reservation;
-changed requests conflict. Generic recovery does not replace work-plan Continue
-authorization or restore a closed component scope.
-
-## Rejecting and restoring a saved candidate
-
-Open the entry in the translation workspace and review its saved revision history.
-For an unselected AI candidate with the current source basis, enter the human
-actor and reason, then choose **Reject AI candidate**. The candidate's immutable
-text and producer evidence remain available. This decision does not approve a
-translation, change a selected revision, remove mechanical checks or create a
-project-wide style or training rule.
-
-The decision records its exact revision, source revision, observed selection and
-previous candidate decision. A changed basis or selection conflicts instead of
-overwriting newer work. Rejected revisions cannot be selected through manual or
-automatic selection. **Restore AI candidate** records a new human decision before
-that same candidate can be selected or suggested again; prior rejection receipts
-remain readable. Source changes never restore a rejected revision automatically.
-
-If a response is lost, the original candidate decision stays pending with its
-captured actor and reason. Check that action before continuing. An explicit retry
-reuses exactly the same identity and payload; editing the next reason does not
-change the original request. Project close and other translation mutations stay
-blocked while the original decision is unresolved. Unsaved translation text is
-kept when the decision settles.
-
-## Terms from saved manual corrections
-
-A saved manual correction can explicitly seed a term proposal for that entry
-and target language. Review the recorded source and the original before/after
-revisions, then enter the exact source term, preferred target and reason. A first
-manual save without a preceding selected revision is not a correction pair.
-Creating or ignoring a proposal does not adopt a term. A stale proposal remains
-readable but cannot be newly adopted; capture the current saved correction when
-needed. Adoption uses the existing term conflict check and records its original
-action and provenance. Adopted terms follow the existing manual entry/language
-scope, including through later normal edits.
-
-New AI preparations use the normal term resolution and term-sharing choice.
-Saved inputs and previous results do not change, and no proposal authorizes
-cross-project sharing, external training or a model request.
+- Producer callers obtain `DispatchRequest` from the execution runtime or store dispatch boundary (`ExecutionRuntime::register` / `ProjectStore::enqueue_execution`), which supplies the private durable-budget channel and defaults to recording `external-unknown` effects. Trusted hosts must call `register_read_only` / `enqueue_read_only_execution` or `register_with_policy` for reviewed effect contracts; a producer cannot self-authorize replay or overwrite a persisted policy by reusing an identity.
+- Development builds support only the [current database schema](../README.md#development). Projects created with older development schemas are refused without automatic migration or reset; preserve those directories and reimport the original source files into a new project. See [work plans](work-plans.md) for human-control boundaries.

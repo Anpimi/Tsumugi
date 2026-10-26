@@ -1,27 +1,20 @@
 # Manual offline Packs
 
-Open **Extensions → Choose offline Pack folder** to review an already built
-collection of packages. Each package starts unchecked. Review its version,
-declared publisher, runtime types and complete requested permissions, then select
-only the members you trust. **Approve and install selected packages** saves those
-approvals and installs their captured bytes. New packages start disabled; enable
-them separately when ready. Existing enablement decisions are preserved.
+An offline Pack is a local directory bundling up to 16 prebuilt plugin packages for convenient side-loading.
 
-A Pack is not a trusted publisher, signature, runtime installer or execution
-grant. Its metadata and publishers are unauthenticated claims. This local flow
-uses the same `manual-local` / `manual-approval` origin as individually selected
-local packages. It cannot overwrite a conflicting source or publisher approval, including an origin
-retained in installation or uninstall history. Leaving a conflicting member
-unchecked preserves the existing installation.
-Package installation, enablement and permission for a particular execution are
-separate decisions. No installation script or worker runs during preview or
-installation.
+To install packages from a Pack:
+1. Open **Extensions → Choose offline Pack folder** and select the Pack directory.
+2. Review each listed package's version, declared publisher, runtime type, and requested permissions. All packages start unchecked.
+3. Select the packages you trust and click **Approve and install selected packages** to record your approvals and install the package files.
+4. Newly installed packages start disabled; enable them individually when you are ready to use them (existing enablement states are preserved).
+
+A Pack is simply a local folder layout—it does not provide cryptographic publisher authentication, runtime installation, or execution permissions. Pack installations use the same `manual-local` / `manual-approval` origin as individually installed local packages and cannot overwrite an existing installation or history entry that was approved from a different source or publisher. Leaving a conflicting member unchecked leaves your existing installation untouched. No installation scripts or plugin workers are executed during preview or installation.
 
 ## Preparing a directory
 
-Place `pack.json` at the selected root, alongside one direct child directory per
-member. Each member directory contains a complete, prebuilt package, including
-its `manifest.json`. The strict descriptor has this shape:
+Place a `pack.json` file at the root of the Pack directory alongside one direct subdirectory per member package. Each member directory must contain a complete prebuilt plugin package, including its `manifest.json`.
+
+`pack.json` must follow this structure:
 
 ```json
 {
@@ -42,47 +35,23 @@ its `manifest.json`. The strict descriptor has this shape:
 }
 ```
 
-Replace the illustrative digest with the exact `packageDigest` returned by the
-public Host inspector for that member:
+Set `packageDigest` to the exact digest printed by `tsumugi-plugin-package inspect` for that member directory:
 
 ```sh
 cargo run --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package -- inspect /absolute/path/to/reference-package
 ```
 
-The Host digest includes the exact manifest and ordered package paths, bytes and
-executable flags. A ZIP/tar hash is a different value. Computing a digest does not
-authenticate its publisher. The descriptor's plugin identity must match the
-captured manifest exactly.
+Note that `packageDigest` is calculated by the Host over the manifest, canonical file paths, file contents, and executable permissions—it is not a ZIP or tarball hash. Every member's `plugin` metadata in `pack.json` must exactly match its `manifest.json`.
 
-Version 1 accepts 1–16 members with distinct logical plugin IDs and distinct
-directory names, including case-insensitive comparison. Directory names are one
-portable path segment; absolute paths, traversal, links, special files and
-unlisted files are rejected. The descriptor is at most 64 KiB. The complete
-selected tree, including the descriptor, is at most 64 MiB, 1,024 files, 1,024
-directories and 17 nested levels, with a 30-second capture deadline. Existing
-single-package and SDK limits also apply, including at most 256 directories per
-member with the member root counted. Current safe directory capture is
-supported on macOS and Linux; other platforms report unavailable.
+### Structural and size limits
+
+Format version `1` enforces the following constraints (currently supported on macOS and Linux):
+- **Member count and naming**: 1 to 16 packages with unique logical plugin IDs and unique directory names (compared case-insensitively). Each `directory` must be a single portable path segment; absolute paths, `..` traversal, symlinks, hard links, special files, and undeclared files are rejected.
+- **Size and depth**: `pack.json` may be at most 64 KiB. The entire Pack tree (including `pack.json`) is capped at 64 MiB, 1,024 files, 1,024 directories, and 17 directory levels, with a 30-second read timeout.
+- **Per-package limits**: Standard single-package and SDK limits still apply, including a maximum of 256 directories per member (counting the member root directory).
 
 ## Confirmation and recovery
 
-Preview captures immutable bytes and performs no Store write. Its ticket expires
-after ten minutes. Changing the original directory does not change a displayed
-snapshot; choose it again to review new bytes. Choosing another Pack clears all
-member selections, even if it has the same name. Closing and reopening the panel
-retains the existing local preview. Reading current state never installs members.
-
-The original installation first saves all selected approvals, then installs the
-selected packages in order. If a later step fails, earlier approvals and installed
-packages remain. A retained or unknown operation keeps its exact original request
-and each member's durability action. Use **Retry original operation** to confirm
-or finish it; do not start a replacement operation. The captured bytes remain
-available for that accepted operation even if the original directory disappears
-or its preview ticket expires. A completed installation's lost acknowledgement
-also uses that original request. Reading inventory alone does not confirm an
-uncertain write.
-
-Pack membership is not persisted: these are explicit individual installations.
-There is no automatic Pack update, member removal, shared trust, source migration
-or bulk uninstall. [Signed offline repositories](offline-repositories.md) use
-a separate explicit root-enrollment and authenticated update workflow.
+- **Preview snapshots**: Selecting a Pack reads an immutable snapshot of its files into memory without writing to the PackageStore. The preview ticket is valid for 10 minutes. Editing files on disk afterwards does not update the displayed preview—re-select the folder to pick up changes. Selecting a different Pack clears your checkboxes, whereas closing and reopening the Extensions panel preserves your active preview.
+- **Sequential installation and retry**: When you confirm installation, Tsumugi saves all selected approvals first and then installs the selected packages in order. If an error occurs midway, earlier approvals and completed package installations remain in place. If an installation is interrupted or its response is lost, use **Retry original operation** to finish or reconcile the exact pending request—this uses the already captured snapshot even if the source folder was moved or the 10-minute preview timer expired.
+- **Individual lifecycle**: Once installed, packages are managed individually. Tsumugi does not track Pack membership after installation, and there is no bulk uninstall, shared trust, or automatic Pack update mechanism. For signed catalogs that support authenticated updates, see [Signed offline repositories](offline-repositories.md).

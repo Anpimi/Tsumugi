@@ -2,182 +2,49 @@
 
 This is the authoritative English changelog. [简体中文](CHANGELOG.zh-CN.md) mirrors the same changes.
 
-Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Application versions follow the project's [versioning policy](docs/versioning.md).
+Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and version numbers follow the [Versioning Policy](docs/versioning.md).
 
 ## [Unreleased]
 
-Source metadata: **0.2.0-alpha.1**. The published alpha.1 snapshot is frozen; the next application distribution must advance the prerelease.
+Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `0.2.0-alpha.1` snapshot is frozen, newer source integrations accumulate here until the next distributed prerelease advances the version counter.
 
-This initial backfill summarizes development commits `e76ef39` through `7febd7e` (2026-09-17 through 2026-10-02), which used `0.1.0` as their development version. The scaffold backfill is retained below alongside later source-only integrations; it does not replace the frozen release or create another distribution.
+*(Includes the initial `0.1.0` development backfill from commits `e76ef39` through `7febd7e`, 2026-09-17 to 2026-10-02, alongside subsequent source integrations.)*
 
 ### Added
 
-- Add a separate macOS ChatGPT sign-in connection, verified OpenID identity, protected credentials and distinct account registrations. Subscription requests use the public Responses API through Pi and existing persistent request controls, without a hard output-token cap. API-key limits remain unchanged. Internal member protocol 4 requires matching regenerated contracts and runtime.
-
-- Desktop plugin management, captured domain capabilities and independent runtime approvals for source/translation import, checking, builds and artifact verification. Saved results require explicit adoption and retain their original package and execution evidence.
-- Pi core and pi-ai 1.3.0 member execution, dynamic team requests and discussions, human guidance and takeover, original tool-result recovery, and project-local context-strategy experiments. Unknown usage remains unknown; preparing or reopening work grants no execution permission.
-
-- Core application execution, captured plugin grants, team coordination records, context strategies and detailed provider usage now share the project authority and its checked reopen path. Desktop plugin and Pi member adapters now use those same owners without adding another project Store or provider ledger.
-
-- Standalone plugin Host source with captured package/runtime inspection, local Store and offline trust management, bounded native/JavaScript component channels, and SDK-owned Host generation. Its optional Core adapter preserves original dispatch grants and separately authorized application lifetimes, including readiness cancellation and confirmed process cleanup. Its opt-in member adapter launches the captured Pi runtime and confirms original child cleanup; frozen runtime and plugin pins remain unchanged.
-
-- Experimental standalone plugin SDK source with Rust data contracts, a conformance CLI, synthetic examples, and self-contained JavaScript bindings and generation tooling. SDK integration does not add a plugin Host or desktop plugin loading; existing immutable SDK archives remain unchanged.
-
-- Shared AI and Arena connection reuse, independent per-provider request rate limits, fair bounded scheduling, and durable request reservations with known usage and unknown exposure shown after reopening. Trusted Core child tasks inherit scope, connection settings, cancellation and ancestor budgets.
-
-- Added macOS desktop builds and local source, translation, glossary import and verified release export, with descriptor-based file authorization and Command-key editing shortcuts.
-
-- Task, AI, Arena and import progress share a session cache and coalesced updates. Missed notifications are reconciled from the project, and hidden views stop their own reads without cancelling running work.
-
-- Bounded review summaries, consistent editor snapshots, and a fixed search range with continuous previous/next navigation and save-and-next across result pages.
-
-- Review checks compute outside database transactions and the project command queue, then recheck their inputs before saving; late checks cannot replace newer translation or check evidence.
-
-- Windows desktop application with English and Simplified Chinese interfaces, project creation, opening, renaming, closing, recent-project reconciliation, and editable target languages.
-- Durable task history with cancellation, interrupted-work recovery, saved results, explicit result adoption, and safe project shutdown.
-- Bounded SMAPI source import from `manifest.json` and flat JSONC `i18n/default.json`, preserving original files and requiring confirmation of the complete source snapshot.
-- SMAPI translation-file preview and checked adoption, immutable manual translation revisions, per-language selections, and interrupted-save/import recovery.
-- Project glossary imports, saved context, translation-memory suggestions, and resource-change impact beside the translation editor.
-- Human approval and change requests, persisted QA attempts, scoped waivers, a work queue, and build-readiness checks against current project evidence.
-- Verified SMAPI language-file builds, immutable releases, and local export with destination checks, explicit replacement choices, and recovery of uncertain outcomes.
-- Upstream source comparison, explicit identity continuation, per-language impact estimates, snapshot history, and append-only corrections preserving earlier translations and releases.
-- Experimental WebVTT caption profile 1, supporting source updates, translation editing, review, and output preserving timing, settings, cue identifiers, and non-text bytes.
-- Configurable OpenAI-compatible translation requests with explicit data-sharing consent, request previews, budgets, saved candidates, partial-failure reporting, and recovery.
-- Arena comparison of two to four schemes or saved candidates, blind labels, explicit identity reveal, candidate selection, and atomic manual merges with recorded contributions.
-- Persistent translation workspaces with search across all current content keys, source and selected translation text; direct entry from review, source impact and Arena; and return to the originating view without losing its position.
+- **macOS & Windows desktop workbench**: Native desktop builds for Windows x64 and macOS (Apple Silicon and Intel targets) with English and Simplified Chinese UI, project creation/opening/renaming/closing, recent-project path reconciliation, editable target locales, descriptor-based file authorization, and `Ctrl+S` / `Cmd+S` editor shortcuts.
+- **SMAPI and WebVTT localization workflows**:
+  - SMAPI source import from `manifest.json` and flat JSONC `i18n/default.json`, plus translation import and preview for `i18n/<locale>.json`.
+  - Upstream source comparison, content identity continuation, per-language impact estimates, snapshot history, and append-only lineage corrections that preserve earlier translations and releases.
+  - Experimental WebVTT caption profile 1 supporting source updates, translation editing, review, and local `.vtt` export while preserving timing, cue settings, cue IDs, and non-text bytes.
+- **Translation editor, glossary, and review**:
+  - Persistent translation editor with full-project search across native keys, source text, and active translations; continuous previous/next and save-and-next navigation across pages; and side-by-side reference panels for terms, context, and revision history.
+  - Project glossary imports, unit context capture, translation memory suggestions, and impact tracking for changed terms or context.
+  - Human review approvals and change requests, non-blocking QA check runs, scoped waivers, work queues, and per-language build-readiness assessments.
+  - Verified SMAPI language-file builds, immutable release records, and local folder export with destination checks and overwrite confirmation.
+- **AI translation, Arena, and Agent work plans**:
+  - Configurable OpenAI-compatible Chat Completions connections with explicit data-sharing previews, request budgets, rate limiting, durable request reservations, and candidate saving.
+  - Separate macOS ChatGPT subscription sign-in with OpenID verification, Keychain-backed credential storage, and Responses API execution through Pi without a hard output-token cap.
+  - Arena comparison for two to four generated schemes or saved candidates, supporting optional blind labels, explicit identity reveal, and manual merges with provenance tracking.
+  - Multi-step Agent work plans powered by `pi-agent-core` and `pi-ai` (`1.3.0`, member protocol 4), supporting dynamic team discussions, read-only capability and MCP tools, bounded time and request budgets, human guidance or takeover, and project-local context-strategy experiments.
+- **Plugin SDK, standalone Host, and desktop plugin management**:
+  - Standalone `tsumugi-plugin-sdk` crate with Rust data contracts, a conformance CLI, synthetic examples, and generated JavaScript bindings.
+  - Standalone `tsumugi-plugin-host` crate with package and runtime inspection, local Store and TUF offline trust management, and isolated Native/JavaScript worker channels, plus optional Core and Pi member adapters.
+  - Desktop plugin management and per-project domain selection with independent package and runtime approvals for source/translation import, QA checks, builds, and artifact verification.
 
 ### Changed
 
-- Default Core domain execution requires captured SDK plugin evidence. The current desktop explicitly selects a temporary `legacy-desktop-domain` profile for its existing built-in imports, QA and builds; both profiles use the same Store, runtime, ledger and receipt validation. Plugin-bound inputs retain their strict checks.
-
-- Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization. Reopening preserves durable request reservations and uncertain exposure without replaying old queued work.
-
-- Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
-- Project storage now uses schema 61, with exact recovery-intent associations committed atomically with their new execution attempt. Other development schemas are unsupported and are refused before schema changes; preserve their directories and create a new project to reimport the original source files. Current projects reopen with full integrity checks. Unsupported or corrupt databases are never reset.
-- The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
-- Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
+- **Project storage schema 61**: Unified project content, execution attempts, recovery-intent associations, plugin grants, team coordination records, context strategies, and provider usage ledgers under SQLite schema **61** (`DELETE` journaling, `FULL` synchronization). Earlier development schemas and unsupported SQLite storage modes are refused on open without modifying or resetting the project directory (`PersistenceError::UnsupportedStorage` in Rust; `unsupported-schema` with `reason: "storage-mode"` over IPC). Keep older project directories intact and re-import the original source files into a new project.
+- **Plugin-backed domain execution and legacy transition**: Core domain execution now requires verified SDK plugin provenance by default. The desktop app enables the transitional `legacy-desktop-domain` profile for existing built-in workflows while sharing the same Store, runtime, usage ledger, and receipt checks; plugin-bound inputs never fall back to built-in validation.
+- **Pre-commit domain validation and recovery policies**: Source, translation, AI candidate, and build adoptions validate domain output before opening write transactions and re-verify scope, cancellation, and receipts atomically on commit. Interrupted operations use the effect policy recorded at enqueue time and require fresh preview/consent before repeating external calls.
+- **Non-blocking project operations and shared session state**: Desktop project commands, full-text search, QA checks, and exports run on a dedicated project thread without blocking window events. Task, AI, Arena, and import progress share a coalesced session cache that reconciles missed notifications and pauses background polling in hidden views.
 
 ### Fixed
 
-- Reject protected-account access when macOS requires Keychain interaction. After a failed write, explicitly retry saving the withdrawn account state before signing in again; ordinary status reads do not write or restore old tokens. Preserve connection drafts and report current account-read failures.
-
-- Treat native Responses refusal content as a failure even without refusal delta events, while retaining reliable reported terminal usage.
-
-- Installed generation components retain their recorded progress after their own reference query spends the remaining tool allowance. New preparations still require available quota and unchanged captured scope.
-
-- New team plans capture a bounded total time budget for multi-round member work and disclose it before consent. Per-request timeouts, original permission deadlines and previously captured plans remain unchanged.
-
-- Member process failure history preserves whether the trusted Host observed a timeout, crash or channel failure and its execution phase. Unknown outcomes still require review and are never automatically replayed.
-
-- Plugin timeout history distinguishes dispatch admission, package staging, readiness, invocation and post-close result handling. Existing limits, authorization checks and uncertain-outcome handling remain in force.
-
-- Source and translation-import starts now record the complete native request with their fixed input. Uncertain acknowledgements are checked without repeating capture or execution; retry remains explicit and requires a confirmed missing start. Inputs without the original request binding cannot confirm that request.
-- Uncertain builds now check their complete original fixed request once, preserving later edits and allowing an explicit same-request retry only after confirmed absence. Uncertain exports and result checks share one automatic read and manual recovery, preserve every confirmed file result, and retain directory authorization without replaying writes or reopening a picker.
-- Recover uncertain direct AI starts by checking the original saved request without starting a runtime or sending another generation; retry is offered only after an explicit absent result.
-
-- Arena start, comparison creation, candidate selection and manual merges can confirm their original saved requests after uncertain acknowledgements without replaying writes. Identity reveal checks the original target visibility, retaining newer edits and requiring an explicit retry only when supported by the read result.
-
-- Resolve uncertain source and translation-import adoption, saved AI/Arena candidates, Task cancellation and continuation through read-only checks of the original request. Automatic checks do not repeat writes; retry remains explicit and is available only after the original result is confirmed absent.
-
-- Uncertain review decisions, built-in checks, terminology saves, context saves and captures, and file glossary decisions can be checked against the complete original request without replaying a write. Only a confirmed missing result enables an explicit retry; newer drafts and review evidence are preserved.
-
-- Confirm uncertain translation saves and revision selections through read-only checks of their complete original requests. Keep newer edits and unknown results available; a confirmed check can continue leaving without saving again.
-
-- Project overview rereads source availability through the shared session cache after source changes and when returning to the view. Refreshing or failed reads cannot keep the translation shortcut ready, and responses from a previous project cannot change the current overview.
-
-- Project metadata recovery checks the original saved request through scoped commands. While its result is being checked, users may edit the text and folder checkbox without changing that request; confirmation keeps newer edits unsaved, and repeated reads or late responses cannot clear another draft or continue navigation.
-
-- Translation import, fixed match application and historical revision selection share scoped commands and preserve their original requests. A later rejected retry cannot erase an earlier uncertain import or selection; checked history and current-source reads remain separate from captured import work.
-
-- Build and export actions share scoped commands with exact mappings, saved release identities and destination consent. Original uncertain requests remain recoverable across view changes; historical release export stays available when current readiness or history reads fail.
-
-- Task recovery, saved-result application, cancellation and preview navigation verify the exact workspace and original scope through the shared command context. Confirmed requests retain their identities across view changes; uncertain results require an exact lookup before explicit replay, and changed or failed reads cannot authorize new task actions.
-
-- Arena actions verify their exact workspace scope, comparison basis, draft or saved candidate through the shared command context. Original uncertain requests remain recoverable, checked Task cancellation stays available during view refreshes, and captured work survives view changes without accepting a replaced or failed read.
-
-- AI actions share the current workspace command context and verify the selected scope or saved candidate before starting. Original uncertain requests remain available for explicit recovery, and approved captured work continues across view switches without applying late results to a replacement project.
-
-- Translation and review workspaces refresh their current references and history through the project session while preserving drafts and captured scopes. Failed reads keep completed saves distinct from uncertain writes; returning to a workspace does not restore stale editing or navigation permission.
-
-- Keep workspace positions and unsaved work when inactive views unmount. Project close and replacement check unfinished work in every workspace, retain unknown operations for recovery, and reject stale navigation or newer input after saving. Confirmed project changes still settle when newer input arrives during opening or closing; local work from the ended session stays read-only for copying until explicitly discarded, and its operations cannot continue into the new session.
-
-- Tasks preserve complete application decisions and original requests across view remounts, including groups spanning result pages. Shared translation writes and same-task cancellation are coordinated before application starts. Uncertain applications require matching preparation and receipt evidence before settling; keeping output or refreshing progress cannot discard an unknown outcome. Recovery actions without a provable original result retain their scope and uncertainty.
-
-- Build mappings, destination checks and original build/export recovery survive release-workspace remounts. Late build confirmations preserve newer input, complete file receipts are checked before confirmation, and selecting a folder again authorizes checking the original export without treating a missing record in that folder as proof that no export occurred. Ordinary navigation retains preparation; leaving the project asks before discarding it.
-
-- Arena settings, explicit generation consent, fixed merge drafts and original start, comparison, reveal, selection and candidate-save requests survive view remounts. Recovery checks complete rounds and the original action, preserves newer input and confirmed saves after read failures, and shares the translation write reservation for selection, merging and candidate saving.
-
-- AI generation and candidate saving keep their original preview, complete selected scope and requests across view remounts. Explicit recovery checks the original attempt or action; confirmed saves remain recorded when result reads fail, and late confirmations preserve newer settings.
-
-- Task, Source, AI and Arena cancellation share the original request across workspace changes and remounts. Explicit retries reuse its identity, and a checked cancellation acknowledgement is kept separate from later task reads and actual worker stopping.
-
-- Translation import preparations, fixed match previews, complete-file confirmations and original uncertain actions survive leaving their view. Checked adoption keeps newer manual input, and import, manual saves and revision selection share one write reservation. Uncertain revision selections retain their captured text and can reconcile the original action after source or language changes.
-
-- Source content, history, identity evidence and translation impact refresh with current project facts. Paged searches retry their original filter and cursor, hidden views stop reads, and removed languages block stale navigation. Automatic comparison reads preserve fixed identity decisions and confirmation evidence; viewing current content remains separate from reading an earlier applied snapshot, including beside newer decisions retained after a late confirmation.
-
-- Source selections, declarations, fixed previews and identity decisions survive view remounts. Original uncertain actions retain their exact request for checked recovery; preparation and adoption confirmations must match that request and its frozen unit. Confirmed application remains saved when a later content read fails, and late confirmations keep newer decisions.
-
-- Current glossary, context, translation-memory and impact reads refresh with project changes, retain paged read recovery, and stop when their view closes. Fresh resource actions recheck their exact target and current read evidence after preparation; automatic comparison refreshes retain the original captured comparison until it is explicitly read again.
-
-- Resource term and context drafts, captured file comparisons and fixed input evidence survive navigation and view remounts. Late saves keep newer edits; removed languages block new work while original uncertain saves, decisions and context captures can be retried with the same request. A captured file remains available when its preview read fails.
-
-- Review fallback and waiver actions recheck the displayed entry, issue and existing exception before dispatch. Batch approvals keep their displayed confirmation scope, recheck availability before starting, and retain the stop control while an entry is being recorded.
-
-- Build-readiness assessments keep the explicitly selected languages, refresh after relevant project changes, and show loading and retry separately. Changing the language selection or leaving the assessment prevents late reads from replacing current results or interfering with review drafts and pending actions.
-
-- Review work queues open without waiting for summaries, show loading separately from empty results, and refresh after relevant project changes. Leaving the queue releases its view wait; a failed page can be retried at its original cursor without replacing captured review work.
-
-- Review history loads independently of the selected entry and current evidence. Failed history pages have their own retry and first-page recovery, while new review results return to current history without replacing reasons, fixed selections or pending actions.
-
-- Save-and-next retains newer edits and original uncertain save requests, and stops late navigation after leaving the workspace or changing the target language.
-
-- Validate project names and target languages before saving from the leave dialog, keeping invalid drafts available to edit.
-
-- Review reasons, reviewer details, fixed selections and original pending actions survive closing the panel or remounting its view. Late confirmations preserve newer edits, while checks and batches retain their original cancellation controls. Returning to an entry retains the content its reason refers to; changed content can be compared and explicitly accepted without losing the reason. Stale checks remain separate from current evidence, and actual project leave still requires confirmation.
-
-- Review retains reasons and original unknown actions when a target language is removed. It blocks new work for that language, checks the scope again after waiting, and reports unstarted entries when a batch stops. An uncertain request remains reserved for exact reconciliation even after its language is restored.
-
-- Translation drafts and their original save requests belong to the project session. Leaving the editing view keeps newer input and pending confirmations; a late save acknowledgement updates its basis without replacing edits made while saving.
-
-- Earlier translations, QA results and review decisions remain readable after source updates remove an entry. Removed entries stay excluded from current evaluation, editing and build eligibility.
-
-- Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
-
-- A recorded task cancellation remains unconfirmed if reading a running worker's state fails. Rechecking the original request preserves its cancellation revision and does not cancel explicitly resumed work.
-
-- AI preparation keeps connection settings, selected scope, preview and consent when navigating between workspaces. Source, resource or sharing changes require a fresh preview and consent; late previews cannot restore obsolete preparation.
-
-- Target-language changes recheck the active translation scope. Drafts for removed languages remain available with a return-to-settings recovery action, while new reads and writes for an unavailable language are blocked.
-
-- Ctrl+S and Command+S save the active translation draft from its list or reference panel. Project-name shortcuts use the same required-name validation as the save button and keep invalid input available for correction. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations; an uncertain translation save can only be checked or retried explicitly.
-
-- Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
-
-- IPC validation keeps both primitive integer bounds and narrower declared field constraints.
-
-- Failed edits preserve their submitted and rejecting bases with translated recovery guidance and expandable diagnostics. Command diagnostic references correlate sanitized boundary logs, including failures before queue admission; unknown results continue to retain the original action.
-
-- Project lifecycle responses, change notifications, execution results, source content, translations, resources, reviews, build/delivery, AI and Arena records are checked against generated Rust contracts; malformed confirmations remain unconfirmed, and revision counters retain their full integer range, including source history revisions. Malformed rejection objects also retain the original action for reconciliation, even when their error code is recognized.
-
-- Metadata updates reject noncanonical expected revisions, including signed values and leading zeros, before writing project data.
-
-- AI resource baselines and reported token usage retain full unsigned integer precision. Arena totals remain exact across candidates; start, comparison and merge confirmations must match the submitted attempt or action.
-
-- Term and context saves preserve newer content and source notes when a delayed response arrives or an uncertain original action is checked again.
-
-- Build acknowledgements confirm the submitted attempt, and export previews bind the release and destination selection. Export confirmations bind the submitted action, release and overwrite choice; delivery history cannot include a different release.
-
-- Lost build and export confirmations retain their original request for an exact saved-result check before another action or navigation. Retrying an accepted build preserves its fixed inputs after later edits. A history refresh failure cannot replace a confirmed export or mask its original rejection.
-
-- Review and QA responses retain their complete input evidence; decisions, checks, waivers and fallback confirmations must match the submitted action, unit and language before pending state is cleared.
-
-- Manual translation saves confirm the committed revision and the next edit basis directly, preserve newer input, and keep history refresh separate from save confirmation. Translation counters and history cursors use exact decimal strings across desktop IPC.
-- Translation, resource, AI and Arena mutations retain their original action after an unrecognized or disconnected IPC response; diagnostic wording no longer decides whether an action may be retried.
-- Desktop project operations, search, review and export run on a bounded project thread instead of blocking window events. Cancellation remains available while review checks run, and queued requests recheck the active session before accessing project data.
-- Project lifecycle cancellation, retry intent, folder moves, stale recent paths, action feedback, and shutdown while tasks are active.
-- Translation draft preservation and save ordering during navigation, return to an editor, and late responses; responsive review checks and saves.
-- Editor keyboard shortcuts and workspace selection interfering with text editing or unexpectedly reopening the first item.
-- Source import limits, unsupported-value feedback, identity guidance, long native keys, and retained input when reopening source updates.
-- QA waiver scope and validator evidence, historical handling of late QA replies, and changed-versus-unchanged source qualification.
-- Caption ordering, Unicode payload boundaries, and timing/layout semantics in upstream impact estimates.
-- Arena selection preservation and recovery after an uncertain manual merge.
+- **Mac Keychain and Responses handling**: Refuse protected-account access cleanly when macOS requires interactive Keychain prompts, require explicit sign-out state persistence before re-authenticating after a write failure, and treat native Responses refusal content as a failed attempt even when refusal delta events are omitted.
+- **Plugin and member process diagnostics**: Preserve detailed failure phases across plugin dispatch, package staging, readiness, invocation, and post-close handling, as well as member process timeouts, crashes, and channel errors. Keep recorded generation progress visible after reference queries consume the remaining tool allowance.
+- **Read-only reconciliation for uncertain operations**: Across project metadata, source and translation imports, manual translation saves, glossary/context edits, review decisions, QA checks, waivers, AI requests, Arena rounds/merges, task cancellation/resumption, builds, and exports, uncertain or interrupted IPC acknowledgements are reconciled through read-only checks of the original request without automatically replaying writes. Explicit retry is enabled only after confirming the original operation did not take effect, and anonymous resume/retry IPC calls are rejected.
+- **Workspace draft and state preservation**: Preserve unsaved drafts, search filters, cursor positions, fixed previews, and pending confirmations when switching views, unmounting inactive panels, or handling late responses. Saving in the background updates the edit baseline without overwriting newer user typing, and closing or switching projects checks all views for unfinished work.
+- **Removed target languages and source entries**: Keep existing drafts and pending reconciliations accessible when a target language is removed while blocking new writes for that language. Preserve historical translations, QA results, and review decisions for source units removed in upstream updates while excluding them from active editing and build readiness.
+- **Wire contract validation and numeric precision**: Validate all IPC responses, notifications, and error payloads against generated Rust schemas, reject non-canonical revision strings (such as signed or zero-padded numbers), and preserve full integer precision and exact decimal string counters across Rust and TypeScript.
+- **Format and editor edge cases**: Fix editor keyboard shortcuts during IME composition and modal dialogs, source import size/type diagnostics, caption cue ordering, UTF-8 byte boundary handling across CJK/emoji/CRLF/BOM inputs, and upstream timing/layout impact calculation.

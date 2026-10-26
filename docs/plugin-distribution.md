@@ -1,73 +1,41 @@
 # Fixed offline extension preparation
 
-For explicitly selected local collections, see [manual offline Packs](offline-packs.md).
-For authenticated local update catalogs, see [signed offline repositories](offline-repositories.md).
-The optional Apple silicon macOS desktop bundle carries a fixed Node/Host
-runtime and two independent prebuilt packages: WebVTT and SMAPI. Its bundled
-runtime requires macOS 13.5 or later. End users of an assembled application do
-not need a development Node, Rust, Python, pnpm or Git installation. Preparing
-and building that application is a separate developer operation; an empty
-machine is not promised an offline source build.
+For side-loading local collections of packages, see [manual offline Packs](offline-packs.md); for signed local update catalogs, see [signed offline repositories](offline-repositories.md).
 
-The current selection uses the published unsigned experimental plugin archives
-for the [Mac application prerelease](experimental-release.md). The preparation
-command does not authenticate a publisher or establish signed network updates,
-a clean-system offline run, or compatibility outside the recorded combination.
+The optional Apple silicon (`aarch64`) macOS desktop bundle includes a pinned Node/Host runtime (requiring macOS 13.5 or later) along with two prebuilt plugins: **WebVTT** and **SMAPI**. End users running the packaged desktop app do not need Node.js, Rust, Python, `pnpm`, or Git installed. The steps below describe how developers stage and build that offline-ready desktop bundle from pre-fetched release artifacts.
+
+The current configuration bundles the unsigned experimental plugin archives built for the [Mac application prerelease](experimental-release.md).
 
 ## Inputs and ownership
 
-The application owns
-[`bundled-plugins.macos-aarch64.json`](../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json).
-Each entry fixes an independent plugin identity/version, declared public source
-repository and commit, complete Host package digest, transport archive name and
-SHA-256, and exact SDK artifact/version. The selection also fixes the platform,
-runtime profile and SDK process protocol. The build and application setup reject
-a different runtime profile/protocol rather than infer compatibility from the
-unchanged alpha version.
+### Desktop catalog (`bundled-plugins.macos-aarch64.json`)
 
-The current candidates retain source-extraction context facts and their exact
-source revision through the pinned SDK helpers. The selected WebVTT package also
-imports existing translated captions from a captured target-language file, with
-independent semantic checking and explicit per-entry adoption. This selection
-changes neither installed package approvals nor existing project bindings.
-Updating a candidate requires
-refreshing its source commit, SDK artifact, transport and complete Host package
-digests together; selecting an older archive by the same alpha version can lose
-these capabilities.
+The desktop application tracks its bundled plugins in [`bundled-plugins.macos-aarch64.json`](../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json). Each entry pins:
+- The plugin identity and version
+- The public source repository and commit hash
+- The full Host `packageDigest`
+- The transport `.tar` filename (`archiveName`) and its SHA-256 digest
+- The exact SDK artifact and version
 
-The public [plugin repository](https://github.com/Anpimi/tsumugi-plugins) owns
-package production, recipes, domain dependencies and deterministic uncompressed
-candidate `.tar` files. Obtain the exact [WebVTT](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1)
-and [SMAPI](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
-release archives matching this catalog, then name the local files `webvtt.tar`
-and `stardew-smapi.tar`. Verify the fixed transport digests. The preparer performs
-no network access, source checkout or dependency compilation. A missing archive
-is a failure, not permission to
-fetch a branch or rebuild a different candidate.
+The catalog also locks the target platform, runtime profile, and SDK process protocol. Both the build script and the desktop installer verify these exact pins rather than assuming compatibility from matching `0.1.0-alpha.1` version strings.
 
-Transport SHA-256 identifies exact archive bytes. `packageDigest` is a different
-identity computed by the existing Rust Host over complete package content and
-executable flags. Neither digest authenticates a publisher. Declared source
-commits and embedded SDK provenance do not independently prove a build's origin.
-Application build pins, local approval, installation receipts, project selection
-and execution grants retain their respective owners.
+The pinned WebVTT and SMAPI packages preserve source-extraction context facts and source revisions via the SDK helpers, and the WebVTT package also supports importing existing translated captions from a target-language `.vtt` file (with independent semantic checks and per-entry adoption). When updating a bundled plugin, update its source commit, SDK artifact, transport SHA-256, and `packageDigest` together.
+
+### Plugin release archives
+
+The public [plugin repository](https://github.com/Anpimi/tsumugi-plugins) owns plugin builds, packaging recipes, domain dependencies, and reproducible uncompressed `.tar` archives.
+
+Before running the preparation script, download the matching release archives and place them in a local directory as `webvtt.tar` and `stardew-smapi.tar`:
+- [WebVTT (`webvtt/v0.1.0-alpha.1`)](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1)
+- [SMAPI (`stardew-smapi/v0.1.0-alpha.1`)](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
+
+Verify their transport SHA-256 checksums against `bundled-plugins.macos-aarch64.json`. The preparation script operates strictly offline—if an archive is missing, it fails immediately rather than fetching source code or building a replacement. Note that the transport SHA-256 covers the `.tar` file bytes, while `packageDigest` is computed by the Rust Host over the unpacked manifest, files, and executable flags.
 
 ## Prepare and build
 
-First prepare the current compiled Host, production dependencies and fixed Node
-distribution using the [runtime preparation instructions](../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact).
-Use a trusted builder; only the fixed tool files and clean Host runtime are
-included from that preparation. Preparation reports and local package-manager caches do
-not grant authority or supply runtime dependencies.
-
-Place the two complete, approved archives in one existing directory. Their
-filenames must match `archiveName` in the catalog. Build and explicitly review
-the `tsumugi-plugin-package` inspector and its SHA-256, then run with Python 3.11
-or newer. Also prepare the application's standalone
-[Pi member artifact](../runtimes/agent-service/README.md) from the same checkout.
-Its frozen dependencies and platform esbuild binary must already be available
-offline. Run these commands from the repository root; neither preparer invokes
-an installer or fetches runtime dependencies:
+1. **Prepare the JavaScript Host and Node runtime**: Follow the [runtime preparation instructions](../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact) on a trusted build machine to stage the compiled Host, production dependencies, and pinned Node distribution.
+2. **Stage the plugin archives**: Place `webvtt.tar` and `stardew-smapi.tar` (matching `archiveName` in the catalog) into an existing local directory.
+3. **Build the Host inspector and stage bundled resources**: Ensure Python 3.11+, Cargo's offline cache, and the [Pi member artifact](../runtimes/agent-service/README.md) dependencies (including the platform `esbuild` binary) are available locally, then run from the repository root:
 
 ```sh
 cargo build --locked --offline -p tsumugi-plugin-host --bin tsumugi-plugin-package
@@ -81,73 +49,22 @@ pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/sr
 CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
-The resource parent must exist and both output directories must be new. Member
-packaging compiles source directly; the frontend build and Cargo build script
-do not create or refresh that artifact. Explicitly review previous output or
-use a fresh checkout rather than overwriting it. All supplied paths
-are absolute and may not traverse symlink ancestors, apart from the fixed macOS
-`/tmp` and `/var` OS aliases. Archive files must be ordinary, bounded single-link
-files. The preparer captures the actual archive bytes before interpreting them;
-only those captured bytes are materialized, never a later replacement path.
+### How staging and verification work
 
-Archive transport accepts regular files with canonical portable paths only. It
-refuses traversal, aliases, duplicates, overlapping paths, links, sparse/special
-members and extra/missing recipe files. Each package has at most 256 files, at
-most 16 path components and at most 64 MiB; the whole selected bundle also has a
-64 MiB file-content ceiling. SDK lock contents must match the exact selected SDK
-artifact and version. The pinned Host inspector independently validates the
-actual manifest and complete package digest; a matching transport hash alone is
-not sufficient.
-
-All files are prepared beneath a new owner-only staging directory. Only a
-captured inspector copy with the reviewed executable hash runs; no plugin,
-selected Node, Host component or package script runs. The inspector has bounded
-time and output. Its identity, digest, manifest bytes, file count and byte count
-must match the selected package. The preparer rechecks captured inputs and the
-complete prepared files/executable flags before atomically promoting the entire
-set with the platform's no-replace rename operation. Final package directories
-are `0755`, ordinary files `0644`, and executable files `0755`; the executable
-flags remain identical to the inspected artifact, independent of builder umask.
-
-`preparation.json` inside the output records public selection pins, inspector
-hash and package observations without local source paths. The desktop build
-captures the actual package/runtime resources again and embeds source-owned
-metadata; it never trusts this report as approval. Tauri places complete package,
-tool and Host trees at their logical resource paths. The separate member tree
-is captured through the same Host artifact owner used at execution; a missing
-entrypoint or a protocol different from Core's generated profile fails the
-build. It uses only the independently approved Node tool and does not become a
-plugin Process channel. The exact Node distribution pin remains owned by the
-existing runtime preparation. The current build supports
-the selected macOS arm64 builder and target only.
+- **Path and destination rules**: All CLI paths must be absolute and free of symlink ancestors (except macOS `/tmp` and `/var` system aliases). The parent directory `apps/desktop/src-tauri/resources` must exist, while both `bundled-plugins` and `member-runtime` must not exist yet (neither the frontend build nor Cargo's `build.rs` generates `member-runtime`).
+- **Archive and package validation**: Each `.tar` input must be a regular, single-link file containing only portable relative file paths—no path traversal, symlinks, hard links, special/sparse files, duplicate paths, or unlisted files. Each package may contain at most 256 files, 16 path segments, and 64 MiB (with a 64 MiB cap across the combined bundle).
+- **Isolated inspection and atomic promotion**: `prepare-desktop-plugins.py` copies the input archives and the verified `tsumugi-plugin-package` binary (checked against `--inspector-sha256`) into an owner-only staging directory. It runs only that inspector binary—never plugin code, Node, or package scripts—to verify each package's identity, `packageDigest`, manifest hash, file count, byte count, and `sdk.lock.json` pins. Once verified, it sets deterministic permissions (`0755` for directories and executables, `0644` for regular files, independent of `umask`) and atomically renames the staged directory to `--output` without overwriting existing paths.
+- **Desktop packaging**: `preparation.json` records the public catalog pins, inspector hash, and package digests without embedding local filesystem paths. During `tauri build`, the Rust build re-verifies the staged plugin packages, JavaScript runtime, and `member-runtime` tree (ensuring its entrypoint and protocol match Core's generated profile) and bundles them into the macOS `aarch64` application.
 
 ## Failures and existing installations
 
-A corrupt archive, wrong source/identity/SDK artifact, changed input, unexpected
-file, invalid Host inspection or missing dependency stops preparation. No old
-catalog, embedded parser, development checkout, PATH runtime or source compilation
-is used as fallback. A preparation failure leaves the final destination absent
-and may retain the new `.tsumugi-plugins-*` staging directory beside it for
-review. Existing destinations are refused before reading inputs; even an empty
-directory created concurrently cannot be replaced. Remove only an explicitly
-reviewed failed attempt, or choose a fresh destination. Never overwrite an
-already verified resource set to make a retry succeed. A rare staging cleanup
-failure after successful promotion is reported separately; the completed output
-remains available for inspection.
+If an archive is corrupted, a digest or SDK lock mismatches, an unexpected file is present, or the output directory already exists, `prepare-desktop-plugins.py` aborts without creating `--output`. When a run fails after staging begins, the temporary `.tsumugi-plugins-*` sibling directory may be left behind so you can inspect the failure; review and delete it before retrying, and never overwrite an already verified output directory in place.
 
-In the application, review **Extensions → Use included extensions**. Setup uses
-the same capture, revisioned settings and Store installation boundary as manual
-packages, preserving existing activation choices. Uncertain results retain the
-original request for reconciliation. Installed bytes and local decisions can
-remain available after the original acquisition resources disappear. New
-execution still requires the actual selected environment, current approval,
-supported platform and a separately authorized Core operation. Bundle updates
-do not replace an in-flight attempt's captured environment.
+Inside the packaged desktop app, users can install these bundled plugins via **Extensions → Use included extensions**:
+- Setup uses the same PackageStore installation and revisioned settings flow as manually added plugins, keeping any existing enablement choices and in-flight task environments untouched.
+- If an installation is interrupted, the pending request is retained so the user can reconcile or retry it, and already installed plugins remain usable even if bundled installation resources are absent in a later build.
+- Running a plugin in a project still requires an approved runtime environment and per-operation execution consent.
 
-Before distributing, verify the final installation/portable artifact, both
-packages and the complete runtime on a clean supported system with networking
-unavailable and no developer toolchain. Exercise setup, reopen, both domains,
-damaged/missing resources, existing decisions and uninstall/update boundaries.
-Build preparation and transport tests are narrower evidence than that acceptance.
+Before distributing a release build, test the final `.app` / installer bundle on a clean Apple silicon macOS system with network access disabled and no developer tools installed—covering initial setup, app restarts, both WebVTT and SMAPI workflows, missing/corrupted resource handling, and update/uninstall behavior.
 
 [简体中文](plugin-distribution.zh-CN.md)

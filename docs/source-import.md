@@ -1,111 +1,68 @@
 # Source import
 
-Each executable source/translation role captures its own complete Project or
-Attempt binding from the installed component. Producer, semantic checker and
-format Review scopes may differ. An Attempt checker uses its own execution
-attempt; the producer result cannot choose or widen that scope. Source, required
-checks, original grants and saved validation evidence remain unchanged owners.
+The **Source content** view imports and maintains project source snapshots using an installed source plugin and runtime. See the [README](../README.md#development) for current database schema compatibility and the [versioning policy](versioning.md) for application release versioning.
 
-The Source content view uses an enabled installed source package and an independently approved installed runtime. In **Extensions**, review and install the exact package, enable it separately, and independently approve and install its supported runtime. Installation and enablement do not authorize code execution. The first captured JavaScript runtime targets Apple silicon on macOS 13.5 or later; other runtime profiles and the complete official domain-package distribution remain under development. A build without an installed supported environment explains the unavailable operation and keeps existing project content available.
+## Preparing extensions and capturing source files
 
-Choose the installed source format and runtime, then **Choose source folder**. The native chooser authorizes the directory; requests cannot supply a directory path. The package's non-executable source Resource fixes material paths, limits, profile, revision policy, and independent extractor/checker contributions. The workbench does not select a parser by plugin name or file extension.
+Before importing source files, open **Extensions** to review, install, and enable the source package, and independently approve and install its required runtime (the initial bundled JavaScript runtime targets Apple silicon Macs running macOS 13.5 or later). Each executable role—producer, semantic checker, and format reviewer—maintains its own `Project` or `Attempt` execution binding.
 
-Confirm that the files use the project's source language. **Check source files** captures and fingerprints only the declared material. It neither runs a plugin nor grants execution permission. Review the fixed file list, exact package/runtime and requested permissions. **Import for preview** requires explicit consent to the extractor for that input and up to ten minutes. It uses those captured bytes without rereading the external source, even if the source files subsequently change.
+To import a source snapshot:
 
-The plugin runs as the current OS user and can access files and network outside the captured material. A child process is not an OS sandbox. Approval of the package or runtime does not substitute for this per-attempt decision.
+1. **Select format and directory**: In **Source content**, select the installed source format and runtime, choose the project's source language, and click **Choose source folder**. Directory access is granted strictly through the native OS folder picker; the package's declarative source Resource defines which relative file paths, byte limits, and revision rules apply (parsers are never inferred from plugin names or file extensions).
+2. **Capture and fingerprint**: Click **Check source files** to capture and fingerprint the declared input files into the project without executing any plugin code.
+3. **Extract for preview**: Review the captured file list, package/runtime identities, and requested permissions, then grant explicit execution consent (valid for up to 10 minutes) and click **Import for preview**. The extractor plugin processes the captured bytes stored in the project rather than rereading the external filesystem. Note that plugin child processes run under your current OS user account and are not sandboxed at the OS kernel level.
+4. **Run mandatory source checks and apply**: A successful extraction produces a saved source proposal. Click **Review independent check execution** to prepare the proposal for the semantic checker, consent to **Run independent source checks**, and then click **Record fixed check validation**. Once Core verifies that both the extraction and mandatory semantic checks succeeded under valid grants, confirm and apply the complete source snapshot across all pages.
 
-A successful extraction creates a saved proposal; it cannot be applied yet. **Review independent check execution** prepares the complete fixed source and proposal for the exact checker and required semantic rules without running it. Separately consent to **Run independent source checks**, then **Record fixed check validation**. Core rechecks both executions and their current permissions before recording the proof. Pending, incomplete or invalid mandatory checks block application and retain the proposal. Only valid checks enable confirmation and application of the entire captured set, including pages not displayed.
+## Updating source content and maintaining identity
 
-When a project already has source content, choose **Update source content** to capture another complete declared set of files. The comparison identifies same-key text changes, unchanged content, reordered positions, additions, removals, possible renames, and ambiguous one-to-many or many-to-one relationships. Equal text under another key is only a candidate; it never inherits identity automatically. Reviewers can confirm or reject a candidate with their name and reason. Unresolved or rejected entries become new content identities. The original snapshot, translations, decisions, and releases remain stored. Project names and target-language changes do not invalidate the source comparison itself; an enabled maintenance notice still requires its chosen target language. A competing source snapshot invalidates source confirmation.
+When a project already has an adopted source snapshot, use **Update source content** to capture an updated set of source files and compare it against the current snapshot:
 
-Identity continuation uses the saved native evidence and the fixed versioned revision policy. A same-key text change needs an explicit continuation decision to retain its unit, and its earlier translation approval and QA do not carry over. A same-key, same-text entry can retain its unit and source revision even when reordered. Review and QA must establish current eligibility before another release.
+- **Change classification**: The comparison identifies unchanged strings, same-key text edits, reordered entries, additions, removals, candidate renames, and ambiguous (`1:N` or `N:1`) mappings. Identical text under a different key is surfaced as a candidate rename and requires a reviewer's name and reason to confirm or reject; unresolved or rejected items become new content units.
+- **Continuation rules**: Under the versioned revision policy, an unchanged string with the same key keeps its content unit, source revision, and existing translation approvals/QA even if reordered. A same-key string whose source text changed requires an explicit continuation decision to retain its content unit, and its prior translation approval and QA checks are invalidated until re-verified in **Review and QA**.
+- **Impact estimation and work queue**: Before applying the update, **Review estimated impact** summarizes per-language effects across the complete snapshot. After applying, **Current translation impact** computes the exact review and QA work needed per entry and links directly to **Review and QA** and the translation editor.
+- **Snapshot history and identity correction**: **Source snapshot history** retains all verified snapshots, file fingerprints, and continuation decisions. To amend an earlier identity decision, reimport the current source files, select the earlier snapshot as the historical comparison basis, and record the updated continuation or rejection decision (reimporting identical files without an identity change is rejected as a no-op).
 
-Search and paging change only the displayed comparison. The confirmation always covers the complete captured source, including removed entries and unresolved relationships. **Review estimated impact** shows a per-language estimate before confirmation. After adoption, **Current translation impact** derives the current qualification and all pending reasons from saved source, translation, review and resource facts. Its work-queue action opens the existing review workflow, and an entry can open its translation editor directly. Returning to Source content refreshes the same impact page. An estimate cannot grant approval or overwrite a newer translation edit.
+### Optional maintenance notice
 
-**Source snapshot history** lists verified snapshots, original fingerprints and identity evidence. Search an earlier snapshot to inspect its native text, decisions, reviewer and reason. To correct an identity decision, import the current source package again, choose the earlier snapshot as the historical decision basis, and record an explicit continuation or rejection. You can search that fixed historical source for another item rather than relying on equal-text suggestions. Correction appends a new checked snapshot and receipt; it preserves unrelated current identities and earlier decisions, translations and releases. Reimporting identical files without an explicit identity decision is rejected as unchanged.
+Before applying a checked source snapshot, you can optionally enable a **maintenance notice** for one target language:
 
-## Optional maintenance notice
+- The notice option belongs to that specific source adoption action, expires after 5 minutes, and evaluates the first 100 source occurrences (which may include repeated entries).
+- Applying the source snapshot and evaluating the maintenance notice succeed or fail independently: if the notice fails, stops, or is superseded by another source update, the applied source snapshot remains intact.
+- Viewing a completed notice displays a read-only impact summary. Preparing or replacing an AI maintenance draft from the notice requires a fresh check and uses the standard **AI translation** preview, data-sharing, and consent flow.
 
-Before applying checked source content, you can enable one maintenance notice
-and choose its target language. It is off by default. The choice belongs to that
-exact source action and expires after five minutes; replaying the action does not
-extend its deadline. The notice checks the first 100 source occurrences, which
-can include repeated entries. Entries beyond that window have not been assessed.
+## Inspecting original source records in the editor
 
-Applying source content and evaluating its notice have separate outcomes. A
-failed, stopped or expired notice does not undo saved source content. The notice
-records its original source snapshot and complete assessment. A competing source
-update makes unfinished work superseded. Reopening the project shows saved
-history without restarting a pending notice or restoring permission.
+In the translation editor, expand **Terms, context and history** to view extracted source facts, neighboring strings, and captured format metadata:
 
-Use the original source action to inspect an uncertain notice or stop new work.
-If preparation has not yet been recorded, its state remains unconfirmed; ending
-a local wait does not prove it stopped. Stopping closes new admission while
-already accepted work drains, and does not cancel the source adoption itself.
+- Source details display the original native key label, captured filename, and half-open character/byte range (`UTF-8` bytes, `UTF-16` code units, or graphemes).
+- Clicking **View original record** loads the full stored record text on demand (up to an 8 MiB encoded response limit, without truncating text to fit a summary page). Each read verifies that the current source snapshot and entry selection have not changed.
 
-Viewing a notice shows read-only saved impact. It does not change the AI draft
-or its language. Creating or explicitly replacing a maintenance draft requires a
-fresh check and respects current Source and AI edits and unresolved operations.
-The existing AI workbench still requires its own plan, preview, sharing choices
-and execution consent. The notice does not run a model, plugin or worker, select
-translations, grant approval or publish a release.
+## Capture security and payload limits
 
-## Inspect original source records
+### Native file capture guarantees
 
-In the translation editor, expand **Terms, context and history** to read source
-facts, neighboring text and additional captured source information. Choose
-**View original record** for an additional record to load its complete stored
-text, such as the original settings associated with a subtitle cue. Source
-details identify its scope and captured format. This advanced reference is
-read-only; viewing remains local under the existing separate AI sharing controls.
+Tsumugi captures declared source files through native directory handles to prevent path traversal and concurrent tampering:
+- Symbolic links, reparse points, parent-directory traversal (`..`), and duplicate physical file inputs are rejected.
+- On Windows, the capture handle denies concurrent writes, renames, and deletions while files are read. On macOS, each path component is opened relative to its parent directory descriptor (`O_NOFOLLOW`, mapping `/var` and `/tmp` to `/private`), and file identities, timestamps, directory entries, and byte contents are re-verified before accepting the capture.
+- Once files are captured into the project database, external source folders can be moved or deleted without affecting previews, adoption, or project reopening.
 
-Each record is checked against the current source snapshot and entry before it
-is read. Changing the source or selected entry keeps newer translation drafts
-and prevents an earlier response from appearing under the new entry. Unavailable
-records offer a retry in place. Ordinary reference pages contain descriptions;
-the full text is loaded only when a record is opened and is never truncated to
-fit a page. Existing source capture and format limits still apply.
+### Payload and profile ceilings
 
-## Materials and limits
+- **General pipeline limits**: Encoded source payloads are capped at 2 MiB, content exchanges at 4 MiB, complete fixed check inputs at 4 MiB, and persisted execution results at 8 MiB (counting metadata and references). Preview pages return up to 100 rows and 256 KiB per page without truncating individual strings, while editor reference pages are capped at 128 KiB.
+- **Bundled Stardew SMAPI profile limits**: Expects a single Mod folder containing `manifest.json` (declaring an entry DLL or content pack; no DLL is ever executed) and a flat `i18n/default.json` localization file (UTF-8 with optional BOM, JSON comments, and trailing commas allowed; `$schema` is preserved as metadata). Duplicate or case-colliding keys, empty localization objects, split `i18n/default/` directories, archives, and inline Content Patcher files are rejected. Cumulative SMAPI limits are: 16 KiB `manifest.json`, 128 KiB combined input, 256 direct directory entries per inspected folder, 2,000 strings, 1,024-byte printable ASCII native keys, 256-byte ASCII namespace, 16 KiB per string, and 1 MiB saved source capture.
 
-Supported format semantics and material paths come from the selected package. Native capture rejects links, path traversal, observed replacement and duplicate physical inputs; files must meet their declared byte limits and the shared encoded capture budget. Unsupported or incomplete inputs fail as a whole. Source payloads have a 2 MiB encoded ceiling, content exchanges a 4 MiB ceiling, the complete fixed check input a 4 MiB ceiling, and the stored execution result an 8 MiB ceiling. Metadata and references count toward these limits. Preview pages contain at most 100 rows and 256 KiB without truncating text.
+## Task persistence and recovery
 
-Editor reference pages retain their separate 128 KiB ceiling. One explicitly
-opened source record uses a separate 8 MiB encoded response limit, including its
-source identity; this local read limit does not expand the SDK's 2 MiB raw block
-limit or the original capture limits.
+Started imports run as persistent background tasks accessible in **Tasks**:
 
-Source details display the original identity label, captured file and half-open range with its explicit UTF-8-byte, UTF-16 or grapheme encoding. Canonical matching values do not replace the original label. Historical details load on demand and offer **Refresh** when unavailable; switching snapshots discards a late response for the earlier source.
-
-Files are read through authorized native directory handles. Windows denies ordinary writes, renames and deletion while the declared input files are captured. macOS opens each path component relative to a directory descriptor without following symlinks, then checks file identities, timestamps, directory entries and repeated bytes before accepting the capture. Detected concurrent changes reject the capture; POSIX advisory locks are not treated as write exclusion. The system `/var` and `/tmp` aliases are mapped to their `/private` locations. Reparse points, user-controlled symlinks and duplicate physical inputs are rejected. This is not a sandbox against privileged software. The Host sends fixed captured material to the declared process component; Core alone records project adoption. Process permissions are described above.
-
-## Saved tasks and recovery
-
-**Back** keeps an unstarted selection while the project stays open. Leaving the project asks before discarding it. Once import starts, its task and output remain available from **Tasks**. Closing a view does not cancel a persisted task. Active work participates in the existing stop-before-close or directory-move flow.
-
-If a start acknowledgement is lost, invalid or uncertain, the app automatically checks the original saved request once without repeating capture or execution. **Check saved import start** uses the same read-only check. Only a confirmed missing start enables **Retry the same import**, which explicitly resubmits the complete original request. A failed check or missing original-request evidence keeps the outcome uncertain and does not enable retry. Persisted tasks and captured bytes remain available in **Tasks** after reopening; an older task without that request binding cannot prove the original start.
-
-If applying is uncertain, query its saved receipt before retrying the same action. Repeated confirmed actions return the original receipt and identities. Cancelled output can only be applied with fresh explicit authorization. Unknown execution is never replayed automatically. Failed source files should be corrected and imported as a new task.
-
-Cancelled, expired or closed plugin grants require a new reviewed attempt; they cannot be renewed on the original attempt. A cancelled checker can be prepared again without replacing the captured proposal.
-
-After capture, the external source folder can be moved or removed: preview, adoption and reopening use project-owned bytes. Moving the closed project keeps content identities and receipts intact. Closing a project ends its current execution authority; persisted history does not restore a grant. Corrupt stored evidence and unsupported database schemas are rejected rather than repaired or shown as empty content.
-
-See the [README](../README.md#development) for the current database schema. This development build opens its current format only; earlier experimental projects are preserved and refused without conversion or reset. Application release versions and future upgrade support follow the [versioning policy](versioning.md).
-
-## Retained built-in source command profile
-
-- One Mod folder, with a manifest identifying either an entry DLL or a content pack, and flat localization strings. No DLL is executed.
-- UTF-8, optional BOM, JSON comments and trailing commas. Duplicate or case-colliding keys are rejected. Native keys and the manifest namespace must use printable ASCII; text can contain Unicode. Empty strings are preserved; an empty localization object is rejected.
-- `$schema` is retained as editor metadata, not a string to translate. Original files are kept byte-for-byte, including comments and fields not extracted.
-- Split `i18n/default/` layouts, archives, inline Content Patcher text, linked paths and other resource formats are unsupported. Build-time manifest version placeholders produce a warning; importing does not establish game compatibility.
-
-Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 direct entries in each inspected directory, 2,000 strings, 1,024-byte native keys, 256-byte namespace and 16 KiB per string. The saved source capture must fit 1 MiB, the SDK source and content proposal each 2 MiB, the complete fixed check input 4 MiB and the complete persisted execution result 8 MiB. Encoded limits include references and evidence and may be reached before the string-count limit. Oversized input fails as a whole. Preview pages contain at most 100 rows and 256 KiB without truncating text.
-
-The former SMAPI source fixture remains available for isolated regression checks through `execution-test-host`; it is not the normal Source content path or a fallback for unavailable plugins.
-
-Saved tasks and original receipts remain readable after reopening. New plugin execution still requires its original explicit preparation and current authorization; a saved result or continuation receipt does not restore a grant. Old anonymous resume/retry is refused. See the [execution test-host guide](execution-test-host.md#continuation-identity-and-current-storage) for the exact continuation boundary and the [README](../README.md#development) for current development compatibility.
+- **Lost start or apply confirmations**: If a start acknowledgement is lost or uncertain, the app queries the original saved request once in read-only mode (and **Check saved import start** repeats that check). **Retry the same import** is enabled only when the lookup confirms the request was never started. Similarly, if applying a snapshot returns an uncertain response, query the saved receipt before retrying.
+- **Reopening and grant lifecycles**: Closing a project or restarting the app preserves all saved tasks, captured bytes, and receipts, and ends active execution grants. Cancelled, expired, or closed plugin grants require preparing a new authorized attempt (a cancelled checker can be re-prepared against an already captured source proposal without re-running extraction). See the [execution test-host guide](execution-test-host.md#continuation-identity-and-current-storage) for continuation storage details.
 
 ## Native fault checks
 
-The explicit `execution-test-host` feature reads one-shot controls from `source-fixture-control/` beside its executable. Normal builds do not contain these hooks. JSON files named `estimate.json`, `prepare.json`, `adopt-before.json` or `adopt-after.json` are consumed at that boundary. `{"wait":true}` writes a `.reached` marker and waits up to 60 seconds for the matching `.release` file. `{"fail":true}` returns an unconfirmed response. A `source` object with `manifest`, `strings` and `language` captures and commits a competing complete source through the real runner and adoption handler. Use only synthetic projects. The post-adoption failure is delivered after the real commit and returns `outcome-unknown`; the original action remains available for receipt lookup, which must find exactly one saved snapshot.
+When built with the `execution-test-host` feature (absent from production builds), the source import pipeline reads one-shot fault-injection controls from a `source-fixture-control/` directory next to the executable, and retains the legacy SMAPI source fixture for isolated regression tests.
+
+Control files (`estimate.json`, `prepare.json`, `adopt-before.json`, and `adopt-after.json`) are consumed when execution reaches the corresponding boundary:
+- `{"wait":true}` writes a `.reached` marker file and pauses up to 60 seconds for a matching `.release` file.
+- `{"fail":true}` returns an unconfirmed response (`outcome-unknown` after `adopt-after.json` commits, allowing you to verify that receipt lookup finds the single committed snapshot).
+- Supplying a `source` object (`manifest`, `strings`, and `language`) commits a competing source snapshot through the real runner and adoption handler to test concurrent update handling. Always run fault checks against disposable synthetic projects.

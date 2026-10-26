@@ -1,52 +1,41 @@
 # 固定扩展的离线发行准备
 
-可选 Apple silicon macOS 桌面发行物携带固定的 Node/Host 运行环境，以及独立的
-WebVTT 和 SMAPI 两个预构建包；随附运行环境要求 macOS 13.5 或以上。使用组装后的
-应用不要求用户安装开发用 Node、Rust、Python、pnpm 或 Git。准备和构建应用属于
-开发操作，不承诺空机器可以离线从源码构建。
+如需手动导入本地扩展包集合，请参阅[手工离线扩展包](offline-packs.md)；如需使用带签名的本地更新目录，请参阅[签名离线仓库](offline-repositories.md)。
 
-当前组合为 [Mac 应用实验预发布](experimental-release.zh-CN.md) 选择已发布的未签名实验插件归档。
-准备命令不认证发布者，不证明签名网络更新、清洁系统离线运行或记录组合以外的兼容性。
+可选的 Apple silicon（`aarch64`）macOS 桌面发行包内置了固定版本的 Node/Host 运行环境（要求 macOS 13.5 或更高版本），以及 **WebVTT** 和 **SMAPI** 两个预构建扩展包。终端用户直接运行打包后的桌面应用即可，无需安装 Node.js、Rust、Python、`pnpm` 或 Git。本文介绍开发者如何在离线构建环境中准备并打包这些内置扩展资源。
+
+当前配置使用为 [Mac 应用实验预发布](experimental-release.zh-CN.md) 构建的未签名实验插件归档。
 
 ## 输入与责任
 
-应用拥有
-[`bundled-plugins.macos-aarch64.json`](../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json)。
-每个条目固定独立的插件身份/版本、声明的公开源码仓库与提交、完整 Host 包摘要、
-传输归档文件名与 SHA-256，以及准确 SDK 产物/版本。整组选择另固定平台、运行环境
-profile 和 SDK process protocol。构建与应用设置会拒绝不同 profile/protocol，
-不能仅凭相同 alpha 版本推定兼容。
+### 桌面端内置清单（`bundled-plugins.macos-aarch64.json`）
 
-当前候选通过固定 SDK helpers 保留源码提取的上下文事实及准确源码 revision。
-选定的 WebVTT 包另支持从捕获的目标语言文件导入已有译文，经独立语义检查后逐项明确采纳。
-本次随附选择不改变已安装包的批准或已有项目绑定。
-更新候选时须一并刷新源码提交、SDK 产物、传输摘要和完整 Host 包摘要；仅凭相同
-alpha 版本选择旧归档，可能丢失这些能力。
+桌面应用通过 [`bundled-plugins.macos-aarch64.json`](../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json) 管理随附扩展。每个条目固定以下字段：
+- 插件身份（publisher、ID）与版本号
+- 公开源码仓库地址与提交哈希
+- 完整的 Host `packageDigest`
+- 传输归档文件名（`archiveName`）及其 SHA-256 摘要
+- 精确的 SDK 产物与版本
 
-[公开插件仓库](https://github.com/Anpimi/tsumugi-plugins)拥有包生产、文件配方、领域
-依赖和确定性的未压缩候选 `.tar`。取得与清单匹配的准确
-[WebVTT](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1) 和
-[SMAPI](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
-归档，分别以 `webvtt.tar` 和 `stardew-smapi.tar` 保存在本地，核验固定传输摘要。
-准备器不联网、不检出源码、不编译依赖。
-归档缺失会报错，不因此下载某个分支或重新构建另一候选。
+该清单同时锁定了目标平台、运行环境 profile 与 SDK process protocol。构建脚本和桌面安装流程都会严格校验这些固定值，而不会仅凭相同的 `0.1.0-alpha.1` 版本号推定兼容。
 
-传输 SHA-256 固定归档字节；`packageDigest` 由原 Rust Host 按完整包内容和可执行位
-计算，是另一种身份。两种摘要都不认证发布者。声明的源码提交与随包 SDK 来源记录
-也不能独立证明构建来源。应用构建固定值、本机批准、安装回执、项目选择和执行授权
-仍由各自边界负责。
+当前锁定的 WebVTT 与 SMAPI 候选包通过 SDK helpers 保留源码提取的上下文事实及源码修订号（revision）；WebVTT 包还支持从捕获的目标语言 `.vtt` 文件导入既有译文（经独立语义检查后逐条确认采纳）。升级随附候选包时，必须同步更新源码提交、SDK 产物、传输归档 SHA-256 以及完整的 Host `packageDigest`。
+
+### 插件发布归档
+
+[公开插件仓库](https://github.com/Anpimi/tsumugi-plugins)负责插件构建、文件配方、领域依赖以及确定性的未压缩 `.tar` 归档。
+
+在执行准备脚本前，请下载与清单匹配的发布归档，并在本地目录中分别命名为 `webvtt.tar` 和 `stardew-smapi.tar`：
+- [WebVTT（`webvtt/v0.1.0-alpha.1`）](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/webvtt/v0.1.0-alpha.1)
+- [SMAPI（`stardew-smapi/v0.1.0-alpha.1`）](https://github.com/Anpimi/Tsumugi-plugins/releases/tag/stardew-smapi/v0.1.0-alpha.1)
+
+请核对归档文件的传输 SHA-256 是否与 `bundled-plugins.macos-aarch64.json` 一致。准备脚本完全离线运行——若归档缺失会直接报错，不会联网拉取分支或重新编译替代产物。请注意：传输 SHA-256 校验的是 `.tar` 归档字节，而 `packageDigest` 由 Rust Host 根据解包后的完整文件内容与可执行权限位计算得出。
 
 ## 准备与构建
 
-先按[运行环境准备说明](../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact)
-准备当前已编译 Host、生产依赖与固定 Node 分发包。使用可信构建环境；该准备仅提供
-固定工具文件与清洁 Host 树。准备报告和本机包管理器缓存不授予权限，也不替代运行依赖。
-
-将两个完整、已批准的归档置于同一已有目录，文件名须与清单的 `archiveName` 一致。
-构建并明确审阅 `tsumugi-plugin-package` 检查程序及其 SHA-256，再使用 Python 3.11
-或以上执行。同时从同一 checkout 准备应用的独立
-[Pi 成员产物](../runtimes/agent-service/README.md)，其冻结依赖与当前平台的 esbuild
-二进制须已离线备妥。以下命令从仓库根执行；准备器不调用安装器或下载运行依赖：
+1. **准备 JavaScript Host 与 Node 运行环境**：在可信构建环境中按[运行环境准备说明](../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact)准备好已编译的 Host、生产依赖和固定版本的 Node 分发包。
+2. **放置插件归档**：将核验无误的 `webvtt.tar` 和 `stardew-smapi.tar`（与清单中的 `archiveName` 一致）放入同一个本地目录。
+3. **构建检查程序并生成内置资源**：确认本地已备妥 Python 3.11+、Cargo 离线依赖缓存，以及[Pi 成员产物](../runtimes/agent-service/README.md)所需的冻结依赖与当前平台 `esbuild` 二进制，然后在仓库根目录执行：
 
 ```sh
 cargo build --locked --offline -p tsumugi-plugin-host --bin tsumugi-plugin-package
@@ -60,49 +49,22 @@ pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/sr
 CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
-资源父目录必须已存在，两处输出都必须是新目录。成员打包直接编译源码，前端构建和
-Cargo build script 不生成或刷新该产物；应明确审阅旧输出或使用新 checkout，不覆盖
-既有产物。所有输入路径使用绝对路径，不经过符号链接
-祖先；仅允许 macOS 固定的 `/tmp`、`/var` 系统别名。归档必须是有界、单硬链接的普通
-文件。准备器先捕获实际归档字节，仅物化这些字节，不转而读取后来替换的路径。
+### 暂存与校验机制
 
-传输格式仅接受路径规范、可移植的普通文件，拒绝路径逃逸、别名、重复/重叠路径、
-链接、稀疏/特殊成员，以及配方之外或缺失的文件。每包最多 256 文件、路径最多 16 段、
-内容最多 64 MiB；整组选择的内容总量也不超过 64 MiB。随包 SDK lock 必须与选定 SDK
-准确产物和版本一致。固定 Host 检查程序独立验证实际 manifest 和完整包摘要；仅传输
-摘要匹配不足以交付资源。
-
-所有文件先写入新建、仅 owner 可访问的暂存目录。只执行具有已审阅摘要的检查程序
-捕获副本；不运行插件、所选 Node、Host 组件或包脚本。检查有时间和输出上限，其身份、
-包摘要、manifest 字节、文件数和字节数必须全部一致。准备器复核捕获的输入与完整输出
-字节/可执行位后，以平台原生的 no-replace rename 一次性交付整组包。最终包目录权限
-为 `0755`，普通文件 `0644`，可执行文件 `0755`；可执行位与已检查产物保持一致，
-不受构建者 umask 影响。
-
-输出内的 `preparation.json` 仅记录公开选择固定值、检查程序摘要和包观察，不包含本机
-输入路径。桌面构建再次通过原 Host 捕获实际包与运行环境，并嵌入构建拥有的元数据，
-不会将该报告当作批准。Tauri 按逻辑资源路径携带完整包、工具和 Host 树。独立成员树
-通过实际执行时相同的 Host 产物 owner 捕获；入口缺失或协议与 Core 生成 profile
-不符都会阻止构建。它只使用独立批准的 Node 工具，不成为插件 Process 通道；准确
-Node 分发固定值仍归既有运行环境准备入口。当前入口仅
-支持清单选择的 macOS arm64 构建者与目标。
+- **路径与输出目录要求**：所有传入路径均须为绝对路径，且不得包含符号链接祖先目录（macOS 系统固定的 `/tmp` 与 `/var` 别名除外）。父目录 `apps/desktop/src-tauri/resources` 必须已存在，而 `bundled-plugins` 和 `member-runtime` 两个输出目录必须尚不存在（前端构建和 Cargo `build.rs` 均不会自动生成或刷新 `member-runtime`）。
+- **归档与包体积限制**：归档必须是单硬链接的普通文件，且内部仅包含路径规范、可移植的普通文件——拒绝路径穿越、符号/硬链接、稀疏或特殊文件、重复/重叠路径以及配方外或缺失的文件。单个包最多包含 256 个文件、路径深度最多 16 层、内容上限 64 MiB；整组内置包的总内容同样不超过 64 MiB。
+- **隔离检查与原子交付**：`prepare-desktop-plugins.py` 将输入归档及校验过 `--inspector-sha256` 的 `tsumugi-plugin-package` 二进制副本复制到仅当前用户可访问的新建暂存目录中。准备过程只运行该检查程序副本（有执行时间和输出上限），绝不运行插件代码、Node、Host 组件或包脚本。检查程序会独立核验每个包的身份、`packageDigest`、manifest 字节、文件数、字节数以及随附的 `sdk.lock.json`。核验通过后，脚本统一设置权限（目录与可执行文件为 `0755`，普通文件为 `0644`，不受构建环境 `umask` 影响），并通过平台原生的 no-replace rename 一次性原子交付到 `--output`。
+- **桌面端打包**：生成的 `preparation.json` 仅记录公开清单固定值、检查程序摘要和包摘要，不包含本机路径。执行 `tauri build` 时，桌面构建流程会重新通过 Host 校验插件包、JavaScript 运行环境以及 `member-runtime` 目录树（确保入口存在且协议与 Core 生成的 profile 一致），并将它们打包进 macOS `aarch64` 应用中。
 
 ## 失败与既有安装
 
-归档损坏、来源/身份/SDK 产物不符、输入变化、额外文件、Host 检查异常或依赖缺失，
-都会停止准备。不会回退到旧清单、内嵌解析器、开发 checkout、PATH 运行时或临时源码
-编译。准备失败不会新建最终输出，但可能在旁边保留本次 `.tsumugi-plugins-*` 暂存目录
-供检查。已有输出在读取输入前即拒绝；并发创建的空目录也不会被替换。只清理明确审阅过
-的失败尝试，或改用新输出，不覆盖已有已核验资源以强行重试。原子交付成功后如暂存清理
-异常，会单独报告；完整输出仍可检查。
+若遇到归档损坏、来源/身份/SDK 产物不匹配、输入文件被修改、存在多余文件、Host 检查不通过或输出目录已存在，准备脚本会立即中止且不会创建最终输出目录。若在暂存阶段失败，同级目录下可能保留 `.tsumugi-plugins-*` 临时目录供排查；请先审阅并清理失败的暂存目录或指定新的输出路径，切勿直接覆盖已核验的资源目录。
 
-应用中通过 **扩展 → 使用随附扩展** 审阅并安装。设置沿用手工包相同的捕获、带修订
-设置和 Store 安装边界，保留既有启用选择；结果不确定时保留原请求以核对。取得资源
-消失后，已安装字节和本机决定仍可保留。新执行仍须核验实际选择的环境、当前批准、
-支持平台和独立授权的 Core 操作。更新随附包不会替换在途 attempt 捕获的环境。
+在打包后的桌面应用中，用户可通过 **扩展 → 使用随附扩展** 审阅并安装内置扩展：
+- 安装过程沿用与手动导入本地包相同的捕获、带修订号的设置以及 PackageStore 写入边界，保留既有的启用状态，且不会替换正在运行的任务所绑定的环境。
+- 若安装过程被中断，系统会保留原请求供用户核对或重试；即使后续版本不再随附安装包资源，本机已安装的扩展和批准记录依然可用。
+- 在项目中实际运行插件时，仍须核验所选运行环境、当前批准状态并单独确认执行授权。
 
-分发前仍须在断网、无开发工具链的清洁支持系统上检查最终安装/便携产物、两个包及完整
-运行环境，并覆盖设置、重开、两领域、损坏/缺失资源、既有决定和卸载/更新边界。准备器
-与传输测试的证据范围小于这些完整验收。
+在正式分发前，请务必在断网、未安装任何开发工具链的清洁 Apple silicon macOS 系统上验证最终安装包或便携产物，完整测试初始设置、应用重开、WebVTT 与 SMAPI 两个领域的工作流、资源缺失/损坏处理以及更新与卸载边界。
 
 [English](plugin-distribution.md)

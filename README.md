@@ -4,199 +4,179 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-An extensible localization workbench for translating and maintaining evolving content.
+Tsumugi is an extensible localization workbench built for translating and maintaining content that changes over time.
 
-Tsumugi keeps source content, translations, terminology, review, validation, and releases in one project, with a focus on preserving useful work as the source changes over time.
+Instead of treating localization as a one-off export, Tsumugi keeps source snapshots, translations, terminology, context, review decisions, QA checks, AI workflows, and release artifacts inside a single project—preserving useful work as upstream content evolves.
 
 ## Overview
 
-Source content changes, translations are revised, and terminology evolves. Work that was complete for one version may need attention in the next.
+Software strings, game mods, and subtitles rarely stay still. Source text is revised, keys move, and terminology shifts between versions. Work that was finished for one release often needs targeted updates in the next.
 
-Tsumugi treats these changes as part of the normal project lifecycle:
+Tsumugi models these updates as part of the normal project lifecycle:
 
 ```text
-Import
-  → Translate
-  → Review
-  → Validate
-  → Build
-  → Release
-  → Update
+Import → Translate → Review → Validate → Build → Release → Update
 ```
 
-When new source content is imported, Tsumugi keeps existing work by default and compares it against the new source. The goal is to keep what still applies, flag what needs attention, and preserve the history behind those decisions.
+When you import a new upstream snapshot, Tsumugi compares it against existing project history rather than discarding prior work. It identifies what still applies, flags entries that need re-verification or fresh translation, and keeps an audit trail of how each change was resolved.
 
-## Project Model
+## Core Concepts
 
-A project holds localization work across revisions. It contains source revisions, localization units, target-locale work, terminology, review decisions, validation results, and release history.
+### Project Model
 
-Content identity is separate from text equality and physical location. Identical text does not necessarily represent the same content, and content that moves or changes location may still retain its identity across revisions.
+A project tracks localization work across upstream revisions, including:
 
-Translation, review, applicability, and validation have separate states. A translation may exist without being reviewed. A reviewed translation may later require reassessment if its relevant source or context changes. Editing a translation does not silently carry forward an earlier approval.
+- Source snapshots, content units, and their original file locations
+- Target locales and immutable translation revisions
+- Glossaries, unit context, and translation memory suggestions
+- Human review decisions, QA check runs, and scoped waivers
+- Background task history, AI candidates, and Arena comparisons
+- Verified release builds and local export receipts
 
-## Maintenance
+**Content identity** is tracked independently from raw text and file position. Two identical strings are not assumed to be the same unit, and a string that moves or changes wording across revisions can keep its logical identity.
 
-Upstream changes are handled through content lineage and dependency information.
+**Translation, review, applicability, and validation** are tracked as separate states. Saving a translation does not mark it reviewed, editing a translation clears prior approval, and upstream source or terminology changes can flag previously approved entries for reassessment.
 
-Tsumugi can distinguish between work that:
+### Upstream Maintenance
 
-- remains applicable
-- needs validation again
-- requires translation or review
-- cannot be resolved automatically
+When upstream content updates, Tsumugi uses content lineage and dependency tracking to classify existing work into entries that:
 
-Previous translations and decisions remain part of project history even when they are no longer current. Updates build on that history within the same project.
+- Remain applicable as-is
+- Need QA checks re-run
+- Require re-translation or human review
+- Have ambiguous lineage that needs a manual decision
 
-## Extension Model
+Earlier translations, review notes, and releases stay in project history even after entries are modified or removed upstream.
 
-Tsumugi separates localization semantics from domain-specific knowledge. The Core defines project state, lifecycle rules, authoritative decisions, and the boundaries through which additional capabilities participate.
+### Extensions and Domain Plugins
 
-Extensions provide bounded capabilities through explicit contracts. A single extension may provide several related capabilities, while others may contribute only data or reusable resources.
+Tsumugi separates core localization workflows from format- and domain-specific logic. The Rust Core owns project state, storage, task orchestration, and result adoption, while domain capabilities run through explicit contracts:
 
-Extensions do not own the project model. Their results are returned to the Core, validated, and adopted through the same rules as other project changes.
+- **[Plugin SDK](crates/plugin-sdk/README.md)** (`crates/plugin-sdk`): Standalone Rust data contracts, a conformance CLI, and generated JavaScript bindings.
+- **[Plugin Host](crates/plugin-host/README.md)** (`crates/plugin-host`): Package inspection, local Store and trust management, and isolated Native/JavaScript worker channels.
+- **[Desktop Plugin Management](docs/plugin-distribution.md)**: Explicit package installation, runtime approval, and per-project domain binding.
 
-Public extension contracts remain separate from internal storage and implementation details. Executable extensions communicate through language-neutral boundaries and are not tied to the implementation language of the Core.
+Built-in and plugin-backed workflows currently cover Stardew Valley SMAPI mods (`manifest.json` + flat `i18n/*.json`) and an experimental WebVTT plain-text subtitle profile with explicit cue IDs (preserving timing, layout, and non-text bytes). See [Bundled Integrations and Compatibility](docs/integrations.md) and the [Plugin Authoring Guide](docs/plugin-authoring.md).
 
-This lets different localization domains share a workflow and a single source of truth.
+### AI, Arena, and Agent Work Plans
 
-The [experimental plugin SDK](crates/plugin-sdk/README.md) provides independently
-buildable Rust data contracts, a conformance CLI, and generated JavaScript
-bindings. Its version and immutable source packages are separate from the desktop
-release. The [standalone plugin Host](crates/plugin-host/README.md) adds captured
-package inspection, local trust/Store management and headless component channels.
-The optional Core adapter connects these channels to original execution grants
-and separately authorized application lifetimes. Desktop source integrates
-[plugin management and domain selection](docs/plugin-distribution.md), independent
-package/runtime approval, captured execution and explicit result adoption.
-[Work plans](docs/work-plans.md) use one pinned Pi core and pi-ai member runtime,
-with dynamic team discussions, original request budgets and human stop/takeover
-controls. The Core retains project and execution authority. These source changes
-do not replace the frozen application or extension archives.
+AI features are optional and work alongside manual editing:
 
-## AI
+- **[Direct AI Translation](docs/ai-translation.md)**: Configurable OpenAI-compatible Chat Completions connections (plus macOS ChatGPT subscription sign-in) with explicit data-sharing previews, request budgets, and candidate saving.
+- **[Arena Comparison](docs/ai-translation.md#arena-comparison)**: Side-by-side comparison of two to four generated schemes or saved revisions, with optional blind labels and manual merge tracking.
+- **[Agent Work Plans](docs/work-plans.md)**: Multi-step localization tasks powered by `pi-agent-core` and `pi-ai`, supporting dynamic team discussions, read-only capability tools ([Plugin Tools](docs/plugin-tools.md), [MCP Retrieval](docs/mcp-retrieval.md), [MCP Sharing](docs/mcp-sharing.md)), request budgets, and human guidance or takeover.
 
-AI is optional. It may produce translation candidates, review signals, comparisons, contextual findings, or other structured results.
+AI and Agent outputs never overwrite active translations directly; they are saved as candidates or proposals that go through the same selection, review, and QA workflow as human edits.
 
-Those results use the same project model as manually produced work. AI output does not directly become authoritative project state or human approval.
+### Build and Release
 
-Manual translation, review, and maintenance remain supported independently of an Agent backend.
-
-## Build and Release
-
-Editing, building, releasing, and delivering are separate operations.
-
-A release is created from fixed project inputs and validated build output:
+Editing, building, releasing, and exporting are distinct steps:
 
 ```text
 Project state
     ↓
-Release inputs
+Pinned release inputs
     ↓
 Pre-build validation
     ↓
 Build
     ↓
-Post-build validation
+Post-build artifact validation
     ↓
-Release
+Recorded Release
     ↓
-Delivery
+Local export / delivery
 ```
 
-Validation checks both translation state and the artifact the build produced.
+A build validates both project readiness and the generated output files before recording an immutable release. If a subsequent file export fails or is interrupted, the recorded release remains intact and can be reconciled or re-exported from its verified bytes. See [Local Build and Export](docs/build-release.md).
 
-A failed build does not become a release, and a failed delivery attempt does not erase an already recorded release.
+## Desktop Workbench
+
+The desktop app organizes work into dedicated views accessible from the sidebar. Switching views preserves scroll positions, filters, and unsaved drafts; leaving an unsaved translation prompts to save, keep editing, or discard.
+
+- **Source Content**: Import and inspect source snapshots, compare upstream updates, and resolve content lineage. See [Source Import and Maintenance](docs/source-import.md).
+- **Translations**: Paged, searchable editor covering native keys, source text, and active translations across the full source snapshot, with collapsible panels for glossary terms, context, and revision history. Also supports importing existing translation files. See [Translation Import and Editing](docs/translation-import.md).
+- **Glossary & Context**: Manage project terms, step through local glossary files, pin unit context, and inspect translations affected by terminology changes. See [Glossary and Context](docs/resources.md).
+- **Review & QA**: Record human approvals or change requests, run built-in or plugin QA checks, manage waivers, and check build readiness per target language. See [Review and QA](docs/review-qa.md).
+- **AI Translation, Arena & Work Plans**: Run scoped AI translations, compare candidates in Arena, or coordinate multi-member Agent work plans.
+- **Tasks**: Monitor persisted execution progress, cancel running work, reconcile interrupted operations, and adopt completed outputs.
+- **Build & Export**: Build verified language files from approved translations and export them to local folders.
+
+Browser-style shortcuts (refresh, back/forward navigation, print, view source, save page) are disabled in the workbench so they do not interfere with editing. `Ctrl+S` (`Cmd+S` on macOS) saves the active editor draft, and standard text selection/copy (`Ctrl+C` / `Cmd+C`) and input context menus work as expected.
 
 ## Architecture
 
-The current reference architecture is:
-
 ```text
-React + TypeScript + i18next
-        │
-      Tauri
-        │
-    Rust Core
-        │
-Capability Protocol
-        │
-Workers / Data Extensions / External Tools
+React 19 + TypeScript 7 + i18next
+               │
+            Tauri 2
+               │
+           Rust Core
+               │
+      Capability Protocol
+               │
+Workers / Domain Plugins / Agent Service
 ```
 
-The desktop interface requests operations; the Core controls state transitions. The Core owns project semantics, persistence, orchestration, result adoption, and release state.
-
-Long-running or domain-specific operations can run outside the Core through bounded capability contracts. Public contracts are intended to remain independent from the Rust ABI.
+The React frontend renders workspace state and dispatches Tauri commands. The Rust Core enforces state transitions, SQLite persistence, concurrency guards, and result adoption. Long-running or domain-specific work runs out-of-process through language-neutral capability contracts that do not depend on the Rust ABI.
 
 ## Development
 
-The desktop supports Windows x64 and macOS (Apple Silicon and Intel build targets), and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode Command Line Tools and uses the system WKWebView. Install the platform prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/). macOS application bundles target macOS 11 or later; each architecture must be built with its corresponding Rust target.
+### Prerequisites
 
-Project lifecycle, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` `--domain=arena`, `--domain=connections`, `--domain=plugins`, `--domain=strategy`,
-`--domain=mcp` or `--domain=mcpRetrieval` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.
+- **Supported platforms**: Windows x64 and macOS (Apple Silicon and Intel targets; minimum macOS 11)
+- **Toolchain**: Rust 1.98+, Node.js, pnpm 12, Vite 8, Tauri 2
+- **Windows native dependencies**: Visual Studio C++ Build Tools, Windows SDK, and Microsoft Edge WebView2 Runtime
+- **macOS native dependencies**: Xcode Command Line Tools (uses system `WKWebView`)
 
-Command failures retain their original structured evidence. When a saved basis has changed, expandable diagnostics show the submitted and rejecting values; recovery guidance explains the next read or decision without automatically retrying a write. Diagnostic references correlate command-boundary logs containing only operation labels, error classifications and the reference, without request bodies or project paths. Unknown results keep the original action for reconciliation.
+See the [Tauri prerequisites guide](https://v2.tauri.app/start/prerequisites/) for platform setup details.
 
-Source and translation capture ranges are half-open UTF-8 byte offsets in the original captured artifact, before escape decoding or newline normalization. They are not JavaScript string indices. The shared `crates/core/tests/fixtures/source-unicode.contract.json` covers BOM, CRLF, Chinese text, emoji, combining characters and JSON escapes, with UTF-16 positions as a test oracle for Rust and TypeScript.
+### Building and Running
 
 From the repository root:
 
-```text
+```sh
 pnpm install
 pnpm --dir apps/desktop build
 cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-For a standalone Windows executable without an installer, run:
+To build a standalone Windows executable without an installer (embeds the frontend; requires WebView2 Runtime at runtime):
 
-```text
+```sh
 pnpm --dir apps/desktop tauri build --no-bundle
+# Output: target/release/tsumugi-desktop.exe
 ```
 
-For a macOS application bundle, run on a Mac:
+To build a macOS application bundle:
 
-```text
+```sh
 pnpm --dir apps/desktop tauri build
 open target/release/bundle/macos/Tsumugi.app
 ```
 
-The platform configuration bundles the current architecture as a `.app`. Apple Silicon has been verified with a native build and local project workflow. To build Intel on Apple Silicon, install the Rust `x86_64-apple-darwin` target and pass `--target x86_64-apple-darwin`; the Intel build and macOS 11 runtime have not yet been verified. Code signing, notarization, and distributing a release are separate operations. Development builds can run with `pnpm --dir apps/desktop tauri dev`.
+On Apple Silicon, cross-compiling for Intel requires installing the `x86_64-apple-darwin` Rust target and passing `--target x86_64-apple-darwin`. Code signing, notarization, and release distribution are handled separately.
 
-Launch `target/release/tsumugi-desktop.exe` directly. This build embeds the frontend and does not need a development server or console window. The Microsoft Edge WebView2 Runtime is still required. `tauri dev` and debug builds retain the development console.
+### Wire Contracts and Text Offsets
 
-The desktop workbench suppresses page reload, browser navigation, printing, page-source and page-save shortcuts so they cannot bypass the editing workflow. Ctrl+S (Command+S on macOS) still belongs to the active editor. Text fields retain their native editing menus; other text can be selected and copied with Ctrl+C or Command+C. The navigation and toolbar stay in place while the workspace scrolls.
+IPC DTOs across project lifecycle, execution, source, translation, resources, review, release, AI, Arena, connections, plugins, strategy, and MCP use Rust/Serde definitions as their single source of truth. After modifying wire types, regenerate and verify the checked-in schemas, TypeScript definitions, and precompiled validators:
 
-The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, adding target locales, importing source content, managing translation revisions, working with project terminology and context, reviewing current translations, and building verified SMAPI language files for local export. These operations use Tauri commands.
+```sh
+pnpm --dir apps/desktop generate:contracts
+pnpm --dir apps/desktop check:contracts
+```
 
-The sidebar opens each working area in the main workspace. Returning to another area preserves its project-local position and drafts; leaving an unsaved translation first offers save, keep editing, or discard. The project overview shows import or continue-editing actions according to the current source. Translations opens the editor by default, with a searchable paged list alongside source text, translation and revision controls. Search covers native keys, source text and selected translations across the complete current source, including entries beyond the displayed page. Terms, context and history are available in a collapsible reference area.
+You can target a single domain with `--domain=<name>` (for example `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai`, `--domain=arena`, `--domain=connections`, `--domain=plugins`, `--domain=strategy`, `--domain=mcp`, or `--domain=mcpRetrieval`). Contract generation uses the optional `wire-schema` Cargo feature; the desktop app never compiles schemas dynamically at runtime.
 
-The Tasks view exposes persisted execution progress, saved outputs, cancellation, eligible recovery, and explicit result adoption. Normal builds have no synthetic task creation menu. Developers can use the isolated [execution test host](docs/execution-test-host.md) to exercise these paths without a translation provider.
+Source and translation capture ranges use half-open UTF-8 byte offsets in the raw captured file (before escape decoding or newline normalization), rather than JavaScript UTF-16 string indices. The shared fixture at `crates/core/tests/fixtures/source-unicode.contract.json` tests BOM, CRLF, CJK text, emoji, combining marks, and JSON escapes across Rust and TypeScript.
 
-The Source content view imports a SMAPI Mod's `manifest.json` and flat `i18n/default.json` through the bundled integration. Declare the source language, check the files, review the saved strings, and explicitly apply a complete snapshot. Existing projects can compare and adopt a new complete source snapshot while retaining earlier content and releases. Original files remain unchanged. See [supported inputs and recovery](docs/source-import.md). The Translations view imports a flat `i18n/<language>.json`, previews matches against the current source, creates candidates or checked selections, and saves immutable manual revisions. See [translation import and editing](docs/translation-import.md). Glossary and context lets you edit adopted terms, review a local glossary file one entry at a time, capture context, inspect translation suggestions, and locate potentially affected translations. See [glossary and context](docs/resources.md). Review and QA records human decisions, runs current checks, shows work by language, and assesses build readiness under the balanced policy; see [review and QA](docs/review-qa.md). Build and export turns approved translations into verified local SMAPI language files; see [local build and export](docs/build-release.md). Packaging or installing complete Mods is not implemented.
+### Storage, Diagnostics, and Test Host
 
-AI translation supports an editable OpenAI-compatible Chat Completions endpoint, model, credential environment variable name, and budget. Connection presets remain editable. Source text is required; terms and context are shared only when enabled. Preview and confirm the exact data before sending. Successful results can be saved as candidates, then compared and selected in Translations. Partial failures retain successful results; starting new requests requires a fresh preview and budget. macOS also offers a separate ChatGPT sign-in connection using your authorized subscription allowance, with request limits and no hard output-token cap. API-key connections keep their existing output limits. See [direct AI translation](docs/ai-translation.md).
+- **Database schema**: Current projects use SQLite schema **61** with `DELETE` journaling and `FULL` synchronization. Earlier development schemas or unsupported SQLite storage modes are refused without modifying, resetting, or auto-migrating the project directory (`PersistenceError::UnsupportedStorage` in Rust, or `unsupported-schema` with `reason: "storage-mode"` over desktop IPC). To use content from an older development snapshot, keep the old directory intact and re-import the original source files into a new project.
+- **Diagnostics and recovery**: Command failures preserve structured evidence. When a save conflicts with newer state, expandable diagnostics show both the submitted and current values alongside recovery steps without automatically re-running writes. Boundary log reference IDs record only operation labels and error categories, omitting project paths and request payloads.
+- **Execution test host**: Developers can test task lifecycle, cancellation, and recovery flows without configuring an external AI provider by using the isolated [Execution Test Host](docs/execution-test-host.md).
 
-Arena comparison generates two to four schemes under a shared round budget or compares saved revisions offline. Optional blind comparison keeps fixed anonymous labels until an explicit reveal. Save candidates, select a revision or edit an atomic manual merge with contributing provenance, then continue normal Review and QA. See [AI translation and Arena comparison](docs/ai-translation.md).
+## Version and Status
 
-New projects use database schema 61. Only the current schema is supported; other development snapshots are refused before application schema changes. Tsumugi preserves their directories without upgrading or rebuilding them; SQLite may complete its own hot-journal recovery when opening a database. Keep those directories and create a new project to reimport the original source files. Current project reopening verifies the complete layout and persisted associations; it never resets the directory. The application is in the unreleased `0.2.0-alpha.1` development batch. See the [changelog](CHANGELOG.md) and [versioning policy](docs/versioning.md) for changes, compatibility and future version decisions.
-
-Current projects use SQLite DELETE journaling and FULL synchronization. Unsupported storage settings are refused separately from corrupt schemas, broken references or altered artifacts; Tsumugi preserves the directory and does not convert the storage mode or reset its contents. Keep a refused directory intact and select another supported project in the opening dialog to continue. Do not change SQLite settings manually as a substitute for a supported storage profile. Saved releases remain available after a failed delivery and export uses their verified original bytes. Uncertain deliveries must be reconciled before another delivery to the same destination; explicit retries use the existing action identity, or a fresh confirmed destination preview for a new delivery.
-
-Compatibility and migration support between early development snapshots is not guaranteed. Current project identity, stored manifests, release bytes and receipts remain integrity requirements. Core Rust callers with exhaustive matches on `PersistenceError` or `PersistenceErrorCode` must handle `UnsupportedStorage`; desktop errors use the existing `unsupported-schema` code with `reason: "storage-mode"`.
-
-The bundled WebVTT integration supports a limited plain-text caption profile with explicit cue IDs. It preserves timing, layout and original non-text structure through import, translation, source maintenance and checked local subtitle export. See [bundled integrations and compatibility](docs/integrations.md) for supported syntax and interface maturity.
-
-## Status
-
-Tsumugi is in early development. Current work focuses on the foundations for complete localization workflows:
-
-- project and language boundaries
-- content identity and lineage
-- translation and review state
-- dependency and impact analysis
-- task execution and result adoption
-- build and release semantics
-- extension contracts
-- persistence and recovery
-
-Detailed APIs, storage schemas, transport protocols, and public extension contracts are still under design. There is no stable plugin API yet.
+The repository is currently in the unreleased **`0.2.0-alpha.1`** development batch. See the [Changelog](CHANGELOG.md) and [Versioning Policy](docs/versioning.md) for release history and compatibility rules.

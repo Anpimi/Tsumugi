@@ -1,13 +1,10 @@
-# Host/Core compatibility runner
+# Host / Core Compatibility Runner (`compatibility.py`)
 
-`compatibility.py` is a Python 3.11+ standard-library entry point for two existing
-Host/Core integration tests. It uses an explicitly selected prebuilt WebVTT package
-and SMAPI package. It does not build plugins or the JavaScript component Host,
-install packages, download a runtime, or substitute another domain implementation.
+`compatibility.py` is a Python 3.11+ script (using only the Python standard library) that runs the two primary Host + Core domain integration tests against prebuilt WebVTT and Stardew SMAPI plugin packages and a prebuilt JavaScript runtime.
 
-Run from any directory on macOS or Linux with Cargo, Git and the repository's
-Rust toolchain available. Supply independently approved package digests and the
-tool/Host trees plus approval descriptor used by the existing runtime fixture:
+## Usage
+
+Run the script on macOS or Linux with Cargo, Git, and Rust 1.98+ installed. Set `CARGO_TARGET_DIR` to an absolute shared target directory and pass absolute paths to the prebuilt packages, expected package digests, captured Node tool tree, clean JavaScript Host tree, approved runtime descriptor, and a non-existent output directory:
 
 ```sh
 export CARGO_TARGET_DIR=/absolute/path/to/shared-cargo-target
@@ -23,73 +20,46 @@ python3 crates/plugin-host/scripts/compatibility.py \
   --offline
 ```
 
-The script finds its own checkout. `CARGO_TARGET_DIR` must be explicitly set to
-an absolute shared cache path; the output directory must be new. `--offline` is
-optional and applies to every Cargo invocation. All Cargo commands use
-`--locked`. A command has a 1,800-second limit; timeout/interruption terminates
-only its owned process session. Each integration test also retains its original
-bounded Worker and temporary-project cleanup.
+- `--offline` is optional and forwards `--offline` to every `cargo` command. All `cargo` invocations run with `--locked`.
+- Each subprocess has a 1,800-second timeout; on timeout or interruption, the runner terminates the subprocess's process session.
 
-The two test targets belong to the independent
-[`compatibility/Cargo.toml`](../compatibility/Cargo.toml) workspace, which refers
-to the original test files and their support modules without copying them. It
-depends on the normal Core and the Host's `core-adapter` feature. Before dispatch,
-locked Cargo metadata must identify this checkout's exact Core, SDK and Host
-manifests and show **no enabled Core features**. Missing or inconsistent metadata
-refuses dispatch; neither case is marked as executed. This isolates the Host
-package's own development dependency on `execution-test-host`.
+## Verification Pipeline
 
-Before starting either test, the runner calls this checkout's public
-`tsumugi-plugin-package inspect` for both packages and checks each observed
-`packageDigest` against its supplied pin. It calls `tsumugi-plugin-runtime
-inspect` using the supplied descriptor's profile, version and entrypoints, then
-requires the complete observed descriptor to equal that approval. The original
-Rust capture owners perform the package/runtime byte checks. Inspection itself
-is not Worker evidence or distribution approval.
+1. **Workspace & Feature Isolation**: The runner executes tests through the standalone [`compatibility/Cargo.toml`](../compatibility/Cargo.toml) workspace rather than the root workspace. Before running any test, it checks `cargo metadata --locked` to confirm that `tsumugi-core`, `tsumugi-plugin-sdk`, and `tsumugi-plugin-host` resolve to this checkout and that **zero Core features** (specifically excluding `execution-test-host`) are enabled.
+2. **Package & Runtime Pin Verification**:
+   - Runs `tsumugi-plugin-package inspect` on both `--webvtt-package` and `--smapi-package` and verifies that each computed `packageDigest` matches `--webvtt-digest` and `--smapi-digest`.
+   - Runs `tsumugi-plugin-runtime inspect` on `--runtime-tool` and `--runtime-host` using the profile, version, and entrypoints from `--runtime-approval`, verifying that the observed `RuntimeEnvironmentDescriptor` matches the approved descriptor.
+3. **End-to-End Integration Execution**: Runs two exact test functions with `--features core-adapter,javascript-conformance`:
 
-The two fixed selections use the consumer workspace's local
-`core-adapter,javascript-conformance` cfg features; these do not enable the Core
-test feature:
-
-| Domain | Integration target | Exact test |
+| Domain | Integration Target | Test Function |
 | --- | --- | --- |
 | WebVTT | `source_adoption` | `official_source_checks_gate_atomic_adoption_revision_updates_and_reopening` |
 | Stardew SMAPI (`stardew-smapi`) | `translation_validation` | `complete_translation_requires_current_scope_independent_grants_and_saved_check_proof` |
 
-These are the actual `PackageImage` prebuilt-package → `RunnerProxy` → Worker → Core grant,
-semantic-check, adoption and reopen consumers. The script does not copy their
-fixtures, checks, runtime or domain algorithms. Each selection must report
-exactly one executed test with its exact name, one pass and no failure, ignored
-test or measurement. Other tests filtered out of the integration target are
-reported normally. An empty filtered run cannot pass. A failure in one case
-does not hide the other runnable case's result.
+Each test exercises the full `PackageImage` → `RunnerProxy` → JavaScript Worker → Core permission, semantic check, adoption, and project reopen flow. Each target must report `1 passed, 0 failed, 0 ignored` for the exact named test; if one domain fails, the runner still executes and records the second domain before exiting.
 
-`compatibility.json` has `schemaVersion: 1`, an overall `status`, the actual
-`host.commit`/`host.dirty`, SDK Cargo/source declarations, the approved and
-observed runtime descriptor, both `cases` and every attempted `commands` entry.
-The `consumer` entry records its metadata command, resolved workspace root,
-exact owner manifest paths, enabled features and validation status.
-Each case records `domain`, `test` (the exact function name), `status`, the real
-package `inspection` and, when libtest ran, `executionCounts`. `execution`
-retains its command and five explicit fixture selectors. Complete stdout and
-stderr logs are retained for inspections, metadata and tests, including failures.
-Exit zero means both consumers passed; exit one means an incomplete or failed
-run; exit two refuses an existing output directory or invalid CLI usage.
+## Output Format (`compatibility.json`) and Exit Codes
 
-SDK producer fields describe tracked source in this checkout. A dirty checkout
-is recorded as dirty, and its commit does not identify those uncommitted bytes.
-Package/runtime fingerprints identify captured bytes; neither they nor a Host
-checkout declaration authenticate a publisher or prove which source commit
-produced the prebuilt JavaScript Host. Its tool version/profile remain installer
-claims. This runner does not establish PackageStore installation, Desktop IPC/GUI behavior, sandboxing, all
-platforms, model quality, broad release compatibility or production permission.
+The runner writes `compatibility.json` (`schemaVersion: 1`) and full stdout/stderr logs for every command into `--output`:
 
-The orchestration tests use a fake command boundary and do not start Cargo or
-Workers. They verify exact selection, refusal of empty/ignored runs, pin and
-runtime mismatches, retained failure evidence and separate domain results:
+- `status`: overall run status (`passed` or `failed`).
+- `host`: current Git commit SHA and dirty worktree status (`host.commit`, `host.dirty`).
+- `sdk`: SDK version and source metadata from Cargo.
+- `consumer`: resolved `compatibility/Cargo.toml` workspace root, manifest paths, enabled features, and validation status.
+- `runtime`: the approved and observed `RuntimeEnvironmentDescriptor`.
+- `cases`: per-domain results including `domain`, `test`, `status`, `inspection`, `executionCounts`, and the `execution` command/fixture arguments.
+- `commands`: full command lines and log file references for every executed step.
+
+Exit codes:
+
+- `0`: all inspections and both domain integration tests passed.
+- `1`: an inspection, metadata check, or integration test failed.
+- `2`: invalid CLI arguments or `--output` already exists.
+
+## Unit Tests
+
+The runner's own orchestration logic (argument validation, metadata feature gating, digest/descriptor mismatch handling, and test count parsing) is tested with mocked subprocess calls:
 
 ```sh
 python3 -m unittest discover -s crates/plugin-host/scripts/tests -v
 ```
-
-Those Python checks alone are not package/runtime compatibility evidence.

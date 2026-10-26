@@ -1,11 +1,5 @@
-# Local resource update fixture
+# Local Resource Update Fixture
 
-`g1.json` and `g2.json` are test glossaries authored for this repository. Their
-source phrases and native keys come from the MIT-licensed Lookup Anything fixture
-in `../stardew-lookup/` (upstream revision
-`76565e83ede4bc8b3c293f1c659032ba9c39c213`). They are not an upstream
-glossary or an output of the bundled SMAPI integration.
+`g1.json` and `g2.json` are synthetic test glossaries whose source phrases and native keys are drawn from the MIT-licensed [Lookup Anything fixture](../stardew-lookup/README.md) (upstream commit `76565e83ede4bc8b3c293f1c659032ba9c39c213`).
 
-The two complete files model a user-authorized local resource changing from G1
-to G2. `oracle.json` is a manually stated expected result. It must not be
-regenerated from the glossary or matching implementation under test.
+The pair models an update to a project glossary from revision `G1` to `G2`. `oracle.json` contains the manually verified expected impact and matching results; do not regenerate `oracle.json` from the glossary comparison implementation under test.

@@ -4,109 +4,73 @@
 
 [English](README.md) · [简体中文](README.zh-CN.md)
 
-面向持续演进内容的可扩展本地化工作台，原生支持 AI 与 Agent 工作流。
+面向持续演进内容的可扩展本地化工作台，原生支持 AI 与 Agent 协作流程。
 
-Tsumugi 将源内容、翻译、术语、上下文、审阅、验证、发布与后续维护放在同一个项目中管理。内容更新后，它帮助判断哪些工作仍然有效、哪些需要重新处理，并保留判断依据。
-
-当前内置领域支持 SMAPI 本地化和有限范围的 WebVTT 纯文本字幕。字幕可在源内容中显式选择，沿用翻译、维护、审阅和发布流程，并导出到本地 `.vtt` 文件。支持范围与兼容性见 [集成说明](docs/integrations.md)。
+Tsumugi 不把本地化当作一次性导出任务，而是将源内容快照、译文修订、术语、上下文、审阅结论、QA 检查、AI 候选以及构建发布记录统一保存在同一个项目中。当上游内容更新时，它能帮助你识别哪些工作仍然有效、哪些需要重新处理，并完整保留决策历史。
 
 ## 概览
 
-源内容会更新，翻译会被修改，术语和上下文也会变化。上一版已经完成的工作，到了新版本可能需要重新处理。
+软件界面、游戏 Mod 和字幕往往会持续迭代：原文会修改、条目会移动、术语也会演进。上一版已经完成的翻译，到了新版本可能需要局部更新或重新核对。
 
-Tsumugi 将这些变化视为项目生命周期的一部分：
+Tsumugi 将这种演进视为日常项目生命周期的一部分：
 
 ```text
-导入
-  → 翻译
-  → 审阅
-  → 验证
-  → 构建
-  → 发布
-  → 更新
+导入 → 翻译 → 审阅 → 验证 → 构建 → 发布 → 更新
 ```
 
-导入新的上游内容时，Tsumugi 不会默认将已有成果判为失效或丢弃，而会根据内容身份、版本沿袭和相关依赖判断哪些工作仍然适用，哪些需要重新验证、翻译或审阅，并保留足够的历史信息解释这些变化。
+导入新的上游源内容时，Tsumugi 不会丢弃既有成果，而是基于内容身份、版本沿袭和依赖关系与现有项目进行比对：自动保留仍然适用的结果，标记需要重新验证、重译或审阅的条目，并记录每次变更的依据。
 
-## 项目模型
+## 核心概念
 
-Project 是 Tsumugi 中跨版本维护本地化工作的单位，可以包含：
+### 项目模型
 
-- 源内容快照与修订
-- 本地化单元及其来源位置
-- 目标语言与翻译修订
-- 术语与上下文
-- 审阅决策
-- QA 与验证结果
-- 工作项与执行任务
-- Release 与交付记录
+一个项目（Project）跨版本管理全部本地化资产与状态：
 
-内容身份与文本值和物理位置相互独立。相同文本不一定代表相同内容；内容即使在新版本中移动或发生变化，也可能仍然延续同一个逻辑身份。
+- 源内容快照、本地化单元及其原始文件位置
+- 目标语言与不可变的译文修订记录
+- 术语表、单元上下文与翻译记忆建议
+- 人工审阅结论、QA 检查结果与限定范围的豁免（Waiver）
+- 后台任务记录、AI 翻译候选与 Arena 对比结果
+- 经校验的构建产物（Release）与本地导出回执
 
-翻译、人工审阅、当前适用性和验证状态也分别记录。一个翻译可以已经存在但尚未经过审阅；一个曾经通过审阅的翻译，也可能因为相关源内容、上下文或约束发生变化而需要重新确认。修改翻译不会自动继承旧版本的批准结果。
+**内容身份独立于文本字面值和文件位置**：相同的文本不一定代表同一个本地化单元；即便条目在新版本中移动了位置或修改了原文，仍可延续同一逻辑身份。
 
-## 持续维护
+**翻译、人工审阅、当前适用性与 QA 验证分别记录状态**：保存译文不会自动视为通过审阅；修改译文不会自动沿用旧版批准结论；当原文、术语或上下文发生变化时，原本已批准的译文也会被标记为需要重新确认。
 
-上游更新在日常工作流中处理，无需单独迁移。导入新的源版本后，Tsumugi 可以区分：
+### 上游持续维护
 
-- 仍然适用的工作
-- 需要重新验证的工作
-- 需要重新翻译或人工确认的工作
-- 无法自动判断的变化
+导入新版本源内容后，Tsumugi 会根据版本沿袭与依赖分析区分：
 
-内容的新增、删除、修改、移动、拆分、合并以及无法确定的对应关系，都可以作为版本沿袭的一部分被记录。
+- 仍然直接适用的译文与审阅结论
+- 需要重新运行 QA 检查的条目
+- 需要重新翻译或人工审阅的条目
+- 无法自动判定对应关系、需要人工确认沿袭关系的变更
 
-已经不再适用于当前版本的翻译和决策仍然保留在项目历史中，供后续更新参考。
+不再适用于当前版本的旧译文、审阅记录与历史发布仍保留在项目历史中，随时可供对照。
 
-## Native AI 与 Agent
+### 扩展模型与领域插件
 
-Tsumugi 将 AI 集成在本地化工作流中。常规任务可以直接调用模型；需要调查、分析或多个步骤协同完成的任务，则可以通过内置的 Agent Runtime 执行。
+Tsumugi 将通用本地化流程与具体文件格式、领域规则解耦。Rust Core 负责项目状态、持久化、并发控制与结果采纳；具体领域能力通过语言无关的契约接入：
 
-一个 Agent Task 可以获得明确限定的：
+- **[插件 SDK](crates/plugin-sdk/README.md)**（`crates/plugin-sdk`）：独立构建的 Rust 数据契约、契约检查 CLI 以及生成的 JavaScript 绑定。
+- **[插件 Host](crates/plugin-host/README.md)**（`crates/plugin-host`）：提供插件包检查、本地 Store 与信任管理，以及隔离的原生 / JavaScript 组件通道。
+- **[桌面插件管理](docs/plugin-distribution.zh-CN.md)**：支持显式安装插件包、批准运行环境，并为项目绑定对应领域能力。
 
-- 任务目标
-- 项目上下文
-- 可用工具
-- 执行限制
-- 结构化输出要求
+目前内置与插件支持覆盖 Stardew Valley SMAPI Mod（`manifest.json` 与平铺 `i18n/*.json`）以及带显式 cue ID 的实验性 WebVTT 纯文本字幕（导入、翻译、更新与导出均保留时间轴、布局及非文本字节）。支持范围与兼容性详见[内置集成说明](docs/integrations.md)与[插件开发指南](docs/plugin-authoring.md)。
 
-适合 Agent 处理的工作包括上下文调查、术语冲突分析、审阅、修复建议以及其他需要结合项目状态进行推理的任务。
+### AI 翻译、Arena 与 Agent 工作计划
 
-Agent 使用的工具具有明确权限。调查类操作通常以只读方式进行；涉及项目修改时，Agent 提交的是结果或变更建议，由 Core 负责验证和采纳。
+AI 能力按需使用，与纯手动翻译、审阅和维护共享同一套项目模型：
 
-Agent 不拥有项目状态，必须遵守翻译、审阅和发布规则。
+- **[直接 AI 翻译](docs/ai-translation.md)**：支持可编辑的 OpenAI 兼容 Chat Completions 接口（以及 macOS 下的 ChatGPT 订阅账号登录），发送前可预览实际共享的数据并设置预算。
+- **[Arena 对比](docs/ai-translation.md#arena-comparison)**：支持在同一预算下生成 2–4 套方案或离线对比已有候选，提供可选盲评标签与记录贡献来源的人工合并。
+- **[Agent 工作计划（Work Plans）](docs/work-plans.md)**：基于 `pi-agent-core` 与 `pi-ai` 运行多步本地化协作任务，支持团队成员动态讨论、只读插件与 MCP 工具调用（见[插件工具](docs/plugin-tools.md)、[MCP 检索](docs/mcp-retrieval.md)、[MCP 共享](docs/mcp-sharing.md)）、请求预算控制，以及人工随时指导、停止或接管。
 
-AI 产生的翻译候选、审阅信号、上下文发现或其他结果，与人工工作使用同一套项目模型和历史机制。
+AI 与 Agent 产出的内容不会直接覆盖当前译文或充当人工批准，而是作为候选或建议保存，通过相同的选择、审阅和 QA 流程进入项目。
 
-AI 可以按需使用。手动翻译、审阅和维护也有完整支持。
+### 构建与发布
 
-## 执行与结果采纳
-
-耗时的提取、翻译、索引、QA、比较和构建操作使用统一的任务执行机制。任务可以具有进度、取消、重试、恢复和历史记录，并基于确定的输入版本运行。
-
-任务成功返回后，Core 会先检查相关前提是否仍然成立，再决定是否采纳结果；结果不会直接覆盖当前项目状态。
-
-例如，当 AI 或 Agent 正在处理某条翻译时，如果用户已经手动修改了它，稍后返回的结果可以继续作为候选保存，但不会覆盖更新后的版本。
-
-## 扩展模型
-
-Tsumugi 将本地化语义与领域知识分开。Core 负责项目状态、生命周期规则、权威决策，以及其他能力参与项目时必须遵守的边界。
-
-扩展通过明确的 Capability Contract 提供能力。一个扩展可以提供多个相关能力，也可以只提供数据或可复用资源。扩展产生的结果需要返回 Core，并通过正常的验证和采纳流程进入项目。
-
-扩展不会直接拥有项目模型，也不会通过直接访问内部存储来改变项目状态。
-
-公开扩展契约与内部实现保持分离。可执行扩展通过与语言无关的边界通信，不要求与 Core 使用相同的实现语言。
-
-新领域和新能力也使用这套项目语义和生命周期。
-
-[实验性插件 SDK](crates/plugin-sdk/README.md)提供可独立构建的 Rust 数据契约、契约检查 CLI 和生成的 JavaScript 定义。SDK 版本与不可变源码包独立于桌面发行版。[独立插件 Host](crates/plugin-host/README.md)补充包捕获检查、本地信任与 Store 管理及无界面的组件通道；可选 Core 适配连接原执行授权与独立批准的应用生命周期，应用成员执行和桌面插件载入仍需独立集成。
-
-## 构建与发布
-
-编辑、构建、发布和交付是不同的操作。
-
-一次 Release 基于固定的项目输入和经过验证的构建产物产生：
+编辑、构建、发布（Release）与导出交付是彼此独立的操作：
 
 ```text
 项目状态
@@ -115,106 +79,104 @@ Tsumugi 将本地化语义与领域知识分开。Core 负责项目状态、生�
     ↓
 构建前验证
     ↓
-构建
+构建产物
     ↓
-构建后验证
+构建后产物验证
     ↓
-记录 Release
+记录不可变 Release
     ↓
-导出 / 安装 / 发布
+本地导出 / 交付
 ```
 
-翻译在编辑器中通过检查后，最终产物仍需单独验证。Tsumugi 会在构建前检查项目，在构建后检查实际产物。
+构建前会检查项目就绪状态，构建后会校验实际生成的产物字节。构建失败不会生成 Release；已经记录的 Release 也不会因为后续导出中断或目标目录写入失败而丢失，可随时核对结果并基于原始校验字节重新导出。详见[本地构建与导出说明](docs/build-release.md)。
 
-构建失败不会被记录成成功的 Release；而一个已经成功生成的 Release，也不会因为之后的导出、安装或外部发布失败而消失。
+## 桌面工作台
+
+桌面端通过侧边导航切换各个工作面，切换时自动保留当前位置、筛选条件与未保存草稿；离开存在未保存修改的译文时会提示保存、继续编辑或放弃。
+
+- **源内容**：导入并检查源快照、比对上游更新并确认内容沿袭关系。详见[源导入与维护说明](docs/source-import.md)。
+- **译文**：默认打开分页编辑器，支持在整个源快照范围内搜索原生 key、原文与当前译文，并排提供术语、上下文与修订历史折叠参考栏，同时支持导入外部译文文件。详见[译文导入与编辑说明](docs/translation-import.md)。
+- **术语与上下文**：维护项目术语、逐条审阅本地词表文件、固定单元上下文，并定位受术语变更影响的译文。详见[术语与上下文说明](docs/resources.md)。
+- **审阅与 QA**：记录人工批准或修改意见、运行内置或插件 QA 检查、管理豁免，并按语言评估构建前就绪状态。详见[审阅与 QA 说明](docs/review-qa.md)。
+- **AI 翻译、Arena 与工作计划**：发起受控的 AI 翻译请求、在 Arena 中盲评或合并候选，或编排多成员 Agent 任务。
+- **任务**：查看持久化任务进度、取消运行中操作、恢复中断任务并显式采纳已完成结果。
+- **构建与导出**：将通过审阅与检查的译文构建为经校验的本地语言文件并导出到目标目录。
+
+工作台默认屏蔽浏览器刷新、前进/后退、打印、查看源码与另存网页等快捷键，防止误触中断编辑流程。`Ctrl+S`（macOS 为 `Command+S`）用于保存当前编辑器草稿，输入框原生编辑菜单与 `Ctrl+C` / `Command+C` 复制保持正常可用。
 
 ## 架构
 
-当前参考实现采用：
-
 ```text
-React + TypeScript + i18next
-        │
-      Tauri
-        │
-    Rust Core
-        │
-Language-neutral Capability Protocol
-        │
-Workers / Data Extensions / External Tools
+React 19 + TypeScript 7 + i18next
+               │
+            Tauri 2
+               │
+           Rust Core
+               │
+   Language-neutral Capability Protocol
+               │
+Workers / Domain Plugins / Agent Service
 ```
 
-桌面界面负责呈现状态和请求操作，状态转换由 Rust Core 决定。Rust Core 负责项目语义、状态约束、持久化、任务编排、结果采纳与 Release 状态。
-
-可执行的领域能力通常运行在独立 Worker 中，并通过与语言无关的协议与 Core 通信。Worker 可以使用适合自身领域的实现技术，公开扩展契约不会绑定 Rust ABI。
+前端负责状态展示与操作发起，所有状态转换、SQLite 持久化、并发保护与结果采纳均由 Rust Core 控制。耗时的领域能力在独立 Worker 进程中运行，通过与语言无关的协议与 Core 通信，公开扩展契约不绑定 Rust ABI。
 
 ## 开发环境
 
-桌面支持 Windows x64 和 macOS（Apple Silicon 与 Intel 构建目标），使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
+### 环境要求
 
-命令失败会保留原始结构化证据。已保存依据发生变化时，可展开诊断查看提交值与拒绝时的值；恢复提示说明下一步读取或决策，不会自动重试写入。诊断编号关联命令边界日志，日志只包含操作标签、错误分类与编号，不包含请求正文或工程路径。结果未知时继续保留原行动以供核对。
+- **支持平台**：Windows x64 与 macOS（Apple Silicon 及 Intel 构建目标，最低系统版本 macOS 11）
+- **开发工具链**：Rust 1.98+、Node.js、pnpm 12、Vite 8、Tauri 2
+- **Windows 原生依赖**：Visual Studio C++ Build Tools、Windows SDK、Microsoft Edge WebView2 Runtime
+- **macOS 原生依赖**：Xcode Command Line Tools（使用系统 `WKWebView`）
 
-源内容与译文捕获范围使用原始捕获文件中左闭右开的 UTF-8 字节位置，位于转义解码和换行规范化之前，不是 JavaScript 字符串索引。共用的 `crates/core/tests/fixtures/source-unicode.contract.json` 覆盖 BOM、CRLF、中文、emoji、组合字符和 JSON 转义，并用 UTF-16 位置作为 Rust 与 TypeScript 的测试对照。
+各平台依赖安装方式可参考 [Tauri 环境准备指南](https://v2.tauri.app/start/prerequisites/)。
+
+### 构建与运行
 
 在仓库根目录执行：
 
-macOS 构建需要 Xcode Command Line Tools，使用系统 WKWebView；平台依赖见 [Tauri 指引](https://v2.tauri.app/start/prerequisites/)。macOS 应用包最低系统版本为 11，默认构建当前架构：
-
-```text
-pnpm --dir apps/desktop tauri build
-open target/release/bundle/macos/Tsumugi.app
-```
-
-Apple Silicon 已通过原生构建和本地项目流程验收。在 Apple Silicon 上构建 Intel 版本时，先安装 Rust 的 `x86_64-apple-darwin` target，再加 `--target x86_64-apple-darwin`；Intel 构建和 macOS 11 运行尚未验证。开发使用 `pnpm --dir apps/desktop tauri dev`；签名、公证与发布另行进行。macOS 使用 Command+S 保存和 Command+C 复制。
-
-```text
+```sh
 pnpm install
 pnpm --dir apps/desktop build
 cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-如需不带安装器的 Windows 独立可执行程序，运行：
+构建不带安装器的 Windows 独立可执行程序（内嵌前端资源，运行需系统具备 WebView2 Runtime）：
 
-```text
+```sh
 pnpm --dir apps/desktop tauri build --no-bundle
+# 产物路径：target/release/tsumugi-desktop.exe
 ```
 
-直接启动 `target/release/tsumugi-desktop.exe`。该构建内嵌前端，不依赖开发服务器，也不显示控制台窗口；仍需 Microsoft Edge WebView2 Runtime。`tauri dev` 和 debug 构建会保留开发控制台。
+在 macOS 上构建应用包：
 
-桌面工作台会拦截网页刷新、浏览器前后导航、打印、查看源代码和网页保存快捷键，避免绕过编辑流程。Ctrl+S 仍由当前编辑器处理；文本输入框保留原生编辑菜单，其他正文仍可选取并使用 Ctrl+C 复制。工作区滚动时，导航和工具栏保持原位。
+```sh
+pnpm --dir apps/desktop tauri build
+open target/release/bundle/macos/Tsumugi.app
+```
 
-当前桌面界面支持创建、打开、重命名和关闭项目、添加目标语言、导入源内容、管理译文修订、维护项目术语和上下文、审阅当前译文，以及构建并在本地导出已验证的 SMAPI 语言文件。这些操作通过 Tauri 命令完成。
+在 Apple Silicon 上交叉编译 Intel 版本时，需先安装 Rust 的 `x86_64-apple-darwin` target 并传入 `--target x86_64-apple-darwin`。代码签名、公证与分发流程独立于本地构建。
 
-“任务”视图可查看持久化执行进度、已保存输出、取消、符合条件的恢复操作及显式结果采纳。普通构建没有合成任务创建菜单。开发者可使用隔离的[执行测试宿主](docs/execution-test-host.md)，在不接入翻译提供商的情况下检查这些流程。
+### 协议契约生成与文本偏移
 
-“源内容”视图通过内置集成导入 SMAPI Mod 的 `manifest.json` 与平铺 `i18n/default.json`。确认源语言、检查文件并核对已保存原文后，可明确应用完整源快照。已有源内容的项目可比较和采纳新的完整源快照，同时保留旧内容与发布。原文件不会被修改。支持范围与恢复方法见[源导入说明](docs/source-import.md)。“译文”视图可导入平铺的 `i18n/<language>.json`、预览与当前源内容的匹配、建立候选或受检查的选择，并保存不可变的人工修订。详见[译文导入与编辑说明](docs/translation-import.md)。“术语与上下文”视图可编辑已采纳术语、逐项审阅本地术语文件、固定上下文输入、查看翻译建议并定位可能受影响的译文。格式与操作见[术语与上下文说明](docs/resources.md)。“审阅与 QA”视图记录人工决定、运行当前检查、按语言展示待处理项，并依均衡策略评估构建前资格；见[审阅与 QA 说明](docs/review-qa.md)。“构建与导出”将已批准译文制成经校验的本地 SMAPI 语言文件；见[本地构建与导出说明](docs/build-release.md)。打包或安装完整 Mod 尚未实现。
+项目生命周期、执行、源内容、译文、资源、审阅、发布、AI、Arena、连接、插件、策略及 MCP 等桌面 IPC DTO 均以 Rust/Serde 定义为单一事实来源。修改相关定义后，需重新生成并校验仓库内的 JSON Schema、TypeScript 类型与预编译校验器：
 
-侧边导航在主工作区打开各工作面，往返时保留项目内的位置和草稿；离开未保存译文前可选择保存、继续编辑或放弃。项目概览根据当前源内容提供导入或继续编辑入口。“译文”默认打开编辑页，将可搜索的分页列表与原文、译文和修订操作并排显示。搜索覆盖整个当前源范围中的原生 key、源文和当前选中译文，也能找到未显示在本页的条目。术语、上下文和历史可在参考区展开查看。
+```sh
+pnpm --dir apps/desktop generate:contracts
+pnpm --dir apps/desktop check:contracts
+```
 
-“AI 翻译”支持可编辑的 OpenAI 兼容 Chat Completions 地址、模型、凭证环境变量名和预算，连接预设也可修改。源文为必要输入，术语和上下文仅在勾选后分享。发送前需预览并确认实际内容。成功结果可保存为候选，再进入“译文”比较和选择；部分失败保留成功项，新的请求需重新预览和设置预算。macOS 还提供独立的 ChatGPT 登录连接，使用授权订阅额度并限制请求次数，没有硬输出 token 上限；API Key 连接保留现有输出限额。详见[直接 AI 翻译说明](docs/ai-translation.md)。
+可通过 `--domain=<名称>` 仅更新或检查指定领域（如 `--domain=project`、`--domain=execution`、`--domain=source`、`--domain=translation`、`--domain=resource`、`--domain=review`、`--domain=release`、`--domain=ai`、`--domain=arena`、`--domain=connections`、`--domain=plugins`、`--domain=strategy`、`--domain=mcp`、`--domain=mcpRetrieval`）。契约生成使用可选的 `wire-schema` Cargo feature，应用在运行时不会动态编译 Schema。
 
-“Arena 对比”在整轮共享预算内生成二至四个方案，也可离线比较已保存修订。可选盲评保留固定匿名标签，只有明确揭示才显示身份。用户可保存候选、选择译文或编辑带贡献来源的原子人工合并，再继续正常审阅和 QA。详见 [AI 翻译与 Arena 对比说明](docs/ai-translation.md)。
+源内容与译文的捕获范围采用原始文件字节流中左闭右开的 UTF-8 字节偏移（位于转义解码与换行符规范化之前），而非 JavaScript 的 UTF-16 字符串索引。共用测试集 `crates/core/tests/fixtures/source-unicode.contract.json` 覆盖了 BOM、CRLF、中文字符、emoji、组合字符及 JSON 转义在 Rust 与 TypeScript 两侧的对照验证。
 
-新项目使用数据库 schema 61。仅支持当前 schema；其他开发快照在应用修改结构前明确拒绝。Tsumugi 保留原目录，不升级或重建；SQLite 打开数据库时仍可能完成自身的热日志恢复。请保留这些目录，并创建新项目重新导入原始源文件。当前项目重开时核验完整结构及持久化关联，不重置原目录。应用当前属于尚未发布的 `0.2.0-alpha.1` 开发批次。变化、兼容性及后续版本决策见[更新日志](CHANGELOG.zh-CN.md)和[版本管理策略](docs/versioning.md)。
+### 存储格式、诊断与测试宿主
 
-当前项目采用 SQLite DELETE 日志模式与 FULL 同步。不受支持的存储设置会明确拒绝，并与损坏的结构、缺失引用或被篡改产物区分。Tsumugi 保留该目录，不转换存储模式、不重置内容。请保持被拒绝的目录完整，在打开对话框中另选受支持的项目继续。不要自行修改 SQLite 设置来冒充受支持的存储方案。交付失败后，已保存发布仍保留，导出采用经过校验的原始字节。结果未知的交付须先核对，再对同一目标发起交付；显式重试沿用原 action 身份，或经新的目标预览确认后创建新交付。
+- **数据库 Schema**：当前项目使用 SQLite schema **61**，固定采用 `DELETE` 日志模式与 `FULL` 同步级别。早期开发快照或不受支持的 SQLite 存储配置会被明确拒绝（Core Rust 错误类型为 `PersistenceError::UnsupportedStorage`，桌面 IPC 错误码为 `unsupported-schema` 且 `reason: "storage-mode"`），Tsumugi 不会自动修改、升级或重置原目录。如需迁移旧开发快照中的数据，请保留原目录并新建项目重新导入原始源文件。
+- **结构化诊断与恢复**：命令失败时会保留原始结构化证据。若保存时底层基准已发生变化，可展开诊断面板对照提交值与当前值，并按提示执行下一步读取或决策，系统不会自动重放写入。命令边界日志通过诊断编号关联，仅记录操作标签与错误分类，不包含请求正文或本地工程路径。
+- **执行测试宿主**：开发调试时可使用隔离的[执行测试宿主](docs/execution-test-host.md)，在不接入外部翻译模型的情况下验证任务进度、取消与恢复流程。
 
-前期开发快照之间不保证兼容或迁移支持；当前工程身份、已存 manifest、发布字节与回执仍须保持完整。Core Rust 调用方若穷尽匹配 `PersistenceError` 或 `PersistenceErrorCode`，须处理 `UnsupportedStorage`；桌面错误通过既有 `unsupported-schema` 与 `reason: "storage-mode"` 表示该分类。
+## 版本与状态
 
-## 当前状态
-
-Tsumugi 仍处于早期开发阶段，当前主要在设计和实现完整本地化流程所需的基础能力，包括：
-
-- Project 与语言边界
-- 内容身份与版本沿袭
-- 翻译与审阅状态
-- 术语、上下文与依赖关系
-- 影响分析与既有成果复用
-- Native AI 与 Agent Runtime
-- 执行任务与结果采纳
-- QA、构建与 Release
-- 扩展边界
-- 持久化、历史与恢复
-
-详细 API、存储 Schema、Worker Transport 以及公开扩展契约仍在设计中，目前尚无稳定的 Plugin API。
+当前代码库处于尚未发布的 **`0.2.0-alpha.1`** 开发批次。最近变更、兼容性边界与版本管理规则详见[更新日志](CHANGELOG.zh-CN.md)与[版本管理策略](docs/versioning.md)。

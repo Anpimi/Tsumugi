@@ -1,55 +1,51 @@
 # Execution test host
 
-The desktop Tasks view reads the project's persistent execution ledger. Normal builds do not register a synthetic operation or its injection command. To exercise generation, cancellation, recovery, and adoption without a translation or external provider, build the explicit test host from the repository root:
+The desktop **Tasks** view is backed by the project's persistent execution ledger. Production builds do not expose synthetic operations or fault-injection hooks. To test task generation, cancellation, recovery, and adoption locally without configuring an external AI provider or translation plugin, build the desktop app with the `execution-test-host` feature from the repository root:
 
 ```powershell
 pnpm install --frozen-lockfile
 pnpm --filter @tsumugi/desktop exec tauri build --debug --no-bundle --features execution-test-host -- --locked
 ```
 
-Add `--offline` after the final `--` when the Cargo dependencies are already cached. The executable is `target/debug/tsumugi-desktop.exe`; its web assets are embedded, so no development server is required.
+Append `--offline` after the final `--` if Cargo dependencies are already cached. The resulting binary (`target/debug/tsumugi-desktop.exe` on Windows) embeds the frontend assets, so no separate development server is needed.
 
-Start it with an absolute path to a **new, nonexistent directory** whose parent exists:
+## Running synthetic fixtures
+
+Launch the test binary with an absolute path to a **new, nonexistent directory** inside an existing parent folder:
 
 ```powershell
 & .\target\debug\tsumugi-desktop.exe --fixture-directory 'C:\Temp\tsumugi-execution-check' --fixture-mode partial --fixture-grouped
 ```
 
-The host creates a three-item synthetic project and starts its task. In the app, choose **Open project**, select that directory, then choose **Tasks** in the sidebar. Creating the fixture never overwrites an existing directory. To reopen a fixture after closing the app, launch the same test executable **without fixture arguments**, then open the existing directory.
+The host initializes a three-item synthetic project and starts its task (refusing to overwrite an existing directory). In the app, choose **Open project**, select that directory, and open **Tasks** in the sidebar. To inspect the same project after restarting the app, launch the test executable **without fixture arguments** and open the existing directory.
 
-Available modes:
+### Fixture modes and options
 
 | Mode | Behavior |
 | --- | --- |
-| `partial` | Two items succeed and one fails safely; retrying the failed item succeeds. |
-| `success` | All three items generate saved outputs; adoption remains explicit. |
-| `hold` | The first dispatched item waits for cancellation, then ends without a reliable result. Remaining items have not been dispatched. |
-| `unknown` | Each dispatch ends without a reliable result; the explicit query returns its saved-test outcome. |
+| `partial` | Two items succeed and one fails with a retryable error; retrying the failed item succeeds. |
+| `success` | All three items generate saved outputs ready for explicit adoption. |
+| `hold` | The first dispatched item blocks until cancelled, then terminates with an unknown outcome while remaining items stay undispatched. |
+| `unknown` | Every dispatch terminates with an unknown outcome; running an explicit outcome query resolves the saved test result. |
 
-`--fixture-grouped` makes all three items one atomic adoption unit. Without it, each item is independently adoptable. The runner returns at 1.5-second intervals except in `hold` mode. Item ordering follows captured identities, so the safely failing item need not appear second on screen.
-
-The feature also registers `seed_execution_fixture` for IPC tests. It requires the current `sessionToken`, `projectId`, a mode, `delayMs` from 0 through 5000, and `grouped`. It has no production menu entry. Fixture target tables are accepted only by this explicit feature; use a normal build and a separate fresh project for production schema checks.
+- Passing `--fixture-grouped` treats all three items as a single atomic adoption unit; omitting it allows each item to be adopted independently.
+- The runner completes items at 1.5-second intervals (except in `hold` mode). Because items are ordered by captured identity, the failing item in `partial` mode does not necessarily appear second in the list.
+- For automated IPC tests, `execution-test-host` also registers the `seed_execution_fixture` command, which takes `sessionToken`, `projectId`, `mode`, `delayMs` (`0`–`5000`), and `grouped`. Fixture target tables are only accepted when `execution-test-host` is enabled; use a standard build and a fresh project to verify production schema behavior.
 
 ## Continuation identity and current storage
 
-Resume and safe-failure retry use `continue_execution`, with a fixed action identity, original attempt and consistency unit, exact remaining item set and expected task cancellation revision. The original intent, canonical request digest and unique new attempt are committed in one execution-ledger transaction. `read_execution_continuation` reads the complete original receipt by action identity. `read_execution_continuations` pages the original attempt's receipts by the existing attempt sequence; a non-null cursor means more history must be read.
+Task resume and safe-failure retry run through `continue_execution`, which requires a fixed action identity, the original attempt and consistency unit, the exact set of remaining items, and the expected task cancellation revision:
 
-Replaying a recorded request returns that same receipt before evaluating fresh eligibility. It does not enqueue again, invoke a producer again or renew scheduling authority after reopening. A changed payload under the same action conflicts. An unrecorded request keeps its original cancellation basis; a later cancellation rejects it. Reused successes stay in the complete unit without another dispatch. This local guarantee does not establish exactly-once external execution or provider billing.
+- **Transactional ledger records**: The original intent, canonical request digest, and new attempt identity are committed together in a single execution-ledger transaction. `read_execution_continuation` retrieves a single receipt by action identity, while `read_execution_continuations` pages through an attempt's receipts in sequence order (a non-null cursor indicates additional pages).
+- **Idempotent local replay**: Resubmitting a recorded request returns the stored receipt before evaluating current eligibility, without re-enqueuing work, re-invoking the producer, or renewing scheduling authority after reopening. Submitting a modified payload under the same action identity returns a conflict. Previously succeeded items remain part of the consistency unit without being dispatched again. Note that local replay idempotency applies to the project ledger and does not guarantee exactly-once execution or billing on an external provider.
+- **Outcome queries vs. continuations**: The legacy anonymous `recover_execution` route rejects resume and retry requests; it is used solely for session-owned outcome queries and output validation.
+- **Schema compatibility**: Development builds support only the [current database schema](../README.md#development). Opening a project validates the table layout, frozen inputs, result references, and continuation bindings. Projects using older development schemas are refused without automatic migration or reset; keep those directories intact and reimport the original source files into a new project.
 
-The old anonymous `recover_execution` route refuses resume/retry. It still owns outcome queries and output validation: query jobs remain session-owned and validation may commit individual saved results. They do not acquire continuation receipts or an exact replay guarantee from this change.
+## Verification checklists
 
-Current projects support only the [current database schema](../README.md#development). Opening verifies the exact layout, frozen inputs, result references and continuation associations. Other development schemas are refused before application schema changes, without an automatic upgrade, rebuild or reset; SQLite may complete its own hot-journal recovery. Preserve an unsupported directory and reimport its original sources into a new project.
+### Automated test suite
 
-## Manual checks
-
-1. In `partial --fixture-grouped`, inspect the saved outputs, retry the single eligible failure, and adopt the group. Successful outputs must not be regenerated; all three target changes appear in the recorded receipt.
-2. Close and reopen. The receipt and saved output remain available. Reopening does not dispatch old work automatically.
-3. In a fresh `hold` project, attempt close, application exit, project switching, and directory rename. Return from the stop confirmation once, then confirm stopping. The active result becomes unknown; undispatched work remains cancelled. Failed project opening retains the old session and reports that work stopped.
-4. In `unknown`, query one item explicitly. It becomes a generated, unapplied output. Unknown work has no generation retry action.
-5. Change UI language between English and Simplified Chinese. Use the keyboard to enter Tasks, inspect an item, open and leave a confirmation, and return to the triggering control. Check layouts at the minimum window size.
-6. Leave a project-name draft, enter Tasks, and return. The draft must remain. Removing a target locale must not let historical work recreate that scope.
-
-Automated checks use real SQLite and the Tauri IPC handler with a mock window runtime:
+Automated tests run against real SQLite databases and the Tauri IPC handler using a mock window runtime:
 
 ```text
 cargo test -p tsumugi-core --locked
@@ -58,16 +54,22 @@ cargo test -p tsumugi-desktop --locked
 pnpm --filter @tsumugi/desktop test
 ```
 
-IPC, component tests, and successful builds do not establish native visual or keyboard acceptance. Record manual observations separately, including the source revision and whether the test feature was enabled.
+### Manual UI and lifecycle checks
+
+Because automated IPC and component tests do not cover native window rendering or keyboard navigation, verify the following flows manually in the test host (recording the source revision and build features used):
+
+1. **Grouped retry and adoption**: Launch with `partial --fixture-grouped`, inspect the saved outputs, retry the single failed item, and adopt the group. Verify that already succeeded items are not regenerated and that all three target updates appear in the adoption receipt.
+2. **Persistence across restarts**: Close and reopen the project. Verify that the receipt and saved outputs remain intact and that reopening does not automatically dispatch pending work.
+3. **Cancellation and lifecycle guards**: In a fresh `hold` project, trigger project close, app exit, project switch, and directory rename. Cancel out of the stop confirmation dialog once, then confirm stopping. Verify that the active item transitions to `unknown`, undispatched items remain `cancelled`, and a failed project open keeps the current session active.
+4. **Resolving unknown outcomes**: In an `unknown` project, run an explicit outcome query on one item and verify that it transitions to a generated, unapplied output (with no generation retry button offered while `unknown`).
+5. **Localization, keyboard, and layout**: Switch the UI language between English and Simplified Chinese. Navigate into **Tasks** using only the keyboard, inspect an item, open and dismiss a confirmation modal, and verify focus restoration and layout at the minimum window size.
+6. **Draft and scope isolation**: Leave an unsaved project-name draft, switch to **Tasks**, and return to confirm the draft is preserved. Remove a target locale and verify that historical tasks cannot recreate the removed locale scope.
 
 ## Project command scheduling
 
-The desktop owns its session and SQLite connection on one project thread. All project commands, including reads, lifecycle changes, review and export, enter a FIFO queue without waiting on the window or async runtime thread. Session tokens and project identities are checked when the operation executes. Closing does not overtake an accepted write, and losing a reply does not cancel that write: use the existing action/receipt reconciliation flow.
+Each open project owns a dedicated background thread for its session state and SQLite connection. All project commands—including reads, lifecycle transitions, reviews, and exports—enter a bounded FIFO queue so they never block the UI window or async runtime threads:
 
-Admission permits at most 32 normal operations and reserves four additional slots for close, execution cancellation and quiescence. Saturation returns the existing `busy` error before work is accepted. A split file-capture operation reserves its slot through its final session check, so queue saturation cannot strand its completion. File/capture work uses at most four blocking slots; native pickers have one separate slot. Their permits stay with the work even if a caller stops waiting.
-
-Review cancellation is an independent, session-and-project-bound signal and does not wait behind a check. A synchronous database operation already running on the project thread is not forcibly interrupted; accepted close/cancel operations retain FIFO ordering. The execution ticker uses that same owner, so a long project operation can delay task projection even though the window remains responsive. Database read optimization and shorter QA transactions are separate concerns.
-
-Operations taking at least 100 ms including queue time emit a diagnostic line with operation name, dispatch sequence, session epoch, queue milliseconds and work milliseconds. Epochs are local to the running process. These logs contain no request text, paths, project IDs or session tokens; work time includes SQLite and application processing and is not a per-query SQL trace.
-
-For native scheduling checks, this test feature also consumes `review-page.json` and `review-check.json` through the same one-shot controls described in [source import](source-import.md#native-fault-checks). A `{"wait":true}` barrier pauses the actual project operation until its matching `.release` file appears (60-second deadline). Check window input while `review-page.reached` exists; check the independent cancel action while `review-check.reached` exists. Release the barrier before the deadline and verify the real operation's result. Synthetic delays isolate scheduling and do not establish real search performance. Keep these controls beside a dedicated test executable and use only disposable project data.
+- **Queue capacity and slot reservations**: The queue admits up to 32 normal operations and reserves 4 additional slots for project close, task cancellation, and quiescence. When the queue is full, new requests fail immediately with a `busy` error. Split file-capture operations hold their reserved slot until their final session check completes, using at most 4 blocking file-capture slots and 1 separate slot for native file/folder pickers.
+- **Session and ordering guarantees**: Session tokens and project IDs are validated when an operation executes on the project thread. Closing a project does not jump ahead of an already accepted write, and losing an IPC response does not cancel an accepted write (use the standard receipt reconciliation flow). Review cancellation uses an independent session-and-project signal that bypasses the queue wait, though an already executing synchronous SQLite statement runs to completion before the next queued command starts.
+- **Slow-operation diagnostics**: Any operation whose total time (queue wait + execution) reaches 100 ms logs a diagnostic entry containing the operation name, dispatch sequence, process-local session epoch, queue time (ms), and work time (ms). Diagnostic logs omit request payloads, file paths, project IDs, and session tokens.
+- **Native scheduling fault checks**: When built with `execution-test-host`, the scheduler also reads `review-page.json` and `review-check.json` from `source-fixture-control/` using the one-shot barrier mechanism described in [source import](source-import.md#native-fault-checks). A `{"wait":true}` rule writes a `.reached` marker and pauses the project thread for up to 60 seconds until a matching `.release` file is created, allowing you to test UI responsiveness while `review-page.reached` is active and independent review cancellation while `review-check.reached` is active. Use these barriers only with a dedicated test binary and disposable project data.

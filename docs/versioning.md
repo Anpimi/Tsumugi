@@ -1,127 +1,63 @@
-# Application versioning and changelog maintenance
+# Application Versioning and Changelog Maintenance
 
-## Version source and release boundary
+## Version Source and Release Boundary
 
-`[workspace.package].version` in [Cargo.toml](../Cargo.toml) is the application's single version source. `tsumugi-core` and `tsumugi-desktop` inherit it. Tauri's configuration omits `version` so it reads the desktop Cargo package version; the frontend package is marked `private` and has no independent release version. Regenerate the workspace package entries in `Cargo.lock` with Cargo when changing the application version, using `cargo update --workspace --offline` with the existing dependency cache.
+`[workspace.package].version` in [Cargo.toml](../Cargo.toml) is the single source of truth for the desktop application's version. Both `tsumugi-core` and `tsumugi-desktop` inherit this field. The Tauri configuration omits `version` so it reads the Cargo package version directly, and the frontend `package.json` is marked `private` without an independent release number.
 
-The release unit is the desktop application built from one verified source commit. Database schemas, bundled integration implementations, caption profiles and capability/exchange contracts have separate versions. Evaluate their compatibility when their behavior changes; do not change them merely to match an application version.
+Whenever you change the workspace version, refresh the workspace entries in `Cargo.lock` using the local cache:
 
-The supported user-facing scope is the documented project workflow and import/export formats. Internal Rust, storage and IPC interfaces are not a stable public SDK. The application remains in initial development.
+```sh
+cargo update --workspace --offline
+```
 
-## Choosing the next version
+A desktop release is built from a single verified source commit. Database schemas, bundled format integrations, caption profiles, and capability/exchange contracts carry their own version numbers. Update those internal versions only when their own format or behavior changes—not merely to match an application bump.
 
-Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
+The supported public surface is the documented desktop workflow and its import/export formats. Internal Rust APIs, SQLite storage tables, and Tauri IPC payloads are not a stable public SDK.
 
-| Situation | Version choice |
+## Choosing the Next Version
+
+Tsumugi follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Pick the target release version relative to the previous release, and advance prerelease identifiers within that target. While the project is in `0.y.z` initial development, apply the following rules:
+
+| Change Scope | Version Rule |
 |---|---|
-| Compatible bug fixes only | Increment patch, for example `0.2.0` to `0.2.1` |
-| New functionality, or incompatible documented behavior/data/format changes | Increment minor and reset patch, for example `0.2.0` to `0.3.0` |
-| Another distributed prerelease for the same target | Advance the prerelease counter, for example `0.2.0-alpha.1` to `0.2.0-alpha.2` |
-| Documentation, tests or tooling with no shipped behavior or compatibility change | No application bump by itself |
+| Backwards-compatible bug fixes only | Increment patch (e.g., `0.2.0` → `0.2.1`) |
+| New features, or incompatible changes to documented behavior, data, or formats | Increment minor and reset patch (e.g., `0.2.0` → `0.3.0`) |
+| Subsequent prerelease distributions for the same target | Advance the prerelease counter (e.g., `0.2.0-alpha.1` → `0.2.0-alpha.2`) |
+| Documentation, tests, or internal tooling with no shipped behavior or compatibility change | No version bump required |
 
-Use `alpha.N` while the target is under development. A move to `beta.N`, `rc.N` or the normal version requires an explicit readiness decision. Once a stable public compatibility contract is established at `1.0.0`, incompatible changes increment major; compatible features increment minor; compatible fixes increment patch.
+Active development on a target uses `alpha.N` identifiers; moving to `beta.N`, `rc.N`, or a stable release requires an explicit release readiness decision. Once `1.0.0` establishes a stable compatibility contract, breaking changes will increment the major version.
 
-Assess the whole unreleased batch, including earlier commits. A new feature in a fix batch changes its target; a new incompatibility requires a fresh compatibility review even if a version was already chosen. Routine commits and internal validation builds can share a pending version. Freeze that version when an explicitly designated prerelease/release snapshot is distributed or tagged; subsequent snapshots must use a new version. Record the source commit and artifact digest to distinguish internal builds.
+Always evaluate the **entire unreleased batch** rather than bumping per commit. If a bug-fix batch gains a new feature or breaking change, re-evaluate the target version for the whole batch. Once a prerelease or release build is published or tagged, that version identifier is frozen—any subsequent distribution must advance the version counter.
 
-The first managed target, `0.2.0-alpha.1`, consolidated development commits through `7febd7e`, including new workflows and storage incompatibilities, after the original `0.1.0` scaffold version. The application alpha.1 release is now frozen. Subsequent source-only integrations remain under **Unreleased** without replacing that release; the next application distribution must advance its prerelease counter.
+The first managed target, `0.2.0-alpha.1`, consolidated the initial `0.1.0` development history through commit `7febd7e`. Because the published `0.2.0-alpha.1` snapshot is frozen, newer source changes accumulate under **Unreleased** until the next distributed prerelease advances the version to `0.2.0-alpha.2` (or `0.3.0-alpha.1`).
 
-## Maintaining each change
+## Maintaining Changelogs
 
-1. Assess user-visible behavior, compatibility, project migrations and the application's release impact before completing a change. Check the existing unreleased entries and version target.
-2. Describe user-relevant additions, changes and fixes under `Unreleased` in [CHANGELOG.md](../CHANGELOG.md), using the appropriate Keep a Changelog category. State incompatible behavior and concrete migration steps. Consolidate related entries instead of copying commit subjects or listing merge commits.
-3. Update [CHANGELOG.zh-CN.md](../CHANGELOG.zh-CN.md) in the same change. English is authoritative; version headings, dates, categories, scope and migration facts must agree. A change without release impact needs no artificial entry or bump; record that assessment in its review or delivery notes.
-4. If the batch's target changes, update the Cargo workspace version, regenerate its lockfile entries, and synchronize current-version statements. Verify the resolved versions of both workspace packages and the version metadata of the actual desktop build. Select behavior checks according to the changed risk; a version-only change does not require an unrelated full test suite.
+1. **Assess impact**: Before completing a change, check how it affects user-visible workflows, data compatibility, or migration requirements against the current `Unreleased` batch.
+2. **Update `CHANGELOG.md`**: Record user-relevant additions, changes, and fixes under `## [Unreleased]` in [CHANGELOG.md](../CHANGELOG.md) using [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) categories (`Added`, `Changed`, `Fixed`). Document any breaking changes and concrete user steps. Group related changes into cohesive entries rather than copying raw commit messages.
+3. **Sync `CHANGELOG.zh-CN.md`**: Update [CHANGELOG.zh-CN.md](../CHANGELOG.zh-CN.md) in the same change. The English changelog is authoritative; version headers, release dates, categories, and migration instructions must match across both files. Purely internal refactors, test updates, or doc edits that do not alter shipped behavior do not need changelog entries.
+4. **Apply version updates when needed**: If the target version changes, update `[workspace.package].version`, refresh `Cargo.lock`, update version references in the documentation, and verify that both Cargo packages and the desktop bundle resolve to the new version.
 
-Before an authorized application release, move the batch into `## [VERSION] - YYYY-MM-DD` in both changelogs using the actual release date, leave a fresh `Unreleased` section, and align the manifest version, release title, source commit and artifact identity. Preserve published entries. Tags and release publication are separate operations from local development commits.
+When preparing an official release, move the `Unreleased` entries under `## [VERSION] - YYYY-MM-DD` in both changelogs, leave a clean `## [Unreleased]` heading at the top, and verify that the Cargo manifest, release title, source commit, and artifact digests align.
 
-## Experimental SDK source and artifacts
+## Component and Transition Profiles
 
-`crates/plugin-sdk/Cargo.toml` owns the SDK's independent version, currently
-`0.1.0-alpha.1`. It inherits the workspace edition, minimum Rust version, license
-and authors, while retaining its own package version. The SDK has no Core or
-Host dependency; adding its source does not add a desktop plugin workflow or
-change application storage, IPC or execution profiles. See the
-[SDK build and consumption guide](../crates/plugin-sdk/README.md).
+### Experimental Plugin SDK (`crates/plugin-sdk`)
 
-The current source-only integration retains the application and SDK version
-metadata and does not designate a new distribution snapshot. The application
-alpha.1 release and earlier immutable SDK archives remain frozen. Current SDK
-source may differ from an archive with the same version label; consumers must
-select exact source/artifact provenance and must not replace a frozen archive
-or silently update a consumer lock.
+`crates/plugin-sdk/Cargo.toml` manages its own independent version (currently `0.1.0-alpha.1`), while inheriting the workspace Rust edition, MSRV, license, and authors. It has no dependency on `tsumugi-core` or `tsumugi-plugin-host`. See the [SDK README](../crates/plugin-sdk/README.md) for build and consumer verification commands.
 
-Before another SDK distribution, reassess the complete changes since its selected
-artifact and advance the prerelease. In particular, the current Windows runtime
-data enum variant requires downstream exhaustive Rust matches to be updated;
-this data choice establishes no Windows execution support. Review protocol and
-profile compatibility independently from SemVer. A source integration or local
-Cargo package verification does not publish to crates.io or update any release.
+Consumers pin SDK artifacts by exact commit and SHA-256 digest rather than relying on mutable version labels. Before distributing a new SDK archive, review all contract changes since the previous archive (such as new platform enum variants that affect exhaustive Rust matches) and advance the SDK prerelease version.
 
-## Standalone Host source profile
+### Standalone Plugin Host (`crates/plugin-host`)
 
-The experimental `tsumugi-plugin-host` package inherits the workspace application
-version. Its independent source profile provides package/runtime inspection, local
-Store and offline trust management, and headless SDK process channels. Its default source profile does
-not add application member execution, project schemas or desktop plugin loading.
-The opt-in `core-adapter` source profile uses the existing Core execution and
-application authority without adding a separate Store or changing its schema.
-Desktop consumers and the opt-in member adapter connect to that same authority;
-the internal Pi member channel is separate from the SDK Process protocol.
-The default Host build remains Core-free. The private JavaScript Host workspace
-is an internal component runtime with a pinned production dependency, not another
-public SDK version source.
+`tsumugi-plugin-host` inherits the workspace version. By default it builds without `tsumugi-core`, providing package/runtime inspection, local Store and TUF trust management, and headless SDK process channels. Enabling the optional `core-adapter` feature connects those channels and the internal Pi member runtime to Core's execution, grant, and process-lifecycle tracking without introducing a separate database store.
 
-This source-only integration keeps existing application/SDK versions, protocol
-and profile identities, frozen SDK/plugin/runtime pins and published assets.
-New local conformance runtimes are explicit test inputs, never replacements for
-old approved artifacts. A future distribution must select and verify the complete
-application/SDK/Host/plugin combination and advance the appropriate prerelease;
-this source integration does not designate or publish that snapshot.
+### Core Storage and Desktop Domain Transition
 
-## Core storage and desktop transition profile
+Current projects use SQLite schema **61** (`DELETE` journaling, `FULL` synchronization), which unifies project content, execution history, plugin grants, team work plans, context strategies, and provider usage ledgers. Older development schemas are rejected on open without modifying or resetting the project folder; users should keep old folders intact and re-import original source files into a new project.
 
-The source-only Core integration uses current-only project schema **61**. Older
-development schemas are refused without an application migration or directory
-reset. Keep those project directories intact and create a fresh project to
-reimport the original source files. The format includes the complete execution,
-provider, grant, application, strategy and domain owners; reopening verifies their
-original associations in one consistent snapshot. Persisted facts do not restore
-live execution permissions.
+By default, `tsumugi-core` requires SDK plugin provenance for domain operations. The desktop crate currently enables the transitional `legacy-desktop-domain` feature so existing built-in SMAPI/WebVTT commands and current-project receipt recovery remain available alongside plugin-backed workflows. Both paths share the same Store, runtime, usage ledger, and receipt checks, and plugin-bound inputs never fall back to built-in validation. Remove `legacy-desktop-domain` only after all remaining built-in command callers and receipt recovery paths have completed their migration.
 
-Default Core requires captured SDK plugin evidence for domain execution. The
-current desktop dependency explicitly enables `legacy-desktop-domain` for its
-retained built-in source/translation import, QA and build command consumers and
-current-project receipt recovery. The production UI uses captured SDK adapters;
-a plugin selection failure cannot route to a built-in command. This profile uses the same Store, execution runtime,
-ledger and immutable receipts. It accepts only the existing known built-in
-capabilities and policies when no plugin is bound; plugin-bound inputs cannot
-fall back to built-in validation. It does not enable `execution-test-host`, crash
-hooks or synthetic task menus.
+### ChatGPT Subscription and Member Protocol
 
-Remove the production profile only after its remaining built-in command and
-current-project recovery consumers have an explicit accepted transition. Historical receipt and
-result decoding must remain valid for supported current projects, or be covered
-by an explicit current-only format transition; UI migration alone is not grounds
-to remove it. Core's required-nullable strategy provenance and its admission and
-reopen checks apply to both profiles. Desktop IPC exports the complete current Core data required by its consumers,
-including strategy provenance, resource origins and unknown outcomes. Original
-request and receipt correlations remain checked at the command boundary.
-
-This changes source storage/API compatibility within the unreleased development
-batch. It does not replace the frozen application alpha.1 distribution, SDK,
-plugins or runtime assets. The next distributed application must advance its
-prerelease and reassess the complete combination under the rules above.
-
-## ChatGPT subscription source profile
-
-ChatGPT sign-in adds a separate account reference and controlled Responses profile.
-The trusted desktop account owner keeps credentials in macOS Keychain; Core retains
-physical request reservations, unknown usage, cancellation and adoption authority.
-API-key limits, project schema 61, SDK Process and WorkPlan identities are unchanged.
-Internal member protocol advances from 3 to 4; regenerate its contracts and build
-the matching runtime together. Frozen member protocol 3 archives remain immutable.
-
-This source-only integration updates bilingual Unreleased entries and retains
-application/SDK metadata. It does not designate another alpha.1 distribution; the
-next distributed application and changed runtime must follow the prerelease and
-complete-combination review rules above.
+macOS ChatGPT sign-in stores credentials in the macOS Keychain while keeping request reservations, unknown-usage tracking, cancellation, and result adoption in Core. Internal member protocol **4** pairs regenerated wire contracts with the matching `agent-service` runtime; frozen protocol 3 archives remain unchanged for existing pins.

@@ -1,106 +1,52 @@
-# Read-only capability tools
+# Read-Only Capability Tools
 
-A Resource with `tsumugi.capability-tool-declaration` schema/behavior `1/1`
-adapts one capability from the same package. It does not introduce another
-executor, installation identity, model provider or permission owner. A manual
-query, batch consumer or Agent can select the same original capability.
+A non-executable JSON resource with schema `tsumugi.capability-tool-declaration` (`1/1`) exposes a read-only capability from the same plugin package as a reusable query tool for manual reference lookups, batch preparation, or Agent tool calls.
 
-`CapabilityToolDeclaration` contains `name`, `title`, `description`,
-`capabilityId`, an exact optional `profile`, `supportingResources` and an
-optional `skill`. The manifest's original capability owns input/output/error
-contracts, limits and permissions. The tool does not repeat or override them.
-If that capability declares profiles, the adapter must explicitly select one
-matching both its schema and behavior versions. A capability with no profiles
-requires a null or absent profile.
+## Tool Declaration and Binding (`CapabilityToolDeclaration`)
 
-The current tool contract admits only `read-only` capabilities whose requested
-permissions are empty or `captured-input`. It refuses proposal/external effects,
-project services, staged writes, network and child-process requests. The Host's
-approved runtime and per-attempt execution consent remain separate requirements;
-these data checks make no OS sandbox claim.
+`CapabilityToolDeclaration` (up to 16 KiB encoded) contains:
 
-`parse_tool_declaration` refuses unknown and duplicate fields, invalid names,
-blank or unbounded guidance, repeated Resource IDs and more than 16 supporting
-Resources. The complete encoded declaration is bounded to 16 KiB; titles use a
-256-byte bound and descriptions 4096 bytes. Text is retained as supplied.
-`CapabilityToolDeclaration::bind` selects the original capability, verifies
-Resource/Skill kinds in the actual validated manifest and retains the independently
-supplied whole-package digest. Two tools with the same name remain separate
-provider selections; consumers must resolve collisions explicitly.
+- `name`, `title` (up to 256 UTF-8 bytes), and `description` (up to 4,096 UTF-8 bytes).
+- `capabilityId`: the target capability contribution ID in the same package.
+- `profile`: an exact `ContractRef` (required if the target capability declares supported profiles; must be `null` or omitted if the capability has no profiles).
+- `supportingResources`: up to 16 unique non-executable `Resource` contribution IDs in the same package.
+- `skill`: an optional non-executable `Skill` contribution ID in the same package.
+- `query`: an optional structured presentation and payload template (`ToolQueryDeclaration`).
 
-A consuming Host must read this exact Resource contract, bind against its
-immutable image and verify all selected Resource and Skill files are nonexecutable.
-Supporting Resource content stays opaque;
-its consumer owns domain validation. A new package's changed support bytes yield
-a new whole-package identity. A deserialized binding is a claim and must be
-rebound against actual captured package bytes, never treated as authority.
+The target capability retains ownership of its input, output, and error schemas, resource limits, and permissions:
 
-Schemas, JavaScript types and the standalone structural validator are generated
-from Rust through the SDK contract generator.
-The CLI `validate-tool-declaration` additionally applies bounded semantic checks.
-Neither JSON structure nor package guidance grants tools or makes instructions
-trusted. Application discovery, current component availability, execution
-authorization and complete product journeys are separate integration work.
+- Only capabilities with a `read-only` project effect and either empty permissions or `captured-input` permission are accepted. Capabilities requesting `proposal` or `external` effects, `project-service` access, staged writes, network access, or subprocess execution are rejected.
+- `parse_tool_declaration` validates field bounds and rejects unknown or duplicate fields, invalid tool names, blank text, and duplicate resource IDs.
+- `CapabilityToolDeclaration::bind` resolves the capability, supporting resources, and skill against the package's `ValidatedManifest` and attaches the package digest. When staging a package, the Host verifies that all referenced resource and skill files are non-executable.
 
+Schema generation and CLI validation are driven by the Rust definition (`validate-tool-declaration`).
 
-## Host-rendered Ui selector
+## Host-Rendered UI Selector (`reference-query` Slot)
 
-The existing manifest `Ui { slot, schema }` shape can select the Host's bounded
-`reference-query` slot with this tool Resource's exact `1/1` contract. Ui ownership
-remains JavaScript-only. A matching Host consumer must require one Resource
-in that same captured package and component, the original query capability in
-that component, and the bounded presentation below. It must reject ambiguous or
-unsupported bindings rather than choose a Resource by name or manifest order.
-This adds no SDK wire fields or runtime permission. Installed-currentness,
-display lifecycle and independent execution consent belong to that consumer;
-this SDK package provides no rendered Ui or desktop plugin workflow.
+A manifest `Ui { slot, schema }` contribution (owned by a JavaScript component) can target the Host's `reference-query` slot with schema `tsumugi.capability-tool-declaration` (`1/1`). To bind cleanly in the Host, that component and package must own exactly one matching tool resource declaration, its referenced query capability, and a `query` presentation block (`ToolQueryDeclaration`). Ambiguous multi-resource bindings are rejected rather than resolved by manifest order.
 
-## Bounded text-query presentation
+## Structured Query Presentation (`ToolQueryDeclaration`)
 
-A tool can additionally declare `query`, a finite reference-query presentation.
-The package owns a fixed `inputTemplate`, exact original `inputSchema` and
-`outputSchema`, a `textPath` and `maxTextBytes`, one explicit target selector,
-one explicit category/sense selector, and reference result columns. Each
-selector supplies original values, labels, descriptions and selection bounds.
-A host can render these as text, a target choice and explicit sense choices;
-this contract supplies no arbitrary form controls, scripts, CSS or application
-state access. Headless tools need no presentation.
+Adding a `query` object to `CapabilityToolDeclaration` allows the Host to render a structured reference lookup UI and construct capability payloads without executing arbitrary plugin UI scripts or custom HTML/CSS:
 
-Paths are arrays of object keys and zero-based array indices, for example
-`["queries", 0, "text"]`. They are bounded to eight parts and address existing
-values only. Text, target and category paths cannot overlap; `__proto__`,
-`constructor`, `prototype`, control characters and unbounded indices are
-refused. The template must already contain the corresponding text, target
-string and category array. Resource pins and other domain inputs remain exact
-immutable template data, generated by the package from its actual resources;
-only the original worker validates their domain meaning. Capturing a template
-never grants Resource adoption, execution or project-service access.
+- `inputTemplate`: a fixed JSON template (fitting within the capability's `maxInputBytes`) pre-populated with package data such as resource SHA-256 pins.
+- `inputSchema` and `outputSchema`: must match the underlying capability's schemas (`1/1`).
+- `textPath` and `maxTextBytes`: a path into `inputTemplate` where the user's query string is inserted, bounded by `maxTextBytes` (which cannot exceed `maxInputBytes`).
+- Target and category/sense selectors: one explicit single-value target selector and one multi-value category/sense selector, each specifying its path in `inputTemplate`, allowed option values, labels, descriptions, and selection count bounds (up to 64 options total).
+- Result columns: up to 8 columns, with an output array path (up to 128 result entries per response) and per-column string field paths.
 
-Input/output schema references must match the original capability exactly.
-The template fits its input bound; the text bound cannot exceed it. There are
-at most 64 explicit options, eight result columns and 128 entries per payload,
-within the complete 16 KiB tool declaration bound. Output paths select an
-array of reference entries; each column selects a string from each entry.
-Missing, wrongly typed or oversized results are errors, distinct from an empty
-matching array. Full original outputs and provenance remain in the execution
-ledger; presentation does not certify their business meaning or approve them.
+### Path Rules
 
-The public `javascript/tool-query.mjs` exports `createToolQuery(binding)`.
-Use it after the application rebinds an actual installed package. Its
-`prepare({ text, target, selections })` constructs one original capability
-payload; single and batch consumers use the same helper for each selected text.
-It retains Unicode, line breaks, explicit target values and fixed template
-fields, and bounds the complete encoded payload, including JSON escaping.
-`entries(output)` returns strings for the declared reference columns without
-rendering markup or following links. `ToolQueryError` exposes a stable code and
-field for the host to localize. Caller-supplied bindings remain claims; this
-helper neither authenticates them nor bypasses original domain validation or
-per-attempt application consent.
+Template and output paths are arrays of 1 to 8 object keys or zero-based array indices (for example, `["queries", 0, "text"]`):
 
-Rust consumers use `ToolQueryDeclaration::prepare_payload(text, target,
-selections, max_input_bytes)` to construct the same original capability payload.
-The binding's capability supplies `max_input_bytes`; the declared text bound,
-explicit option membership, selection bounds, existing paths and complete
-encoded input bound are checked together. Fixed template fields and exact UTF-8
-source text remain intact. This helper neither grants execution nor creates
-missing paths, and it leaves domain input validation to the original worker.
+- Every path in `inputTemplate` must point to an already existing placeholder value of the matching type (string for text and target; array for category selections).
+- The text, target, and category paths must not overlap.
+- Disallowed keys (`__proto__`, `constructor`, `prototype`), control characters, and out-of-bounds indices are rejected.
+
+### Constructing Payloads and Extracting Rows
+
+- **JavaScript (`javascript/tool-query.mjs`)**: `createToolQuery(binding)` returns `{ prepare, entries }`:
+  - `prepare({ text, target, selections })` validates the user input against `maxTextBytes`, the allowed selector options, and the capability's complete encoded `maxInputBytes` ceiling (including JSON escaping), returning a fresh payload object with all fixed template fields preserved.
+  - `entries(output)` extracts the declared string columns from a capability response (rejecting missing, wrongly typed, or >128-entry outputs) without interpreting HTML or links.
+  - Validation failures throw `ToolQueryError` with a stable `code` and `field` for UI localization.
+- **Rust**: `ToolQueryDeclaration::prepare_payload(text, target, selections, max_input_bytes)` performs the identical template substitution and byte-budget validation in Rust.

@@ -1,27 +1,28 @@
 # Bundled integrations and compatibility
 
-Desktop source selects installed, independently approved plugin capabilities in
-**Source content**, before selecting a folder. Package approval, runtime approval
-and permission for each execution are separate. The explicitly bundled plugin
-profile includes the fixed packages below; a source build without those resources
-does not silently select a built-in implementation. See [plugin installation](plugin-distribution.md).
-A current source retains its captured domain and identity policy.
+In **Source content**, you select an installed, approved plugin capability before choosing a source folder. Approving a package, approving a runtime, and authorizing each individual execution are separate steps. The bundled plugin profile ships with the packages listed below; building from source without bundling those resources does not fall back to a built-in implementation. See [plugin installation](plugin-distribution.md) for details on managing packages.
 
 | Integration | Captured input | Export | Support |
 |---|---|---|---|
 | Stardew SMAPI 0.1.0-alpha.1 | `manifest.json`, `i18n/default.json` | `i18n/<language>.json` | Flat JSONC language files; see [source import](source-import.md) |
 | WebVTT 0.1.0-alpha.1 | `source.vtt` | `<language>.vtt` in the export folder | Caption profile 1; see below |
 
-Caption profile 1 supports UTF-8 with an optional BOM, LF/CRLF/CR line endings, explicit nonempty ASCII cue identifiers, and plain text with multiple lines. IDs that differ only in ASCII case are rejected as duplicates; the original spelling is preserved. Timing uses `mm:ss.mmm` or `hh:mm:ss.mmm`, with increasing start order and end after start. Overlapping cues are permitted. Supported settings are `line`, `position`, `size`, `align`, and declared `region`. NOTE blocks and leading STYLE/REGION blocks are retained as original data. CSS is not executed by the workbench.
+## WebVTT Caption Profile 1
 
-Anonymous cues, cue payload markup or entities, vertical settings, unknown settings, invalid timestamps and empty payloads are rejected. This is a limited editing profile, not a complete WebVTT renderer. Inputs are bounded to 128 KiB and 2,000 cues; individual text is limited to 16 KiB. The format reference is [W3C WebVTT syntax](https://www.w3.org/TR/2026/CRD-webvtt1-20260520/#syntax).
+The experimental WebVTT integration implements Caption Profile 1, a focused editing subset of the [W3C WebVTT syntax](https://www.w3.org/TR/2026/CRD-webvtt1-20260520/#syntax) (rather than a full WebVTT media renderer):
 
-After importing and applying a snapshot, use **Translations → Edit translations** to save normal revisions. Use **Review and QA** to run checks and record explicit approvals. Existing translated WebVTT files use the separately captured import, independent check and per-entry adoption flow described in [translation import](translation-import.md). **Build and export** uses the saved source template and approved project text. It changes only cue payloads, preserving timing, settings, identifiers, order and every other original byte. Enter a safe `.vtt` name for each language. No external subtitle source is reread during building. Empty text, blank lines, arrows and markup that could change the file structure are rejected before release.
+- **Accepted syntax and limits**: Input files must be UTF-8 (with an optional BOM) using LF, CRLF, or CR line endings, up to 128 KiB and 2,000 cues in total, with each individual cue text up to 16 KiB. Every cue requires a nonempty ASCII identifier (IDs differing only by ASCII case are rejected as duplicates, while original casing is preserved) and plain-text payloads (which may span multiple lines).
+- **Timing and cue settings**: Timestamps use `mm:ss.mmm` or `hh:mm:ss.mmm` with non-decreasing start times and end times strictly after start times; overlapping cues are allowed. Supported cue settings are `line`, `position`, `size`, `align`, and declared `region`. `NOTE` blocks and leading `STYLE` or `REGION` blocks are preserved as original file data (embedded CSS is never executed by the workbench).
+- **Rejected constructs**: Anonymous cues, cue payload markup or HTML entities, vertical cue settings, unrecognized settings, invalid timestamps, and empty cue payloads are rejected.
 
-To maintain subtitles, choose **Update source content** and review a new `source.vtt`. Timing and layout changes require renewed source correspondence and review even when the words match. Explicit continuation keeps the content unit, appends a new source revision and retains earlier translations and releases. Unchanged cues retain applicable work. Renamed IDs do not inherit identity from matching words alone. Earlier snapshots and releases remain readable after reopening.
+### Editing, building, and maintaining WebVTT subtitles
 
-Executable plugins run through captured native or JavaScript Host channels with
-explicit unsandboxed-execution consent. They have the current user's operating-system
-permissions; package declarations and Core grants are application controls, not an
-operating-system sandbox. Removing or revoking an installation does not erase saved
-project evidence or silently grant a replacement package its earlier authority. Core project/storage and Tauri/capability interfaces are internal; caption profile 1 is experimental. Capability and exchange version 1 are implementation versions, not promises of public SDK compatibility. Unknown required versions are rejected. New attempts record their actual implementation versions; saved releases keep their original bytes and checks. See the [README](../README.md#development) for the current database schema and the [versioning policy](versioning.md) for application release versions.
+1. **Translate and review**: After importing and applying a source snapshot, edit cue translations under **Translations → Edit translations**, run checks and record approvals in **Review and QA**, or import existing translated `.vtt` files through the workflow in [translation import](translation-import.md).
+2. **Build and export**: **Build and export** combines the saved source template with your approved project translations. It replaces only the cue text payloads while preserving timing, cue settings, identifiers, cue ordering, and all other original bytes, without rereading external subtitle files. Enter a valid `.vtt` filename for each target language; empty translations, blank lines, timestamp arrows (`-->`), or markup that could alter the file structure are rejected before a release can be created.
+3. **Update source subtitles**: Choose **Update source content** to compare a new `source.vtt` snapshot. Unchanged cues retain their existing work, while timing or layout modifications require re-verifying source correspondence and review even if the source words are identical. Cues with renamed IDs do not inherit identity automatically from matching text alone. Confirming the continuation appends a new source revision while preserving earlier snapshots, translations, and releases.
+
+## Execution model and version compatibility
+
+Executable plugins run through native or JavaScript Host channels and require explicit unsandboxed execution consent per attempt. Because plugin processes run with the current OS user's permissions, package capability declarations and Core grants act as application-level controls rather than an operating-system sandbox. Uninstalling or revoking a plugin preserves existing project records and never transfers prior permissions to a replacement package.
+
+Core project/storage interfaces and Tauri capability bindings are internal, and capability and exchange version `1` identify the current implementation contract rather than a stable public SDK guarantee (unrecognized required versions are rejected). New attempts record the exact implementation versions used, while saved releases preserve their original artifact bytes and check proofs. See the [README](../README.md#development) for database schema compatibility and the [versioning policy](versioning.md) for application release versioning.

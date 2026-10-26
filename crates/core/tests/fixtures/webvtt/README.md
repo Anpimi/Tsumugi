@@ -1,5 +1,22 @@
-# Caption conformance fixture
+# WebVTT Caption Conformance Fixture
 
-These self-authored examples are distributed under the project's MIT license. They are synthetic, not captured from a person or third-party video.
+This directory contains synthetic WebVTT (`webvtt-captions`) test fixtures distributed under the repository's MIT license.
 
-The independent S1 oracle is six cues, in order: `keep` = `Hello\nWorld`, `timed` = `Wait`, `word` = `Old`, `layout` = `Layout`, `rename` = `Same`, `removed` = `Gone`. S2 keeps only `keep` unchanged; `timed` changes its start, `word` changes text, and `layout` changes its setting. `renamed` requires an explicit identity decision. `added` is new and `removed` disappears. S1's Chinese byte oracle is `expected-zh-CN.vtt`; everything outside the cue payloads must remain identical.
+## Generations and Oracles
+
+- **S1 (`s1.vtt`)**: Contains six cues in order:
+  1. `keep` = `Hello\nWorld`
+  2. `timed` = `Wait`
+  3. `word` = `Old`
+  4. `layout` = `Layout`
+  5. `rename` = `Same`
+  6. `removed` = `Gone`
+- **S2 (`s2.vtt`)**: Models an upstream caption update relative to S1:
+  - `keep`: unchanged.
+  - `timed`: start timestamp changed.
+  - `word`: cue text changed.
+  - `layout`: cue settings changed.
+  - `renamed`: replaces `rename` with the same text (`Same`), requiring an explicit user identity decision.
+  - `added`: newly added cue.
+  - `removed`: deleted in S2.
+- **Target Build Oracle (`expected-zh-CN.vtt`)**: The expected UTF-8 output when building S1 for `zh-CN`; all bytes outside the translated cue payloads must remain identical to `s1.vtt`.

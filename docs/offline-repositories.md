@@ -1,21 +1,16 @@
 # Signed offline repositories
 
-The experimental Extensions panel accepts an already built local repository.
-Obtain its initial root through a channel you independently trust, compare the
-displayed root fingerprint with that channel, and explicitly confirm the trust
-refresh. Selecting a folder or root file alone enrolls nothing. Repository
-verification neither installs packages nor executes code.
+The experimental Extensions panel can verify and install plugins from a local [TUF (The Update Framework)](https://theupdateframework.io/) repository on disk.
 
-After verification, review each package's exact version, repository-attested
-publisher, runtime and complete package/capability permissions. Select the
-members you want to install. Members start unchecked; choosing another version
-of the same logical plugin replaces that selection and its rollback consent.
-New versions start disabled. Existing enablement and in-flight fixed bindings
-remain separate; installation never silently switches a running provider.
+To enroll or refresh a repository and install packages:
+1. Obtain the repository's initial root metadata file (`1.root.json` or current root) through a channel you independently trust.
+2. In **Extensions**, select the repository directory and root file, verify that the displayed root fingerprint matches your trusted source, and confirm the trust refresh. (Merely selecting a folder or file does not enroll the repository, and verification never installs packages or runs code.)
+3. Once verified, review the available packages—including each version, repository-attested publisher, runtime, and requested permissions—and check the packages you want to install.
+4. Confirm installation. Newly installed versions start disabled, and active plugin bindings in running tasks are never switched automatically.
 
 ## Repository layout
 
-Use a complete, already built directory containing:
+A signed offline repository is a prebuilt directory with the following structure:
 
 ```text
 metadata/<version>.root.json
@@ -27,11 +22,9 @@ packages/<direct-member-name>/manifest.json
 packages/<direct-member-name>/...
 ```
 
-Consistent snapshots use the standard versioned snapshot/targets metadata and
-SHA-256-prefixed catalog filename. Include the current retained root and every
-intermediate root needed for rotation. Metadata is verified with TUF; catalog
-bytes must match the signed target description before any member is trusted.
-The strict authenticated catalog is:
+Consistent snapshots use standard versioned `snapshot.json` / `targets.json` filenames and a SHA-256-prefixed `catalog.json` filename. Include the currently enrolled root file as well as every intermediate `<version>.root.json` needed to verify key rotations.
+
+During verification, TUF checks metadata signatures, thresholds, versions, and expiration dates before validating `targets/catalog.json` against its signed target hash and length. The authenticated `catalog.json` must follow this structure:
 
 ```json
 {
@@ -46,64 +39,32 @@ The strict authenticated catalog is:
 }
 ```
 
-`packageDigest` is the Host's complete package digest, not the hash of an archive
-or the catalog target. The publisher identifier is attested by this repository;
-it is not an independent publisher-key authentication claim. The catalog cannot
-choose its source identity: the Store derives that stable identifier from the
-independently enrolled initial root's canonical signed content. Retain that
-initial root for subsequent selections. A root rotation updates the existing
-source's latest trusted root, not its original source identifier.
+Key identity rules:
+- **`packageDigest`**: The Host's full package digest (`tsumugi-plugin-package inspect`), not an archive hash or the TUF target hash of `catalog.json`.
+- **`publisherId`**: Attested by this repository's TUF targets role rather than an independent per-publisher signing key.
+- **Repository source ID**: Derived by the PackageStore from the canonical signed bytes of the initial enrolled root metadata. Keep that initial root file when refreshing the repository later; subsequent root rotations update the source's trusted root key without changing its stable source ID.
 
-The catalog is at most 64 KiB and declares 1–16 exact members. Distinct versions
-may coexist in the catalog; each installation chooses at most one version per
-logical plugin. The complete capture is at most 64 MiB, 1,024 files/directories
-and a 30-second deadline. Individual package limits, including its root in the
-256-directory limit, remain in force. Root files are at most 256 KiB. Links,
-special files, path aliases, undeclared package contents and executable metadata
-are refused. Capture/Store operations currently support macOS and Linux.
-There are no network requests, archive extraction or installation scripts.
-This profile accepts top-level targets only; delegated targets are refused
-before verification can mutate the trusted metadata cache.
+### Repository and package limits
+
+Repository capture and PackageStore operations are supported on macOS and Linux, operate entirely offline without archive extraction or install scripts, and enforce these limits:
+- **Catalog**: Up to 64 KiB, declaring 1 to 16 package entries. Multiple versions of the same logical plugin can coexist in `catalog.json`, though you can select at most one version per plugin during an installation.
+- **Root metadata**: Each root file may be at most 256 KiB. Top-level TUF roles only; delegated targets are rejected before mutating the metadata cache.
+- **Directory tree**: Up to 64 MiB and 1,024 total files/directories, with a 30-second capture timeout. Standard per-package bounds (including the 256-directory limit counting the package root) also apply. Symlinks, hard links, special files, path aliases, undeclared package files, and executable flags on metadata files are rejected.
 
 ## Update safety and recovery
 
-Signature thresholds, root rotation, metadata versions, target hashes/lengths,
-expiry and the latest sampled time use the pinned upstream verifier. The local
-storage adapter only connects its metadata operations to the existing locked
-PackageStore. It does not replace TUF verification. Already verified intermediate
-root, role and time progress is retained even if a later role fails. The
-original root-update comparison context remains durable until key-rotation
-cache invalidation finishes; interrupted recovery still authenticates from the
-latest trusted root. Corrupt
-state is an error; deleting or resetting the metadata cache is not a recovery
-operation.
+### TUF verification and trust persistence
 
-Each accepted refresh retains its exact action, revision, root decision and
-frozen source bytes. An uncertain write requires confirmation of that original
-action. After reopening, the Store conservatively requires original-action
-confirmation before another refresh; merely observing visible files does not
-prove durability. Resume reuses retained input even if the selected folder has
-disappeared, rechecks current expiry, and never authorizes package installation.
-Trust revisions and package-settings revisions are separate.
-The experimental Store retains at most sixteen sources and 128 trust actions
-in total, including frozen inputs. It performs no automatic history deletion;
-keep sufficient space for those retained snapshots.
+Tsumugi uses the pinned upstream TUF verifier to enforce signature thresholds, root key rotation, version monotonicity, target hashes/lengths, and expiration timestamps, persisting verified state in the locked PackageStore:
+- **Incremental progress**: Verified intermediate roots, roles, and timestamp watermarks are saved even if a later role fails verification. During key rotation, the root comparison context stays durable until cache invalidation completes.
+- **Corruption handling**: Corrupt store state is treated as a hard error; never manually delete or reset the metadata cache to work around verification errors.
+- **Action recovery**: Every accepted trust refresh records its action ID, revision, root decision, and frozen input bytes. If a write is interrupted or the app reopens after an uncertain refresh, you must confirm the original action before starting another refresh (recovering a refresh re-checks expiration against the saved snapshot without installing packages).
+- **Retention bounds**: The experimental store holds up to 16 enrolled sources and 128 total trust actions (including frozen snapshots) without automatic pruning, so ensure adequate disk space.
 
-A verified installation ticket expires after at most ten minutes or the earliest
-metadata expiry. New installation decisions recheck source currentness, clock
-and expiry. A newer, pending or rejected refresh invalidates earlier candidates.
-An accepted installation's original recovery action can still confirm already
-recorded results; it cannot silently add a new member or change permissions.
+### Installing, updating, and rolling back packages
 
-An older software version in a currently authenticated catalog can be chosen
-with separate explicit rollback consent. Ordinary update selection cannot
-downgrade software. This never relaxes metadata rollback, expiry or root rules.
-Existing origins retained by approvals, installations and uninstall history
-cannot be replaced with another source or publisher. Removed catalog members
-cannot receive new approval from an old candidate; existing local approvals
-remain independently removable in Extensions.
+- **Installation tickets**: A verified repository preview ticket expires after 10 minutes or at the earliest TUF metadata expiration, whichever comes first. Starting a new refresh invalidates older installation tickets.
+- **Downgrades and rollbacks**: Standard update selection only moves forward. Selecting an older plugin version from an authenticated catalog requires explicit rollback consent for that plugin (replacing any earlier version selection in the same preview). TUF metadata rollback, expiration, and root rotation rules are never relaxed.
+- **Origin pinning**: Package origins recorded in approvals, active installations, or uninstall history cannot be reassigned to a different repository source or publisher. If a package is removed from `catalog.json`, it cannot be newly approved from a stale ticket, while already installed packages can still be managed or uninstalled in **Extensions**.
 
-There is no background update, automatic provider switch, root discovery,
-repository removal, source migration or automatic Pack membership management.
-Repository trust, package approval, enablement and each execution grant remain
-separate decisions.
+Tsumugi does not poll repositories in the background, auto-update plugins, migrate sources, or remove enrolled repositories. Repository trust enrollment, package approval, plugin enablement, and per-task execution consent remain distinct steps.

@@ -1,67 +1,46 @@
-# Experimental local process protocol
+# Local Process Protocol
 
-Process protocol **3** is separate from manifest protocol, content exchange,
-capability schema/behavior identities and package SemVer. Its sole type/schema
-source is the Rust SDK. A separately implemented process Host must implement
-actual pipe/state handling; parsing a frame does not start a worker or grant
-authority.
+Process protocol **3** defines the length-prefixed JSON message framing used over stdio pipes between the Rust Host (`tsumugi-plugin-host`) and plugin worker processes (JavaScript components or native Rust workers). Its version (`3`) is independent of the manifest protocol (`1`), content exchange protocol (`1`), and SDK crate version (`0.1.0-alpha.1`).
 
-Each frame is a four-byte unsigned **big-endian** JSON byte length followed by
-exactly that many UTF-8 JSON bytes. A body must be nonempty and at most
-`MAX_PROCESS_FRAME_BYTES` (24 MiB + 64 KiB). An invocation payload separately
-fits `MAX_INVOCATION_PAYLOAD_BYTES` (4 MiB); JSON quoting can expand each arbitrary
-UTF-8 byte to six bytes, with 64 KiB reserved for bounded metadata.
-The SDK-generated process profile owns both limits. Domain source/content each
-retain their own 2 MiB ceiling; combined source-check data uses 4 MiB.
-`maxResultBytes` limits the complete encoded result frame, while a contribution's
-`maxInputBytes`/`maxOutputBytes` limit raw payload bytes. The receiver checks both;
-the Host additionally applies its narrower policy/capability and aggregate stream
-limits. Stdout contains frames only. Stderr is a separately bounded diagnostic
-stream, not a result channel. Partial headers/bodies, invalid JSON, unknown or
-duplicate typed fields and unsupported protocols are errors.
+## Wire Framing and Byte Limits
 
-The JSON envelope contains `protocolVersion` and a typed `body` with `kind` and
-`data`. The host sends `activate`, `invoke`, `service-response`, `cancel`, `close` or
-`ping`; the worker sends `ready`, `result`, `service-request`, `cancelled`,
-`closed` or `pong`. The SDK checks structural
-and semantic data; the Host also checks message direction, active state and exact
-request/nonce/instance correlation. A syntactically valid result in the wrong
-state is not an accepted invocation.
+Every frame consists of a 4-byte unsigned **big-endian** byte length followed by a non-empty UTF-8 JSON body of at most `MAX_PROCESS_FRAME_BYTES` (24 MiB + 64 KiB).
 
-`activate`/`ready` carry the exact captured `ProcessActivation`: one `instance`,
-the frozen `capabilities` roster and the mandatory `services` array. The
-`ComponentInstanceBinding` includes plugin identity, component ID, package digest,
-fresh instance ID and activation generation, without choosing a contribution.
-Every `ProcessCapability` has a `contributionId` and its full `capability`
-declaration. The roster must be nonempty, unique by contribution ID and contain
-at most `MAX_PROCESS_CAPABILITIES` (128) members, while the original encoded-frame
-byte limit still applies. Duplicate IDs with different declarations are also
-refused. The actual Host must compare Ready to its complete original activation,
-the artifact it captured and the process it launched. A peer that echoes these
-values has not authenticated a publisher, obtained a grant or proven safe domain
-behavior. A roster cannot be expanded after activation.
+- `MAX_INVOCATION_PAYLOAD_BYTES` is 4 MiB of raw UTF-8 payload data. Because JSON string escaping can expand arbitrary UTF-8 bytes up to 6x (`\u00XX`), the 24 MiB + 64 KiB frame ceiling accommodates worst-case escaping plus 64 KiB of envelope metadata.
+- Individual domain contracts enforce their own tighter payload limits (for example, 2 MiB for source extraction or content exchange, and 4 MiB for combined check inputs).
+- A capability's `maxInputBytes` and `maxOutputBytes` bound raw `EncodedPayload` UTF-8 bytes, while `InvocationRequest.maxResultBytes` bounds the complete encoded `result` frame.
+- `stdout` carries only protocol frames; `stderr` is reserved for diagnostic output and is bounded separately by the Host.
 
-`ProcessActivation::capability(id)` looks up the exact member; `provider(id)`
-validates the complete roster and derives that member's full call binding,
-refusing a missing member. `ProviderBinding::instance()` projects its component
-principal. `ComponentInstanceBinding::provider(id)` checks syntax only; it does
-not prove membership. Scope, permissions, current authority and deadlines remain
-with the actual Host. Project/Attempt use singleton rosters and retain the
-existing service semantics. The initial multi-callable Application profile is
-JavaScript and read-only, without required dependencies or ProjectService
-permissions; broader composition and Native Application remain unsupported.
+Each JSON message has the shape `{ "protocolVersion": 3, "body": { "kind": "<kind>", "data": ... } }`:
 
-`invoke` and `result` reuse the existing invocation types, the full per-call
-`ProviderBinding` including contribution ID, and exact UTF-8 payload digests.
-Sharing an instance does not authorize any other roster member's call.
-`receive_invocation_result` checks the complete result document against
-the request's `maxResultBytes` and validates its separately bounded payload. Opaque payloads still need
-their own schema/domain interpreter and Core adoption. `cancelled` acknowledges
-only the correlated dispatch; it cannot claim rollback, refund or the absence of
-an external effect. `close` and `closed` carry the component `instance` and apply
-to its entire frozen roster. `closed` acknowledges only that instance's cleanup.
-The Host's actual exit/reaping evidence remains separate. `ping`/`pong` use fresh
-nonces for an explicit liveness check, not an authorization lease.
+| Direction | Frame `kind` values |
+| --- | --- |
+| Host → Worker | `activate`, `invoke`, `service-response`, `cancel`, `close`, `ping` |
+| Worker → Host | `ready`, `result`, `service-request`, `cancelled`, `closed`, `pong` |
+
+The Rust codec rejects partial headers or bodies, malformed JSON, unknown or duplicate JSON fields, and unsupported protocol versions (protocol 1 and 2 frames are not accepted).
+
+## Component Activation and Multi-Capability Rosters
+
+An `activate` frame (and the worker's matching `ready` response) carries a `ProcessActivation` containing:
+
+1. `instance`: a `ComponentInstanceBinding` (`plugin` identity, `componentId`, `packageDigest`, fresh `instanceId`, and `activationGeneration`).
+2. `capabilities`: a non-empty, duplicate-free list of up to `MAX_PROCESS_CAPABILITIES` (128) `ProcessCapability` entries (`contributionId` + full `Capability` declaration).
+3. `services`: a list of up to 16 `ServiceBinding` entries (empty when no project services are bound).
+
+The worker must echo the exact `ProcessActivation` in its `ready` frame before any `invoke` frames are sent, and the capability roster is frozen for the lifetime of that instance.
+
+- `ProcessActivation::capability(id)` looks up a roster member by contribution ID.
+- `ProcessActivation::provider(id)` validates the roster and constructs the full per-call `ProviderBinding` for that contribution ID.
+- `ProviderBinding::instance()` projects the shared `ComponentInstanceBinding` from a per-call binding (`ComponentInstanceBinding::provider(id)` performs syntax validation only and does not check roster membership).
+- `Project` and `Attempt` components use singleton rosters (1 capability). The multi-capability `Application` profile supports up to 128 read-only JavaScript capabilities with no required dependencies or `ProjectService` permissions.
+
+## Invocation, Cancellation, Shutdown, and Heartbeats
+
+- **`invoke` / `result`**: Carries the full `InvocationRequest` (including the specific `ProviderBinding` with `contributionId`) and returns an `InvocationResult` checked via `receive_invocation_result`.
+- **`cancel` / `cancelled`**: Requests cooperative cancellation of a specific dispatch ID and acknowledges that the dispatch was cancelled.
+- **`close` / `closed`**: Carries the `ComponentInstanceBinding` to shut down the entire component instance and all capabilities in its roster.
+- **`ping` / `pong`**: Exchanges a fresh nonce to verify process responsiveness.
 
 ```sh
 cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- schema-process
@@ -69,81 +48,26 @@ cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract 
 cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- validate-process frame.json
 ```
 
-The generated schema is structural. Exact provider/request matching, logical
-package-path rules, identities, payload digest verification and live Host state
-remain semantic checks. A JSON parser in another language may discard duplicate
-members; a schema alone cannot detect that loss. The receiving Rust SDK parses
-the original bytes and rejects duplicate typed fields.
+## Project Services (`service-request` / `service-response`)
 
-## Project services
+For `Project`- and `Attempt`-scoped components, the Host can bind up to 16 `ServiceBinding` handles during activation. Each binding specifies a handle ID, provider identity, contract reference, input/output/error schemas, project and scope IDs, activation generation, configuration digest, project effect, and payload/call limits.
 
-A trusted Host can select at most sixteen exact service bindings before starting
-one project-scoped component. Every binding fixes its handle, provider, contract,
-input/output/error schemas, project/scope, activation generation, configuration
-digest, effect and limits. Required dependencies must have the selected provider
-set ready; optional dependencies may have no provider. Single selection refuses
-ambiguity, while independent collection retains each explicitly supplied provider.
-The capability must request the exact `ProjectService` contract. These values
-are captured descriptions, not execution grants or project/credential handles.
+While an invocation is active on the channel:
 
-During an active invocation, `service-request` carries a fresh call ID, selected
-handle, the original invocation context and a separately hashed opaque input.
-The context's input digest continues to identify the outer invocation; it must
-not be replaced by the service-input digest. `service-response` echoes the exact
-call, handle and context and returns a typed success/failure/unknown payload using
-the binding's schema. The Rust Host constructs the caller from its actual child
-channel and original request, enforces scope, effect, byte/call limits, and checks
-current authority before and after dispatch. The trusted caller also exposes the
-original absolute invocation deadline so an enqueued operation can retain that
-bound after the callback returns. The deadline covers service calls; progress
-never renews it. Duplicate, unsolicited or
-stale calls and responses revoke the channel. Cancellation cannot prove rollback.
+1. The worker sends `service-request` with a unique `callId`, a bound `handleId`, the outer `InvocationContext` (whose `inputDigest` remains the outer invocation's input digest), and a separately hashed `EncodedPayload` for the service input.
+2. Only one service call may be in flight at a time, up to 128 total service calls per channel.
+3. The Host validates caller identity, scope, effect, byte/call limits, and the outer invocation's absolute deadline before dispatching the service callback and returning `service-response` with a `Succeeded`, `Failed`, or `Unknown` payload. Duplicate, unsolicited, or out-of-turn service frames terminate the channel.
 
-The transport is serial, with one pending service call and at most 128 calls per
-channel. A broker should return an enqueue receipt promptly for long work rather
-than hold a worker until that work completes. Its owner must retain any original
-execution/grant association until the child task is terminal, including after
-channel cleanup. This transport supplies no AI, budget, adoption or authorization
-implementation. Those remain the application's existing execution owners.
+## Component Profiles
 
-Process 1/2 frames and captured runtime descriptions are not accepted by the
-current process-3 receiver. Regenerate bindings and build/capture the current
-Host; no historical wire fallback or development-data migration is supplied.
-Manifest and content-exchange protocol identities remain independent.
+### JavaScript Component Profile
 
-## JavaScript component profile
+The [JavaScript component Host](../../../runtimes/javascript-host/README.md) consumes the generated wire types ([`javascript/process.d.ts`](../javascript/process.d.ts)) and exposes the [`ComponentAPI`](../javascript/component.d.ts) facade:
 
-A separate JavaScript Host can load components using the generated
-[wire types](../javascript/process.d.ts) and the declared
-[component facade](../javascript/component.d.ts). The SDK supplies those data
-definitions, while activation and execution require a matching Host implementation. The Rust schema remains
-the wire source; the SDK's `generate:contracts` command emits those TypeScript
-types and an Ajv standalone validator. `profile-process` exports the Rust protocol
-version, frame and roster bounds and SDK package version for generation.
+- During `activate(api)`, the component inspects `api.instance` and `api.contributions` (both deeply frozen) and calls `api.register(contributionId, handler)` exactly once for every contribution in `api.contributions`.
+- Missing, duplicate, unknown, or post-activation registrations fail activation and trigger disposal before `ready` is sent.
+- Incoming frames are pre-scanned with `jsonc-parser` to reject duplicate JSON object keys, non-scalar strings, non-integer numbers, unsafe integers, and deep nesting before structural validation.
 
-The facade exposes read-only `instance` and `contributions` descriptions, where
-each contribution has its exact ID and contract. During `activate`, authors call
-`register(contributionId, handler)` exactly once for every captured member.
-Missing, duplicate, unknown and late registrations fail. Only complete successful
-activation publishes Ready; a partially registered component must be disposed
-without exposing a callable subset. Disposal and late callbacks remain bound to
-their original instance and activation generation. The old `contribution` field
-and no-ID registration API have no fallback. Per-call metadata retains its
-original complete provider, invocation context, cancellation signal and services.
+### Rust Native Component Profile
 
-This JavaScript profile rejects duplicate decoded JSON keys, non-scalar strings,
-non-integer numeric tokens, unsafe JavaScript integers and excessive nesting.
-Exact payload UTF-8 (including BOM, CRLF and Unicode) remains opaque data. These
-additional parser limits are profile constraints; structural validation does not
-replace Rust's semantic matching or the real parent's channel/authority checks.
-
-## Rust native component profile
-
-The optional SDK `native-worker` feature provides the
-[native component entry point](native-worker.md), using this same strict Rust
-codec. Authors implement their capability over captured input and return opaque
-proposal bytes; the entry point owns framing, handshake, result correlation,
-cooperative cancellation and disposal. The actual process Host still checks
-captured package identity, scope, live authority, deadlines and reaping. This
-component-side API does not establish a complete Native/Core runtime environment
-or perform domain validation/adoption.
+The optional `native-worker` feature provides [`serve_native_component`](native-worker.md), which wraps this Rust codec for single-capability native workers with no service bindings.

@@ -1,62 +1,40 @@
 # Share a fixed entry with an MCP client
 
-The experimental outbound MCP connection lets an external client read one saved
-entry in one target language. Open the entry in **Translations**, open its MCP
-sharing panel, name the recipient, and prepare a preview. Adopted terms and saved
-human context are separate choices and start disabled.
+The experimental outbound MCP bridge lets an external MCP client read a single saved translation entry in one target language. This feature exposes local project data to an external client; it does not connect Tsumugi to an external MCP server.
 
-Review the complete preview before authorizing. Unsaved editor text is not sent.
-The source and selected translation must refer to the same source revision. A
-changed preview requires a new confirmation. Once authorized, the connection
-reads that fixed version; later edits do not silently become shared content.
+## Preparing and authorizing a share
 
-Authorization displays a stdio client configuration containing `command`, `args`
-and `env`. Use it with a client that accepts a local stdio MCP server. Keep
-Tsumugi and the project open. The command starts the same executable in bridge
-mode, before the desktop UI starts, and forwards MCP bytes to the original
-project session over a randomly assigned `127.0.0.1` port. It does not open the
-project in a second process.
+1. Open the entry in **Translations**, open the MCP sharing panel, enter a label for the recipient, and generate a preview.
+2. Optionally include **Adopted terms** or **Saved human context** (both are disabled by default).
+3. Review the preview and authorize the share.
 
-The configuration contains an independent bearer credential for this recipient.
-Anyone holding it can attempt to use this sharing connection. Do not post it in
-logs or source control. It contains neither the desktop session token nor a model
-provider credential. The recipient name is your label; the client's reported
-name does not authenticate it. External clients may retain or forward content
-they receive, including sending it to their model provider. Revocation cannot
-recover delivered content.
+Only saved data is shared—unsaved editor drafts are excluded, and the source text and selected translation must belong to the same source revision. Modifying the preview requires re-confirming. Once authorized, the share is pinned to that exact snapshot; subsequent edits in Tsumugi are not exposed to the client.
 
-Only one authenticated connection can use each authorization. It expires after
-the chosen duration, up to ten minutes. Revoking it, disconnecting the
-authenticated client, closing the project, or exiting the application closes
-admission. The panel distinguishes closed admission from responses still
-draining. Reconnecting requires a fresh preview and authorization. A lost
-authorization response can be checked under its original identity; explicitly
-recovering that original configuration does not renew permission or its deadline.
+## Connecting the client
 
-The connection exposes three tools with an empty object as their input:
+Authorizing a share generates a local stdio MCP server configuration (`command`, `args`, and `env`) that you can paste into any MCP client supporting stdio servers. Keep Tsumugi and the project open while using the connection: the command launches the Tsumugi binary in headless bridge mode and proxies MCP traffic over a random `127.0.0.1` port to your active project session without opening a second database instance.
+
+### Security and session lifecycle
+
+- **Bearer credential**: The generated configuration includes a single-use bearer token scoped to this share. Treat it as a secret and do not commit it to version control or paste it into logs. It does not contain your desktop session token or model-provider API keys. The recipient name is only a local label; Tsumugi does not authenticate the client's self-reported name.
+- **Data handling**: Once a client reads the entry, it may cache or forward the text (for example, to its own model provider). Revoking a share stops future reads but cannot recall data already sent.
+- **Expiration and revocation**: Each authorization permits a single authenticated client connection and expires after your chosen duration (up to 10 minutes). Revoking the share, disconnecting the client, closing the project, or quitting Tsumugi closes admission immediately; the panel indicates if any in-flight responses are still draining. If an authorization response is lost, you can recover the original configuration under its action identity without extending its deadline, whereas reconnecting after closure requires a new preview and authorization.
+
+## Exposed tools and protocol limits
+
+The server exposes three zero-argument tools (input must be `{}`):
 
 | Tool | Disclosed content |
 | --- | --- |
-| `tsumugi_read_entry` | The fixed entry's source and selected translation, with their revision identities |
-| `tsumugi_read_terms` | Applicable adopted terms, including unresolved conflicts, only when separately selected |
-| `tsumugi_read_context` | Saved human context for this entry and language, only when separately selected |
+| `tsumugi_read_entry` | The pinned entry's source text, selected translation, and revision IDs |
+| `tsumugi_read_terms` | Applicable adopted terms (including unresolved conflicts), if enabled in the preview |
+| `tsumugi_read_context` | Saved human context for this entry and language, if enabled in the preview |
 
-The server refuses extra arguments and unselected categories. It provides no
-project browsing, file paths, SQL, model execution, translation adoption, review
-approval, or export tools. Extracted and inferred context and neighboring entries
-are excluded. The complete disclosed payload is limited to 64 KiB of encoded
-UTF-8; oversized previews are refused instead of truncated.
+Calls passing extra arguments or requesting unselected categories are rejected. Extracted or inferred context, neighboring entries, file paths, project browsing, SQL queries, model execution, translation adoption, review approval, and export operations are not exposed.
 
-Each connection allows at most 100 content reads and 128 incoming protocol
-frames. Incoming frames are limited to 128 KiB. Reaching a connection limit
-closes the share; it does not automatically issue replacement permission.
+Connection and payload boundaries:
+- **Payload size**: The total disclosed payload is capped at 64 KiB of UTF-8; oversized previews are rejected upfront rather than truncated.
+- **Session quotas**: A connection allows at most 100 content reads and 128 incoming protocol frames (up to 128 KiB per frame). Hitting any limit closes the share.
+- **Structured output**: Tool responses return MCP `structuredContent` only, without duplicating project text into fallback plain-text blocks. Clients must support structured tool results and should treat returned fields strictly as project data rather than prompt instructions.
 
-Tool results use MCP `structuredContent`. The client must support structured
-tool results; the server does not duplicate project text in a compatibility
-text block. Treat all returned content as project data rather than instructions.
-
-The transport uses the official [Rust MCP SDK 3.5.1](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.5.1).
-MCP defines the [2026-07-28 current protocol](https://modelcontextprotocol.io/docs/2026-07-28/learn/versioning),
-with compatibility behavior implemented by the SDK. Support for a particular
-external client's configuration or platform still requires that client's testing.
-This entry point does not connect Tsumugi to an external MCP server.
+The transport is built on the official [Rust MCP SDK 3.5.1](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v3.5.1) implementing the [2026-07-28 MCP specification](https://modelcontextprotocol.io/docs/2026-07-28/learn/versioning). Verify compatibility with your target MCP client on your platform.

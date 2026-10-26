@@ -1,83 +1,50 @@
-# Existing translation data
+# Existing Translation Import Contracts
 
-The experimental SDK provides four data contracts at schema/behavior `1/1`:
-`tsumugi.translation-extraction-input`, `tsumugi.translation-exchange`,
-`tsumugi.translation-extraction-check-input` and
-`tsumugi.translation-import-declaration`. They share captured artifact, native
-identity, text-range, provider and required-check types with source extraction.
-Errors reuse the bounded `tsumugi.source-extraction-error` material-extraction
-contract. The process protocol, application data format and SDK package version
-remain independent of these identities.
+The SDK provides four schema/behavior `1/1` contracts for importing and verifying existing translations from domain files:
 
-## Fixed capture and complete proposal
+- `tsumugi.translation-extraction-input` (`TranslationExtractionInput`)
+- `tsumugi.translation-exchange` (`TranslationExchange`)
+- `tsumugi.translation-extraction-check-input` (`TranslationExtractionCheckInput`)
+- `tsumugi.translation-import-declaration` (`TranslationImportDeclaration`)
 
-`TranslationExtractionInput` fixes a profile, operation-local `importId`, current
-`sourceSetId`/`sourceSnapshotId`, explicit `targetLanguage`, `nativeScope` and the
-complete original UTF-8 artifacts. `nativeScope` contains the namespace and exact
-native-identity policy captured from adopted source. `languageEvidence` records
-`user-confirmed`; a wire value alone cannot establish that a person consented.
-Only the trusted application can approve capture, runtime execution or adoption.
+These contracts share artifact, native identity, text range, provider binding, and check coverage types with [source extraction](source-extraction.md), and reuse `tsumugi.source-extraction-error` for extraction failures.
 
-The application must verify that the source is current, its profile/native scope
-match, and the chosen canonical target is a registered language in that project.
-Import cannot create a project language or silently infer a regional mapping.
-For example, a filename declaration `zh` and a chosen project target `zh-CN`
-remain distinct evidence, even after the user explicitly confirms the mapping.
+## Extraction Input and Proposal (`TranslationExtractionInput` & `TranslationExchange`)
 
-`TranslationExchange` retains every captured byte and metadata field once, adds
-the domain's `declaredLanguage`, and supplies `entries` and a complete `order`.
-Each `ImportedTranslation` has an operation-local ID, decoded text, an explicitly
-encoded original `SourceReference`, and `NativeIdentityEvidence` including the
-original display spelling/reference. Empty text is a value; an empty proposal
-retains its original file and scope with empty entries/order. No entry can carry
-an authoritative project unit or source-revision allocation.
+`TranslationExtractionInput` (up to 2 MiB encoded) supplies the translation extractor with:
 
-Both input and proposal are bounded by 2 MiB of complete encoded UTF-8 data.
-Proposals admit at most 2000 entries and 16 KiB per decoded text. IDs/order must
-be unique with exact coverage, references must land on scalar boundaries in
-captured artifacts, native evidence must use the fixed scope, and original hashes
-must match actual bytes. `validate_translation_extraction` compares the fixed
-input/proposal scope and complete artifact collections. It does not decode a
-domain file, interpret filename languages, normalize native keys, prove complete
-domain extraction or resolve current project matches.
+- The domain `profile` and an operation-local `importId`.
+- The current project `sourceSetId` and `sourceSnapshotId`.
+- The explicit `targetLanguage` and `languageEvidence` (`user-confirmed`), which the application verifies against the project's registered target languages before invoking the plugin (a locale hint in a filename such as `zh.json` is kept distinct from a canonical project target language such as `zh-CN`).
+- `nativeScope`: the namespace and native-identity policy captured from the project's adopted source.
+- The captured UTF-8 translation source `artifacts` (with SHA-256 digests and relative logical paths).
 
-## Independent checks and project decisions
+`TranslationExchange` (up to 2 MiB encoded) returns:
 
-`TranslationExtractionCheckInput` contains the original input, complete proposal
-and an independently frozen set of mandatory, nonwaivable plugin requirements
-targeting `importId`. It admits 4 MiB of complete encoded data. The domain checker
-returns the existing `CheckResults`, reparsing original material independently
-of the extractor. Caller policy must compare exact rule/version, package
-selection, original digests, full target coverage and the actual Host channel.
-Completed coverage with error findings still blocks adoption. A checker cannot
-replace the fixed policy or authorize project writes.
+- The unmodified input artifacts and metadata, plus the domain file's `declaredLanguage`.
+- `entries` (up to 2,000 `ImportedTranslation` items) and a complete `order` array.
+- Each `ImportedTranslation` contains a unique operation-local ID, decoded translation text (up to 16 KiB; `""` is a valid empty string), a `SourceReference` pointing to a valid Unicode scalar range in the captured artifact, and `NativeIdentityEvidence` (canonical `value` plus original `display` spelling/reference) matching the input's `nativeScope`.
 
-After these checks, Core owns current-source matching by the selected native
-policy, unresolved/ambiguous results, selected-translation conflicts, candidate
-and revision IDs, and explicit per-entry decisions. Current source/revision,
-target language, selection and result/proof bases must be rechecked inside the
-existing mutation transaction. Preserve unselected evidence, original action
-identity, idempotent receipts and uncertain-outcome recovery; this SDK creates
-no second project, candidate or execution ledger.
+`validate_translation_extraction` verifies that `TranslationExchange` preserves the input scope and artifacts, that all entry IDs and `order` match 1-to-1, and that all source references and native identities are well-formed.
 
-## Resource selection
+## Independent Checks and Core Matching (`TranslationExtractionCheckInput`)
 
-`TranslationImportDeclaration` describes one material selected relative to an
-explicitly granted directory: a portable `logicalDirectory`, lowercase alphanumeric
-`extension`, role and byte limit. It binds an exact profile, extractor, separate
-read-only checker and nonempty semantic rules. The resource grants no path or
-execution authority, runs no discovery program and contains no glob syntax.
-`TranslationImportBinding.validate_input` enforces one immediate selected file,
-extension, role, profile and raw byte limit. Domain restrictions such as the
-meaning of `default.json` remain in the selected domain checker.
+Before Core matches imported entries against project source units, an independent read-only checker validates the extraction via `TranslationExtractionCheckInput` (up to 4 MiB encoded):
 
-The Host reads only its captured resource bytes and binds both contributions to
-that exact package. Metadata selection does not start a Worker, approve a
-publisher, install a package, restore grants or adopt results. Desktop capture,
-the independent domain implementation and Core matching/adoption integration
-remain required consumers; these data helpers alone do not complete migration.
+- Contains the original `TranslationExtractionInput`, the proposed `TranslationExchange`, and mandatory, non-waivable plugin check requirements targeting `importId`.
+- The checker re-parses the raw artifact bytes independently of the extractor and returns `CheckResults` (`tsumugi.check-results`), which Core evaluates with `FixedCheckSet::evaluate`.
 
-## Public harness
+Once check coverage is complete with zero blocking findings, Core matches the canonical native identities against the current source snapshot inside its mutation transaction—handling unresolved or ambiguous keys, conflicts with already selected translations, and per-entry user adoption decisions.
+
+## Resource Selection (`TranslationImportDeclaration`)
+
+A plugin package declares its translation import capability in a non-executable JSON resource with schema `tsumugi.translation-import-declaration/1/1`:
+
+- Specifies a relative `logicalDirectory`, a lowercase ASCII alphanumeric file `extension`, an artifact `role`, and a `maxBytes` ceiling for selecting a single file within a user-granted directory (no globs or discovery scripts).
+- Binds the domain `profile`, `extractor` contribution ID, a separate read-only `checker` contribution ID, and a non-empty list of mandatory `semanticRules` within the same package.
+- `TranslationImportBinding::validate_input` checks that a `TranslationExtractionInput` contains exactly one file matching the declared directory, extension, role, profile, and byte limit (format-specific file rules, such as rejecting `default.json` as a translation file in SMAPI, are enforced by the domain checker).
+
+## CLI and Code Generation
 
 From a built `tsumugi-plugin-contract` binary:
 
@@ -89,11 +56,4 @@ tsumugi-plugin-contract validate-translation-extraction-check-input check.json
 tsumugi-plugin-contract validate-translation-import-declaration declaration.json
 ```
 
-Rust owns the types, semantic data checks and schemas. Generate schemas with
-`schema-translation-extraction-input`, `schema-translation-exchange`,
-`schema-translation-extraction-check-input`, `schema-translation-import-declaration`
-and `schema-translation-types`; corresponding `check-<kind>-schema` commands
-refuse stale files. The SDK's `generate:contracts` command
-generates SDK declaration types and standalone structural validators. JSON.parse
-and JSON Schema cannot replace strict Rust duplicate-field rejection, exact
-hash/reference association, actual channel checks or domain semantics.
+Schema generation commands (`schema-translation-extraction-input`, `schema-translation-exchange`, `schema-translation-extraction-check-input`, `schema-translation-import-declaration`, `schema-translation-types`, and their `check-<kind>-schema` counterparts) feed `generate-contracts.mjs` to emit TypeScript definitions and standalone JavaScript structural validators.

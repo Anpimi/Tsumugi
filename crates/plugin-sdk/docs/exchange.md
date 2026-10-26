@@ -1,137 +1,69 @@
-# Experimental content and invocation exchange
+# Content and Invocation Exchange
 
-Exchange protocol `1` is independent of the SDK's `0.1.0-alpha.1`, manifest
-protocol and each schema/behavior/profile identity. It is an experimental data
-contract, not a stable runtime API. The desktop still uses built-in integrations.
-Nothing in this unit loads plugins or changes project persistence.
+Exchange protocol `1` defines the wire envelopes and semantic invariants for passing extracted source content, invocation requests and results, and QA check coverage between the Host and plugin components. Its schema is generated from the Rust types into [`content-exchange.schema.json`](../schemas/content-exchange.schema.json).
 
-`ExchangeDocument` wraps one typed content, request, result, check-set or
-check-results body. Rust/Serde is the source of the generated
-[`content-exchange.schema.json`](../schemas/content-exchange.schema.json).
-`parse_exchange` rejects unsupported protocol, unknown/duplicate envelope fields,
-malformed references and semantic integrity errors. Complete encoded content
-frames allow 4 MiB, including escaping and framing; other exchange frames retain
-their 2 MiB limit. Combined invocation inputs retain their separate 4 MiB budget.
-These transport ceilings do not enlarge any domain profile's smaller limits.
-Content units, occurrences, order entries and relations retain their 2,000-item
-limits. Domain blocks have a separate 4,000-item limit so identity and context
-extensions can coexist for every item. Collection counts do not bypass the
-complete content byte ceiling. Captured material and build artifacts retain
-their independent 2 MiB limits.
+`ExchangeDocument` wraps a single typed body (`content`, `request`, `result`, `check-set`, or `check-results`). `parse_exchange` enforces protocol version `1`, rejects unknown or duplicate fields, and validates internal references and byte budgets:
 
-## Three layers of content
+| Envelope / Collection | Limit |
+| --- | --- |
+| Complete encoded `content` frame | 4 MiB (including JSON escaping and envelope framing) |
+| Other `ExchangeDocument` frames | 2 MiB |
+| Combined invocation inputs | 4 MiB |
+| Captured source material / build artifacts | 2 MiB each |
+| Content units, occurrences, order entries, relations | 2,000 items each |
+| Domain extension blocks (`DomainBlock`) | 4,000 items (allowing both identity and context blocks per unit/occurrence) |
 
-`ContentExchange` separates these representations:
+## Three-Layer `ContentExchange` Model
 
-| Layer | Fields | Meaning |
+`ContentExchange` separates translatable content into three distinct layers so format-specific syntax and byte fidelity are preserved alongside generic translation units:
+
+| Layer | Fields | Purpose |
 |---|---|---|
-| Generic semantics | Units, source revision references, decoded text, occurrences, order, typed relations and protected fragments | Operation-local proposals or captured references, as defined by the capability |
-| Domain extensions | Target, namespaced schema/behavior identity, handling and exact UTF-8 payload | Domain-owned interpretation, without an open property bag |
-| Original fidelity | Captured UTF-8 artifacts, logical path, role, SHA-256 and source ranges | Immutable original bytes, including BOM, line endings and unedited records |
+| Generic semantics | Units, source revision references, decoded text, occurrences, order, typed relations, and protected fragments | Translatable text units, structural relationships, and inline protected placeholders |
+| Domain extensions | Target reference, namespaced schema/behavior ID, handling mode (`required`, `preserve`, `optional`), and UTF-8 payload | Format- or domain-specific metadata (such as native identity evidence or source context facts) |
+| Original fidelity | Captured UTF-8 artifacts, logical path, role, SHA-256 digest, and source character/byte ranges | Unmodified original file bytes (including BOMs, line endings, and surrounding syntax) |
 
-An occurrence references an artifact and a range in its exact original string.
-Protected fragments instead reference decoded unit text. The decoder checks
-digests, references, complete occurrence order, owners, duplicate identities and
-range boundaries. Relations can represent hierarchy or another graph; timing,
-layout, native identity policy and other domain meanings remain profile-owned.
-The host's existing locale owner validates supported canonical language values;
-the SDK only bounds their wire labels.
+- **Occurrences vs. Protected Fragments**: Each occurrence references a source artifact and a character/byte range in that artifact's raw string. Protected fragments reference ranges within a unit's decoded text.
+- **Native Identity Evidence**: `NativeIdentityEvidence.value` holds the domain's canonical matching key, while `display` preserves the original spelling and source range (or `null` for derived keys). Core matches units using the canonical value directly without re-normalizing it.
+- **Domain Extension Handling**: Domain block payloads are stored as exact UTF-8 strings without parsing and re-serializing their internal fields. Blocks marked `required` must be listed as supported when calling `require_supported_extensions`. Blocks marked `preserve` (and unrecognized `optional` blocks) must be carried through unchanged.
+- **Preservation Helpers**: `verify_content_preservation` checks that immutable source artifacts and preserved domain blocks are untouched. `verify_fixed_content_scope` additionally checks that units, source revisions, native occurrence evidence, ordering, and relations remain identical across fixed-segmentation transformations.
 
-Native identity `value` is the domain-provided canonical matching value, not
-necessarily the original literal. Required display evidence retains original
-spelling with a captured reference or explicit null. Semantic revision basis
-uses versioned domain blocks selected by a separately captured policy. Core must not normalize that value again or
-accept operation-local extraction revision references as authoritative project
-revisions. The [source extraction contract](source-extraction.md) fixes raw
-material separately from a proposed `ContentExchange`.
+## Unicode Text Coordinates
 
-Domain payloads are strings intentionally preserved without parsing and
-reserializing their members. `required` blocks need the exact interpreter for an
-operation that uses them; `require_supported_extensions` checks that requirement.
-Stored text and opaque evidence can still be read. `preserve` payloads must remain
-exact even if understood. Unknown `optional` blocks may be uninterpreted but are
-also preserved by the default fidelity check. This is preservation of bytes,
-not a claim that an arbitrary payload is valid domain JSON or understood.
+Text ranges (`TextRange`) are half-open intervals `[start, end)` tagged with an explicit coordinate encoding:
 
-`verify_content_preservation` compares immutable captured artifacts and required
-opaque preservation. `verify_fixed_content_scope` additionally compares units,
-source revisions, native occurrence evidence, order and relations for a
-fixed-segmentation transformation. It rejects self-consistent but out-of-scope
-output. Extraction and explicit split/merge operations need their own output
-contract and Core identity adoption. These helpers do not validate decoded text
-against JSONC/caption grammar, protected structure semantics or domain layout.
-Domain validation and independent fidelity oracles remain necessary.
+- `utf8-byte`: byte offsets into the UTF-8 string; must not split a UTF-8 scalar value.
+- `utf16`: UTF-16 code unit offsets; must not split a surrogate pair.
+- `grapheme`: extended Unicode grapheme cluster offsets (using the pinned Unicode segmentation rules); converting from byte or UTF-16 offsets rejects boundaries that fall inside a grapheme cluster.
 
-## Explicit text coordinates
+Coordinate conversions (`convert_text_range`) operate on the exact target string without normalizing, rounding, or truncating text. Ranges computed against raw JSON source files must not be applied directly to unescaped decoded unit strings. The conformance test suite (`source-unicode.contract.json`) verifies offset conversions across CJK text, skin-tone and ZWJ emoji sequences, combining marks, escaped JSON strings, UTF-8 BOMs, and CRLF line endings.
 
-Ranges are half open, with `utf8-byte`, `utf16` or `grapheme` encoding. Conversion
-uses the same exact string. UTF-8 ranges cannot split a code point; UTF-16 cannot
-split a surrogate pair. Graphemes use extended Unicode grapheme clusters from the
-pinned segmentation dependency. Conversion to graphemes rejects a scalar boundary
-inside a cluster. No conversion rounds, normalizes or truncates user text.
-Byte ranges in original JSON strings must not be reused in decoded strings.
+## Invocation Requests and Channel Correlation
 
-The public Unicode oracles cover Chinese, a skin-tone/ZWJ emoji, combining marks,
-escaped source strings, BOM, CRLF and empty/end ranges. `source-unicode.contract.json`
-and the companion sample were copied from this repository's self-authored MIT
-fixtures so the standalone package retains their independent expected offsets.
-The exchange fixtures represent those samples; they are not real executing
-plugin packages or proof of full domain conformance.
+`InvocationRequest` pins the full context for a single capability call:
 
-## Captured request and actual channel
+- Project, operation, attempt, item, dispatch, and scope identifiers.
+- Input payload (`EncodedPayload` with exact UTF-8 and SHA-256) and scope/environment/configuration digests.
+- Provider identity (`ProviderBinding`: package digest, component ID, contribution ID, live instance ID, and activation generation).
+- Capability/profile references, input/output/error schema references, and `maxResultBytes`.
 
-`InvocationRequest` fixes project/operation/attempt/item/dispatch/scope, input,
-scope/environment/configuration digests, package/component/contribution/instance
-and activation generation, capability/profile, input/output/error schemas and
-the maximum complete result frame. `EncodedPayload` preserves exact UTF-8 and
-its SHA-256. Matching that digest does not validate the payload's domain schema.
+When a worker replies, `receive_invocation_result` verifies the result frame against both the original `InvocationRequest` and the Host's independently tracked channel `ProviderBinding`. Any mismatch in project, item, dispatch, scope, package digest, instance ID, activation generation, configuration digest, or schema/behavior version is rejected. Outcomes are classified explicitly into `Succeeded`, `Failed`, or `Unknown`.
 
-`receive_invocation_result` compares the response with both the captured request
-and an independently supplied actual channel binding. A self-reported plugin ID
-is insufficient. Wrong project, item, dispatch, scope, package, instance, generation,
-configuration, schema or behavior identity is rejected. Success, failure and
-unknown outcomes remain distinct. None grants adoption or safe replay authority.
+## Mandatory Check Coverage (`FixedCheckSet`)
 
-Only the runtime host can authenticate an actual package/channel, enforce current
-permissions and revocation, check complete delegation and budgets, validate payload
-schema/meaning and recheck current project dependencies in Core's mutation boundary.
-The SDK has no authorizer, database, credential access or execution ledger.
-Its binding values are claims until compared at that actual host boundary.
+Core constructs an immutable `FixedCheckSet` via `capture_required_checks`, combining mandatory Core QA rules with any domain check rules required by the active source or build profile. Each captured requirement records the rule's schema/behavior version, implementation identity (`Core` or `Plugin` with its `ProviderSelectionBinding`), input and scope digests, target IDs, mandatory/waivable policy, and any permitted `not-applicable` reason and basis digest.
 
-## Mandatory check coverage
+`FixedCheckSet::evaluate` checks a set of returned `CheckResult` items against the captured policy:
 
-The trusted Core policy owner captures a `FixedCheckSet` using
-`capture_required_checks`: mandatory Core rules unioned with adopted domain rules.
-The captured value is immutable; a received check-set projection cannot replace it.
-Empty Core sets, weakened Core requirements and duplicate rule/implementation
-identities are rejected. Rule schema/behavior and implementation identities,
-input/scope digests, targets, mandatory/waivable policy and an explicitly allowed
-not-applicable reason/basis are separate captured facts.
+- Every required rule must match its exact version, provider identity, input/scope digests, and complete target set.
+- Unknown, duplicate, stale, out-of-scope, or partially covering results are rejected, as are `not-applicable` results where the policy does not allow them.
+- Rules not present in the results remain `Missing`; `Failed`, `Cancelled`, and `Unavailable` results are tracked as distinct incomplete states. An empty result array never satisfies a non-empty `FixedCheckSet`.
+- `CheckCoverage.complete` indicates that every mandatory rule either completed across all targets or returned an explicitly permitted `not-applicable` result. A complete check set may still contain blocking error findings that Core will use to gate adoption or release.
 
-`evaluate` requires exact versions, implementations, input/scope basis and full
-target coverage for each returned rule. Unknown, duplicate, stale, extra-target,
-partial or illegal not-applicable results are rejected. Missing rules remain
-`Missing`; failed, cancelled and unavailable are distinct incomplete states.
-An empty result array does not complete a mandatory set. A completed rule with
-zero findings is legitimate only with its full captured identity and coverage.
+## Conformance CLI Commands
 
-`CheckCoverage.complete` means the mandatory rules have completed coverage or an
-explicitly allowed not-applicable result. It can include blocking findings. It
-does not mean no errors, accepted waivers, human approval or release eligibility.
-Core retains those decisions. Results must first be bound to their actual
-producer; this data evaluator cannot authenticate a plugin's claims.
+See the [SDK README](../README.md) for full CLI invocation examples:
 
-## Public harness and remaining boundaries
-
-The [SDK README](../README.md) lists CLI commands. `validate-exchange` checks wire
-integrity only. `match-result` additionally compares an independent channel-binding
-fixture; that CLI fixture does not authenticate a live channel. `check-coverage`
-treats its check-set file as an explicitly supplied captured policy fixture and
-reports coverage, not a release decision. All semantic errors use static fields
-and classifications rather than echoing rejected text.
-
-Manifest/resource limits and production execution limits remain separate. Real
-Host/Worker loading, source verification, OS enforcement, domain payload validators,
-project adoption, runtime cleanup and cross-language execution are still required
-before declaring corresponding runtime guarantees. No historical development
-schema upgrade, compatibility fallback or parallel persistence is added here.
+- `validate-exchange <file>`: validates wire formatting and internal references of an `ExchangeDocument`.
+- `match-result <request.json> <result.json> <channel.json>`: runs `receive_invocation_result` against request, result, and channel fixture files.
+- `check-coverage <set.json> <results.json>`: runs `FixedCheckSet::evaluate` and reports coverage status.

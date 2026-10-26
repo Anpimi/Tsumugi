@@ -1,34 +1,27 @@
-# Source context facts
+# Source Context Facts
 
-`tsumugi.source-context-facts/1/1` describes bounded context associated with a
-captured source. Use it as a `DomainBlock` in the existing content exchange.
-The block's `target` supplies snapshot, unit or occurrence applicability; facts
-do not allocate project units, revisions, entities or human decisions.
+The `tsumugi.source-context-facts/1/1` contract defines a structured `DomainBlock` payload for attaching source-derived contextual facts to a `ContentExchange` snapshot, unit, or occurrence.
 
-A fact has an operation-local `id`, a presentation `kind`, literal `text`, and
-an explicit `origin`. Kinds are `speaker`, `role`, `scene`, `time`, `location`
-and `note`. The domain owns interpretation and literal spelling. The SDK does
-not infer a speaker from a key, parse a caption time, normalize text or convert
-an interpretation into an extracted fact.
+## Data Model and Origins
 
-- `extracted` requires captured source references.
-- `inferred` requires both source references and a nonempty rationale. References
-  describe its basis; they do not establish that the interpretation is true.
-- Human project context remains in the application's separate revision owner.
-  There is no `manual`, `approved`, consent or execution-grant field here.
+Each fact in a `tsumugi.source-context-facts` block includes:
 
-Each reference identifies a captured artifact and a nonempty half-open range,
-with explicit `utf8-byte`, `utf16` or `grapheme` coordinates. The receiving
-content exchange checks artifact membership and exact Unicode boundaries with
-the existing SDK text conversion. Neither a path nor a reference authorizes
-reading another artifact or another project.
+- `id`: an operation-local identifier.
+- `kind`: one of `speaker`, `role`, `scene`, `time`, `location`, or `note`.
+- `text`: the literal context string (up to 4,096 UTF-8 bytes), preserved as provided by the domain extractor without normalization.
+- `origin`: how the fact was obtained from the source material:
+  - `extracted`: requires 1 to 8 `SourceReference` ranges pointing to the exact source artifacts where the fact appears.
+  - `inferred`: requires 1 to 8 `SourceReference` ranges plus a non-empty `rationale` string (up to 4,096 UTF-8 bytes) explaining the inference.
 
-The independent domain checker must verify claimed extraction and interpretation
-against the original source. Producer identity, checker evidence, actual source
-revision, applicability, sharing selection and input capture remain trusted
-application responsibilities. Structural validity supplies none of that authority.
+User-authored project context is managed separately by Core's project revision store rather than through `source-context-facts` blocks.
 
-## Constructing and checking a block
+Every `SourceReference` specifies a captured artifact ID and a non-empty half-open `TextRange` (`utf8-byte`, `utf16`, or `grapheme`). When validating a `ContentExchange`, the receiver verifies that every referenced artifact exists in the exchange and that every range aligns with valid Unicode scalar or grapheme boundaries via the SDK's text coordinate converter.
+
+## Constructing and Parsing Context Blocks
+
+### JavaScript Encoding
+
+Plugin authors can construct and validate context blocks in JavaScript using `encodeSourceContextFacts` and `SOURCE_CONTEXT_FACTS_PROFILE`:
 
 ```js
 import { encodeSourceContextFacts } from './source-context.mjs';
@@ -49,43 +42,31 @@ const block = {
 };
 ```
 
-The JavaScript encoder snapshots a plain data value and checks the actual
-encoded budget, explicit origins, identities and range ordering. Its generated
-validator, types and frozen limits come from the Rust owner. It cannot establish
-artifact membership or Unicode boundaries without the captured material.
+`encodeSourceContextFacts` snapshots the input object and validates fact counts, IDs, origins, range ordering, and the 64 KiB serialized byte limit before returning the UTF-8 JSON string.
 
-Rust callers can use `parse_source_context_facts` for the bounded body and
-`parse_source_context_block` with their captured artifacts for the exact contract
-and coordinate associations. `ContentExchange::validate` checks supported context
-blocks as part of the original content receiver. It preserves the original
-payload bytes, including whitespace; it does not rewrite the block.
+### Rust Parsing and Revision Policy
 
-Facts have no implicit sharing policy. Applications must preview the actual
-selected material and require applicable consent before sending it. A block
-relevant to source revision identity must be included in the producer's captured
-`SourceRevisionPolicy.revisionBasis`. Later facts must not rewrite an original
-generation input or restore a historical execution grant.
+In Rust:
 
-Unknown versions retain the existing extension handling: preserve opaque bytes
-where permitted and refuse an operation requiring an unsupported interpreter.
-A malformed supported `1/1` block is refused rather than reclassified as unknown.
-An empty `facts` array is an explicit empty observation, distinct from no block.
+- `parse_source_context_facts` validates the standalone JSON payload against the `1/1` schema and byte limits.
+- `parse_source_context_block` additionally verifies the `DomainBlock` contract reference and resolves all `SourceReference` coordinates against the captured source artifacts.
+- `ContentExchange::validate` automatically validates any `tsumugi.source-context-facts/1/1` blocks present in a `ContentExchange` while preserving the original `payloadUtf8` bytes (including whitespace). Malformed `1/1` blocks fail validation rather than falling back to unknown-extension handling. An empty `facts: []` array represents an explicit empty observation.
 
-## Limits and conformance
+If a domain profile treats context facts as part of a unit's semantic revision identity, its `SourceRevisionPolicy.revisionBasis` must list `tsumugi.source-context-facts/1/1`. When forwarding context facts to external model endpoints, the application's execution preview discloses the selected context alongside source text for user consent.
 
-The current profile allows 32 facts, 8 distinct source references per fact,
-4096 UTF-8 bytes per text or inference rationale, and 64 KiB for the complete
-serialized body. Counts, text and complete encoded-byte limits are independent;
-the receiver never truncates or silently drops an entry. JSON Schema character
-bounds alone cannot establish UTF-8 byte budgets or source associations.
+## Limits and Conformance CLI
+
+| Item | Limit |
+| --- | --- |
+| Facts per block | 32 |
+| Source references per fact | 8 distinct references |
+| `text` / inference `rationale` length | 4,096 UTF-8 bytes each |
+| Complete serialized block payload | 64 KiB |
+
+Run the conformance tests and CLI commands from the repository root:
 
 ```sh
 cargo test -p tsumugi-plugin-sdk --features schema --locked --test source_context --test source_extraction
 cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- schema-source-context-facts
 cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- validate-source-context-facts crates/plugin-sdk/tests/fixtures/source-context-facts.json
 ```
-
-The cross-language conformance test accepts an already-built absolute SDK CLI
-through `TSUMUGI_PLUGIN_CONTRACT`; it installs nothing and uses synthetic data.
-These SDK contracts alone do not implement domain collection, project capture,
-provider sharing or a desktop context workflow.

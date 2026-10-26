@@ -1,105 +1,69 @@
-# Experimental plugin declarations
+# Plugin Declarations
 
-The [`tsumugi-plugin-sdk`](..) crate currently provides strict
-data declarations, exact declaration resolution and a public schema/validation
-harness. These contracts are experimental. The SDK does not install packages,
-replace the runtime loader or establish runtime isolation.
+[`tsumugi-plugin-sdk`](..) defines the `PluginManifest` data model, capability and dependency resolution rules, and JSON Schema validation harness for declaration protocol `1`.
 
-## Identity, ownership and scope
+## Identity, Ownership, and Scope
 
-A `PluginManifest` records declaration protocol `1`, a claimed publisher/plugin
-ID and SemVer, requested permissions, components and contributions. Components
-declare application, project or attempt scope, runtime kind, package-relative
-entrypoint, required/optional capability dependencies and bounded stop/cleanup
-deadlines. Data components have no entrypoint and cannot provide callable
-capabilities or executable UI. Resources and Skills can belong to data components.
+A `PluginManifest` declares:
 
-Each contribution has one component owner. A package can contribute resources,
-Skills, UI and multiple capabilities under one package identity. Required and
-optional dependencies, lifecycle ownership and future result/input dependencies
-are different relationships. Parsing a dependency does not resolve it or activate
-an instance. Activation-time cycle prevention, actual optional-service
-availability and cleanup belong to the runtime host.
+- Protocol version (`1`), publisher ID, plugin ID, and SemVer version.
+- Package-level requested permissions.
+- Components and their owned contributions (`capabilities`, `resources`, `skills`, `ui`).
 
-Identifiers are bounded lowercase ASCII namespace labels. Package references are
-relative, without parent traversal, empty segments, drive paths or backslashes.
-The host must still verify actual handles, symlinks, package contents and platform
-constraints when loading. Manifest claims cannot authenticate publisher identity
-or protect a worker from accessing the operating system.
+Each component specifies an execution scope (`application`, `project`, or `attempt`), a runtime kind (`javascript`, `native`, or `data`), a package-relative entrypoint (omitted for `data` components), required and optional capability dependencies, and stop/cleanup deadlines. `data` components cannot own callable capabilities or executable UI, but can own `resources` and `skills`. Each contribution belongs to exactly one component in the same manifest.
 
-## Capability declarations and compatibility
+Identifiers are bounded lowercase ASCII namespace labels. Package paths must be relative and portable—without `..` segments, empty segments, Windows drive prefixes, or backslashes. When staging a package on disk, the Host independently verifies file handles, symlinks, and platform constraints.
 
-Every capability identifies its input, output and error schemas, supported
-profiles, project effect, requested permissions and resource limits. Profiles
-and contracts carry separate positive `schemaVersion` and `behaviorVersion`
-identities. Current declaration resolution requires an exact match for both;
-there is no implicit SemVer range or fallback to another profile. A profile-sensitive
-capability requires an explicit profile. Changing behavior with the same JSON
-field types does not satisfy the previous behavior identity.
+## Capability Declarations and Compatibility
 
-`resolve_declarations` only inspects validated declarations. Overlapping single
-providers require an explicit `ProviderKey`, including claimed publisher, plugin,
-version and contribution. `collect-independent` keeps each provider's identity
-in canonical order, without merging values or using registration order as
-precedence. The runtime must later bind a verified package digest, actual channel,
-instance, activation generation, project/attempt scope and configuration. A
-declaration key is not that binding and cannot authorize a callback.
+Each capability contribution declares its input, output, and error schemas, supported profiles, project effect (`read-only`, `proposal`, or `external`), requested permissions, and payload/time limits.
 
-The synthetic fixtures cover the current domain capability matrix:
+Both contracts and profiles carry explicit positive `schemaVersion` and `behaviorVersion` numbers. Compatibility requires an exact match on both versions—there is no implicit SemVer range matching or automatic fallback to another profile. Capabilities that declare profiles require callers to specify an exact profile when resolving or invoking them.
 
-| Capability | SMAPI fixture | WebVTT fixture |
+### Resolution and Provider Bindings
+
+- `resolve_declarations` resolves capability requests against a set of validated manifests. A single-provider request with multiple matching declarations requires an explicit `ProviderKey` (publisher, plugin, version, and contribution ID) to disambiguate. A `collect-independent` request returns all matching providers in canonical order rather than relying on registration order.
+- `CapabilityCompatibilityRequest` and `ValidatedManifest::diagnose_capability` apply the exact same contract/profile predicate as `capability()` and provider resolution, reporting missing or non-callable contributions, contract schema/behavior mismatches, and unsupported or omitted profiles.
+- `bind_capability` pairs a validated declaration and its owning component with an independently verified package digest to form a `ProviderSelectionBinding`. Attaching a live `instance` ID and `activationGeneration` produces a `ProviderBinding` for an active process channel.
+
+### Domain Capability Fixtures
+
+The synthetic manifests in `tests/fixtures/` model the capability matrix for the two reference domains (using `example.*` schema IDs):
+
+| Capability | SMAPI fixture (`smapi-i18n-flat`) | WebVTT fixture (`webvtt-captions`) |
 |---|---|---|
-| Detect/material checks | Declared | Declared |
+| Detect / material checks | Declared | Declared |
 | Extract source | Declared | Declared |
 | Import translations | Declared | Unavailable |
-| Match source/identity proposals | Declared | Declared |
+| Match source / identity proposals | Declared | Declared |
 | Validate content | Declared | Declared |
 | Build | Declared | Declared |
 | Validate artifact | Declared | Declared |
 
-Fixture profile names match the existing `smapi-i18n-flat` and
-`webvtt-captions` scopes. They preserve the absence of WebVTT translation import.
-They do not implement these capabilities, widen either format profile or prove
-domain fidelity. Their `example.*` schema IDs remain fixture declarations.
-
 ## Component dependency closure diagnostics
 
-The Rust SDK can inspect the transitive component dependencies of explicitly
-selected roots. A root identifies an exact plugin version and component, so
-data and Skill components can be inspected without inventing a callable.
-Each dependency keeps the manifest's required flag and Single or
-CollectIndependent policy. An independent choice identifies its owner and exact
-contract, with an optional exact profile and selected provider keys. Omitting
-that choice uses the original resolver with no profile and no preferred provider;
-it does not guess a profile or resolve ambiguity by load order.
+The SDK can inspect the transitive component dependency graph of explicitly selected root components via `diagnose_dependency_closure`. Because roots are identified by `ComponentKey` (plugin identity, version, and component ID), data and Skill components can be inspected alongside callable components.
 
-Construct a `DependencyClosureRequest` from `ComponentKey` roots and independent
-`DependencyChoice` selections. `parse_dependency_closure_request` accepts bounded
-strict JSON; `validate()` applies the same rules to requests built directly in
-Rust. Each `DeclarationEntry` borrows a `ValidatedManifest` and carries the
-caller's observed `enabled` flag:
+Each dependency edge preserves the manifest's `required` flag and `Single` or `CollectIndependent` resolution policy. Callers may supply per-dependency `DependencyChoice` entries specifying the owning component, exact contract, optional profile, and selected provider keys; omitting a choice runs the standard resolver with no profile and no preferred provider.
 
 ```rust
 let report = tsumugi_plugin_sdk::diagnose_dependency_closure(&entries, &request)?;
 ```
 
-The Host's `PackageCatalog::diagnose_dependencies(&request)` produces a
-`CatalogDependencyClosure`: `declarations` contains that SDK report, `packages`
-retains the catalog's exact package digests, approved origins and enabled flags,
-and `providers` retains the original `ProviderSelectionBinding` identities.
-Construct the catalog through its existing independently approved image owner;
-a manifest or this report cannot supply package approval.
+- `DependencyClosureRequest` can be constructed in Rust (and checked via `.validate()`) or parsed from strict JSON via `parse_dependency_closure_request`.
+- Each `DeclarationEntry` wraps a borrowed `ValidatedManifest` and an `enabled: bool` flag.
+- In `tsumugi-plugin-host`, `PackageCatalog::diagnose_dependencies(&request)` wraps this report into a `CatalogDependencyClosure` containing `declarations` (the SDK report), `packages` (digests, approved origins, and enabled flags), and `providers` (`ProviderSelectionBinding` identities).
 
-Unknown root packages or components are rejected with `MissingOwner`. A known
-disabled root is retained with `enabled=false`; its dependencies are still
-inspected as declarations. This does not admit that component for activation.
+### Traversal Rules and Limits
 
-The report retains nodes, edges, selected providers and closed cycle paths in
-canonical order. Shared components are traversed once. Missing required
-declarations, absent optional declarations, disabled selections and ambiguity
-remain distinct; optional absence alone is not a conclusion that the component
-cannot run. Duplicate roots or choices, duplicate provider selections and unused
-choices are rejected. Limits fail explicitly rather than truncating a report:
+- Unknown root packages or components fail with `MissingOwner`.
+- A known root with `enabled = false` is included in the report with its dependencies traversed so callers can inspect why a disabled component would or would not resolve.
+- Nodes, edges, selected providers, and closed dependency cycles are emitted in canonical order, with shared components visited once.
+- Missing required declarations, absent optional declarations, disabled providers, and ambiguous single-provider matches are reported as distinct states.
+- Duplicate roots, duplicate or unused dependency choices, and duplicate provider selections are rejected.
+- The report scope is `declaration-catalog-only`: Host-provided external services (such as `tsumugi.core` work-plan generation) are resolved by the Host at runtime rather than through catalog manifests.
+
+Exceeding any input or graph limit fails validation rather than truncating the report:
 
 | Input or traversal | Limit |
 |---|---:|
@@ -113,51 +77,22 @@ choices are rejected. Limits fail explicitly rather than truncating a report:
 | Active traversal depth | 32 |
 | Encoded request / report | 64 KiB / 1 MiB |
 
-The report's `declaration-catalog-only` scope observes the supplied manifests and
-enabled state. External Host services are not included. For example, a missing
-`tsumugi.core` catalog declaration does not prove that the Host's original
-generation service is unavailable. The report grants no approval, instance,
-service handle or execution permission and does not relax Application scope
-restrictions. A real service binding must still validate its captured provider,
-runtime, scope, generation, permissions, cancellation and original deadline.
+## Effects and Requested Permissions
 
-## Effects and requested permissions
+Capabilities declare one of three project effects:
 
-`read-only`, `proposal` and `external` describe declared project effects.
-A proposal is an output for Core to consider, not already-adopted project state.
-Package permissions and per-capability requirements must agree. Requests can name
-captured inputs, staged outputs, exact project services, network destinations or
-package-relative programs. Network labels do not validate or authorize actual
-URLs; the broker validates the concrete request and destination.
+- `read-only`: inspects inputs without proposing project state changes or performing external side effects.
+- `proposal`: returns candidate content, translations, or artifacts for Core to validate and adopt.
+- `external`: interacts with external services or approved model endpoints.
 
-No declaration grants these permissions. Installation, trust, scopes, execution
-grants, budget ownership and write authority remain distinct host decisions.
-Cross-plugin calls must preserve the originating caller and complete delegation
-chain. The host must reuse the existing execution/work-plan cancellation,
-generation, budget, receipt and adoption boundaries; this SDK exposes no database,
-authorizer, credential store or second task ledger. Declared limits are requests;
-host limits can be stricter. Missing required checks cannot become a successful
-empty result, and an automatic selection cannot become human approval.
+Every permission requested by a capability must also be declared in the package's top-level permission set. Permission descriptors can reference `captured-input`, staged outputs, specific `project-service` contracts, network destination labels, or package-relative executables. Declared permissions and resource limits are requests evaluated by the Host: the Host enforces stricter runtime ceilings, validates concrete URLs and service handles, and tracks caller delegation chains and budgets.
 
-## Schema and harness
+## JSON Schema and CLI Harness
 
-Generate JSON Schema with the SDK's `schema` CLI command; the optional `schema`
-feature compiles generation support. Runtime parsing uses the same Rust/Serde
-types and a bounded 256 KiB input. Unknown fields, duplicate JSON fields,
-unrecognized enum values, unsupported protocol, missing contribution owners,
-duplicate identities, invalid limits and undeclared permission requirements are
-rejected. The CLI prints only a validated declaration or a static error
-classification/field, not arbitrary rejected contents.
+With the `schema` feature enabled, `tsumugi-plugin-contract` generates and verifies `schemas/plugin-manifest.schema.json`:
 
-The checked-in `schemas/plugin-manifest.schema.json` is generated, not separately
-edited. `check-schema <file>` compares it with the current Rust generator and
-rejects stale schemas. The schema pins the supported protocol from the same Rust
-constant. Relationship and other semantic checks remain in the validation harness.
-Unsigned fields use standard integer bounds from their Rust primitive limits;
-no custom integer-format registration is needed in a JSON Schema validator.
+- `schema`: emits the JSON Schema from the Rust/Serde types (using standard integer bounds for unsigned integers).
+- `check-schema <file>`: verifies that the committed schema matches the current Rust definition.
+- `validate <file>`: parses a manifest (up to 256 KiB), rejecting unknown or duplicate JSON keys, unsupported protocol versions, missing component owners, duplicate IDs, invalid resource limits, and undeclared capability permissions. Errors report static classifications and field names without echoing untrusted input text.
 
-Use the CLI validation command as well as structural schema validation. Neither
-proves a real host, package execution, OS sandbox, effective permissions or
-accepted project writes. The [content/result envelope and check coverage](exchange.md)
-are separate data contracts with their own protocol; manifest validation does not
-validate their payloads or provide the runtime host.
+See [Content and Invocation Exchange](exchange.md) for the payload envelope and check coverage contracts.

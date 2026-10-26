@@ -1,78 +1,36 @@
-# Internal member execution adapter
+# Internal Member Execution Adapter (`@tsumugi/agent-service`)
 
-This internal workspace package uses `@earendil-works/pi-agent-core` and
-`@earendil-works/pi-ai` at the same pinned version. `MemberKernel` owns one Pi
-instance and its local transcript. Application services supply the captured
-context, original request identities, authorized tools and controlled transport.
+`@tsumugi/agent-service` is the internal Node.js worker runtime that executes AI team members on top of `@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` (pinned at `1.3.0`). Spawned by [`tsumugi-plugin-host`](../../crates/plugin-host/README.md) (`member::run_member`), it wraps a single Pi agent instance (`MemberKernel`) over an internal stdio channel generated from `tsumugi-core`'s Rust types.
 
-The current profile is OpenAI-compatible Chat Completions over SSE. Pi serializes
-messages and parses provider responses; the supplied host transport receives the
-exact body and captured endpoint, without SDK authentication headers. The host
-must bind the original destination, attach credentials, reserve every physical
-attempt against the shared budget, enforce current permission and settle usage.
-Automatic provider retries are disabled in this profile.
+## Architecture and Execution Flow
 
-`prepare` is awaited before each model request, including tool follow-up turns.
-It returns the original host request identity and an optional frozen shared
-view. Core supplies the view's exact UTF-8 data, real authors, source references
-and sharing basis. The public Pi `transformContext` hook adds it as one untrusted
-user-data message for that request, after the leading system declarations.
-The adapter preserves the accepted input, local message order and complete
-tool call/result pairs. Shared data never becomes a local assistant response or
-tool result, and earlier views do not accumulate in Pi's local history. A null
-view removes the previous projection instead of retaining it as a fallback.
+### Controlled Transport and Budget Accounting
 
-Guidance queued while `prepare` waits enters the next normal request boundary;
-it does not alter the already captured view. Core associates the frozen view
-basis with the original request and its actual serialized body. Node does not
-supply a replacement basis when requesting HTTP. Model, tool and lifecycle records
-carry that association. Event listeners are awaited through `agent_end`; their
-completion indicates local execution settlement, while business results still
-require application receipts. Missing provider usage must retain unknown budget
-occupancy: a normalized zero count alone is insufficient evidence of known usage.
-Usage retains the provider's prompt and completion totals. Cache read, cache write
-and reasoning details are decimal strings when explicitly reported as safe
-nonnegative integers within their corresponding total, otherwise null. Explicit
-zero remains `"0"`; missing details remain unknown. Prompt totals already include
-cache counts and completion totals already include reasoning, so details never
-increase either total. Cache read and write counts need not be disjoint.
-The worker's event, request-preparation and result projections omit Pi assistant
-messages' normalized usage and synthetic prices. Pi's internal transcript stays
-intact; the raw usage receipt remains the only accounting evidence sent to Host.
-User data, tool arguments and tool results retain their original fields.
+The current member profile targets OpenAI-compatible Chat Completions over SSE with automatic provider retries disabled:
 
-Tool implementations use the application's existing mutation and sharing
-boundaries. `beforeToolCall` checks admission, and `afterToolCall` controls the
-model-visible result. Persist application revocation before calling `close`,
-which closes local admission, clears queued guidance and waits for Pi to abort.
+- Pi serializes conversation messages and parses SSE responses, while delegating all HTTP I/O to the Host-controlled transport callback.
+- The worker never holds ambient API keys or network credentials. For each physical request attempt, the Host binds the destination endpoint, attaches credentials, reserves budget against the shared `WorkPlan`, enforces live permissions, and records token usage.
+- **Usage Reporting**: The worker forwards the provider's raw usage receipt (prompt and completion totals, plus optional `cacheRead`, `cacheWrite`, and `reasoning` counts formatted as non-negative integer decimal strings when valid, or `null` when absent) and strips Pi's normalized zero-fallbacks and synthetic price calculations from event and result projections. If a provider omits usage data, budget occupancy remains explicitly unknown rather than defaulting to `0`.
 
-The member process uses an internal application channel generated from Core's
-Rust types. It is separate from the SDK plugin Process protocol. The trusted
-Host stages the captured application bundle with only the independently approved
-Node tool, clears the environment, bounds frames and process lifetime, and waits
-for the original child to exit before releasing its staging directory. Pi runs
-without the component Host or ambient credentials. Model capacity and prices remain
-unknown unless supplied by their actual owner; normalized SDK zero values are
-not authoritative billing records.
+### Request Preparation and Shared Context Views (`prepare` & `transformContext`)
 
-The desktop adapter selects the exact application-default Node identity from
-build metadata and loads its independently installed, approved bytes. This also
-supports scopes without tools and scopes containing only native tools. Empty
-scopes retain their original model authorization, sharing, budget and dispatch
-deadline; they do not require a fabricated tool consent. Actual domain tools
-keep their independent captured permissions and original broker. Settings
-revocation also stops the member's pending controlled IO.
+Before each model request (including tool follow-up turns), `MemberKernel` awaits the Host's `prepare` callback:
 
-The synthetic checks cover the real Pi packages, standalone bundle, owned
-process boundary and a desktop/Core/domain-Worker tool loop with original
-budget and cancellation assertions. Full native application acceptance and
-real-provider quality, cache and billing evidence remain separate. A missing
-member runtime is an explicit failure for Agent input; it does not select the
-fixed single-completion path.
+1. `prepare` returns the authoritative Host request identity and an optional frozen shared context view (containing UTF-8 text, author identities, source references, and sharing basis supplied by Core).
+2. Pi's `transformContext` hook injects that view as a single untrusted user-data message immediately after the leading system declarations for that request only.
+3. Shared context views never accumulate in Pi's persistent local transcript or impersonate assistant/tool messages; returning a `null` view on a subsequent turn removes the prior view projection.
+4. Any user guidance queued while `prepare` is in flight is held until the next request boundary so the already-captured view basis remains consistent with the serialized request body.
 
-Use Node `>=26.10.0 <27`, pnpm 12 and the repository lockfile. Provision the
-dependencies and platform esbuild binary from an existing offline cache before
-preparation; missing inputs fail rather than trigger installation or a download:
+### Tool Calls and Lifecycle Shutdown
+
+- **Tools**: Domain and application tools execute through Core's existing broker and mutation boundaries. `beforeToolCall` checks tool admission against the active plan, and `afterToolCall` formats the model-visible tool result. Scopes without tools or scopes containing only native tools run without requiring synthetic JavaScript tool grants.
+- **Cancellation & Close**: Calling `close` stops local admission, clears queued guidance, and waits for Pi to abort in-flight work. Event listeners are awaited through `agent_end` before the worker exits and the Host releases the temporary staging directory.
+
+## Building, Testing, and Packaging
+
+Requires Node `>=26.10.0 <27`, `pnpm` 12, and a populated offline dependency cache (including the platform `esbuild` binary). The workspace configuration disables the unused `@google/genai` preinstall and `protobufjs` postinstall scripts.
+
+From the repository root:
 
 ```sh
 pnpm install --offline --frozen-lockfile --ignore-scripts
@@ -80,56 +38,25 @@ pnpm --dir runtimes/agent-service build
 pnpm --dir runtimes/agent-service test
 ```
 
-The workspace explicitly denies the unused `@google/genai` preinstall no-op and
-`protobufjs` version-diagnostic postinstall scripts. Their distributed JavaScript
-is used as packaged; installation does not require these scripts.
+### Regenerating the Member Channel Contract
 
-Generate the member channel after editing its Core authority:
+After modifying the member channel types in `tsumugi-core`, regenerate the JSON schema, `profile.json`, and TypeScript bindings:
 
 ```sh
 pnpm --dir runtimes/agent-service generate:contracts
 ```
 
-The same generation emits `profile.json` and the TypeScript profile. The
-packager and desktop build read that generated protocol identity; they do not
-choose a separate version. Check the captured contract before packaging.
+### Packaging the Standalone Member Runtime Artifact
 
-From the repository root, create a new standalone artifact directory before
-using the optional desktop runtime bundle profile. Its parent must already
-exist. Packaging compiles the member source directly and does not require a
-previous `dist` build:
+To verify contract currentness and bundle the standalone member runtime directory (for `TSUMUGI_TEST_MEMBER_ARTIFACT` or the desktop `bundled-runtime` feature):
 
 ```sh
 pnpm --dir runtimes/agent-service check:contracts
 pnpm --dir runtimes/agent-service package:runtime --output "$PWD/apps/desktop/src-tauri/resources/member-runtime"
 ```
 
-The output is a self-contained `worker.mjs`, its internal format manifest and
-license notices, without source maps, repository metadata or runtime package
-resolution. The build uses ESM package entry points so UMD relative imports are
-not left unresolved. Existing output directories are refused. Runtime packaging
-does not install or approve Node or any domain tool; those keep their original
-installation, selection and consent requirements. The runtime profile maps this
-artifact to `member-runtime/` beside the application resources. Artifact files
-use non-executable `0644` permissions even under a restrictive builder umask,
-so installed resources remain readable across installation users. Owned staging
-directories stay private; the application bundler supplies its final directory
-permissions. With
-`bundled-runtime` enabled, the desktop build captures this complete bounded
-tree through the same Host owner used at runtime. A missing entrypoint or a
-protocol different from Core's generated profile fails the build. Preparation
-does not run as part of the frontend build or Cargo build script. Review any
-previous output explicitly or use a fresh checkout; a build never removes it.
+`package:runtime` compiles the TypeScript source directly with `esbuild` (resolving ESM entrypoints so UMD relative imports are bundled cleanly) into a self-contained `worker.mjs`, its format manifest, and third-party license notices (including [`licenses/pi-1.3.0.txt`](licenses/pi-1.3.0.txt) from [`earendil-works/pi` `v1.3.0`](https://github.com/earendil-works/pi/blob/v1.3.0/LICENSE)):
 
-The separately prepared Node tool retains the exact distribution pin in
-[`node-distribution.macos-aarch64.json`](../javascript-host/scripts/node-distribution.macos-aarch64.json).
-The optional desktop bundle currently supports only that macOS arm64 profile
-and macOS 13.5 or later. The builder's Node version is not approval of a
-redistributed or installed runtime. Follow the complete
-[offline desktop preparation](../../docs/plugin-distribution.md#prepare-and-build)
-before invoking the Tauri runtime bundle profile.
-
-The pinned Pi npm artifacts omit their monorepo license. The retained
-[Pi 1.3.0 notice](licenses/pi-1.3.0.txt) comes from the corresponding
-[upstream tag](https://github.com/earendil-works/pi/blob/v1.3.0/LICENSE); the
-packager includes it only for those exact package identities and versions.
+- Source maps and repository metadata are omitted, and output files are written with `0644` permissions.
+- The target `--output` directory must not already exist (its parent directory must exist).
+- When building the desktop app with the `bundled-runtime` Cargo feature on macOS arm64 (macOS 13.5+), the build verifies this `member-runtime` tree alongside the pinned Node distribution in [`node-distribution.macos-aarch64.json`](../javascript-host/scripts/node-distribution.macos-aarch64.json). See [the offline desktop preparation guide](../../docs/plugin-distribution.md#prepare-and-build) for full bundling instructions.

@@ -1,99 +1,60 @@
-# Experimental source extraction
+# Source Extraction Contracts
 
-Source extraction uses the existing bounded invocation/process transport. It
-does not add filesystem handles, permissions, project revisions or another wire
-envelope. An independently selected capability fixes the following exact payload
-contracts. These versions are independent of SDK SemVer:
+Source extraction runs over the standard invocation and process transport using five payload contracts (versioned independently of the SDK's SemVer):
 
-| Payload | Contract ID | Schema / behavior |
+| Payload Type | Contract ID | Schema / Behavior |
 |---|---|---|
-| `SourceExtractionInput` | `tsumugi.source-extraction-input` | 1 / 1 |
-| `ContentExchange` | `tsumugi.content-exchange` | 2 / 1 |
-| `SourceExtractionError` | `tsumugi.source-extraction-error` | 1 / 1 |
-| `SourceExtractionCheckInput` | `tsumugi.source-extraction-check-input` | 1 / 1 |
-| `CheckResult[]` | `tsumugi.check-results` | 1 / 1 |
+| `SourceExtractionInput` | `tsumugi.source-extraction-input` | `1 / 1` |
+| `ContentExchange` | `tsumugi.content-exchange` | `2 / 1` |
+| `SourceExtractionError` | `tsumugi.source-extraction-error` | `1 / 1` |
+| `SourceExtractionCheckInput` | `tsumugi.source-extraction-check-input` | `1 / 1` |
+| `CheckResult[]` | `tsumugi.check-results` | `1 / 1` |
 
-The SDK exports the IDs and the constructors `source_extraction_input_contract`,
-`content_exchange_contract` and `source_extraction_error_contract`. A domain
-profile is a separate `ContractRef`; these payload IDs do not select a parser.
+The SDK exports these contract identifiers alongside the helper constructors `source_extraction_input_contract`, `content_exchange_contract`, and `source_extraction_error_contract`.
 
-## Captured material and proposals
+## Extraction Input and Proposed `ContentExchange`
 
-`SourceExtractionInput` carries `profile`, `sourceSetId`, `sourceLanguage` and
-`artifacts`. Artifacts retain exact captured UTF-8 bytes, including BOM, newline
-sequences, combining marks and emoji, with their IDs, logical paths, roles and
-SHA-256 digests. Logical paths cannot grant access to a local file. The platform
-still captures the authorized material; the SDK does no IO.
+`SourceExtractionInput` provides an extractor component with:
 
-`SourceExtractionInput::validate` and `ContentExchange::validate` use one shared
-material validator for bounded labels, artifact count, aggregate bytes, unique
-IDs/paths, safe logical paths and actual byte digests. The generic ceilings remain
-2 MiB and 2,000 artifacts; a selected domain may require smaller limits. The
-receiver also limits the entire encoded input to 2 MiB. The SDK checks a bounded
-language label, while the existing host locale owner checks canonical supported
-languages. Strict Serde receivers reject unknown/duplicate fields and invalid
-UTF-8. JSON Schema alone does not check byte digests or these associations.
+- `profile`: the target domain profile (`ContractRef`).
+- `sourceSetId` and `sourceLanguage` (wire label validated by the SDK; canonical language support is checked by the application's locale owner).
+- `artifacts`: up to 2,000 source files (bounded to 2 MiB total and 2 MiB for the entire encoded `SourceExtractionInput`), each carrying a unique artifact ID, safe relative logical path, role, exact UTF-8 string (preserving BOMs, line endings, combining marks, and emoji), and SHA-256 digest.
 
-`validate_source_extraction(input, exchange)` verifies both structures and fixes
-the result to the captured profile, source set, language and exact complete
-artifact set. Reordering artifacts does not change that set; occurrence order is
-explicit in `ContentExchange.order`. New or missing material, changed metadata,
-normalization or recomputed digests cannot replace captured evidence.
+`SourceExtractionInput::validate` and `ContentExchange::validate` share the same artifact validator to enforce size limits, unique IDs and paths, portable relative path rules, and exact SHA-256 byte digests.
 
-The function validates source references and coordinate boundaries through the
-existing content validator. It does **not** parse a domain grammar, prove complete
-cue/key extraction, validate decoded text against raw syntax, interpret domain
-blocks or grant adoption. A structurally associated result still needs the
-selected domain's semantic checks and the host's current authorization.
+### Validating Extraction Proposals (`validate_source_extraction`)
 
-During extraction, unit IDs and `sourceRevisionId` are operation-local proposal
-references. Only Core allocates or maps authoritative project units/revisions and
-decides explicit lineage. `NativeIdentityEvidence.value` is the domain-provided
-canonical matching value; Core must not normalize or casefold it again. The
-required `display` carries the original domain-confirmed spelling and a captured
-source reference, or explicit `null` for a derived identity. The SDK checks its
-nonempty bounded value and reference boundaries; the domain checks its meaning.
-Matching uses the exact namespace, complete policy reference and canonical value.
+`validate_source_extraction(input, exchange)` verifies both the input and the proposed `ContentExchange` (schema/behavior `2/1`) and checks that:
 
-`SourceRevisionPolicy` is captured by the trusted policy owner before receiving
-a proposal. It selects unique exact domain-block schemas whose opaque payload
-bytes contribute to semantic source revisions, alongside unit text and protected
-fragments. It never comes from the proposal. Core can compare those bytes without
-parsing their domain schema or treating operation-local IDs as revision evidence.
+- The proposal matches the input's `profile`, `sourceSetId`, `sourceLanguage`, and complete artifact set (artifact array order may differ; occurrence ordering is defined explicitly by `ContentExchange.order`).
+- Every occurrence and protected fragment range lands on valid Unicode boundaries within its referenced artifact or unit text.
+- Every unit provides required `NativeIdentityEvidence`:
+  - `value`: the domain's canonical matching key (used as-is by Core without additional normalization or case-folding).
+  - `display`: the original spelling and source range in the artifact, or `null` for derived identities.
 
-## Fixed source checks
+Unit IDs and `sourceRevisionId` values in an extraction output are operation-local proposal references; Core allocates persistent project unit and revision IDs when adopting the extraction.
 
-### Package-owned source import resource
+### Semantic Source Revision Policy (`SourceRevisionPolicy`)
 
-A `Resource` contribution can declare schema
-`tsumugi.source-import-declaration/2/2`. Its captured, nonexecutable JSON selects
-a `SourceImportDeclaration`: a human-readable `displayName`, exact `profile`,
-ordered required `materials`, independent `extractor` and `checker` contribution
-IDs, a named `reviewResource`, a `revisionPolicy` and nonempty mandatory `semanticRules`. Each material has
-one literal directory-relative `logicalPath`, `role` and positive `maxBytes`.
-The contract supports up to 32 fixed files, at most 16 path segments and 2 MiB
-aggregate declared bytes. It has no discovery script, optional file or glob
-expansion. Aliased ASCII-case paths and file/directory overlaps are rejected.
-The complete resource is bounded to 32 KiB. Hosts may enforce smaller encoded
-capture limits; they must refuse excess rather than truncate it.
+Before running extraction, the policy owner captures a `SourceRevisionPolicy` specifying which `DomainBlock` schema/behavior IDs contribute their opaque UTF-8 payload bytes to semantic source revision hashing alongside decoded unit text and protected fragments.
 
-`parse_source_import_declaration` uses the strict typed receiver.
-`SourceImportDeclaration::bind` accepts the validated manifest, independently
-supplied package digest and captured Review declaration. It resolves the source
-providers and Review checker from that same manifest/package. Both source providers must support the exact
-profile and SDK source input/output/error schemas. Only captured-input permission
-requests are admitted; the checker must be read-only and distinct from the
-extractor. The captured resource fixes policy before extraction. Neither a
-producer result nor a later check result may choose another checker or omit rules.
+## Package-Owned Source Import Declarations (`tsumugi.source-import-declaration/2/2`)
 
-The Host reads the selected resource directly from the immutable `PackageImage`;
-it does not reopen a package path or execute a component to discover the recipe.
-The application still owns directory selection, bounded platform reads, runtime
-approval, separate current grants and explicit adoption. Material capture keeps
-actual UTF-8 bytes, including BOM and line endings, without interpreting a domain
-grammar. A successful capture or resource lookup proves no domain check or grant.
+A plugin package can bundle a non-executable JSON resource with schema `tsumugi.source-import-declaration/2/2` (`SourceImportDeclaration`, up to 32 KiB) to declare a self-contained source import pipeline:
 
-The public schema and CLI are generated from these Rust types:
+- `displayName` and exact domain `profile`.
+- `materials`: an ordered list of 1 to 32 fixed relative files (each with a literal `logicalPath` up to 16 segments, `role`, and `maxBytes`, up to 2 MiB aggregate across all materials). No globs, optional files, or discovery scripts are permitted, and case-insensitive path aliases or file/directory overlaps are rejected.
+- `extractor` and `checker`: distinct capability contribution IDs in the same package.
+- `reviewResource`: the contribution ID of a [`ReviewDeclaration`](review.md) resource (`tsumugi.review-declaration/1/1`) in the same package.
+- `revisionPolicy` (`SourceRevisionPolicy`) and a non-empty list of mandatory `semanticRules`.
+
+`SourceImportDeclaration::bind` (using `parse_source_import_declaration`) validates the declaration against the package's `ValidatedManifest`, package digest, and captured `ReviewDeclaration`:
+
+- Both `extractor` and `checker` must support the declared `profile` and the SDK's source extraction input/output/error contracts, and may request only `captured-input` permissions.
+- The `checker` capability must be `read-only` and distinct from `extractor`.
+- The referenced `reviewResource` is bound into a `ReviewBinding` fixed to the same package and profile (earlier `1/1` source-import resources without `reviewResource` are rejected).
+
+The Host reads `SourceImportDeclaration` directly from the immutable `PackageImage` without executing plugin code.
 
 ```sh
 cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- schema-source-import-declaration
@@ -101,86 +62,37 @@ cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract 
 cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- validate-source-import-declaration crates/plugin-sdk/tests/fixtures/source-import.declaration.json
 ```
 
-The fixture describes synthetic text. It is neither an official domain package
-nor a runnable worker. These data and capture APIs are prerequisites for dynamic
-desktop source assembly; they do not establish its production cutover.
+## Independent Source Checks (`SourceExtractionCheckInput`)
 
-### Checker input and evidence
+Because `validate_source_extraction` checks structural and coordinate integrity rather than domain format grammar, extracted proposals are verified by an independent semantic checker capability before adoption.
 
-`SourceExtractionCheckInput` carries the entire captured `source`, entire
-`proposal`, and independently fixed `requirements`. The receiver enforces the
-generic source association and unique nonempty plugin requirements. Each is
-mandatory, cannot be waived or declared not applicable, and covers exactly the
-captured source-set ID. Rules, digests and selected provider are preserved.
+`SourceExtractionCheckInput` (up to 4 MiB encoded; `source` and `proposal` each retain their 2 MiB ceiling) bundles:
 
-`CheckImplementation::Plugin.provider` is the four-field
-`ProviderSelectionBinding`; an active instance is unavailable at policy capture.
-The trusted Host separately supplies full actual-channel evidence. A claim in a
-request or response cannot authenticate that channel or package.
+- `source`: the original `SourceExtractionInput`.
+- `proposal`: the extractor's `ContentExchange`.
+- `requirements`: non-empty, mandatory, non-waivable plugin check requirements targeting `sourceSetId` and pinned to the checker's `ProviderSelectionBinding`.
 
-The checker returns the existing strict `CheckResult[]` shape. The trusted caller
-unions its mandatory Core checks with domain requirements, then evaluates exact
-rule, provider, input/scope digest and coverage. Complete coverage can still have
-error findings: it does not itself approve the source. Failed, unavailable,
-cancelled, incomplete or blocking checks cannot authorize adoption. Domain checks
-execute outside project write transactions; the mutation boundary rechecks the
-captured evidence and current authorization.
+The checker returns `CheckResult[]` (`tsumugi.check-results`), which Core combines with its built-in checks and evaluates via `FixedCheckSet::evaluate`.
 
-Source and proposal each fit their own 2 MiB encoded JSON ceiling. Their complete
-check request, including fixed requirements, fits 4 MiB; oversized combinations
-are refused, never truncated. These payload ceilings are distinct from the
-process frame's JSON quoting and metadata budget. Typed validation counts encoded
-bytes without allocating an unbounded intermediate buffer.
+## Error Contract (`SourceExtractionError`)
 
-`parse_content_exchange`, `parse_source_extraction_check_input`, and
-`parse_check_results` bound the complete raw JSON and reject duplicate or unknown
-typed fields. These are data receivers and perform no execution or project IO.
-Content schema 2 requires display evidence; previous experimental shapes are
-rejected rather than migrated.
+`SourceExtractionError` (up to 32 KiB encoded) carries:
 
-## Public errors
+- `code`: one of `invalid-input`, `unsupported-profile`, `invalid-source`, `unsupported-structure`, `limit-exceeded`, or `cancelled`.
+- `artifactId`: nullable ID referencing an artifact from `SourceExtractionInput`.
+- `detail`: a non-empty UTF-8 description (up to 4,096 bytes, containing no NUL bytes). Error details must not expose local filesystem paths, raw user source text, or secrets.
 
-`SourceExtractionError` has a finite kebab-case `code`, nullable `artifactId`, and
-`detail`. Codes are `invalid-input`, `unsupported-profile`, `invalid-source`,
-`unsupported-structure`, `limit-exceeded`, and `cancelled`. They remain separate
-from transport failure, process crash and an unknown outcome.
+## Generated JavaScript Types and Standalone Validators
 
-Details must be nonempty, contain no NUL, and fit 4,096 UTF-8 bytes. The complete
-encoded error is limited to 32 KiB. An artifact ID is a captured identifier, not a
-path; a caller must associate it with the captured input. Producers use public
-diagnostics and must not include local paths, raw source text or secrets. The SDK
-cannot authenticate provenance or determine that arbitrary text is safe to share.
+From the Rust definitions, the SDK emits:
 
-## Generated JavaScript types and conformance
+- Standalone JSON Schemas (`source-extraction-input.schema.json`, `source-extraction-error.schema.json`, `source-extraction-check-input.schema.json`, `check-results.schema.json`) and the build-time type catalog `content-types.schema.json`.
+- TypeScript declarations in [`javascript/content.d.ts`](../javascript/content.d.ts).
+- Zero-dependency standalone Ajv structural validators in `javascript/validate-source-extraction-input.mjs` and `javascript/validate-source-extraction-check-input.mjs` (preserving the SDK's [MIT license](../LICENSE) and the pinned Ajv emitter's MIT license header).
 
-Rust is the sole source for the standalone input/error schemas and the build-time
-`content-types.schema.json` type catalog. The catalog is not an accepted invocation
-payload or another exchange protocol. The existing Host generator converts it
-into [`content.d.ts`](../javascript/content.d.ts), including extraction, content,
-identity, domain-block and explicit text-range types. Do not edit these generated
-declarations or create a handwritten mirror.
+Because `JSON.parse` silently overwrites duplicate object keys and JSON Schema does not verify SHA-256 digests or UTF-8 byte budgets, the Host always validates raw wire payloads through the Rust receivers (`parse_content_exchange`, `parse_source_extraction_check_input`, `parse_check_results`).
 
-The same generator emits `javascript/validate-source-extraction-input.mjs` and
-`javascript/validate-source-extraction-check-input.mjs` from their standalone
-schemas. Each default export is a structural validation
-function with an `errors` property, generated by the existing Ajv emitter. The
-artifact has no Ajv or other runtime import; generation rejects an emitter output
-that would require one. The SDK's [MIT license](../LICENSE) applies, and the
-generated validator includes the installed, locked Ajv emitter's version and
-complete MIT notice. An author may copy the fixed generated artifact together
-with the SDK license, preserving the source/emitter attribution rather than
-copying the SDK's record shape into a handwritten validator.
-
-This validator operates on already-parsed JavaScript values. `JSON.parse` silently
-replaces duplicate object fields, so it cannot substitute for the strict Rust
-Serde receiver for raw JSON. Generated structural validation also does not check
-actual hashes, logical path semantics, byte/count ceilings or domain meaning.
-Hosts still use the SDK semantic validator; plugins still enforce their selected
-profile and smaller domain limits. Hosts must serialize invocation payloads from
-SDK-validated typed captured data, rather than treating arbitrary raw JSON as
-trusted. This data contract alone does not connect a production Core producer.
-
-From the repository root, after building the SDK harness:
+To regenerate and test the schemas and JavaScript bindings from the repository root:
 
 ```sh
 cargo run --locked --offline -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- schema-exchange > crates/plugin-sdk/schemas/content-exchange.schema.json
@@ -195,26 +107,4 @@ cargo test --locked --offline -p tsumugi-plugin-sdk --features schema
 TSUMUGI_PLUGIN_CONTRACT="$PWD/target/debug/tsumugi-plugin-contract" node --test crates/plugin-sdk/tests/source-extraction.test.mjs
 ```
 
-These commands use existing installed build dependencies and do not install them.
-When a custom Cargo target directory is used, supply the actual absolute harness
-path. The CLI also provides `validate-source-extraction-input`,
-`validate-source-extraction-error`, and `match-source-extraction <input> <exchange>`.
-The latter expects the existing `ExchangeDocument` content wrapper; a live
-invocation instead carries its `ContentExchange` as the selected encoded payload.
-
-The public JavaScript/Rust fixture checks exact Unicode bytes and hashes, strict
-receiver behavior, schema currentness and rejection of independently rewritten
-material. It is data conformance, not proof of a domain implementation, process
-identity, source approval or project adoption.
-
-## Adopted domain review binding
-
-A source-import Resource uses schema/behavior 2/2 and must name `reviewResource`.
-The Host reads that exact non-executable ReviewDeclaration Resource from the same
-immutable package. Binding requires the captured declaration, fixes its complete
-rule versions and checker, and rejects a different package/profile or invalid
-Resource schema. Source extraction/checking input protocols retain their existing
-identities. Applications preserve the selected domain Review binding and complete
-checker environment in the original source input; readers do not infer current
-execution authority from stored metadata. Project policy and actual Review
-execution remain application responsibilities.
+The `tsumugi-plugin-contract` CLI also provides `validate-source-extraction-input`, `validate-source-extraction-error`, and `match-source-extraction <input.json> <exchange.json>` (where `<exchange.json>` is wrapped in an `ExchangeDocument`).
