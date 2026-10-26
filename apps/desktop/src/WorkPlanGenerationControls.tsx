@@ -84,12 +84,15 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const toolRemaining = status.toolInvocations ? status.toolInvocations.limit - status.toolInvocations.reserved : 0;
   const toolSelectionValid = !toolHandle || preparedToolsSupported && !!tool && callerAcceptsTool(tool)
     && selected.includes(toolUnitId) && toolAuthorized && toolRemaining > 0;
+  const needsStartAllowance = !!operation && (["prepared", "rejected"].includes(operation.phase)
+    || operation.phase === "unknown" && operation.retryAllowed);
+  const showPreparationGuidance = !operation || needsStartAllowance;
   const selection = jsonIdentity({ request, selected, toolHandle, toolUnitId, tool: tool ?? null });
   const selectionRef = useRef(selection); selectionRef.current = selection;
-  const stale = !!operation && (jsonIdentity(operation.lease) !== jsonIdentity(status.lease) || operation.plan.digest !== status.plan.digest
+  const capturedChanged = !!operation && (jsonIdentity(operation.lease) !== jsonIdentity(status.lease) || operation.plan.digest !== status.plan.digest
     || operation.prepared.scope.some(unit => jsonIdentity(unit) !== jsonIdentity(status.plan.scope.find(item => item.unitId === unit.unitId)))
-    || operation.prepared.preparedTools.some(item => !toolAuthorized || toolRemaining < 1
-      || jsonIdentity(item.tool) !== jsonIdentity(status.plan.tools?.entries.find(tool => tool.handle === item.query.toolHandle))));
+    || operation.prepared.preparedTools.some(item => jsonIdentity(item.tool) !== jsonIdentity(status.plan.tools?.entries.find(tool => tool.handle === item.query.toolHandle))));
+  const stale = capturedChanged || needsStartAllowance && !!operation?.prepared.preparedTools.length && (!toolAuthorized || toolRemaining < 1);
   const outerAttempt = operation?.prepared.attemptId ?? null;
   useEffect(() => {
     if (busy) return;
@@ -289,7 +292,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
           <option value="">{t("ai.component.noReferenceTool")}</option>{status.plan.tools?.entries.map(item => <option key={item.handle} value={item.handle} disabled={!callerAcceptsTool(item) || !toolAuthorized || toolRemaining < 1}>
             {item.binding.declaration.title || item.binding.declaration.name}</option>)}
         </select></label>
-        {!choice ? null : !choice.supportsPreparedTools ? <p>{t("ai.component.referenceLegacy")}</p> : compatibleTools.length === 0
+        {!showPreparationGuidance || !choice ? null : !choice.supportsPreparedTools ? <p>{t("ai.component.referenceLegacy")}</p> : compatibleTools.length === 0
           ? <p>{t("ai.component.referenceUnavailable")}</p> : declaredTools.length === 0 ? <p role="status">{t("ai.component.referenceUndeclared")}</p>
           : !toolAuthorized ? <p role="status">{t("ai.component.referenceConsent")}</p>
           : toolRemaining < 1 ? <p role="status">{t("ai.component.referenceBudget")}</p> : <p>{t("ai.component.referenceHelp")}</p>}
@@ -297,7 +300,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
           <option value="">{t("ai.component.chooseReferenceUnit")}</option>{status.plan.scope.filter(unit => selected.includes(unit.unitId)).map(unit =>
             <option key={unit.unitId} value={unit.unitId}>{unit.nativeKey}</option>)}
         </select></label> : null}
-        {toolHandle && !toolSelectionValid ? <p role="status">{t("ai.component.referenceSelection")}</p> : null}
+        {showPreparationGuidance && toolHandle && !toolSelectionValid ? <p role="status">{t("ai.component.referenceSelection")}</p> : null}
         <label className="field">{t("ai.component.profile")}<select value={profileKey} onChange={event => setProfileKey(event.target.value)}>
           <option value="">{t("ai.component.chooseProfile")}</option>{choice?.declaration.profiles.length === 0
             ? <option value="none">{t("ai.component.noProfile")}</option>
