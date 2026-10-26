@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai::{AiConfig, AiOutput};
+use crate::ai::{AiConfig, AiOutput, Usage};
 use serde_json::json;
 use std::sync::{Mutex, mpsc};
 mod tool_services;
@@ -134,6 +134,22 @@ impl Fixture {
         model: Arc<dyn Runner>,
         component_scope: sdk::ComponentScope,
     ) -> Self {
+        Self::with_model_scope_and_timeout(endpoint, model, component_scope, None)
+    }
+    fn with_outer_timeout(timeout_ms: u32) -> Self {
+        Self::with_model_scope_and_timeout(
+            "http://127.0.0.1:9/v1/chat/completions".into(),
+            Arc::new(Registered { plugin: None }),
+            sdk::ComponentScope::Project,
+            Some(timeout_ms),
+        )
+    }
+    fn with_model_scope_and_timeout(
+        endpoint: String,
+        model: Arc<dyn Runner>,
+        component_scope: sdk::ComponentScope,
+        outer_timeout_ms: Option<u32>,
+    ) -> Self {
         let (directory, mut store, _) =
             crate::persistence::review::tests::current_release_fixture(false);
         let units = store
@@ -194,6 +210,9 @@ impl Fixture {
             )],
         )
         .unwrap();
+        if let Some(timeout_ms) = outer_timeout_ms {
+            envelope.limits.timeout_ms = timeout_ms;
+        }
         envelope.plugin = Some(plugin.clone());
         let outer = FixedInput::capture(envelope).unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
@@ -1145,9 +1164,14 @@ fn service_generation_is_atomic_and_same_call_receipts_do_not_enqueue_again() {
     assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
 }
 
-#[test]
-fn service_origin_gates_actual_http_reservations_and_candidate_adoption() {
-    let mut fixture = Fixture::new();
+struct SucceededChild {
+    receipt: WorkPlanServiceReceipt,
+    dispatch: DispatchRequest,
+    action: AdoptionAction,
+    item: ExecutionId,
+}
+
+fn succeeded_child(fixture: &mut Fixture, reported_usage: Option<Usage>) -> SucceededChild {
     let (prepared, receipt) = fixture.submit();
     fixture.complete_outer();
     let input = prepared.input();
@@ -1156,17 +1180,18 @@ fn service_origin_gates_actual_http_reservations_and_candidate_adoption() {
         .store
         .dispatch_execution_item(receipt.attempt_id, item.item_id)
         .unwrap();
+    let request = ExecutionId::new();
     fixture
         .store
-        .reserve_provider_request(&dispatch, ExecutionId::new(), 2)
+        .reserve_provider_request(&dispatch, request, 2)
         .unwrap();
     let output = AiOutput {
         unit_id: ExecutionId::parse(&item.scope.id).unwrap(),
         target_locale: "zh-CN".into(),
         text: "synthetic candidate".into(),
-        usage: None,
+        usage: reported_usage.clone(),
         requests: 1,
-        usage_incomplete: true,
+        usage_incomplete: reported_usage.is_none(),
     };
     let result = FixedResult::capture(
         ResultEnvelope {
@@ -1201,6 +1226,29 @@ fn service_origin_gates_actual_http_reservations_and_candidate_adoption() {
             serde_json::Value::Null,
         )
         .unwrap();
+    if let Some(usage) = reported_usage {
+        fixture
+            .store
+            .settle_provider_request(&dispatch, request, Some(usage))
+            .unwrap();
+    }
+    SucceededChild {
+        receipt,
+        dispatch,
+        action,
+        item: item.item_id,
+    }
+}
+
+#[test]
+fn service_origin_gates_actual_http_reservations_and_candidate_adoption() {
+    let mut fixture = Fixture::new();
+    let SucceededChild {
+        receipt,
+        dispatch,
+        action,
+        ..
+    } = succeeded_child(&mut fixture, None);
     fixture.store.capture_execution_adoption(&action).unwrap();
     fixture
         .runtime
@@ -1238,6 +1286,72 @@ fn service_origin_gates_actual_http_reservations_and_candidate_adoption() {
             .work_plan_service_receipt(&receipt.identity, &fixture.call)
             .unwrap(),
         Some(receipt)
+    );
+}
+
+#[test]
+fn original_outer_deadline_gates_candidate_after_successful_child_result() {
+    let usage = Usage {
+        prompt_tokens: 2,
+        completion_tokens: 3,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        reasoning_tokens: None,
+    };
+    let mut before = Fixture::new();
+    let early = succeeded_child(&mut before, Some(usage.clone()));
+    assert!(Instant::now() < before.origin.deadline());
+    let saved = before
+        .store
+        .adopt_execution(&early.action, &crate::AiAdoptionHandler)
+        .unwrap();
+    assert_eq!(before.store.adoption_receipt(early.action.action_id).unwrap(), Some(saved));
+    assert!(before
+        .store
+        .saved_ai_candidate(early.receipt.attempt_id, early.item)
+        .unwrap()
+        .is_some());
+
+    let mut after = Fixture::with_outer_timeout(2_000);
+    let original_deadline = after.dispatch.deadline().unwrap();
+    assert_eq!(after.origin.deadline(), original_deadline);
+    let late = succeeded_child(&mut after, Some(usage));
+    assert!(Instant::now() < original_deadline);
+    let budget = after.store.provider_budget(late.receipt.parent_task).unwrap().unwrap();
+    assert_eq!((budget.dispatched, budget.unresolved, budget.usage_unknown), (1, 0, 0));
+    assert_eq!((budget.prompt_tokens.as_str(), budget.completion_tokens.as_str()), ("2", "3"));
+    let sequence = after.store.execution_sequence().unwrap();
+    std::thread::sleep(
+        original_deadline.saturating_duration_since(Instant::now())
+            + std::time::Duration::from_millis(5),
+    );
+    assert!(Instant::now() >= original_deadline);
+    assert!(after.dispatch.plugin_permit().unwrap().is_authorized());
+    assert!(!after.cancellation.is_requested());
+    assert!(!after.settings_revocation.is_requested());
+    assert_eq!(
+        after.store.capture_execution_adoption(&late.action).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    assert!(after
+        .store
+        .saved_ai_candidate(late.receipt.attempt_id, late.item)
+        .unwrap()
+        .is_none());
+    assert!(after.store.adoption_receipt(late.action.action_id).unwrap().is_none());
+    assert_eq!(
+        after
+            .store
+            .reserve_provider_request(&late.dispatch, ExecutionId::new(), 2)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(after.store.provider_budget(late.receipt.parent_task).unwrap(), Some(budget));
+    assert_eq!(after.store.execution_sequence().unwrap(), sequence);
+    assert_eq!(
+        after.store.work_plan_service_receipt(&late.receipt.identity, &after.call).unwrap(),
+        Some(late.receipt)
     );
 }
 
