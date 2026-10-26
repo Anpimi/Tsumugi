@@ -22,6 +22,7 @@ use tsumugi_core::{
             TokenField, TurnAction,
         },
     },
+    application::{TeamDiscussionPolicy, team_discussion_tools, team_execution_tools},
     execution::{Cancellation, ErrorCode, ExecutionError, ExecutionId},
 };
 use tsumugi_plugin_host::{
@@ -681,4 +682,125 @@ async fn captured_member_ready_can_be_cancelled_before_any_provider_request() {
             .next()
             .is_none()
     );
+}
+
+/// Each activation must initialize the captured Pi kernel with the current team
+/// tool roster, then honor cancellation before any physical provider request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn captured_team_members_start_sequentially_and_cancel_before_provider() {
+    struct StopAtPrepare {
+        stop: Cancellation,
+        prepares: usize,
+        http: usize,
+    }
+    impl MemberHandler for StopAtPrepare {
+        fn cancellation(&self) -> Cancellation {
+            self.stop.clone()
+        }
+        fn handle(
+            &mut self,
+            call: MemberCall,
+        ) -> Pin<Box<dyn Future<Output = Result<MemberReply, ExecutionError>> + Send + '_>>
+        {
+            match call {
+                MemberCall::Prepare { .. } => {
+                    self.prepares += 1;
+                    self.stop.request();
+                    Box::pin(async {
+                        Err(ExecutionError::new(ErrorCode::Cancelled, "synthetic-stop"))
+                    })
+                }
+                MemberCall::Event { .. } | MemberCall::Usage { .. } => {
+                    Box::pin(async { Ok(MemberReply::Recorded) })
+                }
+                MemberCall::Http { .. } => {
+                    self.http += 1;
+                    Box::pin(async {
+                        Err(ExecutionError::new(
+                            ErrorCode::Cancelled,
+                            "synthetic-http-denied",
+                        ))
+                    })
+                }
+                _ => Box::pin(async {
+                    Err(ExecutionError::new(
+                        ErrorCode::Cancelled,
+                        "synthetic-unexpected-call",
+                    ))
+                }),
+            }
+        }
+    }
+
+    let runtime = runtime_fixture::approved_runtime();
+    let captured = artifact();
+    for kind in ["translation", "evidence"] {
+        let mut frame = start();
+        let MemberBody::Start {
+            profile,
+            context,
+            input,
+            tools,
+            max_turns,
+            ..
+        } = &mut frame.body
+        else {
+            unreachable!();
+        };
+        profile.model = format!("synthetic-{kind}");
+        *context = json!([]);
+        *input = json!({"work":kind,"instructions":"Preserve {{name}}.",
+            "input":{"sourceText":"Hello {{name}}.","targetLocale":"zh-CN"}})
+        .to_string();
+        *max_turns = 2;
+        tools.clear();
+        tools.extend(
+            team_discussion_tools(TeamDiscussionPolicy::CurrentPlanV2 {})
+                .into_iter()
+                .chain(team_execution_tools())
+                .map(|tool| MemberTool {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.input_schema,
+                }),
+        );
+        assert_eq!(tools.len(), 5);
+        let stage = tempfile::tempdir().unwrap();
+        let mut handler = StopAtPrepare {
+            stop: Cancellation::default(),
+            prepares: 0,
+            http: 0,
+        };
+        let observation = MemberRunObservation::default();
+        let result = run_member_observed(
+            &captured,
+            &runtime,
+            stage.path(),
+            frame,
+            MemberLaunchOptions {
+                allow_unsandboxed_execution: true,
+                cancellation: handler.stop.clone(),
+                limits: HostLimits::default(),
+            },
+            &mut handler,
+            Arc::new(|| true),
+            &observation,
+        )
+        .await;
+        let error = match result {
+            Ok(_) => panic!("cancelled member cannot produce a completed result"),
+            Err(error) => error,
+        };
+        assert_eq!(handler.http, 0, "cancellation must precede HTTP");
+        assert!(
+            matches!(&error, HostError::Cancelled),
+            "unexpected outcome: {error:?}"
+        );
+        assert_eq!(handler.prepares, 1, "member must reach Prepare after Ready");
+        assert_eq!(
+            observation.failure_category(&HostError::Timeout),
+            Some("member-timeout-run")
+        );
+        empty_stage(stage.path());
+    }
 }
