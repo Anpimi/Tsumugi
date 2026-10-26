@@ -62,8 +62,8 @@ it("shows an empty but successful file as a preview rather than a picker cancell
   render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
   expect(await screen.findByText("The file contains no translation units.")).toBeInTheDocument();
-  expect(screen.getByText("No unmapped categories were reported by this restricted parser.")).toBeInTheDocument();
-  expect(screen.queryByText("No file was selected. Nothing was saved.")).not.toBeInTheDocument();
+  expect(screen.getByText("No unmapped items were reported by this preview parser.")).toBeInTheDocument();
+  expect(screen.queryByText("No file selected. Nothing was saved.")).not.toBeInTheDocument();
 });
 
 it("pages many loss categories locally while keeping their full counts and bounded source pointers", async () => {
@@ -77,14 +77,14 @@ it("pages many loss categories locally while keeping their full counts and bound
   const user = userEvent.setup();
   render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
-  expect(await screen.findByText(/Showing loss categories 1–20 of 21/)).toBeInTheDocument();
+  expect(await screen.findByText(/Showing unmapped categories 1–20 of 21/)).toBeInTheDocument();
   expect(screen.getByText(/language-1 · 1 occurrence/)).toBeInTheDocument();
   expect(screen.queryByText(/language-21 · 21 occurrence/)).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Next loss categories" }));
-  expect(screen.getByText(/Showing loss categories 21–21 of 21/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Next unmapped categories" }));
+  expect(screen.getByText(/Showing unmapped categories 21–21 of 21/)).toBeInTheDocument();
   expect(screen.getByText(/language-21 · 21 occurrence/)).toBeInTheDocument();
   expect(screen.getByText(/20 additional occurrence/)).toBeInTheDocument();
-  await user.click(screen.getByText("Original location samples (1)"));
+  await user.click(screen.getByText("Sample locations (1)"));
   expect(screen.getByText(/byte 99 · translation unit 1/)).toBeVisible();
   expect(preview).toHaveBeenCalledTimes(1);
 });
@@ -95,9 +95,9 @@ it("distinguishes a cancelled picker from a failed read and allows another expli
   render(<Shell />);
   const choose = screen.getByRole("button", { name: "Choose TMX file to preview" });
   await user.click(choose);
-  expect(await screen.findByText("No file was selected. Nothing was saved.")).toBeInTheDocument();
+  expect(await screen.findByText("No file selected. Nothing was saved.")).toBeInTheDocument();
   await user.click(choose);
-  expect(await screen.findByRole("alert")).toHaveTextContent("The TMX file could not be previewed");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not preview the TMX file");
   await user.click(choose);
   expect(await screen.findByText("memory.tmx")).toBeInTheDocument();
   expect(preview).toHaveBeenCalledTimes(3);
@@ -147,7 +147,7 @@ it("hides an exact Query record invalidated without a semantic bridge event", as
   expect(record).toBeDefined();
   await act(async () => { await reads!.client.invalidateQueries({ queryKey: record.queryKey, exact: true, refetchType: "none" }); });
   expect(screen.queryByText("memory.tmx")).not.toBeInTheDocument();
-  expect(screen.getByText(/This preview is no longer current/)).toBeInTheDocument();
+  expect(screen.getByText(/This preview is outdated/)).toBeInTheDocument();
   expect(preview).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
   await waitFor(() => expect(preview).toHaveBeenCalledTimes(2));
@@ -159,7 +159,7 @@ it("rejects an unexpected TMX profile without reopening the file chooser", async
   const user = userEvent.setup();
   render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("The TMX file could not be previewed");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not preview the TMX file");
   expect(screen.queryByText("memory.tmx")).not.toBeInTheDocument();
   expect(preview).toHaveBeenCalledTimes(1);
   await user.click(screen.getByRole("button", { name: "Choose TMX file to preview" }));

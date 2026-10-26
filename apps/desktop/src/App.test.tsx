@@ -352,7 +352,7 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
   await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
   await screen.findByRole("heading",{name:"Data sharing preview"});
-  await user.click(screen.getByRole("checkbox",{name:/I confirm sending the shown/}));
+  await user.click(screen.getByRole("checkbox",{name:/I confirm sending the previewed/}));
 }
 
 describe("project lifecycle workbench", () => {
@@ -521,8 +521,8 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Save revision" }));
     await waitFor(() => expect(mocks.drafts.get("session-1")?.current()?.outcomeUnknown).toBe(true));
     await user.type(screen.getByRole("textbox", { name: "Your draft" }), " newer B 👩🏽‍💻 é");
-    await user.click(screen.getByText("Find and range actions", { exact: true }));
-    await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "Unsubmitted 日本語 é");
+    await user.click(screen.getByText("Search and batch selection", { exact: true }));
+    await user.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "Unsubmitted 日本語 é");
     const memory = mocks.memories.get("session-1")!, draft = mocks.drafts.get("session-1")!.current()!;
     const before = { locale: memory.read("translation", "targetLocale"), query: memory.read<string>("translation", "query"),
       applied: memory.read("translation", "appliedQuery"), selection: memory.read("translation", "contentSelection"),
@@ -555,7 +555,7 @@ describe("project lifecycle workbench", () => {
     const pending = new Promise<ContentScope>((resolve, reject) => { complete = resolve; fail = reject; });
     mocks.invoke.mockImplementation((command: string, args) => command === "read_content_scope" ? pending : original(command, args));
     await user.click(screen.getByRole("button", { name: "Find content" }));
-    const find = await screen.findByRole("textbox", { name: "Find by key, source or translation" });
+    const find = await screen.findByRole("textbox", { name: "Search by key, source text, or translation" });
     await waitFor(() => expect(find).toHaveFocus());
     const outside = screen.getByRole("button", { name: "Settings" }); outside.focus();
     await act(async () => outcome === "success" ? complete({ revision: "2", currentSnapshot: fixtureIdentity(500) }) : fail(new Error("Synthetic source read unavailable")));
@@ -573,11 +573,11 @@ describe("project lifecycle workbench", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++next, callback); return next; });
     vi.stubGlobal("cancelAnimationFrame", (frame: number) => { frames.delete(frame); });
     await user.click(screen.getByRole("button", { name: "Find content" }));
-    const find = await screen.findByRole("textbox", { name: "Find by key, source or translation" });
+    const find = await screen.findByRole("textbox", { name: "Search by key, source text, or translation" });
     const memory = mocks.memories.get("session-1")!;
     expect(memory.read("translation", "findFocus")).not.toBeNull();
     if (intent === "focus") act(() => { screen.getByRole("button", { name: "Settings" }).focus(); });
-    else if (intent === "collapse") await user.click(screen.getByText("Find and range actions", { exact: true }));
+    else if (intent === "collapse") await user.click(screen.getByText("Search and batch selection", { exact: true }));
     else await user.click(screen.getByRole("button", { name: "Tasks" }));
     const focused = document.activeElement;
     const pending = [...frames.values()]; frames.clear(); act(() => { pending.forEach(callback => callback(performance.now())); });
@@ -593,7 +593,7 @@ describe("project lifecycle workbench", () => {
       ? Promise.resolve({ ...projectView(), metadata: { ...metadata(), targetLocales: [] } }) : original(command, args));
     await renderApp(); await createProject(user);
     const find = screen.getByRole("button", { name: "Find content" });
-    expect(find).toBeDisabled(); expect(find).toHaveAccessibleDescription("Add a project target language to find content.");
+    expect(find).toBeDisabled(); expect(find).toHaveAccessibleDescription("Add a target language to the project before searching content.");
     const calls = mocks.invoke.mock.calls.length; await user.click(find);
     expect(mocks.invoke.mock.calls.slice(calls).some(([command]) => ["read_content_scope", "read_source_content", "read_review_summary_page", "save_translation_revision"].includes(command))).toBe(false);
     expect(screen.getByRole("heading", { name: "Demo" })).toBeVisible();
@@ -604,7 +604,7 @@ describe("project lifecycle workbench", () => {
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++next, callback); return next; });
     vi.stubGlobal("cancelAnimationFrame", (frame: number) => { frames.delete(frame); });
     await user.click(screen.getByRole("button", { name: "Find content" }));
-    await screen.findByRole("textbox", { name: "Find by key, source or translation" });
+    await screen.findByRole("textbox", { name: "Search by key, source text, or translation" });
     const oldMemory = mocks.memories.get("session-1")!, request = oldMemory.read<import("./sessionNavigation").TranslationFindFocusRequest>("translation", "findFocus")!;
     const original = mocks.invoke.getMockImplementation()!;
     const replacement = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
@@ -619,7 +619,7 @@ describe("project lifecycle workbench", () => {
     const outside = screen.getByRole("button", { name: "Settings" }); act(() => { outside.focus(); });
     const pending = [...frames.values()]; frames.clear(); act(() => { pending.forEach(callback => callback(performance.now())); });
     expect(request.current()).toBe(false); expect(outside).toHaveFocus();
-    expect(screen.queryByRole("textbox", { name: "Find by key, source or translation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Search by key, source text, or translation" })).not.toBeInTheDocument();
     expect(mocks.memories.get("session-2")?.read("translation", "findFocus")).toBeUndefined();
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
   });
@@ -629,7 +629,7 @@ describe("project lifecycle workbench", () => {
       ? Promise.resolve({ ...projectView(), metadata: { ...metadata(), targetLocales: ["ja", "zh-CN"] } }) : original(command, args));
     await renderApp(); await createProject(user);
     const context = () => within(screen.getByRole("group", { name: i18n.t("workbench.context.label") }));
-    expect(context().getByText("Project targets")).toBeVisible();
+    expect(context().getByText("Project target languages")).toBeVisible();
     expect(context().getByText(/\(ja\).*\(zh-CN\)/)).toBeVisible();
     expect(context().getByText("Project scope")).toBeVisible();
     const fixture = installTranslationEditor();
@@ -638,7 +638,7 @@ describe("project lifecycle workbench", () => {
     await user.click(await screen.findByRole("button", { name: "first" }));
     const editor = await editableDraft();
     await user.type(editor, "A");
-    expect(context().getByText("Working target")).toBeVisible();
+    expect(context().getByText("Working language")).toBeVisible();
     expect(context().getByText(/\(zh-CN\)/)).toBeVisible();
     expect(context().queryByText(/\(ja\)/)).not.toBeInTheDocument();
     expect(context().getByText("Entry: first")).toBeVisible();
@@ -650,8 +650,8 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Save revision" }));
     await waitFor(() => expect(release).toBeTypeOf("function"));
     await user.type(editor, "B");
-    await user.click(screen.getByText("Find and range actions", { exact: true }));
-    await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "Unsubmitted 日本語 é");
+    await user.click(screen.getByText("Search and batch selection", { exact: true }));
+    await user.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "Unsubmitted 日本語 é");
     const memory = mocks.memories.get("session-1")!, before = { locale: memory.read("translation", "targetLocale"),
       query: memory.read("translation", "query"), applied: memory.read("translation", "appliedQuery"), selection: memory.read("translation", "contentSelection") };
     await user.click(screen.getByRole("button", { name: "Settings" }));
@@ -699,11 +699,11 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
     const context = () => within(screen.getByRole("group", { name: "Current work context" }));
-    expect(context().getByText("Project targets")).toBeVisible();
+    expect(context().getByText("Project target languages")).toBeVisible();
     expect(context().getByText(/\(ja\)/)).toBeVisible();
     expect(context().queryByText(/\(zh-CN\)/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Translations" }));
-    expect(context().getByText("Working target")).toBeVisible();
+    expect(context().getByText("Working language")).toBeVisible();
     expect(context().getByText(/\(zh-CN\) — no longer a project target/)).toBeVisible();
     expect(context().getByText("Entry: first")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Original A plus B");
@@ -743,10 +743,10 @@ describe("project lifecycle workbench", () => {
   it("uses the AI preparation action by default and retains its owner through the manual editor route", async () => {
     installTranslationEditor(); installAiPreparation();
     const user = userEvent.setup(); await renderApp(); await createProject(user);
-    await user.click(await screen.findByRole("button", { name: "Prepare AI localization" }));
+    await user.click(await screen.findByRole("button", { name: "Set up AI translation" }));
     expect(await screen.findByRole("heading", { name: "AI work" })).toBeVisible();
     await user.type(screen.getByRole("textbox", { name: "Model" }), "Unsent model choice");
-    await user.click(screen.getByRole("button", { name: "Edit directly" }));
+    await user.click(screen.getByRole("button", { name: "Edit translations directly" }));
     expect(await screen.findByRole("heading", { name: "Translations" })).toBeVisible();
     expect(document.querySelector("section.ai-dialog")).toBeNull();
     await user.click(screen.getByRole("button", { name: "AI work" }));
@@ -763,7 +763,7 @@ describe("project lifecycle workbench", () => {
     await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
     expect(draft).toHaveValue("你好");
     await user.type(draft, "改写");
-    await user.click(screen.getByRole("button", { name: "Return to AI work" }));
+    await user.click(screen.getByRole("button", { name: "Return to AI workspace" }));
     expect(await screen.findByRole("heading", { name: "Generated results" })).toBeVisible();
     expect(mocks.drafts.get("session-1")?.current()?.text).toBe("你好改写");
     await user.click(screen.getByRole("button", { name: "Translations" }));
@@ -846,7 +846,7 @@ describe("project lifecycle workbench", () => {
     expect(activity.rows[0]).toMatchObject({ ...originalTask, phase: "active", progress: { running: 1, cancelled: 0, succeeded: 0 } });
     expect(draft).toHaveValue(text);
 
-    await user.click(screen.getByRole("button", { name: "Return to AI work" }));
+    await user.click(screen.getByRole("button", { name: "Return to AI workspace" }));
     expect(await screen.findByRole("heading", { name: "Generated results" })).toBeVisible();
     expect(reads.client.getQueryData<AiView>(key)?.detail).toMatchObject({ ...originalTask, progress: { running: 1, cancelled: 0 } });
     expect(mocks.drafts.get("session-1")?.current()?.text).toBe(text);
@@ -888,11 +888,11 @@ describe("project lifecycle workbench", () => {
     expect(selected.connectionProfile).toEqual(configs[0].connectionProfile);expect(selected.model).toBe("Saved 1");
     connections=structuredClone(connections);connections.snapshot.revision="2";connections.basis.revision="2";
     connections.snapshot.profiles[0].revision="2";connections.snapshot.profiles[0].connection.model="Saved newer";connections.references[0].revision="2";connections.references[0].digest="a".repeat(64);
-    await user.click(screen.getAllByRole("button",{name:"Read current connections"})[0]);
-    await screen.findByText(/The saved connection changed or is unavailable/);
+    await user.click(screen.getAllByRole("button",{name:"Refresh connections"})[0]);
+    await screen.findByText(/The saved connection was updated or is no longer available/);
     expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
     expect(screen.getByRole("combobox",{name:label})).toHaveValue("captured");
-    expect(screen.getByRole("option",{name:"Captured connection · Saved 1"})).toBeInTheDocument();
+    expect(screen.getByRole("option",{name:"Current bound connection · Saved 1"})).toBeInTheDocument();
     expect(mocks.invoke.mock.calls.filter(([command])=>["authorize_work_plan","start_work_plan","start_arena_translation","change_model_connections"].includes(command))).toHaveLength(0);
   });
 
@@ -1428,8 +1428,8 @@ describe("project lifecycle workbench", () => {
     await user.click(await screen.findByRole("button", { name: "first" }));
     const editor = await editableDraft();
     await user.type(editor, "A");
-    await user.click(screen.getByText("Find and range actions", { exact: true }));
-    await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "retained range");
+    await user.click(screen.getByText("Search and batch selection", { exact: true }));
+    await user.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "retained range");
     let finish!: () => void;
     fixture.setSave(async (_request, commit) => { await new Promise<void>(resolve => { finish = resolve; }); return commit(); });
     await user.click(screen.getByRole("button", { name: "Save revision" }));
@@ -1446,7 +1446,7 @@ describe("project lifecycle workbench", () => {
     expect(fixture.saves()).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Translations" }));
     expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("AB");
-    expect(screen.getByRole("textbox", { name: "Find by key, source or translation" })).toHaveValue("retained range");
+    expect(screen.getByRole("textbox", { name: "Search by key, source text, or translation" })).toHaveValue("retained range");
     await waitFor(() => expect(query?.getObserversCount()).toBe(1));
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
     await user.keyboard("{Control>}s{/Control}");
@@ -1696,7 +1696,7 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button",{name:"Arena comparison"}));
     expect(screen.getByRole("textbox",{name:"Scheme 2 · Model"})).toHaveValue("arena-model-2");
     expect(screen.getByRole("checkbox",{name:"first: Hello"})).toBeChecked();
-    expect(screen.getByRole("checkbox",{name:/I confirm sending the shown/})).toBeChecked();
+    expect(screen.getByRole("checkbox",{name:/I confirm sending the previewed/})).toBeChecked();
     expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();
     expect(mocks.invoke.mock.calls.filter(([command])=>command==="preview_arena_translation")).toHaveLength(1);
     expect(mocks.invoke.mock.calls.filter(([command])=>command==="start_arena_translation")).toHaveLength(0);
@@ -1713,7 +1713,7 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.filter(([command])=>command==="start_arena_translation")).toHaveLength(0);
     await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
     await screen.findByRole("heading",{name:"Data sharing preview"});
-    expect(screen.getByRole("checkbox",{name:/I confirm sending the shown/})).not.toBeChecked();
+    expect(screen.getByRole("checkbox",{name:/I confirm sending the previewed/})).not.toBeChecked();
     expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
   });
   it("keeps late Arena reads from project A out of project B after an actual App project switch",async()=>{
@@ -1776,7 +1776,7 @@ describe("project lifecycle workbench", () => {
       expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_work_plan")).toHaveLength(0);
       if (change === "source") {
         expect(screen.getByRole("button", { name: "Preview what will be sent" })).toBeDisabled();
-        await user.click(screen.getByRole("button", { name: "Clear old selection and use current source" }));
+        await user.click(screen.getByRole("button", { name: "Clear old selection and use updated source" }));
         await user.click(screen.getByRole("checkbox", { name: "first: Updated source" }));
       }
       await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
@@ -2204,7 +2204,7 @@ describe("project lifecycle workbench", () => {
     expect(await screen.findByText(i18n.t("translation.savedNewerDraft"))).toBeInTheDocument();
     expect(editor).toHaveValue("AB");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
-    const references = screen.getByText("Terms, context and history");
+    const references = screen.getByText("Terms, context, and history");
     await user.click(references);
     references.focus();
     await user.keyboard("{Meta>}s{/Meta}");
@@ -3225,15 +3225,15 @@ describe("project lifecycle workbench", () => {
       return projectView();
     });
     await user.click(screen.getByRole("button", { name: "Extensions" }));
-    await screen.findByRole("button", { name: "Choose plugin folder" });
+    await screen.findByRole("button", { name: "Select plugin folder" });
     await user.keyboard("{Control>}s{/Control}");
     expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(draft).toHaveValue("Demo draft");
     await user.click(screen.getByRole("button", { name: "Extensions" }));
-    await user.click(await screen.findByRole("button", { name: "Choose plugin folder" }));
-    await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));
+    await user.click(await screen.findByRole("button", { name: "Select plugin folder" }));
+    await user.click(await screen.findByRole("checkbox", { name: /I trust this local package/ }));
     await user.click(screen.getByRole("button", { name: "Approve and install" }));
     await screen.findByRole("button", { name: "Retry original operation" });
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));

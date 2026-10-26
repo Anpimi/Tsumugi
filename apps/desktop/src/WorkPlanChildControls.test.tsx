@@ -126,12 +126,12 @@ async function createChild(index: number, tool = false) {
 it("keeps two known queued children usable under the same root limits while preserving each original consumer", async () => {
   queued = true; render(<Harness />, project);
   const user = await createChild(0), first = screen.getByRole("region", { name: "Child session 1" });
-  await user.click(within(first).getByRole("button", { name: "Generate within this child" }));
+  await user.click(within(first).getByRole("button", { name: "Generate in this sub-session" }));
   await waitFor(() => expect(owner.agent.current().child.children[0].runs[0]?.phase).toBe("queued"));
   expect(owner.reserved()).toBe(true); expect(owner.canRunChild()).toBe(true);
   await createChild(1);
   const second = screen.getByRole("region", { name: "Child session 2" });
-  await user.click(within(second).getByRole("button", { name: "Generate within this child" }));
+  await user.click(within(second).getByRole("button", { name: "Generate in this sub-session" }));
   await waitFor(() => expect(calls("start_work_plan_agent_generation")).toHaveLength(2));
   const children = owner.agent.current().child.children;
   expect(children[0].consumer).not.toBe(children[1].consumer);
@@ -148,7 +148,7 @@ it("uses exact child result readers and guidance, and shows malformed structured
   await user.click(within(child).getByRole("button", { name: "Read tool Skill" }));
   await within(child).findByText("# Child guidance <script>not executed</script>");
   expect(child.querySelector("script, a")).toBeNull();
-  await user.click(within(child).getByRole("button", { name: "Generate within this child" }));
+  await user.click(within(child).getByRole("button", { name: "Generate in this sub-session" }));
   await within(child).findByText(/Child candidate/);
   await waitFor(() => expect(within(child).getByRole("combobox", { name: "Child reference package" })).toBeEnabled());
   await user.selectOptions(within(child).getByRole("combobox", { name: "Child reference package" }), toolWire.spec.handle);
@@ -164,14 +164,14 @@ it("uses exact child result readers and guidance, and shows malformed structured
 
 it("retains the same child and original unknown request over consumer unmount, manual history and exact retry", async () => {
   unknown = true; missing = true; const view = render(<Harness />, project), user = await createChild(0);
-  await user.click(screen.getByRole("button", { name: "Generate within this child" }));
+  await user.click(screen.getByRole("button", { name: "Generate in this sub-session" }));
   await screen.findByText(/The call may have been queued/);
   const before = owner.agent.current().child.children[0], original = before.runs[0];
   expect(owner.canRunChild()).toBe(false); expect(owner.reserved()).toBe(true);
   view.rerender(<Harness shown={false} />); view.rerender(<Harness />);
   expect(owner.agent.current().child.children[0].consumer).toBe(before.consumer);
   expect(owner.agent.current().child.children[0].runs[0].prepared).toBe(original.prepared);
-  await user.click(screen.getByRole("button", { name: "Inspect this child’s task history" }));
+  await user.click(screen.getByRole("button", { name: "View sub-session task history" }));
   expect(history).toHaveBeenCalledWith(original.prepared.taskId, original.prepared.attemptId);
   await user.click(screen.getByRole("button", { name: "Check original Agent start" }));
   await screen.findByRole("button", { name: "Retry same action" });
@@ -192,7 +192,7 @@ it("preserves newer choices and requires explicit use after a late child acknowl
   await act(async () => release());
   await screen.findByText(/Your choices changed/);
   expect(owner.current().config.model).toBe("Kept newer B"); expect(owner.agent.current().child.unitIds).toEqual([status.plan.scope[1].unitId]);
-  expect(screen.getByRole("button", { name: "Generate within this child" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Generate in this sub-session" })).toBeDisabled();
   expect(calls("prepare_work_plan_agent_generation")).toHaveLength(0);
 });
 
@@ -226,7 +226,7 @@ it("ends only an explicitly expired pure-delegation uncertainty, keeps B and doe
 it("keeps task uncertainty reserved after permission retirement without offering the pure-delegation ending", async () => {
   reconcileAck=async()=>{throw new Error("Original read unavailable before permission retirement");};
   unknown = true; render(<Harness />, project); const user = await createChild(0);
-  await user.click(screen.getByRole("button", { name: "Generate within this child" }));
+  await user.click(screen.getByRole("button", { name: "Generate in this sub-session" }));
   await screen.findByText(/The call may have been queued/);
   const run = owner.agent.current().child.children[0].runs[0];
   act(() => reads.client.setQueryData(reads.key(["workPlan", status.lease.planId]), { ...status, state: "stopped", lease: { ...status.lease, generation: "9007199254740994" } }));
@@ -257,7 +257,7 @@ it.each(["active", "enqueued", "not-enqueued", "wrong-ack"] as const)("reconcile
   unknown = true; missing = outcome !== "enqueued";
   reconcileAck=async()=>{throw new Error("First bounded original read unavailable");};
   render(<Harness />, project); const user = await createChild(0);
-  await user.click(screen.getByRole("button", { name: "Generate within this child" }));
+  await user.click(screen.getByRole("button", { name: "Generate in this sub-session" }));
   await screen.findByText(/The call may have been queued/);
   const original = owner.agent.current().child.children[0].runs[0];
   if (outcome !== "active") act(() => reads.client.setQueryData(reads.key(["workPlan", status.lease.planId]), {
@@ -272,13 +272,13 @@ it.each(["active", "enqueued", "not-enqueued", "wrong-ack"] as const)("reconcile
   await act(async () => finish(receipt));
   expect(calls("reconcile_work_plan_agent_execution")[1][1].request).toEqual(original.request);
   if (outcome === "not-enqueued") {
-    const button = await screen.findByRole("button", { name: "End this unqueued preparation" });
+    const button = await screen.findByRole("button", { name: "Close unqueued setup" });
     expect(owner.reserved()).toBe(true); expect(owner.agent.current().child.children[0].runs[0].phase).toBe("unknown");
     await user.click(button);
     expect(owner.agent.current().child.children[0].runs[0].phase).toBe("not-enqueued"); expect(owner.reserved()).toBe(false);
     expect(owner.agent.current().child.children[0].runs[0].prepared).toBe(original.prepared);
   } else {
-    expect(screen.queryByRole("button", { name: "End this unqueued preparation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close unqueued setup" })).toBeNull();
     expect(owner.agent.current().child.children[0].runs[0].phase).toBe(outcome === "enqueued" ? "queued" : "unknown");
   }
   expect(owner.current().config.model).toBe("Newer B during reconciliation");
@@ -288,18 +288,18 @@ it.each(["active", "enqueued", "not-enqueued", "wrong-ack"] as const)("reconcile
 it("keeps an elapsed-deadline start unknown after Active reconciliation and requires explicit plan control", async () => {
   unknown = true; missing = true;
   const view = render(<Harness />, project), user = await createChild(0);
-  await user.click(screen.getByRole("button", { name: "Generate within this child" })); await screen.findByText(/The call may have been queued/);
+  await user.click(screen.getByRole("button", { name: "Generate in this sub-session" })); await screen.findByText(/The call may have been queued/);
   view.rerender(<Harness value={{ ...status, expiresAt: "1" }} />);
   await user.click(screen.getByRole("button", { name: "Check original Agent start" }));
   await screen.findByText(/An elapsed deadline or a missing task read cannot release it/);
-  expect(owner.reserved()).toBe(true); expect(screen.queryByRole("button", { name: "End this unqueued preparation" })).toBeNull();
+  expect(owner.reserved()).toBe(true); expect(screen.queryByRole("button", { name: "Close unqueued setup" })).toBeNull();
   expect(screen.queryByRole("button", { name: "End this inactive child preparation" })).toBeNull();
   expect(calls("control_work_plan")).toHaveLength(0);
 });
 
 it("does not attach a late reconciliation to a replacement run", async () => {
   unknown = true; missing = true; render(<Harness />, project); const user = await createChild(0);
-  await user.click(screen.getByRole("button", { name: "Generate within this child" })); await screen.findByText(/The call may have been queued/);
+  await user.click(screen.getByRole("button", { name: "Generate in this sub-session" })); await screen.findByText(/The call may have been queued/);
   const original = owner.agent.current().child.children[0].runs[0];
   let finish!: (value: unknown) => void;
   reconcileAck = () => new Promise(done => { finish = done; });
@@ -311,12 +311,12 @@ it("does not attach a late reconciliation to a replacement run", async () => {
   await act(async () => finish({ identity: { lease: original.request.lease, taskId: original.request.taskId,
     attemptId: original.request.attemptId, inputDigest: original.request.inputDigest }, outcome: "not-enqueued" }));
   expect(owner.agent.current().child.children[0].runs[0].reconciliation).toBeUndefined();
-  expect(screen.queryByRole("button", { name: "End this unqueued preparation" })).toBeNull(); expect(owner.reserved()).toBe(true);
+  expect(screen.queryByRole("button", { name: "Close unqueued setup" })).toBeNull(); expect(owner.reserved()).toBe(true);
 });
 
 it("automatically confirms one original child enqueue without replaying or granting another scope",async()=>{
   unknown=true;render(<Harness/>,project);const user=await createChild(0);
-  await user.click(screen.getByRole("button",{name:"Generate within this child"}));
+  await user.click(screen.getByRole("button",{name:"Generate in this sub-session"}));
   await waitFor(()=>expect(owner.agent.current().child.children[0].runs[0].phase).toBe("queued"));
   const action=owner.agent.current().child.children[0].runs[0];
   expect(calls("reconcile_work_plan_agent_execution").map(([,args])=>args.request)).toEqual([action.request]);
@@ -326,7 +326,7 @@ it("automatically confirms one original child enqueue without replaying or grant
 
 it("retains child uncertainty after an explicit original retry receives a formal rejection",async()=>{
   unknown=true;missing=true;render(<Harness/>,project);const user=await createChild(0);
-  await user.click(screen.getByRole("button",{name:"Generate within this child"}));
+  await user.click(screen.getByRole("button",{name:"Generate in this sub-session"}));
   const retry=await screen.findByRole("button",{name:"Retry same action"}),original=owner.agent.current().child.children[0].runs[0];
   const base=invoke.getMockImplementation()!;
   invoke.mockImplementation((command,args)=>command === "start_work_plan_agent_generation"

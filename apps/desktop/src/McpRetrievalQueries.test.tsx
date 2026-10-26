@@ -83,15 +83,15 @@ async function prepare() {
   await opened.user.click(ui.getByRole("button", { name: "Connect and discover tools" }));
   await waitFor(() => expect(ui.getByRole("option", { name: "find_terms" })).toBeInTheDocument());
   await opened.user.selectOptions(ui.getByRole("combobox", { name: "Discovered tool" }), "find_terms");
-  await opened.user.selectOptions(ui.getByRole("combobox", { name: "Saved entry for this query" }), id(9302));
+  await opened.user.selectOptions(ui.getByRole("combobox", { name: "Saved entry to query" }), id(9302));
   await opened.user.selectOptions(ui.getByRole("combobox", { name: "Target language" }), "zh-CN");
-  await opened.user.click(ui.getByRole("button", { name: "Use this saved source as the query" }));
-  await opened.user.click(ui.getByRole("button", { name: "Review exact external query" }));
-  await ui.findByRole("textbox", { name: "Query sent to the service" }); return { ...opened, ui };
+  await opened.user.click(ui.getByRole("button", { name: "Use saved source text as query" }));
+  await opened.user.click(ui.getByRole("button", { name: "Preview external query" }));
+  await ui.findByRole("textbox", { name: "Query text to send" }); return { ...opened, ui };
 }
 async function complete() {
-  const opened = await prepare(); await opened.user.click(opened.ui.getByRole("checkbox", { name: /I authorize this service to receive/ }));
-  await opened.user.click(opened.ui.getByRole("button", { name: "Send this exact query" }));
+  const opened = await prepare(); await opened.user.click(opened.ui.getByRole("checkbox", { name: /I authorize sending this query/ }));
+  await opened.user.click(opened.ui.getByRole("button", { name: "Send query" }));
   await opened.ui.findByRole("textbox", { name: "Suggested target term" }); return opened;
 }
 it("keeps discovery and execution manual, and treats descriptions and returned reasons as plain untrusted text", async () => {
@@ -102,20 +102,20 @@ it("keeps discovery and execution manual, and treats descriptions and returned r
   await user.click(ui.getByRole("checkbox", { name: /I authorize connecting/ })); await user.click(ui.getByRole("button", { name: "Connect and discover tools" }));
   await user.selectOptions(ui.getByRole("combobox", { name: "Discovered tool" }), "find_terms");
   expect(ui.getByText("<script>untrusted service description</script>")).toBeInTheDocument();
-  expect(screen.getByRole("region", { name: "External terminology retrieval" }).querySelector("script, a")).toBeNull();
+  expect(screen.getByRole("region", { name: "External terminology lookup" }).querySelector("script, a")).toBeNull();
   expect(externalCalls()).toHaveLength(1); expect(invoke.mock.calls.some(([command]) => command === "start_mcp_term_query")).toBe(false);
 });
 it("runs the exact previewed query and explicitly hands its MCP candidate to the original resource decision path", async () => {
   const { user, ui } = await complete();
-  expect(ui.getByRole("textbox", { name: "Query sent to the service" })).toHaveValue(source.rows[0].occurrence.text);
-  expect((ui.getByRole("textbox", { name: "Service-supplied reason" }) as HTMLTextAreaElement).value).toContain("<a href=");
-  expect(screen.getByRole("region", { name: "Untrusted terminology results" }).querySelector("a, script")).toBeNull();
+  expect(ui.getByRole("textbox", { name: "Query text to send" })).toHaveValue(source.rows[0].occurrence.text);
+  expect((ui.getByRole("textbox", { name: "Service-provided reason" }) as HTMLTextAreaElement).value).toContain("<a href=");
+  expect(screen.getByRole("region", { name: "Terminology lookup results (unverified)" }).querySelector("a, script")).toBeNull();
   expect(invoke.mock.calls.some(([command]) => command === "capture_mcp_glossary" || command === "decide_resource_entry")).toBe(false);
-  await user.click(ui.getByRole("button", { name: "Create a captured terminology candidate" }));
-  await ui.findByText("The external result was captured. It has not been adopted.");
-  await user.click(ui.getByRole("button", { name: "Review the captured terminology" }));
+  await user.click(ui.getByRole("button", { name: "Save as terminology candidate" }));
+  await ui.findByText("Saved as a terminology candidate (not yet adopted).");
+  await user.click(ui.getByRole("button", { name: "Review terminology candidate" }));
   const heading = await screen.findByRole("heading", { name: i18n.t("resource.resourceUpdates") }); await waitFor(() => expect(heading).toHaveFocus());
-  expect(screen.getByText("The captured source basis is current. Review each proposed change before adopting it.")).toBeInTheDocument();
+  expect(screen.getByText("The source basis is current. Review each proposed change before adopting it.")).toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole("button", { name: "Adopt" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Adopt" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "decide_resource_entry")).toBe(true));
@@ -125,55 +125,55 @@ it("runs the exact previewed query and explicitly hands its MCP candidate to the
   expect(invoke.mock.calls.some(([command]) => /prepare_plugin_tool|start_plugin_tool|model/.test(command))).toBe(false);
 });
 it("invalidates consent after a new query edit and keeps the fixed original preview", async () => {
-  const { user, ui } = await prepare(); await user.click(ui.getByRole("checkbox", { name: /I authorize this service to receive/ }));
-  const query = ui.getByRole("textbox", { name: "Exact query text 1" }); await user.clear(query); await user.type(query, "Barrel");
-  expect(ui.getByRole("checkbox", { name: /I authorize this service to receive/ })).not.toBeChecked();
-  expect(ui.getByRole("textbox", { name: "Query sent to the service" })).toHaveValue(source.rows[0].occurrence.text);
-  expect(ui.getByRole("button", { name: "Send this exact query" })).toBeDisabled(); expect(externalCalls()).toHaveLength(1);
+  const { user, ui } = await prepare(); await user.click(ui.getByRole("checkbox", { name: /I authorize sending this query/ }));
+  const query = ui.getByRole("textbox", { name: "Query text 1" }); await user.clear(query); await user.type(query, "Barrel");
+  expect(ui.getByRole("checkbox", { name: /I authorize sending this query/ })).not.toBeChecked();
+  expect(ui.getByRole("textbox", { name: "Query text to send" })).toHaveValue(source.rows[0].occurrence.text);
+  expect(ui.getByRole("button", { name: "Send query" })).toBeDisabled(); expect(externalCalls()).toHaveLength(1);
 });
 it("retains a newer manual resource draft when a completed external candidate requests a handoff", async () => {
-  const { user, ui } = await complete(); await user.click(ui.getByRole("button", { name: "Create a captured terminology candidate" }));
-  await ui.findByText("The external result was captured. It has not been adopted.");
+  const { user, ui } = await complete(); await user.click(ui.getByRole("button", { name: "Save as terminology candidate" }));
+  await ui.findByText("Saved as a terminology candidate (not yet adopted).");
   await user.click(screen.getByRole("tab", { name: "Terms" })); await user.type(screen.getByRole("textbox", { name: "Source term" }), "Manual B");
-  await user.click(screen.getByRole("tab", { name: "Reference queries" })); await user.click(panel().getByRole("button", { name: "Review the captured terminology" }));
-  expect(await panel().findByRole("alert")).toHaveTextContent("Pending work or newer resource input prevents this handoff");
+  await user.click(screen.getByRole("tab", { name: "Reference queries" })); await user.click(panel().getByRole("button", { name: "Review terminology candidate" }));
+  expect(await panel().findByRole("alert")).toHaveTextContent("Pending work or unsaved resource edits prevented switching views");
   expect(owner.current().termDraft.source).toBe("Manual B"); expect(owner.current().previewCapture).toBeNull();
 });
 it("does not apply a handoff preview after newer manual input arrives while its original read is pending", async () => {
-  const { user, ui } = await complete(); await user.click(ui.getByRole("button", { name: "Create a captured terminology candidate" }));
-  await ui.findByText("The external result was captured. It has not been adopted.");
+  const { user, ui } = await complete(); await user.click(ui.getByRole("button", { name: "Save as terminology candidate" }));
+  await ui.findByText("Saved as a terminology candidate (not yet adopted).");
   const pending = deferred<ReturnType<typeof retrievalResourcePreview>>(), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command, payload) => command === "read_resource_preview" ? pending.promise : original(command, payload));
-  await user.click(ui.getByRole("button", { name: "Review the captured terminology" }));
+  await user.click(ui.getByRole("button", { name: "Review terminology candidate" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_resource_preview")).toBe(true));
   act(() => owner.editTerm({ ...owner.current().termDraft, source: "Manual B", target: "人工 B", reason: "Newer input" }));
   await act(async () => { pending.resolve(retrievalResourcePreview(captured!)); });
-  await ui.findByText("Pending work or newer resource input prevents this handoff. Current terminology, context and query input are kept.");
+  await ui.findByText("Pending work or unsaved resource edits prevented switching views. Your current terminology, context, and query inputs are kept.");
   expect(owner.current().termDraft.source).toBe("Manual B"); expect(owner.current().preview).toBeNull();
   expect(screen.getByRole("tab", { name: "Reference queries" })).toHaveAttribute("aria-selected", "true");
 });
 it("keeps the original request reachable during an unknown start, stops independently and returns focus after explicit local closure", async () => {
   const { user, ui } = await prepare(), pending = deferred<McpRetrievalView>(); const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command, payload) => command === "start_mcp_term_query" ? pending.promise : original(command, payload));
-  await user.click(ui.getByRole("checkbox", { name: /I authorize this service to receive/ })); await user.click(ui.getByRole("button", { name: "Send this exact query" }));
+  await user.click(ui.getByRole("checkbox", { name: /I authorize sending this query/ })); await user.click(ui.getByRole("button", { name: "Send query" }));
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
-  expect(screen.queryByRole("heading", { name: "External terminology retrieval" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "External terminology lookup" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Glossary and context" }));
-  expect(screen.getByRole("heading", { name: "External terminology retrieval" })).toBeVisible(); expect(owner.tool.mcp.current().operation!.unknown).toBe("start");
-  await user.click(panel().getByRole("button", { name: "Stop this external operation" }));
+  expect(screen.getByRole("heading", { name: "External terminology lookup" })).toBeVisible(); expect(owner.tool.mcp.current().operation!.unknown).toBe("start");
+  await user.click(panel().getByRole("button", { name: "Stop external operation" }));
   await waitFor(() => expect(owner.tool.mcp.current().operation!.closed).toBe(true));
-  await user.click(within(panel().getByRole("region", { name: "Original external query" })).getByRole("button", { name: "Check original local record" }));
-  await user.click(await panel().findByRole("button", { name: "End this unconfirmed wait after local closure" }));
-  await user.click(panel().getByRole("button", { name: "Close the resolved external request" }));
-  expect(screen.getByRole("heading", { name: "External terminology retrieval" })).toHaveFocus();
+  await user.click(within(panel().getByRole("region", { name: "Pending external query" })).getByRole("button", { name: "Check local record" }));
+  await user.click(await panel().findByRole("button", { name: "Dismiss wait after local closure" }));
+  await user.click(panel().getByRole("button", { name: "Close resolved request" }));
+  expect(screen.getByRole("heading", { name: "External terminology lookup" })).toHaveFocus();
   await act(async () => { pending.resolve(retrievalView(canonical!.discovery, canonical!.query, "enqueued")); });
   expect(owner.tool.mcp.current().operation).toBeNull(); expect(externalCalls()).toHaveLength(2);
 });
 it("reads saved query results and captures them without reconnecting or restoring any consent", async () => {
-  const { user } = await open(), ui = panel(); await user.click(ui.getByRole("button", { name: "Read saved external query history" }));
-  await user.click(await ui.findByRole("button", { name: "External query record 1" })); await user.click(await ui.findByRole("button", { name: "Read attempt 1" }));
+  const { user } = await open(), ui = panel(); await user.click(ui.getByRole("button", { name: "View saved query history" }));
+  await user.click(await ui.findByRole("button", { name: "External query 1" })); await user.click(await ui.findByRole("button", { name: "View attempt 1" }));
   await ui.findByRole("textbox", { name: "Suggested target term" }); expect(externalCalls()).toHaveLength(0);
-  await user.click(ui.getByRole("button", { name: "Create a captured terminology candidate" })); await ui.findByText("The external result was captured. It has not been adopted.");
+  await user.click(ui.getByRole("button", { name: "Save as terminology candidate" })); await ui.findByText("Saved as a terminology candidate (not yet adopted).");
   expect(externalCalls()).toHaveLength(0); expect(owner.tool.mcp.current().operation).toBeNull(); expect(owner.tool.mcp.current().consent).toBe(false);
   expect(invoke.mock.calls.some(([command]) => command === "read_mcp_retrieval_session")).toBe(false);
 });
@@ -184,7 +184,7 @@ it.each(["changed-source", "removed-source"] as const)("shows %s MCP evidence th
   const { user } = await open(state !== "removed-source");
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(await screen.findByRole("button", { name: "External MCP terminology · find_terms" }));
-  await screen.findByText("The captured source basis is no longer current. New adoption or override is unavailable; the saved evidence, Keep and Ignore remain available.");
+  await screen.findByText("The source basis has changed. New adoptions and overrides are disabled, but saved evidence, Keep, and Ignore remain available.");
   expect(screen.getByRole("button", { name: "Adopt" })).toBeDisabled();
   await waitFor(() => expect(screen.getByRole("button", { name: "Keep current" })).toBeEnabled());
   expect(screen.getByRole("button", { name: i18n.t("resource.ignore") })).toBeEnabled(); expect(externalCalls()).toHaveLength(0);
@@ -195,6 +195,6 @@ it("localizes the discoverable entry and consent while keeping user endpoint inp
   await i18n.changeLanguage("zh-CN"); const { user } = await open(), ui = panel();
   await user.type(ui.getByRole("textbox", { name: "MCP 服务端点" }), "https://example.invalid/mcp");
   expect(ui.getByRole("textbox", { name: "MCP 服务端点" })).toHaveValue("https://example.invalid/mcp");
-  expect(ui.getByRole("checkbox", { name: "我允许连接此端点读取工具描述；发现过程不发送项目文本。" })).not.toBeChecked();
-  expect(ui.getByRole("button", { name: "连接并发现工具" })).toBeDisabled(); expect(externalCalls()).toHaveLength(0);
+  expect(ui.getByRole("checkbox", { name: "我允许连接此端点以获取工具说明；发现工具期间不会发送任何项目文本。" })).not.toBeChecked();
+  expect(ui.getByRole("button", { name: "连接并获取工具列表" })).toBeDisabled(); expect(externalCalls()).toHaveLength(0);
 });

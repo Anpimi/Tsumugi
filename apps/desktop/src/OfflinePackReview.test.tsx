@@ -111,15 +111,15 @@ async function openManager() {
   const user = userEvent.setup();
   render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Choose offline Pack folder" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Select offline Pack folder" })).toBeEnabled());
   return user;
 }
 async function choosePack(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Choose offline Pack folder" }));
+  await user.click(screen.getByRole("button", { name: "Select offline Pack folder" }));
   return screen.findByRole("region", { name: "Review Pack: Synthetic tools" });
 }
 function memberCheckbox(id: string) {
-  return screen.getByRole("checkbox", { name: `I trust and approve ${id} 0.1.0 with the permissions shown above` });
+  return screen.getByRole("checkbox", { name: `I trust and approve ${id} 0.1.0 with the permissions listed above` });
 }
 
 beforeEach(async () => {
@@ -131,8 +131,8 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 it.each([
-  { locale: "en-US", entry: "Extensions", choose: "Choose offline Pack folder", title: "Review Pack: Synthetic tools", consent: "I trust and approve", install: "Approve and install selected packages", discard: "Discard selection", network: "Contact network destination", process: "Start a program" },
-  { locale: "zh-CN", entry: "扩展", choose: "选择离线 Pack 目录", title: "审阅组合：Synthetic tools", consent: "我信任并批准", install: "批准并安装所选包", discard: "放弃选择", network: "访问网络目标", process: "启动程序" },
+  { locale: "en-US", entry: "Extensions", choose: "Select offline Pack folder", title: "Review Pack: Synthetic tools", consent: "I trust and approve", install: "Approve and install selected packages", discard: "Cancel selection", network: "Connect to network hosts", process: "Launch external programs" },
+  { locale: "zh-CN", entry: "扩展", choose: "选择离线扩展包文件夹", title: "查看扩展包组合：Synthetic tools", consent: "我信任并批准", install: "批准并安装所选插件包", discard: "取消选择", network: "访问网络地址", process: "启动外部程序" },
 ])("reviews each member and its own permissions without installing in $locale", async labels => {
   await i18n.changeLanguage(labels.locale);
   const user = userEvent.setup();
@@ -162,8 +162,8 @@ it.each([
   expect(within(processMember).getAllByText(program)).toHaveLength(2);
   for (const target of within(processMember).getAllByText(program)) expect(target).toBeVisible();
   expect(within(processMember).queryByText(destination)).not.toBeInTheDocument();
-  expect(within(review).getByText(/have not been authenticated|均未经认证/)).toBeVisible();
-  expect(within(review).getByText(/preview expires after 10 minutes|预览在 10 分钟后到期/)).toBeVisible();
+  expect(within(review).getByText(/are unverified|均未经签名认证/)).toBeVisible();
+  expect(within(review).getByText(/preview expires after 10 minutes|预览将在 10 分钟后过期/)).toBeVisible();
   expectNoMutations();
   await user.click(within(review).getByRole("button", { name: labels.discard }));
   expect(screen.queryByRole("region", { name: labels.title })).not.toBeInTheDocument();
@@ -206,14 +206,14 @@ it("clears all member consent when choosing a new Pack and when cancelling its p
   const user = await openManager();
   await choosePack(user);
   await user.click(memberCheckbox("network-reference"));
-  await user.click(screen.getByRole("button", { name: "Choose offline Pack folder" }));
+  await user.click(screen.getByRole("button", { name: "Select offline Pack folder" }));
   expect(await screen.findByRole("region", { name: "Review Pack: Updated tools" })).toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Review Pack: Synthetic tools" })).not.toBeInTheDocument();
   for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Approve and install selected packages" })).toBeDisabled();
   await user.click(memberCheckbox("local-helper"));
-  await user.click(screen.getByRole("button", { name: "Choose offline Pack folder" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Choose offline Pack folder" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Select offline Pack folder" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Select offline Pack folder" })).toBeEnabled());
   expect(screen.getByRole("region", { name: "Review Pack: Updated tools" })).toBeInTheDocument();
   for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Approve and install selected packages" })).toBeDisabled();
@@ -251,7 +251,7 @@ it("locks conflicting operations and panel dismissal until the accepted installa
   await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
   await waitFor(() => expect(installCalls()).toHaveLength(1));
   expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
-  for (const name of ["Close", "Choose plugin folder", "Choose offline Pack folder", "Read current state", "Discard selection", "Approve and install selected packages", "Enable", "Inspect approved package"]) {
+  for (const name of ["Close", "Select plugin folder", "Select offline Pack folder", "Refresh state", "Cancel selection", "Approve and install selected packages", "Enable", "View package details"]) {
     expect(screen.getByRole("button", { name })).toBeDisabled();
   }
   for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).toBeDisabled();
@@ -284,23 +284,23 @@ it("retains an unknown original Pack action across refresh and reopening, then r
   await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
   expect(await screen.findByRole("button", { name: "Retry original operation" })).toBeEnabled();
   const original = originalRequest();
-  expect(screen.getByText(/operation may be partly saved/)).toBeInTheDocument();
+  expect(screen.getByText(/operation may have partially completed/)).toBeInTheDocument();
   expect(onBusy).toHaveBeenLastCalledWith(true);
-  await user.click(screen.getByRole("button", { name: "Read current state" }));
+  await user.click(screen.getByRole("button", { name: "Refresh state" }));
   await waitFor(() => expect(screen.getAllByRole("button", { name: "Enable" })).toHaveLength(2));
   for (const button of screen.getAllByRole("button", { name: "Enable" })) expect(button).toBeDisabled();
-  expect(screen.queryByText(/The requested change is saved/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Changes saved/)).not.toBeInTheDocument();
   expect(installCalls()).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Retry original operation" })).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Choose offline Pack folder" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Discard selection" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Select offline Pack folder" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel selection" })).toBeDisabled();
   expect(memberCheckbox("network-reference")).toBeChecked();
   expect(memberCheckbox("local-helper")).toBeChecked();
   expect(installCalls()).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Retry original operation" }));
-  expect(await screen.findByText(/The requested change is saved/)).toBeInTheDocument();
+  expect(await screen.findByText(/Changes saved/)).toBeInTheDocument();
   expect(installCalls()).toHaveLength(2);
   expect(installCalls()[1][1]).toEqual({ request: original });
   expect(original.expectedRevision).toBe("0");
@@ -324,11 +324,11 @@ it.each(["malformed", "missing-member", "missing-approval", "wrong-action", "wro
   await user.click(memberCheckbox("local-helper"));
   await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
   expect(await screen.findByRole("button", { name: "Retry original operation" })).toBeEnabled();
-  expect(screen.queryByText(/The requested change is saved/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Changes saved/)).not.toBeInTheDocument();
   expect(screen.getByText("No plugin packages installed.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Enable" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Choose offline Pack folder" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Discard selection" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Select offline Pack folder" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Cancel selection" })).toBeDisabled();
   expect(screen.getByRole("region", { name: "Review Pack: Synthetic tools" })).toBeInTheDocument();
   expect(memberCheckbox("network-reference")).toBeChecked();
   expect(memberCheckbox("local-helper")).toBeChecked();
@@ -351,7 +351,7 @@ it.each(["installed", "uninstalled"])("keeps retained %s origins out of a manual
   mockIpc({ read: () => previous });
   const user = await openManager();
   const review = await choosePack(user);
-  expect(within(review).getByText(/cannot switch an existing package/)).toBeVisible();
+  expect(within(review).getByText(/cannot change the source or publisher of an existing package/)).toBeVisible();
   await user.click(memberCheckbox("network-reference"));
   const install = screen.getByRole("button", { name: "Approve and install selected packages" });
   expect(install).toBeDisabled();

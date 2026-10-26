@@ -321,7 +321,7 @@ it("keeps Windows native paste behavior without reading another clipboard snapsh
 });
 
 async function revealFindActions(user: ReturnType<typeof userEvent.setup>) {
-  const summary = screen.getByText("Find and range actions", { exact: true });
+  const summary = screen.getByText("Search and batch selection", { exact: true });
   if (!summary.closest("details")?.open) await user.click(summary);
 }
 
@@ -398,7 +398,7 @@ it("supersedes a pending editor focus with Find while allowing a later explicit 
   const request: TranslationFindFocusRequest = { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
     metadataRevision: project.metadata.metadataRevision, current: () => true, consume, cancel: vi.fn() };
   act(() => { memory.write("translation", "findOpen", true); memory.write("translation", "findFocus", request); });
-  flush(); const find = screen.getByRole("textbox", { name: "Find by key, source or translation" }); expect(find).toHaveFocus();
+  flush(); const find = screen.getByRole("textbox", { name: "Search by key, source text, or translation" }); expect(find).toHaveFocus();
   await act(async () => { await finish(); });
   await waitFor(() => expect(screen.getByRole("heading", { name: "second" })).toBeVisible());
   expect(find).toHaveFocus(); expect(consume).toHaveBeenCalledTimes(1);
@@ -416,7 +416,7 @@ it("keeps search composition separate from the draft and submits only a later ex
   await user.click(await screen.findByRole("button", { name: "first" }));
   await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Retained B");
   await revealFindActions(user);
-  const find = screen.getByRole("textbox", { name: "Find by key, source or translation" }), before = { ...owner.current()! };
+  const find = screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), before = { ...owner.current()! };
   const calls = invoke.mock.calls.length;
   fireEvent.compositionStart(find); fireEvent.change(find, { target: { value: "日本語 é" } });
   expect(fireEvent.keyDown(find, { key: "Enter", isComposing: true })).toBe(false);
@@ -680,7 +680,7 @@ it("keeps hidden editor references inactive while preserving the workbench's cur
     <TranslationWorkbench project={project} disabled={false} onProposeTerm={async () => false} /></>, project);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const field = await screen.findByRole("textbox", { name: "Your draft" });
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   const auxiliary = ["read_correction_term_basis", "tm_suggestions", "read_source_context"];
   await waitFor(() => { for (const name of auxiliary) expect(invoke.mock.calls.filter(([command]) => command === name)).toHaveLength(1); });
   resize(ui.container.querySelector(".translation-columns")!, 600); await paintContentPanes(); await user.click(screen.getByRole("button", { name: "Entries" }));
@@ -718,12 +718,12 @@ it("opens sharing from the exact current saved editor entry and retains its orig
   const view = render(<><TranslationWorkbench project={project} disabled={false} /><McpSharingPanel /></>, project);
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
-  const entry = await screen.findByRole("button", { name: "Share this saved entry with an external MCP client" });
+  const entry = await screen.findByRole("button", { name: "Share saved entry with external MCP client" });
   await waitFor(() => expect(entry).toBeEnabled()); await user.click(entry);
-  expect(screen.getByRole("heading", { name: "Share one saved entry" })).toHaveFocus();
+  expect(screen.getByRole("heading", { name: "Share saved entry" })).toHaveFocus();
   expect(screen.getByText("Entry first → zh-CN")).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "Include adopted terms for this entry" })).not.toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "Include the saved manual context for this entry" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Include saved manual context for this entry" })).not.toBeChecked();
   expect(invoke.mock.calls.filter(([name]) => String(name).includes("mcp_share"))).toHaveLength(0);
   await user.click(screen.getByRole("button", { name: "Close sharing draft" })); expect(entry).toHaveFocus(); await user.click(entry);
   await user.type(screen.getByRole("textbox", { name: "External recipient" }), "Retained recipient B");
@@ -755,21 +755,21 @@ async function captureDeclaredTranslation(user: ReturnType<typeof userEvent.setu
   const choose = await screen.findByRole("button", { name: "Choose translation folder" });
   await waitFor(() => expect(choose).toBeEnabled()); await user.click(choose);
   await user.selectOptions(await screen.findByRole("combobox", { name: i18n.t("translation.file") }), "zh.json");
-  await user.click(await screen.findByRole("checkbox", { name: /I confirm that zh.json belongs to zh-CN/ }));
-  await user.click(screen.getByRole("button", { name: "Capture translation file" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I confirm that zh.json is for zh-CN/ }));
+  await user.click(screen.getByRole("button", { name: "Select translation file" }));
   expect(await screen.findByRole("button", { name: "Import for review" })).toBeDisabled();
 }
 
 async function importDeclaredTranslation(user: ReturnType<typeof userEvent.setup>) {
   await captureDeclaredTranslation(user);
-  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract this captured translation file/ }));
+  await user.click(screen.getByRole("checkbox", { name: /I allow this plugin to extract translations from the selected file/ }));
   await user.click(screen.getByRole("button", { name: "Import for review" }));
   await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I separately allow this exact checker/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow this checker/ }));
   await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
-  await user.click(await screen.findByRole("button", { name: "Record translation check" }));
-  await user.click(await screen.findByRole("button", { name: "Prepare checked translation preview" }));
-  await user.click(await screen.findByRole("button", { name: "Review checked translation matches" }));
+  await user.click(await screen.findByRole("button", { name: "Save translation check result" }));
+  await user.click(await screen.findByRole("button", { name: "Prepare translation match preview" }));
+  await user.click(await screen.findByRole("button", { name: "Review translation matches" }));
 }
 
 it.each(["empty", "failed"] as const)("distinguishes pending translation file discovery from a %s result", async outcome => {
@@ -790,7 +790,7 @@ it.each(["empty", "failed"] as const)("distinguishes pending translation file di
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "list_plugin_translation_files")).toHaveLength(1));
   expect(screen.getByText(i18n.t("execution.loading"))).toBeVisible();
   expect(screen.queryByText(i18n.t("translation.noFiles"))).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Capture translation file" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Select translation file" })).toBeDisabled();
   await act(async () => {
     if (outcome === "empty") resolveFiles([]);
     else rejectFiles(new Error("Synthetic translation file discovery failure"));
@@ -801,7 +801,7 @@ it.each(["empty", "failed"] as const)("distinguishes pending translation file di
     expect(screen.queryByText(i18n.t("translation.noFiles"))).not.toBeInTheDocument();
   }
   expect(screen.queryByText(i18n.t("execution.loading"))).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Capture translation file" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Select translation file" })).toBeDisabled();
   expect(invoke.mock.calls.some(([name]) => name === "preflight_plugin_translation" || name === "start_plugin_translation")).toBe(false);
 });
 
@@ -1338,11 +1338,11 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
   expect(batchDialog).toHaveTextContent("The complete file has 1 entries: 1 unique matches will be applied; 0 entries will remain unchanged.");
   expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution")).toHaveLength(0);
   await user.click(within(batchDialog).getByRole("button", { name: "Confirm these matches" }));
-  await screen.findByRole("button", { name: "Check the uncertain action's receipt" });
+  await screen.findByRole("button", { name: "Check action status" });
   const originalAction = invoke.mock.calls.find(([name]) => name === "adopt_execution")![1].request.actionId;
   rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "4" } }} disabled={false} />);
   expect(screen.getByRole("button", { name: "Retry the same action" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Check the uncertain action's receipt" }));
+  await user.click(screen.getByRole("button", { name: "Check action status" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_translation_adoption_action")).toHaveLength(2));
   expect(invoke.mock.calls.find(([name]) => name === "read_translation_adoption_action")?.[1].request.adoption.actionId).toBe(originalAction);
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
@@ -1371,7 +1371,7 @@ it("shows the removed target and recovery for a task-opened import after a clean
   expect(removedTargetAlert).toHaveTextContent("zh-CN");
   expect(removedTargetAlert).toHaveTextContent(/restore|project settings/i);
   expect(returnToSettings).toBeEnabled();
-  expect(screen.getByText("This fixed preview needs an explicit refresh before making another decision. Saved results and original pending actions are kept.")).toHaveAttribute("role", "alert");
+  expect(screen.getByText("Refresh this match preview before making further changes. Saved results and pending actions are kept.")).toHaveAttribute("role", "alert");
   expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeDisabled();
   expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution"))
     .toHaveLength(0);
@@ -1447,7 +1447,7 @@ it("confirms a save without a second editor or history read and preserves newer 
   expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([name]) => name === "read_translation_history")).toHaveLength(0);
   await user.type(editor, " plus newer input");
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   await user.click(screen.getByRole("button", { name: "Refresh history" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_translation_history")).toHaveLength(2));
   expect(editor).toHaveValue("Confirmed draft plus newer input");
@@ -1949,7 +1949,7 @@ it.each(["unknown", "missing"] as const)("does not confirm navigation from an au
     await user.click(screen.getByRole("button", { name: "Translations" }));
     await user.click(await screen.findByRole("button", { name: "first" }));
     const draft = await screen.findByRole("textbox", { name: "Your draft" });
-    await screen.findByRole("button", { name: "Retry same protection action" });
+    await screen.findByRole("button", { name: "Retry protection change" });
     await act(async () => { await reads.synchronizeFresh(); });
     expect(draft).toHaveAttribute("readonly");
     expect(draft).toHaveValue("");
@@ -2007,7 +2007,7 @@ it("does not attribute externally confirmed protection to an automatic action re
       fixture.external();
     });
     await act(async () => { await reads.synchronizeFresh(); });
-    await screen.findByText("Protected from automatic selection");
+    await screen.findByText("Protected from automatic updates");
     await act(async () => { identity.resolve(fixtureIdentity(823)); });
     await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
     await user.type(draft, "B after the external protection");
@@ -2237,7 +2237,7 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
   expect(screen.getByRole("button", { name: "entry-51" })).toHaveAttribute("aria-current", "true");
   await user.type(screen.getByRole("textbox", { name: "Your draft" }), "Final saved");
   await user.click(screen.getByRole("button", { name: "Save and next" }));
-  expect(await screen.findByText("You have reached the last entry in this list.")).toBeInTheDocument();
+  expect(await screen.findByText("You have reached the end of the list.")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "entry-51" })).toBeInTheDocument();
   expect(saved.get(fixtureIdentity(1050))).toBe("Final saved");
 });
@@ -2261,12 +2261,12 @@ it("retains input entered while save-and-next waits for the neighboring entry", 
   expect(editor).toHaveValue("AB");
   expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
   expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
-  expect(screen.getByRole("alert")).toHaveTextContent("Your draft changed while the next entry was loading");
+  expect(screen.getByRole("alert")).toHaveTextContent("Your draft was edited while the next entry was loading");
 });
 
 it.each([
-  ["review-scope-expired", "This result list has expired"],
-  ["review-scope-source-changed", "The source range changed"],
+  ["review-scope-expired", "This search result list has expired"],
+  ["review-scope-source-changed", "The source entries changed"],
 ])("recovers a stale result scope through a fresh search without losing the draft (%s)", async (field, message) => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
@@ -2307,7 +2307,7 @@ it("keeps the editor but disables list navigation when a new search has no match
   const editor = await screen.findByRole("textbox", { name: "Your draft" });
   await user.type(editor, "Keep this input");
   await revealFindActions(user);
-  await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "absent");
+  await user.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "absent");
   await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   await screen.findByText("0 matching entries");
@@ -2330,7 +2330,7 @@ it("requires language mapping and applies only the reviewed unique result", asyn
   await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
   const dialog = await screen.findByRole("dialog", { name: "Apply this complete file range?" });
   expect(dialog).toHaveTextContent("The complete file has 1 entries: 1 unique matches will be applied; 0 entries will remain unchanged.");
-  expect(dialog).toHaveTextContent("Create candidates for these fixed matches. Current selections are kept.");
+  expect(dialog).toHaveTextContent("Save these matches as candidate translations and keep current active selections.");
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identities);
   expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution")).toHaveLength(0);
   await user.click(within(dialog).getByRole("button", { name: "Confirm these matches" }));
@@ -2377,7 +2377,7 @@ it.each(["batch", "row"])("refreshes frozen editor summaries after %s import sel
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(screen.getByRole("button", { name: "Edit translations" }));
-  expect(await screen.findByRole("button", { name: "first" })).toHaveTextContent("No selected translation");
+  expect(await screen.findByRole("button", { name: "first" })).toHaveTextContent("No translation selected");
   await user.click(screen.getByRole("button", { name: "Import file" }));
   await importDeclaredTranslation(user);
   await screen.findByRole("heading", { name: "Review translation matches" });
@@ -2436,7 +2436,7 @@ it("shows current adopted terms and context beside the editable translation", as
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(screen.getByRole("button", { name: "Edit translations" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   const reference = await screen.findByRole("region", { name: "Terms and context for this translation" });
   expect(reference).toHaveTextContent("Original: 原文 · Manual · Project terminology");
   expect(reference).toHaveTextContent("Used in the opening screen · Translator note");
@@ -2455,7 +2455,7 @@ it("queries the complete current scope and retains a filtered position on return
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await screen.findByRole("button", { name: "first" });
   await revealFindActions(user);
-  await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "needle");
+  await user.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "needle");
   await revealFindActions(user);
   await user.click(screen.getByRole("button", { name: "Find" }));
   await screen.findByRole("button", { name: "later-needle" });
@@ -2463,7 +2463,7 @@ it("queries the complete current scope and retains a filtered position on return
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await user.click(screen.getByRole("button", { name: "Translations" }));
   expect(await screen.findByRole("button", { name: "later-needle" })).toBeInTheDocument();
-  expect(screen.getByRole("textbox", { name: "Find by key, source or translation" })).toHaveValue("needle");
+  expect(screen.getByRole("textbox", { name: "Search by key, source text, or translation" })).toHaveValue("needle");
   expect(invoke.mock.calls.filter(([name]) => name === "read_translation_history")).toHaveLength(0);
 });
 
@@ -2693,7 +2693,7 @@ it("retains an uncertain protection action while guarding entry, language and pr
   });
   render(<TranslationWorkbench ref={ref} project={project} disabled={false}/>);const user=userEvent.setup();
   await user.click(screen.getByRole("button",{name:"Translations"}));await user.click(await screen.findByRole("button",{name:"first"}));
-  await screen.findByRole("button",{name:"Retry same protection action"});
+  await screen.findByRole("button",{name:"Retry protection change"});
   expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
   expect(screen.getByRole("combobox",{name:"Target language"})).toBeDisabled();
   expect(screen.getByRole("button",{name:"second"})).toBeDisabled();
@@ -2702,8 +2702,8 @@ it("retains an uncertain protection action while guarding entry, language and pr
   expect(leave).toBe(false);expect(opened).toBe(false);
   const draft=screen.getByRole("textbox",{name:"Your draft"});
   expect(draft).toHaveAttribute("readonly");await user.type(draft,"Unsafe input");expect(draft).toHaveValue("");
-  await user.click(screen.getByRole("button",{name:"Retry same protection action"}));
-  await screen.findByText("Protected from automatic selection");
+  await user.click(screen.getByRole("button",{name:"Retry protection change"}));
+  await screen.findByText("Protected from automatic updates");
   await waitFor(()=>expect(draft).not.toHaveAttribute("readonly"));await user.type(draft,"Retained manual input");expect(draft).toHaveValue("Retained manual input");
   const mutations=invoke.mock.calls.filter(([name])=>name==="set_work_protection");expect(mutations).toHaveLength(2);expect(mutations[1][1].request).toEqual(mutations[0][1].request);
 });
@@ -2748,11 +2748,11 @@ it("keeps unreadable protection read-only and recovers through its existing refr
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
   const draft = await screen.findByRole("textbox", { name: "Your draft" });
-  await screen.findByRole("button", { name: "Refresh protection" });
+  await screen.findByRole("button", { name: "Refresh protection status" });
   expect(draft).toHaveAttribute("readonly");
   expect(invoke.mock.calls.filter(([name]) => name === "set_work_protection")).toHaveLength(0);
   failedRead = false;
-  await user.click(screen.getByRole("button", { name: "Refresh protection" }));
+  await user.click(screen.getByRole("button", { name: "Refresh protection status" }));
   await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
   await user.type(draft, "Recovered input");
   expect(draft).toHaveValue("Recovered input");
@@ -2767,8 +2767,8 @@ it("keeps a released entry read-only until explicit protection without re-protec
   const draft = await screen.findByRole("textbox", { name: "Your draft" });
   await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
   await user.click(screen.getByRole("button", { name: "Release protection" }));
-  await user.click(await screen.findByRole("button", { name: "Release for this entry" }));
-  await screen.findByText("Automatic selection is not protected");
+  await user.click(await screen.findByRole("button", { name: "Release protection" }));
+  await screen.findByText("Not protected from automatic updates");
   expect(draft).toHaveAttribute("readonly");
   await user.type(draft, "Unprotected input");
   expect(draft).toHaveValue("");
@@ -2882,7 +2882,7 @@ it.each(["newer-text", "composition"])("preserves %s when a manual selection ack
   await user.click(await screen.findByRole("button", { name: "first" }));
   const draft = await screen.findByRole("textbox", { name: "Your draft" });
   await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   await user.click(screen.getByRole("button", { name: "Select this revision" }));
   await waitFor(() => expect(complete).toBeDefined());
   if (mode === "newer-text") await user.type(draft, "Newer input");
@@ -2912,11 +2912,11 @@ it("reconciles an accepted translation start with the original attempt, grant an
   render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
   const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
   await captureDeclaredTranslation(user);
-  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract this captured translation file/ }));
+  await user.click(screen.getByRole("checkbox", { name: /I allow this plugin to extract translations from the selected file/ }));
   await user.click(screen.getByRole("button", { name: "Import for review" }));
   const retry = await screen.findByRole("button", { name: i18n.t("execution.checkPluginStart") });
   expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("button", { name: "Choose new translation input" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Choose another translation file" })).toBeDisabled();
   await user.click(retry);
   await screen.findByRole("button", { name: "Review independent translation check" });
   const starts = invoke.mock.calls.filter(([name]) => name === "start_plugin_translation");
@@ -2933,10 +2933,10 @@ it("retains translation preparation across views and explicitly protects project
   await captureDeclaredTranslation(user);
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await user.click(screen.getByRole("button", { name: "Translations" }));
-  expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible();
+  expect(screen.getByText(/Selected i18n\/zh.json/)).toBeVisible();
   let leaving!: Promise<boolean>; await act(async () => { leaving = ref.current!.allowLeave(); });
   await user.click(await screen.findByRole("button", { name: "Keep editing" }));
-  expect(await leaving).toBe(false); expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible();
+  expect(await leaving).toBe(false); expect(screen.getByText(/Selected i18n\/zh.json/)).toBeVisible();
   expect(invoke.mock.calls.some(([name]) => name === "start_plugin_translation")).toBe(false);
 });
 
@@ -2950,17 +2950,17 @@ it("blocks a rejected independent translation check and preserves the original p
   const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
   await captureDeclaredTranslation(user);
-  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract/ })); await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await user.click(screen.getByRole("checkbox", { name: /I allow this plugin to extract/ })); await user.click(screen.getByRole("button", { name: "Import for review" }));
   await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
   expect(await screen.findByRole("button", { name: "Run independent translation check" })).toBeDisabled();
-  await user.click(screen.getByRole("checkbox", { name: /I separately allow this exact checker/ })); await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
-  await user.click(await screen.findByRole("button", { name: "Record translation check" }));
-  await screen.findByText(/The mandatory translation check rejected/);
-  expect(screen.queryByRole("button", { name: "Prepare checked translation preview" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /I separately allow this checker/ })); await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
+  await user.click(await screen.findByRole("button", { name: "Save translation check result" }));
+  await screen.findByText(/The required translation check failed/);
+  expect(screen.queryByRole("button", { name: "Prepare translation match preview" })).not.toBeInTheDocument();
   const producerStart = invoke.mock.calls.find(([name]) => name === "start_plugin_translation")![1].request;
   const checkerStart = invoke.mock.calls.find(([name]) => name === "start_translation_check")![1].request;
   expect(checkerStart.grantId).not.toBe(producerStart.grantId); expect(checkerStart.attemptId).not.toBe(producerStart.attemptId);
-  expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible();
+  expect(screen.getByText(/Selected i18n\/zh.json/)).toBeVisible();
 });
 
 it("derives import availability from declared capabilities while preserving editing", async () => {
@@ -2970,7 +2970,7 @@ it("derives import availability from declared capabilities while preserving edit
     ? Promise.resolve({ ...translationInventory, packageDecisions: [] }) : original(command, args));
   const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
-  await screen.findByText(/Enable a translation package matching the current source profile/);
+  await screen.findByText(/Enable a translation plugin matching the current source profile/);
   expect(screen.getByRole("button", { name: "Choose translation folder" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Edit translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   expect(await screen.findByRole("textbox", { name: "Your draft" })).toBeEnabled();
@@ -3007,9 +3007,9 @@ it("reviews a new checker attempt after cancellation without recapturing the pro
   });
   const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" })); await captureDeclaredTranslation(user);
-  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract/ })); await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await user.click(screen.getByRole("checkbox", { name: /I allow this plugin to extract/ })); await user.click(screen.getByRole("button", { name: "Import for review" }));
   await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I separately allow this exact checker/ })); await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow this checker/ })); await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
   await user.click(await screen.findByRole("button", { name: i18n.t("execution.cancel") }));
   await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
   expect(await screen.findByRole("button", { name: "Run independent translation check" })).toBeDisabled();
@@ -3026,11 +3026,11 @@ it("preserves captured input when installed settings change and blocks new autho
     ? Promise.resolve({ ...translationView, settingsRevision: revision }) : original(command, args));
   const user = userEvent.setup(), view = render(<TranslationWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" })); await captureDeclaredTranslation(user);
-  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract/ }));
+  await user.click(screen.getByRole("checkbox", { name: /I allow this plugin to extract/ }));
   revision = "2"; view.rerender(<TranslationWorkbench project={project} disabled />); view.rerender(<TranslationWorkbench project={project} disabled={false} />);
-  await user.click(screen.getByRole("button", { name: "Refresh installed translation choices" }));
-  await screen.findByText(/Extension settings changed after capture/);
-  expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible(); expect(screen.getByRole("button", { name: "Import for review" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Refresh installed translation plugins" }));
+  await screen.findByText(/Extension settings changed after selecting the file/);
+  expect(screen.getByText(/Selected i18n\/zh.json/)).toBeVisible(); expect(screen.getByRole("button", { name: "Import for review" })).toBeDisabled();
   expect(invoke.mock.calls.some(([name]) => name === "start_plugin_translation")).toBe(false);
 });
 
@@ -3116,7 +3116,7 @@ it("keeps the editor and its draft when a query route is unavailable and blocks 
   fireEvent.compositionEnd(input);
   await user.click(screen.getByRole("button", { name: "Look up source text" }));
   expect(query).toHaveBeenCalledExactlyOnceWith("Original");
-  expect(await screen.findByText("Reference queries could not open. Your draft is kept. Finish or check the pending action in Resources, then retry.")).toBeVisible();
+  expect(await screen.findByText("Could not open Reference queries. Your translation draft is kept. Finish or resolve the pending action in Resources, then try again.")).toBeVisible();
   expect(input).toHaveValue("new input retained");
   expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
 });
@@ -3191,7 +3191,7 @@ it("refreshes resource and translation projections on semantic invalidation with
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const editor = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(editor, " local B");
   const originalDraft = owner.current();
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     const value = await original(command, args);
@@ -3237,11 +3237,11 @@ it("keeps the same editable translation draft while explicitly reading and closi
   const editor = await screen.findByRole("textbox", { name: "Your draft" });
   await user.type(editor, " local B");
   const capturedDraft = owner.current();
-  await user.click(screen.getByText("Terms, context and history"));
-  await screen.findByRole("button", { name: "View original record" });
+  await user.click(screen.getByText("Terms, context, and history"));
+  await screen.findByRole("button", { name: "View raw record" });
   expect(invoke.mock.calls.some(([name]) => name === "read_source_context_block")).toBe(false);
-  await user.click(screen.getByRole("button", { name: "View original record" }));
-  await screen.findByText("Reading the original record…");
+  await user.click(screen.getByRole("button", { name: "View raw record" }));
+  await screen.findByText("Loading raw record…");
   expect(owner.current()).toBe(capturedDraft);
   await user.type(editor, " newer C");
   const newerDraft = owner.current();
@@ -3251,7 +3251,7 @@ it("keeps the same editable translation draft while explicitly reading and closi
   expect(await screen.findByText(payloadUtf8)).toBeVisible();
   expect(editor).toHaveValue("Saved base local B newer C");
   expect(owner.current()).toBe(newerDraft);
-  await user.click(screen.getByRole("button", { name: "Close original record" }));
+  await user.click(screen.getByRole("button", { name: "Close raw record" }));
   expect(screen.queryByText(payloadUtf8)).not.toBeInTheDocument();
   expect(editor).toHaveValue("Saved base local B newer C");
   expect(owner.current()).toBe(newerDraft);
@@ -3267,7 +3267,7 @@ it("keeps the fixed list scope and draft through a hidden semantic source change
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   await user.type(await screen.findByRole("textbox", { name: "Your draft" }), " hidden B");
   const captured = owner.current();
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   await within(screen.getByRole("region",{name:i18n.t("sourceContextRead.title")})).findByText(i18n.t("sourceContextRead.noEntries"));
   const sourceReads = invoke.mock.calls.filter(([name]) => name === "read_source_context");
   expect(sourceReads).toHaveLength(1);
@@ -3290,7 +3290,7 @@ it("keeps the fixed list scope and draft through a hidden semantic source change
   await act(async () => { reads.invalidate(["source", "translation", "resources"]); });
   view.rerender(ui, project);
   await screen.findByRole("alert");
-  const references = screen.getByText("Terms, context and history");
+  const references = screen.getByText("Terms, context, and history");
   if (!references.closest("details")!.open) await user.click(references);
   expect(await screen.findByText(/Current hidden resource/)).toBeVisible();
   expect(screen.getByText(i18n.t("sourceContextRead.sourceChanged"))).toBeVisible();
@@ -3319,7 +3319,7 @@ it("guides a retained draft when its unit disappears from a newly confirmed sour
   const editor = await screen.findByRole("textbox", { name: "Your draft" });
   await user.type(editor, " retained B");
   const captured = owner.current();
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   const panel = screen.getByRole("region", { name: i18n.t("sourceContextRead.title") });
   await within(panel).findByText(i18n.t("sourceContextRead.noEntries"));
 
@@ -3392,7 +3392,7 @@ it("retries a failed history range at its exact cursor while keeping ordinary dr
   await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
   const editor = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(editor, " retained B");
   const captured = owner.current();
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   await user.click(screen.getByRole("button", { name: "Refresh history" }));
   const region = screen.getByRole("region", { name: i18n.t("translation.history") });
   await within(region).findByText("201: Revision 201");
@@ -3434,7 +3434,7 @@ it.each(["translation", "source"] as const)("rechecks the original fixed scope w
     await fixedRead.catch(() => {});
   });
   if (changed === "source") {
-    expect(await screen.findByRole("alert")).toHaveTextContent("The source range changed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("The source entries changed");
     expect(screen.queryByRole("button", { name: "first" })).not.toBeInTheDocument();
   } else expect(await screen.findByRole("button", { name: "first" })).toHaveTextContent("Current fixed translation");
   expect(screen.queryByText("Stale captured translation")).not.toBeInTheDocument();
@@ -3596,7 +3596,7 @@ it("keeps source-reference read failures local while allowing the original draft
   render(<><QueryProbe capture={(_reads,draft)=>{owner=draft;}}/><TranslationWorkbench project={project} disabled={false}/></>,project);
   await user.click(screen.getByRole("button",{name:"Translations"}));await user.click(await screen.findByRole("button",{name:"first"}));
   const editor=await screen.findByRole("textbox",{name:"Your draft"});await user.type(editor," local B");const captured=owner.current();
-  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByText("Terms, context, and history"));
   const panel=screen.getByRole("region",{name:i18n.t("sourceContextRead.title")});
   expect(await within(panel).findByText(i18n.t("sourceContextRead.readFailed"))).toBeVisible();
   expect(owner.current()).toBe(captured);expect(editor).toHaveValue("Saved base local B");

@@ -754,7 +754,7 @@ it("shows original cancellation recovery and checked confirmation in Chinese", a
   await act(async () => { await owner.cancel(target); });
   expect(screen.getByRole("button", { name: "重试原取消请求" })).toBeEnabled();
   expect(screen.getByRole("alert")).toHaveFocus();
-  expect(screen.getByText(/仅凭任务进度无法确认这个请求/)).toBeInTheDocument();
+  expect(screen.getByText(/取消请求可能已记录/)).toBeInTheDocument();
   invoke.mockResolvedValueOnce("4");
   await act(async () => { await owner.retry(target.taskId); });
   expect(screen.getByText(/取消请求已记录/)).toBeInTheDocument();

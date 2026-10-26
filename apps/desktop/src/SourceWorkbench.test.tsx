@@ -94,7 +94,7 @@ it("shows bounded saved source failure detail as text and retries only its faile
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   await user.click(screen.getByRole("button", { name: "Import for preview" }));
   expect(await screen.findByText(i18n.t("execution.failureReadFailed"))).toBeVisible();
   expect(screen.getByText(i18n.t("source.errors.invalid"))).toBeVisible();
@@ -135,7 +135,7 @@ it("hides a late failed-source result after selecting another attempt", async ()
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   await user.click(screen.getByRole("button", { name: "Import for preview" }));
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_execution_output")).toBe(true));
   act(() => ref.current!.showAttempt(laterAttempt));
@@ -228,11 +228,11 @@ it("discovers multiple enabled source packages without competing for the install
   expect(choices.some(option => option.textContent?.includes(reference.manifest.plugin.id))).toBe(false);
   expect(reads).toBe(3);
   expect(environments).toBe(1);
-  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await user.click(screen.getByRole("button", { name: "Refresh installed source plugins" }));
   await waitFor(() => expect(inventories).toBe(2));
   expect(environments).toBe(1);
   expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Refresh installed source choices" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Refresh installed source plugins" })).toBeDisabled();
   await act(async () => { releaseRefresh(); });
   await waitFor(() => expect(reads).toBe(6));
   await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
@@ -386,7 +386,7 @@ it("prevents competing refresh and ignores an outdated source environment after 
   await user.click(screen.getByRole("button", { name: "Source content" }));
   await chooseSourcePackage(user);
   await waitFor(() => expect(reads).toBe(1));
-  expect(screen.getByRole("button", { name: "Refresh installed source choices" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Refresh installed source plugins" })).toBeDisabled();
   expect(within(screen.getByRole("region", { name: i18n.t("sourcePlugin.importControls") })).getByText(i18n.t("execution.working"))).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await act(async () => complete({ ...pluginSourceView, declaration: { ...pluginSourceView.declaration, displayName: "STALE ENVIRONMENT" } }));
@@ -412,7 +412,7 @@ async function prepare() {
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   await user.click(screen.getByRole("button", { name: "Import for preview" }));
   await screen.findByRole("heading", { name: "Review imported strings" });
   return user;
@@ -681,7 +681,7 @@ it("requires producer consent after capture and never executes through built-in 
   expect(await screen.findByRole("button", { name: "Import for preview" })).toBeDisabled();
   expect(screen.getByText(/No plugin has run/)).toBeInTheDocument();
   expect(invoke.mock.calls.some(([name]) => name === "start_plugin_source")).toBe(false);
-  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   await user.click(screen.getByRole("button", { name: "Import for preview" }));
   await screen.findByRole("heading", { name: "Review imported strings" });
   expect(invoke.mock.calls.some(([name]) => ["read_source_integration", "read_webvtt_integration", "preflight_source", "start_source_import"].includes(name))).toBe(false);
@@ -699,11 +699,11 @@ it("clears producer consent on a fresh material capture after a rejected grant",
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   await user.click(screen.getByRole("button", { name: "Import for preview" }));
   await screen.findByRole("alert");
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: /I allow this exact plugin/ })).not.toBeChecked());
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: /I allow this plugin to extract source content/ })).not.toBeChecked());
   expect(screen.getByRole("button", { name: "Import for preview" })).toBeDisabled();
   expect(invoke.mock.calls.filter(([name]) => name === "start_plugin_source")).toHaveLength(1);
 });
@@ -722,7 +722,7 @@ it("reconciles an uncertain producer start with its original input, grant and ex
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   await user.click(screen.getByRole("button", { name: "Import for preview" }));
   await screen.findByRole("alert");
   expect(await ref.current!.allowNavigate()).toBe(false);
@@ -757,9 +757,9 @@ it("retains pending proposals and requires separate checker consent and recorded
   expect(await screen.findByRole("button", { name: "Run independent source checks" })).toBeDisabled();
   await user.click(screen.getByRole("checkbox", { name: /I separately allow/ }));
   await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
-  await screen.findByRole("button", { name: "Record fixed check validation" });
+  await screen.findByRole("button", { name: "Save check validation results" });
   expect(screen.getByRole("button", { name: "Apply to project" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Record fixed check validation" }));
+  await user.click(screen.getByRole("button", { name: "Save check validation results" }));
   await waitFor(() => expect(screen.getByRole("checkbox", { name: /Apply all 2/ })).toBeEnabled());
   expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2/ }));
@@ -803,7 +803,7 @@ it("shows the independent checker failure from its own saved result without chan
   await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
   await user.click(await screen.findByRole("checkbox", { name: /I separately allow/ }));
   await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
-  await screen.findByText(/Independent checks did not complete successfully/);
+  await screen.findByText(/Independent checks did not complete/);
   await user.click(screen.getByText(i18n.t("execution.diagnostic")));
   expect(screen.getByText("Required manifest Name is missing.", { exact: false })).toBeVisible();
   expect(screen.getByText("captured-check")).toBeVisible();
@@ -856,7 +856,7 @@ it("allows a fresh independent check after cancellation before dispatch", async 
   await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
   await user.click(await screen.findByRole("checkbox", { name: /I separately allow/ }));
   await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
-  await screen.findByText(/Independent checks did not complete successfully/);
+  await screen.findByText(/Independent checks did not complete/);
   await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
   expect(await screen.findByRole("checkbox", { name: /I separately allow/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Run independent source checks" })).toBeDisabled();
@@ -884,22 +884,22 @@ it("reconciles uncertain validation with the original result and keeps a failed 
   await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
   await user.click(await screen.findByRole("checkbox", { name: /I separately allow/ }));
   await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
-  await user.click(await screen.findByRole("button", { name: "Record fixed check validation" }));
+  await user.click(await screen.findByRole("button", { name: "Save check validation results" }));
   await screen.findByRole("alert");
   expect(await ref.current!.allowNavigate()).toBe(false);
   expect(await ref.current!.allowLeave()).toBe(false);
   const first = invoke.mock.calls.find(([name]) => name === "finish_source_check")![1];
   const pending = draft.current().pendingPlugin; expect(pending?.pendingKind).toBe("finish-check");
-  const retry = screen.getByRole("button", { name: "Reconcile recorded check validation" });
+  const retry = screen.getByRole("button", { name: "Check saved validation status" });
   await waitFor(() => expect(retry).toBeEnabled()); expect(draft.current().pendingPlugin).toBe(pending);
   await user.click(retry);
   await waitFor(() => expect(draft.current().pendingPlugin).toBeNull());
-  await screen.findByText(/The proposal failed its mandatory source checks/);
+  await screen.findByText(/The source import failed required checks/);
   expect(invoke.mock.calls.filter(([name]) => name === "finish_source_check")[1][1]).toEqual(first);
   expect(screen.getByRole("checkbox", { name: /Apply all 2/ })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Apply to project" })).toBeDisabled();
   expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Choose new source input" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Choose different source files" })).toBeEnabled();
   expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(false);
 });
 
@@ -914,15 +914,15 @@ it("keeps capture consent and material while an installed-choice refresh is unav
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this plugin to extract source content/ }));
   unavailable = true;
-  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await user.click(screen.getByRole("button", { name: "Refresh installed source plugins" }));
   await screen.findByRole("alert");
   expect(screen.getByText("Example Mod")).toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: /I allow this exact plugin/ })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /I allow this plugin to extract source content/ })).toBeChecked();
   expect(screen.getByRole("button", { name: "Import for preview" })).toBeDisabled();
   unavailable = false;
-  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await user.click(screen.getByRole("button", { name: "Refresh installed source plugins" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Import for preview" })).toBeEnabled());
   expect(invoke.mock.calls.some(([name]) => name === "start_plugin_source")).toBe(false);
 });
@@ -1086,7 +1086,7 @@ it.each(["comparison", "preview"] as const)("reads the applied snapshot beside a
   if (kind === "comparison") { expect(request.confirmation.actor).toBe("Submitted reviewer"); expect(request.confirmation.lineage?.[0].reason).toBe("Submitted reason"); }
   scope = { revision: (BigInt(request.confirmation.expectedContentRevision) + 1n).toString(), currentSnapshot: fixtureIdentity(100) };
   await act(async () => { finish(sourceReceiptFixture(request)); });
-  await screen.findByText("Source content could not be read. Retry this page; saved content and your identity decisions are kept.");
+  await screen.findByText("Source content could not be read. Retry this page; saved content and your mapping decisions are kept.");
   const receipt = draft.current().receipt;
   expect(receipt?.changes[0].id).toBe(fixtureIdentity(100)); expect(draft.current().pendingApply).toBeNull();
   expect(draft.current().comparison ?? draft.current().preview).toBe(basis); expect(draft.current().actor).toBe("Newer reviewer");
@@ -1114,7 +1114,7 @@ it.each(["comparison", "preview"] as const)("reads the applied snapshot beside a
     const nextPreview = fixedView.getByRole("button", { name: "Next page" }); await waitFor(() => expect(nextPreview).toBeEnabled());
     await user.click(nextPreview);
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_source_preview", { request: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: preview.attemptId, resultId: preview.resultId, after: 1, limit: 50 } }));
-    await screen.findByText("Source content could not be read. Retry this page; saved content and your identity decisions are kept.");
+    await screen.findByText("Source content could not be read. Retry this page; saved content and your mapping decisions are kept.");
     content = within(screen.getByRole("heading", { name: "Imported source content" }).closest("section")!);
     expect(draft.current().previewAfter).toBe(1); expect(content.getByText("Applied next page")).toBeInTheDocument();
     expect(draft.current().preview).toBe(basis); expect(screen.queryByText("Preview next page")).not.toBeInTheDocument();
@@ -1196,7 +1196,7 @@ it("keeps manual candidate pagination on its applied query and assigns the captu
   await user.type(input, "A"); await user.click(panel.getByRole("button", { name: "Search" })); await panel.findByText("Historical candidate");
   await user.clear(input); await user.type(input, "B"); await user.click(panel.getByRole("button", { name: "Next page" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_source_history_content", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, snapshotId: fixed.previousSnapshotId, query: "A", after: 1, limit: 20 } }));
-  await user.click(await panel.findByRole("button", { name: "Continue content identity" }));
+  await user.click(await panel.findByRole("button", { name: "Link to previous entry" }));
   expect(draft.current().lineage[0]).toMatchObject({ newOrdinal: 0, oldOccurrenceId: fixtureIdentity(106), reason: "" });
   expect(draft.current().lineage[73]).toBeUndefined(); expect(input).toHaveValue("B");
 });

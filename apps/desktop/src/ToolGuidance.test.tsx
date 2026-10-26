@@ -102,7 +102,7 @@ it("makes missing Skill, missing references and a tool-free plan explicit withou
   await user.click(screen.getByRole("button", { name: "Hide guidance directory" }));
   status = { ...status, plan: { ...status.plan, tools: null }, toolInvocations: null, effects: ["save-candidate"] };
   view.rerender(<Harness value={status} />);
-  expect(screen.getByText("This authorized scope has no reference tools or tool guidance.")).toBeVisible();
+  expect(screen.getByText("This plan scope has no reference tools or tool guidance.")).toBeVisible();
   expect(calls("open_work_plan_agent_scope")).toHaveLength(1);
 });
 

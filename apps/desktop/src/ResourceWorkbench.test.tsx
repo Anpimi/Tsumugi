@@ -988,7 +988,7 @@ it("waits for resolution before showing empty memory or enabling context actions
   await waitFor(() => expect(resourceReads.client.getQueryState(resourceReads.key(["resource-tm", fixtureIdentity(401), "zh-CN", fixtureIdentity(402), 0, 20]))?.status).toBe("success"));
   expect(screen.queryByText("No matching saved translations.")).not.toBeInTheDocument();
   act(() => resourceOwner.editContextReason("Reason")); expect(screen.getByRole("button", { name: "Save context" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Capture current input" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Lock current input" })).toBeDisabled();
   await act(async () => finish({ unitId: fixtureIdentity(401), locale: "zh-CN", sourceRevisionId: fixtureIdentity(402), entries: [] }));
   await screen.findByText("No matching saved translations."); expect(screen.getByRole("button", { name: "Save context" })).toBeEnabled();
 });

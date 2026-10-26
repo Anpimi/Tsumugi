@@ -35,13 +35,13 @@ function currentView() { if (!canonical) throw new Error("Synthetic sharing view
 function open() { render(<Harness />); act(() => { expect(owner.begin(mcpTarget)).toBe(true); }); }
 async function preview() {
   fireEvent.change(screen.getByRole("textbox", { name: "External recipient" }), { target: { value: "Synthetic recipient" } });
-  fireEvent.click(screen.getByRole("button", { name: "Preview exact shared content" }));
-  await screen.findByRole("region", { name: "Exact saved snapshot" }); await waitFor(() => expect(owner.state.reading).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Preview shared content" }));
+  await screen.findByRole("region", { name: "Saved snapshot preview" }); await waitFor(() => expect(owner.state.reading).toBe(false));
 }
 async function authorize() {
-  fireEvent.click(screen.getByRole("checkbox", { name: "I authorize this recipient to read exactly the content shown above under these limits." }));
-  fireEvent.click(screen.getByRole("button", { name: "Create one-use client configuration" }));
-  await screen.findByRole("button", { name: "Show client configuration" });
+  fireEvent.click(screen.getByRole("checkbox", { name: "I authorize this recipient to read the snapshot shown above under these limits." }));
+  fireEvent.click(screen.getByRole("button", { name: "Generate one-time client config" }));
+  await screen.findByRole("button", { name: "Show client config" });
 }
 beforeEach(async () => {
   vi.restoreAllMocks(); await i18n.changeLanguage("en-US"); canonical = null; sequence = 9200;
@@ -68,36 +68,36 @@ beforeEach(async () => {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it("shows the exact saved content, independent opt-ins and recipient limits before any authorization", async () => {
-  open(); expect(screen.getByRole("heading", { name: "Share one saved entry" })).toHaveFocus();
-  expect(screen.getByRole("button", { name: "Preview exact shared content" })).toBeDisabled();
+  open(); expect(screen.getByRole("heading", { name: "Share saved entry" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Preview shared content" })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: "Include adopted terms for this entry" })).not.toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "Include the saved manual context for this entry" })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "Include saved manual context for this entry" })).not.toBeChecked();
   await preview();
   expect(screen.getByText(/^Synthetic Hello/, { selector: "pre" }).textContent).toBe("Synthetic Hello {{player}} 👩🏽‍💻 é\nمرحبا");
   expect(screen.getByText("合成你好 {{player}}", { selector: "pre" })).toBeInTheDocument();
   expect(screen.getByText("Adopted terms are excluded.")).toBeInTheDocument(); expect(screen.getByText("Manual context is excluded.")).toBeInTheDocument();
-  expect(screen.getByText(/at most five minutes/)).toBeInTheDocument(); expect(screen.getByText(/at most 100 reads/)).toBeInTheDocument();
-  expect(screen.getByText(/including sending it to its model provider/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Create one-use client configuration" })).toBeDisabled(); expect(mcpCommands.authorize).not.toHaveBeenCalled();
+  expect(screen.getByText(/up to five minutes/)).toBeInTheDocument(); expect(screen.getByText(/at most 100 reads/)).toBeInTheDocument();
+  expect(screen.getByText(/including sending it to a model provider/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Generate one-time client config" })).toBeDisabled(); expect(mcpCommands.authorize).not.toHaveBeenCalled();
 });
 
 it("independently includes only the optional categories explicitly chosen before preview", async () => {
-  open(); fireEvent.click(screen.getByRole("checkbox", { name: "Include the saved manual context for this entry" })); await preview();
+  open(); fireEvent.click(screen.getByRole("checkbox", { name: "Include saved manual context for this entry" })); await preview();
   expect(screen.getByText("Synthetic manual context only", { selector: "pre" })).toBeInTheDocument(); expect(screen.getByText("Adopted terms are excluded.")).toBeInTheDocument();
   expect(vi.mocked(mcpCommands.prepare).mock.calls[0]?.[0].preparation.selection).toMatchObject({ shareTerms: false, shareContext: true });
 });
 
 it.each([
-  ["mcp-share-selection-source", "dependency-conflict", /save or select a translation based on the current source/],
-  ["mcp-share-current", "dependency-conflict", /Saved data changed after this preview/],
-  ["mcp-share-bytes", "limit-exceeded", /turn off optional terms or manual context/],
+  ["mcp-share-selection-source", "dependency-conflict", /save or select a translation for the current source/],
+  ["mcp-share-current", "dependency-conflict", /Saved data changed after generating this preview/],
+  ["mcp-share-bytes", "limit-exceeded", /uncheck optional terms or manual context/],
 ] as const)("offers contract-specific recovery while preserving input: %s", async (reason, code, message) => {
   vi.mocked(mcpCommands.prepare).mockRejectedValueOnce({ ...commandErrors.errors[0], stage: "execution-read", reason, code });
   open(); fireEvent.change(screen.getByRole("textbox", { name: "External recipient" }), { target: { value: "Recipient B preserved" } });
-  fireEvent.click(screen.getByRole("button", { name: "Preview exact shared content" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview shared content" }));
   await screen.findByText(message);
   expect(screen.getByRole("textbox", { name: "External recipient" })).toHaveValue("Recipient B preserved");
-  expect(screen.getByRole("button", { name: "Close original sharing request" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Close sharing request" })).toBeEnabled();
   expect(mcpCommands.authorize).not.toHaveBeenCalled();
 });
 
@@ -113,11 +113,11 @@ it("renders shared text literally without executing content or fetching embedded
 
 it("requires explicit reveal for the local credential and hides it again without persisting or rendering it elsewhere", async () => {
   const storage = vi.spyOn(Storage.prototype, "setItem"); open(); await preview(); await authorize();
-  expect(screen.queryByRole("textbox", { name: "One-use MCP client configuration" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Show client configuration" }));
-  expect(screen.getByRole("textbox", { name: "One-use MCP client configuration" })).toHaveValue(JSON.stringify(mcpConfiguration, null, 2));
-  fireEvent.click(screen.getByRole("button", { name: "Hide client configuration" }));
-  expect(screen.queryByRole("textbox", { name: "One-use MCP client configuration" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("textbox", { name: "One-time MCP client configuration" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Show client config" }));
+  expect(screen.getByRole("textbox", { name: "One-time MCP client configuration" })).toHaveValue(JSON.stringify(mcpConfiguration, null, 2));
+  fireEvent.click(screen.getByRole("button", { name: "Hide client config" }));
+  expect(screen.queryByRole("textbox", { name: "One-time MCP client configuration" })).not.toBeInTheDocument();
   expect(storage.mock.calls.some(([, value]) => String(value).includes("synthetic-unusable-recipient-credential"))).toBe(false);
   expect(vi.mocked(mcpCommands.authorize).mock.calls[0]?.[0].authorization.validForSeconds).toBe(300);
 });
@@ -127,25 +127,25 @@ it("keeps the original revoke control available during pending authorization and
   vi.mocked(mcpCommands.authorize).mockImplementation(async (request, preparation) => {
     canonical = mcpView(preparation, request.authorization); return new Promise(resolve => { finish = resolve; });
   });
-  open(); await preview(); fireEvent.click(screen.getByRole("checkbox", { name: "I authorize this recipient to read exactly the content shown above under these limits." }));
-  fireEvent.click(screen.getByRole("button", { name: "Create one-use client configuration" }));
+  open(); await preview(); fireEvent.click(screen.getByRole("checkbox", { name: "I authorize this recipient to read the snapshot shown above under these limits." }));
+  fireEvent.click(screen.getByRole("button", { name: "Generate one-time client config" }));
   await waitFor(() => expect(mcpCommands.authorize).toHaveBeenCalledTimes(1));
   const original = structuredClone(currentView());
   fireEvent.change(screen.getByRole("textbox", { name: "External recipient" }), { target: { value: "New recipient B" } });
-  expect(screen.getByRole("button", { name: "Revoke original permission" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Revoke original permission" }));
+  expect(screen.getByRole("button", { name: "Revoke access" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Revoke access" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Close sharing draft" })).toBeEnabled());
   await act(async () => finish({ view: original, configuration: mcpConfiguration }));
   expect(screen.getByRole("textbox", { name: "External recipient" })).toHaveValue("New recipient B");
-  expect(screen.queryByRole("button", { name: "Show client configuration" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Show client config" })).not.toBeInTheDocument();
 });
 
 it("shows a usable read replacement action while an original read is hung, and does not dispatch authorization", async () => {
   open(); await preview(); let finish!: (value: McpShareView) => void;
   vi.mocked(mcpCommands.read).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  fireEvent.click(screen.getByRole("button", { name: "Check original sharing status" }));
-  const replace = await screen.findByRole("button", { name: "Stop waiting and check the same sharing request" }); expect(replace).toBeEnabled();
-  fireEvent.click(replace); await waitFor(() => expect(screen.getByRole("button", { name: "Check original sharing status" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Check sharing status" }));
+  const replace = await screen.findByRole("button", { name: "Stop waiting and recheck sharing status" }); expect(replace).toBeEnabled();
+  fireEvent.click(replace); await waitFor(() => expect(screen.getByRole("button", { name: "Check sharing status" })).toBeEnabled());
   await act(async () => finish(currentView())); expect(mcpCommands.authorize).not.toHaveBeenCalled();
 });
 
@@ -154,7 +154,7 @@ it("stops automatic status reads after failure and pauses them while collapsed o
   await act(async () => { owner.setConsent(true); await owner.authorize(); });
   let count = vi.mocked(mcpCommands.read).mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(mcpCommands.read).toHaveBeenCalledTimes(count + 1);
-  const details = screen.getByRole("heading", { name: "Share one saved entry" }).closest("details"); if (!details) throw new Error("Sharing details missing");
+  const details = screen.getByRole("heading", { name: "Share saved entry" }).closest("details"); if (!details) throw new Error("Sharing details missing");
   act(() => { details.open = false; fireEvent(details, new Event("toggle")); }); count = vi.mocked(mcpCommands.read).mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); expect(mcpCommands.read).toHaveBeenCalledTimes(count);
   act(() => { details.open = true; fireEvent(details, new Event("toggle")); });
@@ -165,7 +165,7 @@ it("stops automatic status reads after failure and pauses them while collapsed o
   act(() => { fireEvent(document, new Event("visibilitychange")); });
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(owner.state.readFailed).toBe(true); count = vi.mocked(mcpCommands.read).mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); }); expect(mcpCommands.read).toHaveBeenCalledTimes(count);
-  expect(screen.getByRole("button", { name: "Retry this status read" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Retry status check" })).toBeEnabled();
 });
 
 it("keeps the production sharing owner across areas and refuses project exit until the user explicitly closes its resolved draft", async () => {
@@ -186,7 +186,7 @@ it("keeps the production sharing owner across areas and refuses project exit unt
 
 it("keeps the same controls and field labels in Chinese", async () => {
   await i18n.changeLanguage("zh-CN"); open();
-  expect(screen.getByRole("textbox", { name: "外部接收方" })).toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "包含本条目已采用的术语" })).not.toBeChecked();
+  expect(screen.getByRole("textbox", { name: "外部接收方名称" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "包含适用于本条目的已采纳术语" })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "关闭分享草稿" })).toBeEnabled();
 });

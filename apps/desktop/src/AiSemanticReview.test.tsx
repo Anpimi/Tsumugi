@@ -60,7 +60,7 @@ it("keeps the discoverable review entry collapsed without preparing or starting 
   await setup(false);
   expect(screen.getByRole("button", { name: "AI meaning and style review" })).toHaveAttribute("aria-expanded", "false");
   expect(aiSemanticReviewCommands.prepare).not.toHaveBeenCalled(); expect(aiSemanticReviewCommands.start).not.toHaveBeenCalled();
-  expect(screen.queryByRole("button", { name: "Send this exact review" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Send for review" })).toBeNull();
 });
 
 it("keeps a shared current findings witness fresh when the known-attempt model panel is collapsed", async () => {
@@ -84,15 +84,15 @@ it("keeps a shared current findings witness fresh when the known-attempt model p
 
 it("shows the selected saved translation and requires independent fresh consent", async () => {
   await setup(); const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Preview this review" }));
-  const preview = within(await screen.findByRole("region", { name: "Exact model review preview" }));
+  await user.click(screen.getByRole("button", { name: "Preview review" }));
+  const preview = within(await screen.findByRole("region", { name: "Model review preview" }));
   expect(preview.getByText(target.translationText!)).toBeVisible();
-  expect(preview.getByRole("button", { name: "Send this exact review" })).toBeDisabled();
+  expect(preview.getByRole("button", { name: "Send for review" })).toBeDisabled();
   await user.click(preview.getByRole("checkbox"));
-  await user.click(preview.getByRole("button", { name: "Send this exact review" }));
+  await user.click(preview.getByRole("button", { name: "Send for review" }));
   await waitFor(() => expect(aiSemanticReviewCommands.start).toHaveBeenCalledOnce());
   expect(aiSemanticReviewCommands.start).toHaveBeenCalledWith(expect.objectContaining({ attemptId: fixtureIdentity(2401), digest: "e".repeat(64), confirmed: true }));
-  expect((await screen.findAllByText("The model reported no findings for this rule. This is advisory and does not establish approval or mechanical QA success.", { exact: true })).length).toBe(2);
+  expect((await screen.findAllByText("The model reported no issues for this rule. This is advisory only and does not count as approval or QA pass.", { exact: true })).length).toBe(2);
 });
 
 it("retains config B when preview A returns and never restores A's consent", async () => {
@@ -168,12 +168,12 @@ it("records exactly one authoritative recovery unit through the original Task ow
     changes: [{ kind: "ai-semantic-review", id: target.unitId, revision: "1" }] } satisfies Receipt })).mockRejectedValueOnce(new Error("Automatic full action read unavailable"));
   await setup(); await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
   await act(async () => { await review.semantic.start(); }); const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Review recording these advisory findings" }));
-  await user.click(await screen.findByRole("button", { name: "Record these advisory findings" }));
+  await user.click(await screen.findByRole("button", { name: "Review and record findings" }));
+  await user.click(await screen.findByRole("button", { name: "Record findings" }));
   await waitFor(() => expect(tasks.currentActivity()?.phase).toBe("unknown"));
   expect(captured).toMatchObject({ attemptId: view.detail.attemptId, unitId: view.detail.recovery.units[0].unitId, resultIds: [view.detail.items[0].resultId] });
   act(() => review.editReason(target, "Newer reason B"));
-  await user.click(screen.getByRole("button", { name: "Check original recording receipt" }));
+  await user.click(screen.getByRole("button", { name: "Check recording status" }));
   await waitFor(() => expect(tasks.currentActivity()?.phase).toBe("recorded"));
   expect(prepare).toHaveBeenCalledOnce(); expect(adopt).toHaveBeenCalledOnce(); expect(receipt).toHaveBeenCalledTimes(2); expect(receipt).toHaveBeenLastCalledWith(captured);
   expect(review.current().drafts[`${target.locale}:${target.unitId}`]).toBe("Newer reason B");
@@ -191,7 +191,7 @@ it("cancels only the original review Task while keeping its result and current i
   await setup(); await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
   await act(async () => { await review.semantic.start(); });
   act(() => review.semantic.setConfig(value => ({ ...value, model: "Next review B" })));
-  await userEvent.setup().click(await screen.findByRole("button", { name: "Stop this review task" }));
+  await userEvent.setup().click(await screen.findByRole("button", { name: "Stop review task" }));
   await waitFor(() => expect(cancel).toHaveBeenCalledOnce());
   expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ taskId: view.detail.taskId, projectId: project.metadata.projectId }));
   expect(tasks.current(view.detail.taskId)?.target.attemptId).toBe(view.detail.attemptId);

@@ -114,7 +114,7 @@ async function prepare() {
   await screen.findByRole("option", { name: "example/generation 0.1.0 · generation.call" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Generation component" }), `${generationPackage.packageDigest}:generation.call`);
   await user.selectOptions(screen.getByRole("combobox", { name: "Component profile" }), jsonIdentity(generationComponent.profile)!);
-  await user.selectOptions(screen.getByRole("combobox", { name: "Execution environment" }), generationComponent.environmentDigest);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Runtime environment" }), generationComponent.environmentDigest);
   await waitFor(() => expect(screen.getByRole("button", { name: "Prepare component generation" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
   await screen.findByRole("region", { name: "Review component generation" });
@@ -326,7 +326,7 @@ it("requires an explicit no-profile choice for a profile-independent installed d
   await user.click(screen.getByRole("button", { name: "Generate with an installed component" }));
   await screen.findByRole("option", { name: "example/generation 0.1.0 · generation.call" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Generation component" }), `${installed.packageDigest}:generation.call`);
-  await user.selectOptions(screen.getByRole("combobox", { name: "Execution environment" }), generationComponent.environmentDigest);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Runtime environment" }), generationComponent.environmentDigest);
   expect(screen.getByRole("button", { name: "Prepare component generation" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "read_plugin_generation_component")).toBe(false);
   await user.selectOptions(screen.getByRole("combobox", { name: "Component profile" }), "none");
@@ -348,7 +348,7 @@ it("keeps a late preparation tied to its original lease when plan control change
   await screen.findByRole("option", { name: "example/generation 0.1.0 · generation.call" });
   await user.selectOptions(screen.getByRole("combobox", { name: "Generation component" }), `${installed.packageDigest}:generation.call`);
   await user.selectOptions(screen.getByRole("combobox", { name: "Component profile" }), jsonIdentity(generationComponent.profile)!);
-  await user.selectOptions(screen.getByRole("combobox", { name: "Execution environment" }), generationComponent.environmentDigest);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Runtime environment" }), generationComponent.environmentDigest);
   await waitFor(() => expect(screen.getByRole("button", { name: "Prepare component generation" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Prepare component generation" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
@@ -409,7 +409,7 @@ async function chooseComponent() {
   await screen.findByRole("option",{name:"example/generation 0.1.0 · generation.call"});
   await user.selectOptions(screen.getByRole("combobox",{name:"Generation component"}),`${installed.packageDigest}:generation.call`);
   await user.selectOptions(screen.getByRole("combobox",{name:"Component profile"}),jsonIdentity(generationComponent.profile)!);
-  await user.selectOptions(screen.getByRole("combobox",{name:"Execution environment"}),generationComponent.environmentDigest);
+  await user.selectOptions(screen.getByRole("combobox",{name:"Runtime environment"}),generationComponent.environmentDigest);
   await waitFor(()=>expect(screen.getByRole("button",{name:"Prepare component generation"})).toBeEnabled());
   return user;
 }
@@ -708,7 +708,7 @@ it("retains one original read flight across hidden and removed consumers with ex
   const proof=startProof();await act(async()=>{finish(proof);await pending;});
   ui.rerender(<WorkPlanAgentControls {...changed}/>);
   await screen.findByText(/The original component input is recorded/);
-  expect(screen.getByText("The original plan or captured entries changed. This preparation cannot start. Discard it and review the current plan.")).toBeInTheDocument();
+  expect(screen.getByText("The original plan or selected entries changed. This setup cannot start. Discard it and review the current plan.")).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([command])=>command === "read_work_plan_generation_component_start")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([command])=>command === "start_work_plan_generation_component")).toHaveLength(1);
   expect(invoke.mock.calls.filter(([command])=>command === "create_execution_identity")).toHaveLength(4);

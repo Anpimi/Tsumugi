@@ -149,14 +149,14 @@ it.each(["en-US","zh-CN"] as const)("checks reveal target facts in %s and distin
   const pending=owner.current().pending;if(pending?.kind!=="reveal")throw new Error("Expected original reveal");
   const payload={kind:"arena-pending" as const,pendingKind:"reveal" as const,actionId:pending.request.actionId,targetKind:pending.targetKind,targetId};
   await act(async()=>{await i18n.changeLanguage(language);});
-  const checking=language==="en-US"?"Checking whether candidate identities are visible…":"正在核对候选身份是否已可见…";
+  const checking=language==="en-US"?"Checking whether candidate identities are revealed…":"正在核对候选身份是否已揭晓…";
   expect(screen.queryByText(checking)).not.toBeInTheDocument();
   await act(async()=>{write.resolve({});});await screen.findByText(checking);
   expect(owner.current().pending).toMatchObject({checking:true,retryAllowed:false});expect(owner.current().failure).toBeNull();
   act(()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(false);expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);});
   await act(async()=>{read.resolve(null);});await waitFor(()=>expect(owner.current().busy).toBe(false));
   expect(screen.queryByText(checking)).not.toBeInTheDocument();
-  await screen.findByText(language==="en-US"?"The original comparison or round could not be found. Your reveal request is kept; check the target again before retrying.":"找不到原比较或轮次。已保留揭盲请求，请重新核对目标后再重试。");
+  await screen.findByText(language==="en-US"?"Could not find the comparison or round to reveal. Your request is preserved—verify the target before retrying.":"找不到要揭晓的原对比或轮次。你的请求已保留，请核对目标状态后再重试。");
   expect(owner.current().pending).toMatchObject({targetMissing:true,retryAllowed:false});
   expect(screen.queryByRole("button",{name:i18n.t("ai.retrySame")})).not.toBeInTheDocument();
   expect(registry.dispatch("arena.retry-pending",scope,payload)).toBe(false);
@@ -169,7 +169,7 @@ it.each(["en-US","zh-CN"] as const)("checks reveal target facts in %s and distin
   await waitFor(()=>expect(owner.current().busy).toBe(false));expect(owner.current().pending).toMatchObject({targetMissing:false,retryAllowed:true});
   expect(registry.describe("arena.retry-pending",scope,payload)?.availability.enabled).toBe(true);
   visible=true;await act(async()=>{expect(registry.dispatch("arena.reconcile-pending",scope,payload)).toBe(true);});
-  await screen.findByText(language==="en-US"?"Candidate identities are visible.":"候选身份已可见。");
+  await screen.findByText(language==="en-US"?"Candidate identities are now visible.":"候选来源身份已揭晓。");
   expect(owner.current().pending).toBeNull();expect(owner.current().failure).toBeNull();expect(owner.current().notice).toBe("identitiesVisible");
   expect(screen.queryByText(i18n.t("arena.reconciled"))).not.toBeInTheDocument();
   expect(payloads("read_arena_reveal_target")).toEqual(Array.from({length:3},()=>({sessionToken:pending.request.sessionToken,projectId:pending.request.projectId,comparisonId:targetId})));
@@ -195,8 +195,8 @@ it.each([["compare","en-US"],["compare","zh-CN"],["select","en-US"],["select","z
   const pending=owner.current().pending;if(!pending||pending.kind==="start"||pending.kind==="adopt"||pending.kind==="reveal")throw new Error("Expected original Arena decision");
   const payload={kind:"arena-pending" as const,pendingKind:pending.kind,actionId:pending.request.actionId,unitId:pending.request.unitId,locale:pending.request.locale};
   await act(async()=>{await i18n.changeLanguage(language);});
-  const messages={compare:{"en-US":"Checking the saved comparison…","zh-CN":"正在核对保存的比较…"},
-    select:{"en-US":"Checking the saved selection…","zh-CN":"正在核对选择结果…"},merge:{"en-US":"Checking the saved merge…","zh-CN":"正在核对合并结果…"}};
+  const messages={compare:{"en-US":"Checking saved comparison…","zh-CN":"正在核对已保存的对比…"},
+    select:{"en-US":"Checking saved selection…","zh-CN":"正在核对译文选用结果…"},merge:{"en-US":"Checking saved merge…","zh-CN":"正在核对合并保存结果…"}};
   const message=messages[kind][language];expect(screen.queryByText(message)).not.toBeInTheDocument();
   await act(async()=>{write.resolve({});});await screen.findByText(message);
   expect(owner.current().pending).toMatchObject({kind,checking:true,retryAllowed:false});expect(owner.current().failure).toBeNull();
@@ -242,10 +242,10 @@ it("registers scoped Arena commands and routes the visible generation and editor
   ]);
   expect(registry.list(scope).filter(command => command.category === "arena").every(command => command.binding === null)).toBe(true);
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
-  await screen.findByRole("checkbox", { name: /I confirm sending the shown/ });
+  await screen.findByRole("checkbox", { name: /I confirm sending the previewed/ });
   expect(registry.describe("arena.start", scope, startPayload())?.confirmation).toBe("required");
   expect(registry.dispatch("arena.start", scope, startPayload())).toBe(false);
-  await user.click(screen.getByRole("checkbox", { name: /I confirm sending the shown/ }));
+  await user.click(screen.getByRole("checkbox", { name: /I confirm sending the previewed/ }));
   await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Compare and select in editor" })).toBeEnabled());
   expect(registry.dispatch("arena.open-translation", scope, { ...translationPayload(), sourceSnapshotId: fixtureIdentity(999) })).toBe(false);
@@ -260,20 +260,20 @@ it("keeps comparison order, blind capture, merge A/B and explicit basis recovery
   expect(registry.dispatch("arena.select-candidate", scope, { ...selectPayload(), basis: "other" })).toBe(false);
   await user.click(screen.getByRole("button", { name: "Reveal candidate identities" }));
   await waitFor(() => expect(owner.current().busy).toBe(false));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Edit a manual merge" })).toBeEnabled());
-  await user.click(screen.getByRole("button", { name: "Edit a manual merge" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create manual merge" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Create manual merge" }));
   const wrong = { ...mergePayload(), editSeq: mergePayload().editSeq + 1 };
   expect(registry.dispatch("arena.discard-merge", scope, wrong)).toBe(false);
   const save = deferred<TranslationSelection>(), original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, payload: { request: Record<string, unknown> }) => command === "save_arena_merge" ? save.promise : original(command, payload));
-  await user.click(screen.getByRole("button", { name: "Save merge and select" }));
+  await user.click(screen.getByRole("button", { name: "Save and select merge" }));
   await waitFor(() => expect(calls("save_arena_merge")).toHaveLength(1));
   const request = payloads("save_arena_merge")[0]; act(() => owner.editMerge("Newer B"));
   await act(async () => { save.resolve(selectionFor(request)); });
   await waitFor(() => expect(owner.current().pending).toBeNull());
   expect(owner.current().draft?.text).toBe("Newer B");
   comparison = { ...comparison, basis: "changed-basis", selectionId: fixtureIdentity(999) };
-  await user.click(screen.getByRole("button", { name: "Review current basis and keep draft" }));
+  await user.click(screen.getByRole("button", { name: "Update basis and keep draft" }));
   await waitFor(() => expect(owner.current().draft?.basis.basis).toBe("changed-basis"));
   expect(owner.current().draft?.text).toBe("Newer B");
   await user.click(screen.getByRole("button", { name: "Discard merge draft" }));
@@ -528,7 +528,7 @@ it("does not send an older prepared snapshot when the current checked source sco
   expect(registry.describe("arena.start", scope, startPayload())?.availability.enabled).toBe(false);
   expect(registry.dispatch("arena.start", scope, startPayload())).toBe(false);
   expect(owner.current().prepared).toBe(fixedPreview); expect(owner.current().consent).toBe(true); expect(calls("start_arena_translation")).toHaveLength(0);
-  expect(await screen.findByText("The source or shared resources changed. Preview the complete selected range again before sending a new round.")).toBeInTheDocument();
+  expect(await screen.findByText("Source content or shared resources changed. Preview the selected range again before starting a new round.")).toBeInTheDocument();
 });
 
 it("keeps the exact ordered history evidence for comparison across an identity wait", async () => {

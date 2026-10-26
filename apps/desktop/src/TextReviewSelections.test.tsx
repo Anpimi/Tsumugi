@@ -67,7 +67,7 @@ it("ignores a late discovery response belonging to an earlier scope", async () =
 it("shows read failures without substituting an empty successful list", async () => {
   read.mockRejectedValue({ code: "storage-failed", stage: "read", outcome: "rejected", recoveryRequired: false });
   render(<Choices onChange={vi.fn()} />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("Text checkers could not be read");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Text checkers could not be loaded");
   expect(screen.queryByText(/No text suggestion checkers are installed/)).not.toBeInTheDocument();
 });
 

@@ -160,10 +160,10 @@ function exitNavigation(handle: Awaited<ReturnType<typeof open>>) {
 }
 async function review(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Review queries" }));
-  await screen.findByRole("region", { name: "Captured queries and execution consent" });
+  await screen.findByRole("region", { name: "Review queries and permissions" });
 }
 async function start(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this component/ }));
   await user.click(screen.getByRole("button", { name: "Run reference queries" }));
 }
 
@@ -318,8 +318,8 @@ it("runs explicit Unicode single/batch inputs and pairs reversed ledger items wi
   await start(user);
   const results = await screen.findByRole("region", { name: "Query results" });
   await within(results).findByText("<script>untrusted</script>");
-  expect(screen.getByText("Captured 2 queries. Follow their execution status below.")).toBeVisible();
-  expect(screen.queryByText("Captured 2 queries. No component has run yet.")).toBeNull();
+  expect(screen.getByText("Prepared 2 queries. Execution status is shown below.")).toBeVisible();
+  expect(screen.queryByText("Prepared 2 queries. Nothing has run yet.")).toBeNull();
   expect(Array.from(results.querySelectorAll("blockquote pre"), value => value.textContent)).toContain(text);
   expect(within(results).getByText("No preference for this explicit selection.")).toBeVisible();
   expect(results.querySelector("script")).toBeNull();
@@ -339,13 +339,13 @@ it("keeps B typed while A is captured and requires a new review instead of grant
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_tool")).toBe(true));
   await user.type(input, "B");
   await act(async () => finish());
-  await screen.findByRole("region", { name: "Captured queries and execution consent" });
+  await screen.findByRole("region", { name: "Review queries and permissions" });
   expect(input).toHaveValue("AB");
   expect(screen.getByRole("button", { name: "Run reference queries" })).toBeDisabled();
-  await screen.findByText("You edited the query after capture. Review the current input before granting new execution consent.");
+  await screen.findByText("You edited the query after preparing the preview. Review the updated input before authorizing execution.");
   holdPreparation = null;
   await user.click(screen.getByRole("button", { name: "Review queries" }));
-  await waitFor(() => expect(screen.getByRole("checkbox", { name: /^I allow this exact component/ })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: /^I allow this component/ })).toBeEnabled());
   const requests = invoke.mock.calls.filter(([command]) => command === "prepare_plugin_tool");
   expect(requests[0][1].request.payloads[0].rows[0].text).toBe("A");
   expect(requests[1][1].request.payloads[0].rows[0].text).toBe("AB");
@@ -356,7 +356,7 @@ it.each(["project", "native-application"])("confirms an unknown %s start by its 
   const { user, owner } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "single 👩🏽‍💻");
   await review(user);
-  if (applicationMode) await user.click(await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ }));
+  if (applicationMode) await user.click(await screen.findByRole("checkbox", { name: /^I allow this shared instance/ }));
   startUnknown = true; await start(user);
   await waitFor(() => expect(owner().current().pending).toBeNull());
   expect(owner().current().knownTask).toEqual({ taskId: fixtureIdentity(1200), attemptId: prepared!.attemptId, operation: "plugin-tool-query" });
@@ -397,10 +397,10 @@ it("keeps text when extension availability changes and distinguishes malformed s
   const { user } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "input kept");
   await review(user); malformedOutput = true; await start(user);
-  await screen.findByText("The saved result cannot be shown as reference entries. Review its execution record in Tasks; it is not an empty result.");
+  await screen.findByText("The saved output could not be formatted as reference entries (it is not an empty result). Check the execution record in Tasks.");
   inventory.packageDecisions.forEach(decision => { decision.enabled = false; });
   await user.click(screen.getByRole("button", { name: "Refresh reference packages" }));
-  await screen.findByText("Enable a reference package in Extensions and approve its runtime. Your text stays here while the package is unavailable.");
+  await screen.findByText("Enable a reference package in Extensions and approve its runtime. Your query text stays here while the package is unavailable.");
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("input kept");
   expect(screen.getByRole("button", { name: "Review queries" })).toBeDisabled();
 });
@@ -504,7 +504,7 @@ it("does not pick the first of multiple installed providers and reports explicit
   await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "x".repeat(257));
   await user.click(screen.getByRole("button", { name: "Review queries" }));
-  await screen.findByText("This input exceeds the package’s limit. Shorten the text or reduce the batch; your input is preserved.");
+  await screen.findByText("The query input exceeds the package's size limit. Shorten the text or remove rows; your input is kept.");
   expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_tool")).toBe(false);
 });
 
@@ -512,7 +512,7 @@ it("requests cancellation through the original task and preserves its execution 
   const { user } = await open(); queued = true;
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "queued query");
   await review(user); await start(user);
-  await user.click(await screen.findByRole("button", { name: "Request cancellation" }));
+  await user.click(await screen.findByRole("button", { name: "Cancel query" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "cancel_execution_task")).toBe(true));
   await screen.findByText("Cancelled before starting");
   const request = invoke.mock.calls.find(([command]) => command === "cancel_execution_task")?.[1].request;
@@ -524,13 +524,13 @@ it("appends editor text without replacing an existing draft or inheriting its re
   const { user, ref } = await open();
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "existing reference draft");
   await review(user);
-  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this component/ }));
   let added: boolean | undefined;
   await act(async () => { added = ref.current?.addQueryText("👩🏽‍💻\ne\u0301"); });
   expect(added).toBe(true);
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("existing reference draft");
   expect(screen.getByRole("textbox", { name: "Query text 2" })).toHaveValue("👩🏽‍💻\ne\u0301");
-  expect(screen.getByRole("checkbox", { name: /^I allow this exact component/ })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /^I allow this component/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Run reference queries" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
 });
@@ -617,14 +617,14 @@ it("rejects a changed task association for the same tool attempt and keeps cance
   const { user, owner } = await open(); queued = true;
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "queued original");
   await review(user); await start(user);
-  await screen.findByRole("button", { name: "Request cancellation" });
+  await screen.findByRole("button", { name: "Cancel query" });
   await waitFor(() => expect(owner().current().knownTask?.taskId).toBe(fixtureIdentity(1200)));
   if (!detail) throw new Error("Expected original attempt");
   detail = { ...structuredClone(detail), taskId: fixtureIdentity(1201) };
   await refreshWorkbenchReads();
   await screen.findByText(i18n.t("toolQuery.recordReadFailed"));
   expect(owner().current().knownTask).toMatchObject({ taskId: fixtureIdentity(1200), attemptId: detail.attemptId });
-  await user.click(screen.getByRole("button", { name: "Request cancellation" }));
+  await user.click(screen.getByRole("button", { name: "Cancel query" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "cancel_execution_task")).toHaveLength(1));
   const request = invoke.mock.calls.find(([command]) => command === "cancel_execution_task")![1].request;
   expect(request.taskId).toBe(fixtureIdentity(1200)); expect(request.taskId).not.toBe(detail.taskId);
@@ -637,7 +637,7 @@ it("checks an original tool cancellation through the shared feedback before an e
   const original=invoke.getMockImplementation()!;let writes=0,reads=0;
   invoke.mockImplementation((command:string,args:unknown)=>command==="cancel_execution_task"&&++writes===1?Promise.reject(new Error("Lost ACK"))
     :command==="read_execution_cancellation_action"?++reads===1?Promise.reject(new Error("Automatic check unavailable")):Promise.resolve(null):original(command,args));
-  await user.click(await screen.findByRole("button",{name:"Request cancellation"}));
+  await user.click(await screen.findByRole("button",{name:"Cancel query"}));
   await screen.findByText(i18n.t("execution.cancelUnknown"));expect(screen.queryByRole("button",{name:i18n.t("execution.retryCancellation")})).not.toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:i18n.t("execution.checkCancellation")}));
   await user.click(await screen.findByRole("button",{name:i18n.t("execution.retryCancellation")}));
@@ -692,7 +692,7 @@ it.each(["missing-selected", "duplicate-member", "external-member", "ordinary-ro
   expect(owner().current().capture).toBeNull();
   expect(owner().current().pending?.kind).toBe("prepare");
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("keep the exact draft");
-  expect(screen.queryByRole("checkbox", { name: /^I allow this exact shared instance/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /^I allow this shared instance/ })).not.toBeInTheDocument();
   expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
 });
 
@@ -703,7 +703,7 @@ it.each(["javascript", "native-worker"])("requires independent %s application li
   await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "kept query");
   expect(invoke.mock.calls.some(([command]) => ["prepare_plugin_tool", "start_plugin_tool", "read_application_plugin_instance"].includes(command))).toBe(false);
   await review(user);
-  const lifetime = await screen.findByRole("checkbox", { name: /^I allow this exact shared instance/ });
+  const lifetime = await screen.findByRole("checkbox", { name: /^I allow this shared instance/ });
   if (nativeMode) {
     expect(screen.queryByText("secondary.call")).toBeNull();
     expect(screen.getByText(i18n.t("toolQuery.applicationNativeHelp"))).toBeVisible();
@@ -713,7 +713,7 @@ it.each(["javascript", "native-worker"])("requires independent %s application li
   expect(screen.getByText(toolQueryView.binding.capability.provider.contributionId)).toBeVisible();
   expect(screen.getByText(i18n.t("toolQuery.applicationCapabilities"))).toBeVisible();
   const run = screen.getByRole("button", { name: "Run reference queries" });
-  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this component/ }));
   expect(run).toBeDisabled();
   await user.click(lifetime);
   expect(run).toBeEnabled();
@@ -725,10 +725,10 @@ it.each(["javascript", "native-worker"])("requires independent %s application li
   const stop = await screen.findByRole("button", { name: "Stop shared instance" });
   await waitFor(() => expect(stop).toBeEnabled());
   await user.click(stop);
-  await screen.findByRole("button", { name: "Check the original action" });
+  await screen.findByRole("button", { name: "Check action status" });
   expect(owner().current().pending?.kind).toBe("stop-instance");
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("kept query plus draft");
-  await user.click(screen.getByRole("button", { name: "Check the original action" }));
+  await user.click(screen.getByRole("button", { name: "Check action status" }));
   await waitFor(() => expect(owner().current().pending).toBeNull());
   const stops = invoke.mock.calls.filter(([command]) => command === "stop_application_plugin_instance");
   expect(stops).toHaveLength(2);

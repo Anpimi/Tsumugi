@@ -158,7 +158,7 @@ it("keeps an unavailable selected checker visible and prevents authorization", a
   render(<WorkPlanControls context={{ sessionToken: "session", projectId: wire.requests.prepare.projectId }}
     prepared={plan} status={null} busy={false} disabled={false} consent refresh={vi.fn()}
     run={async work => { await work(() => true); }} onPlan={vi.fn()} onStarted={vi.fn()} onBlockedChange={vi.fn()} onOpenTranslation={vi.fn()} />);
-  expect(screen.getByRole("alert")).toHaveTextContent("captured checker or approved runtime is unavailable");
+  expect(screen.getByRole("alert")).toHaveTextContent("selected checker or approved runtime is unavailable");
   expect(screen.getByText("example/first-support 0.1.0")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
   expect(authorize).not.toHaveBeenCalled();

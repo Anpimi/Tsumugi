@@ -69,8 +69,8 @@ function destination() { const item = view.rows[0].item; return { kind: "review-
 async function openAi() {
   const rendered = render(<Harness />);
   await act(async () => { expect(await handle.current!.navigate({ kind: "attempt", area: "ai", attemptId: view.detail.attemptId })).toBe(true); });
-  await screen.findByRole("button", { name: "Review current selected translation" });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Review current selected translation" })).toBeEnabled());
+  await screen.findByRole("button", { name: "Review active translation" });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Review active translation" })).toBeEnabled());
   return rendered;
 }
 function noHandoffWrites(before = 0) {
@@ -150,14 +150,14 @@ it.each(["zh-CN", "ja-JP"])("opens the exact %s current selection rather than th
   act(() => ai.setConfig(before => ({ ...before, model: "AI newer B" })));
   const before = ai.current(), cursor = memory.read("ai", "after");
   expect(target.revisionId).not.toBe(view.rows[0].savedRevisionId);
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
   await screen.findByText("Current human translation", { exact: false });
   expect(area).toBe("review"); expect(review.current().selected?.revisionId).toBe(target.revisionId);
   expect(memory.read("review", "editorOrigin")).toBeNull(); expect(memory.read("review", "editorReturned")).toBeNull();
   expect(review.current().selected?.currentCheck).toBeNull(); expect(review.current().selected?.currentDecision).toBeNull();
-  expect(screen.getByText(/unselected AI candidate and its candidate checks/)).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Return to AI work" }));
-  await screen.findByRole("button", { name: "Review current selected translation" });
+  expect(screen.getByText(/Unselected AI candidates and their check results/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Return to AI workspace" }));
+  await screen.findByRole("button", { name: "Review active translation" });
   expect(area).toBe("ai"); expect(ai.current().config).toEqual(before.config); expect(ai.current().dirty).toBe(true);
   expect(ai.current().attempt).toBe(before.attempt); expect(memory.read("ai", "after")).toBe(cursor);
   noHandoffWrites();
@@ -171,20 +171,20 @@ it.each(["no-selection", "source", "foreign-unit"] as const)("keeps AI work and 
   if (kind === "foreign-unit") invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_review_target"
     ? Promise.resolve({ ...target, unitId: fixtureIdentity(1821) }) : original(command, args));
   const before = review.current();
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
-  await screen.findByRole("button", { name: "Open current translations" });
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
+  await screen.findByRole("button", { name: "Open Translations" });
   expect(area).toBe("ai"); expect(review.current()).toBe(before);
   expect(screen.getByRole("button", { name: i18n.t("ai.openEditor") })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Review current selected translation" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Review active translation" })).toBeEnabled();
   if (kind === "source") {
-    await user.click(screen.getByRole("button", { name: "Open current translations" }));
+    await user.click(screen.getByRole("button", { name: "Open Translations" }));
     await waitFor(() => expect(area).toBe("translation"));
     expect(await screen.findByRole("button", { name: target.nativeKey })).toBeVisible();
   }
   if (kind === "no-selection") {
     await act(async () => { await i18n.changeLanguage("zh-CN"); });
-    expect(await screen.findByText(/此条目尚未选择当前译文/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "打开当前译文" })).toBeEnabled();
+    expect(await screen.findByText(/此条目尚未采用任何译文/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "打开“译文”工作区" })).toBeEnabled();
   }
   noHandoffWrites();
 });
@@ -203,7 +203,7 @@ it("accepts freshly reread equal source and target data through their structural
   act(() => { reads.client.setQueryData(key, capturedTarget); });
   const sourceKey = reads.key(["source-scope"]), capturedSource = reads.client.getQueryData(sourceKey);
   expect(capturedSource).toBeDefined();
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
   await screen.findByText("Current human translation", { exact: false });
   expect(area).toBe("review"); expect(calls("read_review_target").length).toBeGreaterThan(0);
   expect(reads.client.getQueryData(key)).toBe(capturedTarget);
@@ -215,11 +215,11 @@ it("retries only the fresh current read after failure without clearing AI or Rev
   const user = userEvent.setup(); await openAi();
   act(() => { ai.setConfig(before => ({ ...before, model: "Kept AI B" })); review.editReason(target, "Kept review B"); });
   failRead = true;
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
-  expect(await screen.findByText(/Current review evidence could not be read/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
+  expect(await screen.findByText(/Could not load review details/)).toBeVisible();
   expect(area).toBe("ai"); expect(review.current().drafts[reviewOwner.reviewDraftKey(target)]).toBe("Kept review B");
   failRead = false;
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
   await screen.findByRole("textbox", { name: "Reason or evidence" });
   expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Kept review B");
   expect(ai.current().config.model).toBe("Kept AI B"); noHandoffWrites();
@@ -230,7 +230,7 @@ it("preserves old reason B, actor and chosen basis and exposes the original expl
   const old = reviewTargetFixture({ ...target, basisEvidence: undefined, basis: "earlier-basis", revisionId: fixtureIdentity(1822), translationText: "Earlier review translation" });
   act(() => { review.setSelected(old); review.setActor("Reviewer B"); review.editReason(old, "Original reason B"); review.toggleChosen(reviewSummaryFor(old), true); });
   const before = review.current();
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
   await screen.findByText("Earlier review translation", { exact: false });
   expect(review.current().selected).toBe(old); expect(review.current().projection?.basis).toBe(target.basis);
   expect(review.current().drafts).toBe(before.drafts); expect(review.current().chosen).toBe(before.chosen);
@@ -239,8 +239,8 @@ it("preserves old reason B, actor and chosen basis and exposes the original expl
   expect(screen.getByText("Current human translation", { exact: false })).toBeVisible();
   expect(screen.getByRole("button", { name: "Use current content and keep reason" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Return to AI work" }));
-  await screen.findByRole("button", { name: "Review current selected translation" });
+  await user.click(screen.getByRole("button", { name: "Return to AI workspace" }));
+  await screen.findByRole("button", { name: "Review active translation" });
   expect(review.current().selected).toBe(old); expect(review.current().drafts).toBe(before.drafts); expect(review.current().chosen).toBe(before.chosen);
   noHandoffWrites();
 });
@@ -258,10 +258,10 @@ it.each(["unknown", "prepared-checks"] as const)("keeps original %s recovery rea
     act(() => review.setCheckerConsent(slot.attemptId, slot.inputDigest, true));
   }
   const original = review.current(), count = invoke.mock.calls.length;
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
-  await screen.findByRole("button", { name: "Open retained review" });
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
+  await screen.findByRole("button", { name: "Open active review" });
   expect(area).toBe("ai"); expect(review.current()).toBe(original);
-  await user.click(screen.getByRole("button", { name: "Open retained review" }));
+  await user.click(screen.getByRole("button", { name: "Open active review" }));
   await screen.findByRole("textbox", { name: "Reason or evidence" });
   expect(review.current().pending).toBe(original.pending); expect(review.current().checkReview).toBe(original.checkReview);
   expect(review.current().checkConsent).toEqual(original.checkConsent); noHandoffWrites(count);
@@ -275,8 +275,8 @@ it("does not rebind an in-flight original batch or consume its selected entry", 
   await waitFor(() => expect(calls("write_review_decision")).toHaveLength(1));
   const before = review.current(), count = invoke.mock.calls.length;
   expect(before.batchRunning).toBe(true);
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
-  await screen.findByRole("button", { name: "Open retained review" });
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
+  await screen.findByRole("button", { name: "Open active review" });
   expect(area).toBe("ai"); expect(review.current().selected).toBe(before.selected); expect(review.current().chosen).toBe(before.chosen);
   expect(calls("read_review_target")).toHaveLength(0); noHandoffWrites(count);
   await act(async () => { review.stopBatch(); waiting.resolve(); await batch; });
@@ -286,7 +286,7 @@ it("does not rebind an in-flight original batch or consume its selected entry", 
 it.each(["review-B", "ai-B", "source", "removed-locale", "removed-query", "retired"] as const)("rejects a delayed handoff after %s without first rebinding Review", async kind => {
   const rendered = await openAi(), user = userEvent.setup(), pending = deferred<ReviewTarget>(), original = review.current();
   const captured = structuredClone(target); holdRead = pending.promise;
-  await user.click(screen.getByRole("button", { name: "Review current selected translation" }));
+  await user.click(screen.getByRole("button", { name: "Review active translation" }));
   await waitFor(() => expect(calls("read_review_target")).toHaveLength(1));
   if (kind === "review-B") act(() => review.editReason(target, "Later review B"));
   if (kind === "ai-B") act(() => ai.setConfig(before => ({ ...before, model: "Later AI B" })));

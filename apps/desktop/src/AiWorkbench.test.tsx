@@ -170,7 +170,7 @@ it("keeps a prepared draft through panel unmount and clears it only after confir
  await user.click(screen.getByRole("button",{name:"AI work"}));
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("");
  for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
- for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
+ for(const name of ["Include extracted source facts","Include source inferences and rationale","Include adjacent source lines"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
  expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
  expect(prepared.preview.config).toEqual(captured);
  expect(invoke.mock.calls.some(([name])=>["authorize_work_plan","start_work_plan"].includes(name))).toBe(false);
@@ -215,7 +215,7 @@ it("recommends adopted resources but requires exact sharing confirmation and inv
  const user=await preview();
  expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
  for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
- for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
+ for(const name of ["Include extracted source facts","Include source inferences and rationale","Include adjacent source lines"])expect(screen.getByRole("checkbox",{name})).not.toBeChecked();
  const request=invoke.mock.calls.find(([command])=>command==="prepare_work_plan")![1].request;
  expect(request.config).toEqual({...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:"",shareTerms:true,shareContext:true});
  expect(invoke.mock.calls.some(([c])=>["authorize_work_plan","start_work_plan"].includes(c))).toBe(false);
@@ -238,8 +238,8 @@ it.each([true,false])("restores only execution budgets while retaining sharing c
   if(!(checkbox instanceof HTMLInputElement))throw new Error("Expected a sharing checkbox");
   if(checkbox.checked!==sharing)await user.click(checkbox);
  }
- for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])await user.click(screen.getByRole("checkbox",{name}));
- const sourceLimits=[["Source context budget (encoded bytes)",2048],["Maximum source context entries",17]] as const;
+ for(const name of ["Include extracted source facts","Include source inferences and rationale","Include adjacent source lines"])await user.click(screen.getByRole("checkbox",{name}));
+ const sourceLimits=[["Source context byte limit (UTF-8)",2048],["Maximum source context items",17]] as const;
  for(const [name,value] of sourceLimits){const input=screen.getByRole("spinbutton",{name});await user.clear(input);await user.type(input,String(value));}
  await user.click(screen.getByText("Budget and limits"));
  const budgets=[["maxItems",3],["concurrency",2],["maxRequests",7],["maxOutputTokens",512],["maxRetries",1],["timeoutSeconds",30]] as const;
@@ -255,7 +255,7 @@ it.each([true,false])("restores only execution budgets while retaining sharing c
  expect(invoke.mock.calls.filter(([command])=>command==="prepare_work_plan")).toHaveLength(previews);
  for(const [key] of budgets)expect(screen.getByRole("spinbutton",{name:i18n.t(`ai.${key}`)})).toHaveValue(defaultAiConfig[key]);
  for(const name of ["Share applicable adopted terms","Share saved context"])expect(screen.getByRole("checkbox",{name})).toHaveProperty("checked",sharing);
- for(const name of ["Share extracted source facts","Share source inferences and their rationale","Share adjacent original text"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
+ for(const name of ["Include extracted source facts","Include source inferences and rationale","Include adjacent source lines"])expect(screen.getByRole("checkbox",{name})).toBeChecked();
  for(const [name,value] of sourceLimits)expect(screen.getByRole("spinbutton",{name})).toHaveValue(value);
  expect(screen.getByRole("combobox",{name:i18n.t("connections.choose")})).toHaveValue(linked.connectionProfile!.profileId);
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await screen.findByRole("heading",{name:"Data sharing preview"});
@@ -351,7 +351,7 @@ it("lets the user explicitly clear a removed cross-page AI scope without losing 
  expect(screen.queryByRole("checkbox",{name:"first: Hello"})).not.toBeInTheDocument();
  expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
  expect(screen.getByRole("button",{name:"Preview what will be sent"})).toBeDisabled();
- expect(await screen.findByText(/The current source changed/)).toBeVisible();
+ expect(await screen.findByText(/Source content changed/)).toBeVisible();
  expect(invoke.mock.calls.filter(([command])=>command==="prepare_work_plan")).toHaveLength(1);
  await user.click(screen.getByRole("button",{name:"Clear selected range"}));
  expect(screen.getByRole("textbox",{name:"Chat Completions URL"})).toHaveValue("http://127.0.0.1:4000/v1/chat/completions");
@@ -437,13 +437,13 @@ it("requires a separate default-off choice and fresh consent for referenced vers
  await user.click(discussions);
  const artifacts=screen.getByRole("checkbox",{name:"Share the text of versions referenced by published posts"});
  expect(artifacts).not.toBeChecked();
- expect(within(screen.getByRole("region",{name:"Preparation budget and sharing"})).getByText(i18n.t("ai.discussions.costUnknown"))).toBeInTheDocument();
+ expect(within(screen.getByRole("region",{name:"Task budget and sharing"})).getByText(i18n.t("ai.discussions.costUnknown"))).toBeInTheDocument();
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await screen.findByRole("region",{name:"Team discussions"});
  await user.click(screen.getByRole("checkbox",{name:/I authorize the displayed selection policy and member discussion publication/}));
  await user.click(artifacts);
  expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
- expect(within(screen.getByRole("region",{name:"Preparation budget and sharing"})).getByText(i18n.t("ai.discussions.artifactCostUnknown"))).toBeInTheDocument();
+ expect(within(screen.getByRole("region",{name:"Task budget and sharing"})).getByText(i18n.t("ai.discussions.artifactCostUnknown"))).toBeInTheDocument();
  expect(screen.queryByText(i18n.t("ai.costUnknown"))).not.toBeInTheDocument();
  expect(invoke.mock.calls.some(([command])=>command==="authorize_work_plan")).toBe(false);
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
@@ -520,10 +520,10 @@ it("uses a committed receipt to reconcile adoption without repeating the mutatio
  const user=await preview();const original=invoke.getMockImplementation()!;let finish!:(value:unknown)=>void;
  invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject({code:"outcome-unknown"}):command==="read_execution_adoption_action"?new Promise(resolve=>{finish=resolve;}):original(command,args));
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));
- await screen.findByText("Checking the saved adoption result…");expect(screen.getByRole("button",{name:"Check saved result"})).toBeDisabled();
- await act(async()=>{await i18n.changeLanguage("zh-CN");});expect(screen.getByText("正在核对采纳结果…")).toBeInTheDocument();
+ await screen.findByText("Checking whether changes were applied…");expect(screen.getByRole("button",{name:"Check saved result"})).toBeDisabled();
+ await act(async()=>{await i18n.changeLanguage("zh-CN");});expect(screen.getByText("正在核对变更是否已应用…")).toBeInTheDocument();
  await act(async()=>{finish({action:originalAction,receipt:receiptFor()});});
- expect(await screen.findByRole("button",{name:i18n.t("ai.saved")})).toBeDisabled();expect(screen.queryByText("正在核对采纳结果…")).not.toBeInTheDocument();
+ expect(await screen.findByRole("button",{name:i18n.t("ai.saved")})).toBeDisabled();expect(screen.queryByText("正在核对变更是否已应用…")).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([name])=>name==="read_execution_adoption_action")).toHaveLength(1);
  expect(invoke.mock.calls.filter(([name])=>name==="prepare_execution_adoption")).toHaveLength(1);
  await waitFor(()=>expect(screen.queryByText(/Saving may have committed/)).not.toBeInTheDocument());expect(invoke.mock.calls.filter(([c])=>c==="adopt_execution")).toHaveLength(1);expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
@@ -697,7 +697,7 @@ it("keeps a checked plan unavailable when its installed checker cannot be prepar
   });
   await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
   await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
-  expect(screen.getByText(/captured checker or approved runtime is unavailable/i)).toBeInTheDocument();
+  expect(screen.getByText(/selected checker or approved runtime is unavailable/i)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
 });
@@ -774,7 +774,7 @@ async function chooseReferences(user: ReturnType<typeof userEvent.setup>, views:
     if (index > 0) await user.click(screen.getByRole("button", { name: "Add reference provider" }));
     const row = within(screen.getByRole("group", { name: `Reference provider ${index + 1}` }));
     await user.selectOptions(row.getByRole("combobox", { name: "Reference package" }), `${view.binding.capability.provider.packageDigest}:${view.resourceId}`);
-    await user.selectOptions(row.getByRole("combobox", { name: "Execution environment" }), view.environmentDigest);
+    await user.selectOptions(row.getByRole("combobox", { name: "Runtime environment" }), view.environmentDigest);
     await row.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
     await user.selectOptions(row.getByRole("combobox", { name: "Target language" }), index === 0 ? "zh-CN" : "ja");
     await user.click(row.getByRole("checkbox", { name: index === 0 ? /^Term 👩🏽‍💻/ : /^Other/ }));
@@ -1069,12 +1069,12 @@ it("retains old scope and settings after a source change and withdraws the prepa
   return original(command,args);
  });
  await refreshWorkbenchReads(["source"]);
- expect(await screen.findByText(/The current source changed/)).toBeVisible();
+ expect(await screen.findByText(/Source content changed/)).toBeVisible();
  expect(await screen.findByRole("checkbox",{name:"first: Changed source"})).toBeChecked();
  expect(screen.getByRole("button",{name:"Preview what will be sent"})).toBeDisabled();
  expect(screen.queryByRole("button",{name:"Send and generate candidates"})).not.toBeInTheDocument();
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveValue("test-model");
- await user.click(screen.getByRole("button",{name:"Clear old selection and use current source"}));
+ await user.click(screen.getByRole("button",{name:"Clear old selection and use updated source"}));
  expect(screen.getByRole("checkbox",{name:"first: Changed source"})).not.toBeChecked();
  expect(invoke.mock.calls.some(([command])=>command==="authorize_work_plan")).toBe(false);
 });

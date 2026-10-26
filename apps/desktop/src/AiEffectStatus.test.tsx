@@ -21,50 +21,50 @@ it.each(["passed", "findings", "failed", "unknown"] as const)("shows check-only 
   receipt.selection = null; receipt.checkRunId = null; receipt.blocked = null; receipt.candidateBasis.selectionId = null;
   receipt.rules[0].status = status;
   const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText("Candidate check evidence recorded; no translation was selected")).toBeInTheDocument();
-  expect(screen.getByText(/do not select a translation, establish current QA/)).toBeInTheDocument();
-  await userEvent.click(screen.getByText("Mechanical check evidence"));
+  expect(screen.getByText("Candidate check results saved (not selected as active translation)")).toBeInTheDocument();
+  expect(screen.getByText(/do not select the translation, update active QA/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText("Automated check results"));
   const keys = { passed: "passed", findings: "findings", failed: "checkFailed", unknown: "checkUnknown" } as const;
   expect(screen.getAllByText(text => text.includes(i18n.t(`review.${keys[status]}`))).length).toBeGreaterThan(0);
-  expect(screen.queryByText("This candidate was selected by policy")).not.toBeInTheDocument();
+  expect(screen.queryByText("Candidate automatically selected by policy")).not.toBeInTheDocument();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   await i18n.changeLanguage("zh-CN"); rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText("候选检查依据已记录，尚未选择译文")).toBeInTheDocument();
-  expect(screen.getByText(/不会选择译文、形成当前 QA/)).toBeInTheDocument();
+  expect(screen.getByText("已记录候选检查结果（未设为当前译文）")).toBeInTheDocument();
+  expect(screen.getByText(/不会自动采用该译文、更新当前正式 QA/)).toBeInTheDocument();
 });
 it("presents a historical policy selection without claiming current translation or approval", async () => {
   const effect = recorded(); render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText("This candidate was selected by policy")).toBeInTheDocument();
-  expect(screen.getByText(/review the editor for the current translation/)).toBeInTheDocument();
-  expect(screen.getByText(/Human approval remains separate/)).toBeInTheDocument();
-  await userEvent.click(screen.getByText("Mechanical check evidence"));
+  expect(screen.getByText("Candidate automatically selected by policy")).toBeInTheDocument();
+  expect(screen.getByText(/check the editor for the currently active translation/)).toBeInTheDocument();
+  expect(screen.getByText(/Manual approval is still required/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText("Automated check results"));
   expect(screen.getByText(/Required translation/)).toBeVisible();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
 it("shows candidate-only completion in both languages without implying checks or selection", async () => {
   const effect: EffectView = { phase: "saved", actionId: null, receipt: null, error: null, retryable: false };
   const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText("Candidate saved; no translation was selected")).toBeInTheDocument();
-  expect(screen.queryByText("Mechanical check evidence")).not.toBeInTheDocument();
+  expect(screen.getByText("Candidate saved (not selected as active translation)")).toBeInTheDocument();
+  expect(screen.queryByText("Automated check results")).not.toBeInTheDocument();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   await i18n.changeLanguage("zh-CN");
   rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText("候选已保存，尚未选择译文")).toBeInTheDocument();
+  expect(screen.getByText("候选译文已保存（未设为当前译文）")).toBeInTheDocument();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
 it("explains protection while retaining mechanical evidence in both languages", async () => {
   const effect = recorded(); effect.phase = "blocked"; effect.receipt!.blocked = "protected";
   effect.receipt!.selection = null; effect.receipt!.checkRunId = null;
   const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText(/mechanical checks still ran/)).toBeInTheDocument();
+  expect(screen.getByText(/automated checks still ran/)).toBeInTheDocument();
   await i18n.changeLanguage("zh-CN"); rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  expect(screen.getByText(/机械检查仍已执行/)).toBeInTheDocument();
+  expect(screen.getByText(/自动检查仍已完成/)).toBeInTheDocument();
 });
 it("offers only an explicit allowed retry and prevents it under revoked authority", async () => {
   const effect = recorded(); effect.phase = "failed"; effect.receipt = null; effect.retryable = true;
   effect.error = { code: "storage-failed", stage: "execution-adopt", outcome: "rejected", reason: "execution-storage", recoveryRequired: false, diagnosticId: fixture.requests.read.attemptId };
   const retry = vi.fn(); const { rerender } = render(<AiEffectStatus effect={effect} disabled={true} onRetry={retry} />);
-  const button = screen.getByRole("button", { name: "Check saved result and retry original action" });
+  const button = screen.getByRole("button", { name: "Check saved status and retry" });
   expect(button).toBeDisabled(); await userEvent.click(button); expect(retry).not.toHaveBeenCalled();
   rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={retry} />);
   await userEvent.click(button); expect(retry).toHaveBeenCalledTimes(1);
@@ -77,7 +77,7 @@ it("presents opaque plugin rules and findings without classifying them as termin
     findings: [{ issueId: "domain-issue", rule: "plugin:third-domain", code: "third-format-invalid",
       detail: "third-format-invalid", severity: "error", waivable: false }] });
   const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
-  await userEvent.click(screen.getByText("Mechanical check evidence"));
+  await userEvent.click(screen.getByText("Automated check results"));
   expect(screen.getByText(/Plugin check: third-domain/)).toBeVisible();
   expect(screen.getByText("Plugin check reported: third-format-invalid")).toBeVisible();
   expect(screen.queryByText("Protected term needs review")).not.toBeInTheDocument();

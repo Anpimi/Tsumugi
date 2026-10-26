@@ -94,20 +94,20 @@ function installRequest(): PluginRepositoryInstallRequest {
   if (!validateRequestRepositoryInstall(value)) throw new Error("Missing valid installation request");
   return value;
 }
-const packageCheckbox = (id: string, version: string) => screen.getByRole("checkbox", { name: `I approve ${id} ${version} and all permissions shown above` });
-const rollbackCheckbox = () => screen.getByRole("checkbox", { name: "I explicitly approve rolling signed-tools back to 1.0.0" });
+const packageCheckbox = (id: string, version: string) => screen.getByRole("checkbox", { name: `I approve ${id} ${version} and all permissions listed above` });
+const rollbackCheckbox = () => screen.getByRole("checkbox", { name: "I confirm rolling signed-tools back to 1.0.0" });
 async function openRepositories() {
   const user = userEvent.setup();
   render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Signed repositories" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Choose trust root and repository folder" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Select trust root and repository folder" })).toBeEnabled());
   return user;
 }
 async function reviewRepository(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: "Choose trust root and repository folder" }));
-  await user.click(await screen.findByRole("checkbox", { name: "I have checked this root fingerprint and approve refreshing trust for this captured repository." }));
-  await user.click(screen.getByRole("button", { name: "Verify and refresh repository trust" }));
+  await user.click(screen.getByRole("button", { name: "Select trust root and repository folder" }));
+  await user.click(await screen.findByRole("checkbox", { name: "I have verified this root fingerprint and approve updating trust for this repository." }));
+  await user.click(screen.getByRole("button", { name: "Verify and update repository trust" }));
   await screen.findByRole("region", { name: "Review repository: Synthetic repository" });
   await waitFor(() => expect(packageCheckbox("signed-tools", "2.0.0")).toBeEnabled());
 }
@@ -121,8 +121,8 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 it.each([
-  { locale: "en-US", open: "Extensions", repositories: "Signed repositories", choose: "Choose trust root and repository folder", consent: "I have checked this root fingerprint and approve refreshing trust for this captured repository.", refresh: "Verify and refresh repository trust", close: "Close", title: "Review repository: Synthetic repository" },
-  { locale: "zh-CN", open: "扩展", repositories: "签名仓库", choose: "选择信任根与仓库目录", consent: "我已核对此信任根指纹，并批准刷新本次捕获仓库的信任。", refresh: "核验并刷新仓库信任", close: "关闭", title: "审阅仓库：Synthetic repository" },
+  { locale: "en-US", open: "Extensions", repositories: "Signed repositories", choose: "Select trust root and repository folder", consent: "I have verified this root fingerprint and approve updating trust for this repository.", refresh: "Verify and update repository trust", close: "Close", title: "Review repository: Synthetic repository" },
+  { locale: "zh-CN", open: "扩展", repositories: "签名仓库", choose: "选择信任根与仓库文件夹", consent: "我已核对此信任根指纹，并批准更新此仓库的信任状态。", refresh: "校验并更新仓库信任", close: "关闭", title: "查看仓库：Synthetic repository" },
 ])("requires fingerprint consent before revealing selectable packages in $locale", async labels => {
   await i18n.changeLanguage(labels.locale);
   const user = userEvent.setup();
@@ -163,8 +163,8 @@ it("replaces another version's consent and submits only the exact chosen update"
   expect(rollbackCheckbox()).not.toBeChecked();
   expect(rollbackCheckbox()).toBeDisabled();
   expect(packageCheckbox("signed-reference", "1.0.0")).not.toBeChecked();
-  await user.click(screen.getByRole("button", { name: "Approve and install repository packages" }));
-  expect(await screen.findByText(/The requested change is saved/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
+  expect(await screen.findByText(/Changes saved/)).toBeInTheDocument();
   const selectedMember = repository.packages.find(member => member.manifest.plugin.id === "signed-tools" && member.manifest.plugin.version === "2.0.0");
   if (!selectedMember) throw new Error("Missing signed-tools 2.0.0 fixture member");
   expect(calls("install_repository_packages")[0][1]).toEqual({ request: {
@@ -178,13 +178,13 @@ it("replaces another version's consent and submits only the exact chosen update"
 it("keeps trust verification independent from unavailable plugin settings and blocks package installation", async () => {
   mockIpc({ readInventory: () => { throw new Error("Plugin settings unavailable"); } });
   const user = await openRepositories();
-  await user.click(screen.getByRole("button", { name: "Choose trust root and repository folder" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I have checked this root fingerprint/ }));
-  await user.click(screen.getByRole("button", { name: "Verify and refresh repository trust" }));
+  await user.click(screen.getByRole("button", { name: "Select trust root and repository folder" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I have verified this root fingerprint/ }));
+  await user.click(screen.getByRole("button", { name: "Verify and update repository trust" }));
   const review = await screen.findByRole("region", { name: "Review repository: Synthetic repository" });
-  expect(screen.getByText(/Repository trust was verified, but current plugin settings are unavailable/)).toBeInTheDocument();
+  expect(screen.getByText(/Repository trust was verified, but current plugin settings could not be read/)).toBeInTheDocument();
   for (const input of within(review).getAllByRole("checkbox")) expect(input).toBeDisabled();
-  expect(within(review).getByRole("button", { name: "Approve and install repository packages" })).toBeDisabled();
+  expect(within(review).getByRole("button", { name: "Approve and install selected packages" })).toBeDisabled();
   expect(within(review).getByRole("button", { name: "Close package review" })).toBeEnabled();
   expect(calls("refresh_plugin_repository")).toHaveLength(1);
   expect(calls("install_repository_packages")).toHaveLength(0);
@@ -194,7 +194,7 @@ it("requires separate explicit rollback consent and never reuses it after changi
   const user = await openRepositories();
   await reviewRepository(user);
   await user.click(packageCheckbox("signed-tools", "1.0.0"));
-  const install = () => screen.getByRole("button", { name: "Install selected packages including confirmed rollbacks" });
+  const install = () => screen.getByRole("button", { name: "Install selected packages (including rollbacks)" });
   expect(install()).toBeDisabled();
   await user.click(rollbackCheckbox());
   expect(install()).toBeEnabled();
@@ -204,7 +204,7 @@ it("requires separate explicit rollback consent and never reuses it after changi
   expect(install()).toBeDisabled();
   await user.click(rollbackCheckbox());
   await user.click(install());
-  await screen.findByText(/The requested change is saved/);
+  await screen.findByText(/Changes saved/);
   expect(installRequest().members).toEqual([{ package: { plugin: repository.packages[0].manifest.plugin, packageDigest: repository.packages[0].packageDigest }, kind: "rollback" }]);
   expect(calls("refresh_plugin_repository")).toHaveLength(1);
   expect(calls("resume_plugin_repository")).toHaveLength(0);
@@ -222,11 +222,11 @@ it("keeps a conflicting member separate and locks all actions while another memb
   const user = await openRepositories();
   await reviewRepository(user);
   expect(packageCheckbox("signed-reference", "1.0.0")).toBeDisabled();
-  expect(screen.getByText(/This member conflicts with an existing source/)).toBeInTheDocument();
+  expect(screen.getByText(/This package conflicts with an existing source/)).toBeInTheDocument();
   await user.click(packageCheckbox("signed-tools", "2.0.0"));
-  await user.click(screen.getByRole("button", { name: "Approve and install repository packages" }));
+  await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
   await waitFor(() => expect(calls("install_repository_packages")).toHaveLength(1));
-  for (const name of ["Close", "Choose plugin folder", "Choose offline Pack folder", "Choose trust root and repository folder", "Read repository sources", "Close package review"]) {
+  for (const name of ["Close", "Select plugin folder", "Select offline Pack folder", "Select trust root and repository folder", "Refresh repository sources", "Close package review"]) {
     expect(screen.getByRole("button", { name })).toBeDisabled();
   }
   await user.keyboard("{Escape}");
@@ -235,7 +235,7 @@ it("keeps a conflicting member separate and locks all actions while another memb
   const resolveInstall = finish;
   if (!resolveInstall) throw new Error("Missing installation resolver");
   await act(async () => resolveInstall(installed(installRequest())));
-  await screen.findByText(/The requested change is saved/);
+  await screen.findByText(/Changes saved/);
   await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toHaveFocus());
   expect(onBusy).toHaveBeenLastCalledWith(false);
 });
@@ -250,19 +250,19 @@ it("retains an unknown refresh across source reads and reopening, then retries i
     return verified(request);
   } });
   const user = await openRepositories();
-  await user.click(screen.getByRole("button", { name: "Choose trust root and repository folder" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I have checked this root fingerprint/ }));
-  await user.click(screen.getByRole("button", { name: "Verify and refresh repository trust" }));
+  await user.click(screen.getByRole("button", { name: "Select trust root and repository folder" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I have verified this root fingerprint/ }));
+  await user.click(screen.getByRole("button", { name: "Verify and update repository trust" }));
   expect(await screen.findByRole("button", { name: "Retry original operation" })).toBeEnabled();
   const original = calls("refresh_plugin_repository")[0][1];
-  await user.click(screen.getByRole("button", { name: "Read repository sources" }));
-  await screen.findByText(/The original trust refresh needs confirmation/);
+  await user.click(screen.getByRole("button", { name: "Refresh repository sources" }));
+  await screen.findByText(/A trust update is awaiting confirmation/);
   expect(calls("refresh_plugin_repository")).toHaveLength(1);
   expect(calls("resume_plugin_repository")).toHaveLength(0);
   await user.click(screen.getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Retry original operation" })).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Choose trust root and repository folder" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Select trust root and repository folder" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Retry original operation" }));
   await screen.findByRole("region", { name: "Review repository: Synthetic repository" });
   expect(calls("refresh_plugin_repository")).toHaveLength(2);
@@ -275,10 +275,10 @@ it("only resumes a persisted pending source after an explicit action using its s
   sources = { sources: [{ sourceId, rootFingerprint: selection.rootFingerprint, displayName: repository.displayName, revision: "3", expectedRevision: "3", actionId, state: "pending" }] };
   const user = await openRepositories();
   expect(calls("resume_plugin_repository")).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: "Read repository sources" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: `Continue original trust refresh for ${repository.displayName}` })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Refresh repository sources" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: `Continue pending trust update for ${repository.displayName}` })).toBeEnabled());
   expect(calls("resume_plugin_repository")).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: `Continue original trust refresh for ${repository.displayName}` }));
+  await user.click(screen.getByRole("button", { name: `Continue pending trust update for ${repository.displayName}` }));
   await screen.findByRole("region", { name: "Review repository: Synthetic repository" });
   expect(calls("resume_plugin_repository")[0][1]).toEqual({ request: { sourceId, expectedRevision: "3", actionId } });
   expect(calls("select_plugin_repository")).toHaveLength(0);
@@ -294,9 +294,9 @@ it.each(["source", "capture", "revision"])("refuses a trust acknowledgement with
     return { ...view, revision: request.expectedRevision };
   } });
   const user = await openRepositories();
-  await user.click(screen.getByRole("button", { name: "Choose trust root and repository folder" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I have checked this root fingerprint/ }));
-  await user.click(screen.getByRole("button", { name: "Verify and refresh repository trust" }));
+  await user.click(screen.getByRole("button", { name: "Select trust root and repository folder" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I have verified this root fingerprint/ }));
+  await user.click(screen.getByRole("button", { name: "Verify and update repository trust" }));
   expect(await screen.findByRole("button", { name: "Retry original operation" })).toBeEnabled();
   expect(screen.queryByRole("region", { name: "Review repository: Synthetic repository" })).not.toBeInTheDocument();
   expect(screen.getByText(selection.rootFingerprint)).toBeInTheDocument();
@@ -312,9 +312,9 @@ it.each(["missing-member", "wrong-origin"])("keeps installation unconfirmed afte
   const user = await openRepositories();
   await reviewRepository(user);
   await user.click(packageCheckbox("signed-tools", "2.0.0"));
-  await user.click(screen.getByRole("button", { name: "Approve and install repository packages" }));
+  await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
   expect(await screen.findByRole("button", { name: "Retry original operation" })).toBeEnabled();
-  expect(screen.queryByText(/The requested change is saved/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Changes saved/)).not.toBeInTheDocument();
   expect(screen.getByRole("region", { name: "Review repository: Synthetic repository" })).toBeInTheDocument();
   expect(packageCheckbox("signed-tools", "2.0.0")).toBeChecked();
   expect(packageCheckbox("signed-tools", "2.0.0")).toBeDisabled();

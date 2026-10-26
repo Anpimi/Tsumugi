@@ -98,7 +98,7 @@ it.each(["tmx", "tbx"] as const)("keeps the explicitly selected %s report throug
   await focusAndConfirm(); // Native chooser returns focus while its file read is still pending.
   await act(async () => selected.finish());
   expect(await screen.findByText(selected.file)).toBeInTheDocument();
-  expect(screen.queryByText(/This preview is no longer current/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/This preview is outdated/)).not.toBeInTheDocument();
   const reportQuery = currentReads().client.getQueryCache().findAll({ predicate: query =>
     query.queryKey[2] === `${format}-exchange-preview` && query.state.status === "success" })[0];
   expect(reportQuery?.state.isInvalidated).toBe(false);
@@ -109,7 +109,7 @@ it.each(["tmx", "tbx"] as const)("keeps the explicitly selected %s report throug
   const originalReadCount = mutableRead.mock.calls.length;
   await focusAndConfirm(); // The same session and sequence remain current after success.
   expect(screen.getByText(selected.file)).toBeInTheDocument();
-  expect(screen.queryByText(/This preview is no longer current/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/This preview is outdated/)).not.toBeInTheDocument();
   expect(reportQuery?.state.isInvalidated).toBe(false);
   await waitFor(() => expect(mutableRead.mock.calls.length).toBeGreaterThan(originalReadCount));
   expect(selected.preview).toHaveBeenCalledTimes(1);

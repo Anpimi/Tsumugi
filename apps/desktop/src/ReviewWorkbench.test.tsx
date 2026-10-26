@@ -506,7 +506,7 @@ it("requires the original batch confirmation and keeps scoped stop available whi
     expect(registry.dispatch("review.approve-batch", scope)).toBe(true);
     expect(registry.dispatch("review.approve-batch", scope)).toBe(false);
   });
-  const dialog = screen.getByRole("dialog", { name: "Approve these fixed entries?" });
+  const dialog = screen.getByRole("dialog", { name: "Approve these selected entries?" });
   expect(within(dialog).getAllByRole("listitem").map(item => item.textContent)).toEqual(["zh-CN: first", "zh-CN: second"]);
   expect(registry.describe("review.approve-batch", scope)?.availability).toMatchObject({ enabled: false, reason: "hidden" });
   expect(registry.dispatch("review.run-checks", scope)).toBe(false);
@@ -1611,7 +1611,7 @@ it("shows historical check findings and exception reasons", async () => {
   await user.click(screen.getByText("Decision and check history"));
   expect(await screen.findByText("Plugin check reported: marker-mismatch")).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
-  expect(screen.getByText(/Deterministic check run · smapi-prebuild-1 · Earlier evidence/)).toBeVisible();
+  expect(screen.getByText(/Automated check run · smapi-prebuild-1 · Earlier evidence/)).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toHaveTextContent("Earlier evidence");
 });
 

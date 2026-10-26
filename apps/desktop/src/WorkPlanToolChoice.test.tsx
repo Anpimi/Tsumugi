@@ -43,7 +43,7 @@ function provider(number: number) { return within(screen.getByRole("group", { na
 async function choose(user: ReturnType<typeof userEvent.setup>, number: number, view = toolQueryView, sense = "term", target = "zh-CN") {
   const row = provider(number);
   await user.selectOptions(row.getByRole("combobox", { name: "Reference package" }), `${view.binding.capability.provider.packageDigest}:${view.resourceId}`);
-  await user.selectOptions(row.getByRole("combobox", { name: "Execution environment" }), view.environmentDigest);
+  await user.selectOptions(row.getByRole("combobox", { name: "Runtime environment" }), view.environmentDigest);
   await row.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
   await user.selectOptions(row.getByRole("combobox", { name: "Target language" }), target);
   await user.click(row.getByRole("checkbox", { name: sense === "term" ? /^Term 👩🏽‍💻/ : /^Other/ }));
@@ -57,7 +57,7 @@ it("requires explicit tool/environment choices and captures fixed options withou
   await user.click(screen.getByRole("checkbox", { name: "Include read-only reference tools" }));
   await screen.findByRole("option", { name: /philosophy.*agent-query-tool/ });
   expect(provider(1).getByRole("combobox", { name: "Reference package" })).toHaveValue("");
-  expect(provider(1).getByRole("combobox", { name: "Execution environment" })).toHaveValue("");
+  expect(provider(1).getByRole("combobox", { name: "Runtime environment" })).toHaveValue("");
   expect(() => ref.current?.capture()).toThrow();
   await choose(user, 1);
   await waitFor(() => expect(ref.current?.capture()).toMatchObject({ maxInvocations: 10,
@@ -143,7 +143,7 @@ it("does not attach a removed row's late metadata to a remaining provider or a n
   await user.click(screen.getByRole("checkbox", { name: "Include read-only reference tools" }));
   await screen.findByRole("option", { name: /reference-alternative/ });
   await user.selectOptions(provider(1).getByRole("combobox", { name: "Reference package" }), `${toolQueryPackage.packageDigest}:${toolQueryView.resourceId}`);
-  await user.selectOptions(provider(1).getByRole("combobox", { name: "Execution environment" }), toolQueryView.environmentDigest);
+  await user.selectOptions(provider(1).getByRole("combobox", { name: "Runtime environment" }), toolQueryView.environmentDigest);
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_plugin_tool")).toBe(true));
   await user.click(screen.getByRole("button", { name: "Add reference provider" }));
   await choose(user, 2, alternativeView, "other", "ja");

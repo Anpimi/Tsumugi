@@ -89,17 +89,17 @@ it.each([
   const user = userEvent.setup();
   render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
-  await user.click(await screen.findByRole("button", { name: "Uninstall this installation" }));
-  await user.click(screen.getByRole("checkbox", { name: /I approve removing this exact installation/ }));
-  await user.click(screen.getByRole("button", { name: "Confirm installation removal" }));
+  await user.click(await screen.findByRole("button", { name: "Uninstall package" }));
+  await user.click(screen.getByRole("checkbox", { name: /I approve uninstalling this package/ }));
+  await user.click(screen.getByRole("button", { name: "Confirm uninstall" }));
   await screen.findByRole("button", { name: "Retry original operation" });
   expect(onBusy).toHaveBeenLastCalledWith(true);
-  expect(screen.queryByRole("button", { name: "Review current state" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Choose plugin folder" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Refresh current state" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Select plugin folder" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Keep current approval and installation" })).toBeDisabled();
   const laterInstall = { ...installed.packages[0], originalInstallAction: "00000000-0000-4000-8000-000000000002" };
   current = { ...installed, settingsRevision: "9", packages: [laterInstall] };
-  await user.click(screen.getByRole("button", { name: "Read current state" }));
+  await user.click(screen.getByRole("button", { name: "Refresh state" }));
   await user.click(screen.getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Retry original operation" }));
@@ -110,7 +110,7 @@ it.each([
   expect(calls[1][1].request.expectedRevision).toBe("2");
   expect(calls[1][1].request.originalInstallAction).toBe(installed.packages[0].originalInstallAction);
   expect(screen.getByRole("button", { name: "Revoke approval" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Uninstall this installation" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Uninstall package" })).toBeDisabled();
   expect(onBusy).toHaveBeenLastCalledWith(false);
 });
 
@@ -124,17 +124,17 @@ it("keeps a reviewed request fixed across refresh and permits review after a pre
   const user = userEvent.setup();
   render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
-  await user.click(await screen.findByRole("button", { name: "Uninstall this installation" }));
-  await user.click(screen.getByRole("checkbox", { name: /I approve removing this exact/ }));
+  await user.click(await screen.findByRole("button", { name: "Uninstall package" }));
+  await user.click(screen.getByRole("checkbox", { name: /I approve uninstalling this package/ }));
   current = { ...withdrawn, settingsRevision: "7" };
-  await user.click(screen.getByRole("button", { name: "Read current state" }));
-  await user.click(screen.getByRole("button", { name: "Confirm installation removal" }));
-  await screen.findByRole("button", { name: "Review current state" });
+  await user.click(screen.getByRole("button", { name: "Refresh state" }));
+  await user.click(screen.getByRole("button", { name: "Confirm uninstall" }));
+  await screen.findByRole("button", { name: "Refresh current state" });
   expect(invoke.mock.calls.find(([command]) => command === "uninstall_plugin_package")?.[1].request.expectedRevision).toBe("2");
   expect(onBusy).toHaveBeenLastCalledWith(false);
-  await user.click(screen.getByRole("button", { name: "Review current state" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Uninstall this installation" })).toBeEnabled());
-  expect(screen.queryByRole("checkbox", { name: /I approve removing this exact/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Refresh current state" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Uninstall package" })).toBeEnabled());
+  expect(screen.queryByRole("checkbox", { name: /I approve uninstalling this package/ })).not.toBeInTheDocument();
 });
 
 it("offers approval revocation when installed bytes are missing or need recovery", async () => {
@@ -147,15 +147,15 @@ it("offers approval revocation when installed bytes are missing or need recovery
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   expect(await screen.findByRole("button", { name: "Revoke approval" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Uninstall this installation" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Read current state" }));
+  expect(screen.getByRole("button", { name: "Uninstall package" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Refresh state" }));
   // The following read still uses a real inventory shape with approval only.
   invoke.mockImplementation(async (command: string) => {
     if (command === "read_plugin_inventory") return { ...installed, packages: [] };
     throw new Error(command);
   });
-  await user.click(screen.getByRole("button", { name: "Read current state" }));
-  await screen.findByText(/is approved, but its package is not installed/);
+  await user.click(screen.getByRole("button", { name: "Refresh state" }));
+  await screen.findByText(/is approved, but its files are not installed/);
   expect(screen.getByRole("button", { name: "Revoke approval" })).toBeEnabled();
 });
 
@@ -172,13 +172,13 @@ it("reconstructs the original removal fields from a retained observation without
   const user = userEvent.setup();
   render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
-  const summary = await screen.findByText("Previous installation removals", { selector: "summary" });
+  const summary = await screen.findByText("Previous uninstall records", { selector: "summary" });
   await user.click(summary);
-  expect(screen.getByText("This original removal needs confirmation.")).toBeInTheDocument();
+  expect(screen.getByText("This uninstall needs confirmation.")).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([command]) => command === "uninstall_plugin_package")).toHaveLength(0);
-  await user.click(screen.getByRole("button", { name: "Review and confirm original removal" }));
-  await user.click(screen.getByRole("checkbox", { name: /I approve continuing this original removal/ }));
-  await user.click(screen.getByRole("button", { name: "Confirm original removal" }));
+  await user.click(screen.getByRole("button", { name: "Review and confirm removal" }));
+  await user.click(screen.getByRole("checkbox", { name: /I approve continuing this removal/ }));
+  await user.click(screen.getByRole("button", { name: "Confirm removal" }));
   await screen.findByText(i18n.t("plugins.installationRemoved"));
   expect(invoke.mock.calls.find(([command]) => command === "uninstall_plugin_package")?.[1].request).toEqual(original);
 });
@@ -201,15 +201,15 @@ it("retains an ordinary partially approved installation when the backend require
   const user = userEvent.setup();
   render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
-  await user.click(await screen.findByRole("button", { name: "Choose plugin folder" }));
-  await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));
+  await user.click(await screen.findByRole("button", { name: "Select plugin folder" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I trust this local package/ }));
   await user.click(screen.getByRole("button", { name: "Approve and install" }));
   await screen.findByText(i18n.t("plugins.pending"));
   expect(screen.queryByText(i18n.t("plugins.cleanupPending"))).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Review current state" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Choose plugin folder" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Refresh current state" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Select plugin folder" })).toBeDisabled();
   expect(onBusy).toHaveBeenLastCalledWith(true);
-  await user.click(screen.getByRole("button", { name: "Read current state" }));
+  await user.click(screen.getByRole("button", { name: "Refresh state" }));
   await user.click(screen.getByRole("button", { name: "Close" }));
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Retry original operation" }));

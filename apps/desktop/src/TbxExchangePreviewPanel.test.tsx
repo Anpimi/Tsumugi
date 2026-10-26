@@ -70,7 +70,7 @@ it("opens the chooser only on click and pages concepts and term candidates witho
   expect(preview).toHaveBeenCalledWith({ ...context, locale: "zh-CN" });
   expect(screen.getByText(/Showing concepts 1–20 of 21/)).toBeInTheDocument();
   expect(screen.queryByText("Source 1")).not.toBeInTheDocument();
-  await user.click(screen.getAllByRole("button", { name: "Inspect all term candidates" })[0]);
+  await user.click(screen.getAllByRole("button", { name: "View all term candidates" })[0]);
   expect(screen.getByText("Source 1")).toBeInTheDocument();
   expect(screen.queryByText("Source 21")).not.toBeInTheDocument();
   expect(screen.getByText(/Language section 1, term section 1 ·/)).toBeInTheDocument();
@@ -96,21 +96,21 @@ it("keeps Unicode whitespace, null, empty text, literal statuses and direct sour
   render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TBX file to preview" }));
   expect(await screen.findByText("dictionary.tbx")).toBeInTheDocument();
-  expect(screen.getByText(/More than one project source language or usable term candidate/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Inspect all term candidates" }));
+  expect(screen.getByText(/Multiple source language sections or usable term candidates/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "View all term candidates" }));
   const original = screen.getByText(/日 本/);
   expect(original.textContent).toBe(raw);
   expect(original).toHaveStyle({ whiteSpace: "pre-wrap" });
-  expect(screen.getAllByText("Not supplied").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("Not provided").length).toBeGreaterThan(0);
   expect(screen.getByText("Empty text")).toBeInTheDocument();
-  expect(screen.getByText(/Term limitations: Missing term/)).toBeInTheDocument();
+  expect(screen.getByText(/Term issues: Missing term/)).toBeInTheDocument();
   expect(screen.queryByText("Direct source line")).not.toBeInTheDocument();
-  await user.click(screen.getAllByRole("button", { name: "Original usage statuses and direct term sources" })[0]);
+  await user.click(screen.getAllByRole("button", { name: "File usage statuses and direct term sources" })[0]);
   expect(screen.getAllByText("preferred").length).toBeGreaterThanOrEqual(2);
   expect(screen.getAllByText("unrecognized").length).toBeGreaterThanOrEqual(2);
   expect(screen.getByText(/Direct source/).textContent).toBe("Direct source\n  line");
   expect(screen.getByText(/Unknown usage status/)).toBeInTheDocument();
-  expect(screen.getByText(/Repeated usage status/)).toBeInTheDocument();
+  expect(screen.getByText(/Duplicate usage status/)).toBeInTheDocument();
 });
 
 it("labels license, schema hints, quality and document language honestly, with metadata on demand", async () => {
@@ -118,17 +118,17 @@ it("labels license, schema hints, quality and document language honestly, with m
   render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TBX file to preview" }));
   expect(await screen.findByText("dictionary.tbx")).toBeInTheDocument();
-  expect(screen.getByText(/License, source permission, provenance, and term quality have not been verified/)).toBeInTheDocument();
-  expect(screen.getByText(/document language is reported as file metadata/)).toBeInTheDocument();
-  expect(screen.getByText(/No schema link was followed or executed/)).toBeInTheDocument();
+  expect(screen.getByText(/License, usage rights, provenance, and term quality are unverified/)).toBeInTheDocument();
+  expect(screen.getByText(/Reported from the file metadata/)).toBeInTheDocument();
+  expect(screen.getByText(/External schemas are never fetched or executed/)).toBeInTheDocument();
   expect(screen.getByText("de-DE")).toBeInTheDocument();
-  expect(screen.getByText(/Unfollowed schema hint/)).toBeInTheDocument();
+  expect(screen.getByText(/Ignored schema hint/)).toBeInTheDocument();
   expect(screen.getByText(/1 additional occurrence/)).toBeInTheDocument();
   expect(screen.queryByText("A multilingual glossary")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "File titles and source descriptions (unverified)" }));
   expect(screen.getByText("A multilingual glossary")).toBeInTheDocument();
   expect(screen.getByText("Contributor statement, unverified")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Original location samples (1)" }));
+  await user.click(screen.getByRole("button", { name: "Sample locations (1)" }));
   expect(screen.getByText(/byte 23 · concept outside a concept/)).toBeInTheDocument();
 });
 
@@ -141,11 +141,11 @@ it("distinguishes an empty file from chooser cancellation, a failed read and exp
   const choose = screen.getByRole("button", { name: "Choose TBX file to preview" });
   await user.click(choose);
   expect(await screen.findByText("The file contains no concepts.")).toBeInTheDocument();
-  expect(screen.getByText("No unmapped categories were reported by this restricted parser.")).toBeInTheDocument();
+  expect(screen.getByText("No unmapped items were reported by this preview parser.")).toBeInTheDocument();
   await user.click(choose);
-  expect(await screen.findByText("No file was selected. Nothing was saved.")).toBeInTheDocument();
+  expect(await screen.findByText("No file selected. Nothing was saved.")).toBeInTheDocument();
   await user.click(choose);
-  expect(await screen.findByRole("alert")).toHaveTextContent("The TBX file could not be previewed");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not preview the TBX file");
   await user.click(choose);
   expect(await screen.findByText("dictionary.tbx")).toBeInTheDocument();
   expect(preview).toHaveBeenCalledTimes(4);
@@ -161,12 +161,12 @@ it("pages loss categories locally and keeps complete counts and original pointer
   const user = userEvent.setup();
   render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TBX file to preview" }));
-  expect(await screen.findByText(/Showing loss categories 1–20 of 21/)).toBeInTheDocument();
+  expect(await screen.findByText(/Showing unmapped categories 1–20 of 21/)).toBeInTheDocument();
   expect(screen.queryByText("field-21")).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Next loss categories" }));
+  await user.click(screen.getByRole("button", { name: "Next unmapped categories" }));
   expect(screen.getByText("field-21")).toBeInTheDocument();
   expect(screen.getByText(/20 additional occurrence/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Original location samples (1)" }));
+  await user.click(screen.getByRole("button", { name: "Sample locations (1)" }));
   expect(screen.getByText(/byte 99 · concept 1/)).toBeInTheDocument();
   expect(preview).toHaveBeenCalledTimes(1);
 });
@@ -203,7 +203,7 @@ it("hides old reports on semantic and exact invalidation, hiding and remounting"
   expect(record).toBeDefined();
   await act(async () => { await reads!.client.invalidateQueries({ queryKey: record.queryKey, exact: true, refetchType: "none" }); });
   expect(screen.queryByText("dictionary.tbx")).not.toBeInTheDocument();
-  expect(screen.getByText(/This preview is no longer current/)).toBeInTheDocument();
+  expect(screen.getByText(/This preview is outdated/)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Choose TBX file to preview" }));
   expect(await screen.findByText("dictionary.tbx")).toBeInTheDocument();
   await act(async () => reads!.invalidate(["resources"]));
@@ -222,9 +222,9 @@ it("keeps the native picker gate closed after stopping a wait, including panel r
   const user = userEvent.setup();
   const view = render(<Shell />);
   await user.click(screen.getByRole("button", { name: "Choose TBX file to preview" }));
-  await user.click(screen.getByRole("button", { name: "Stop waiting for TBX preview" }));
+  await user.click(screen.getByRole("button", { name: "Cancel TBX preview wait" }));
   expect(screen.getByRole("button", { name: "Choose TBX file to preview" })).toBeDisabled();
-  expect(screen.getByText(/original file chooser is still open/)).toBeInTheDocument();
+  expect(screen.getByText(/file chooser is still open/)).toBeInTheDocument();
   view.rerender(<Shell mounted={false} />);
   view.rerender(<Shell />);
   expect(screen.getByRole("button", { name: "Choose TBX file to preview" })).toBeDisabled();
@@ -244,7 +244,7 @@ it("rejects a wrong profile or association and never treats that report as curre
   const choose = screen.getByRole("button", { name: "Choose TBX file to preview" });
   for (let count = 1; count <= 3; count++) {
     await user.click(choose);
-    expect(await screen.findByRole("alert")).toHaveTextContent("The TBX file could not be previewed");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not preview the TBX file");
     expect(screen.queryByText("dictionary.tbx")).not.toBeInTheDocument();
     expect(preview).toHaveBeenCalledTimes(count);
   }
@@ -275,7 +275,7 @@ it("leaves the existing glossary draft intact when the preview fails in the reso
   await user.type(screen.getByRole("textbox", { name: "Preferred target form" }), "稿");
   await user.click(screen.getByRole("tab", { name: "Resource updates" }));
   await user.click(screen.getByRole("button", { name: "Choose TBX file to preview" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("The TBX file could not be previewed");
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not preview the TBX file");
   await user.click(screen.getByRole("tab", { name: "Terms" }));
   expect(screen.getByRole("textbox", { name: "Source term" })).toHaveValue("Draft source");
   expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("稿");

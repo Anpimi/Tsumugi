@@ -193,7 +193,7 @@ it("keeps a confirmed save and newer B after the current target read fails, then
   target = { ...target, currentDecision: receipt }; failTarget = true;
   await act(async () => saved.resolve(receipt));
   const alert = await screen.findByRole("alert");
-  expect(screen.getByText("The action was recorded. Earlier evidence remains in project history.")).toBeVisible();
+  expect(screen.getByText("Decision saved. Earlier records remain in project history.")).toBeVisible();
   expect(reason).toHaveValue("B");
   expect(owner.current().pending).toBeNull();
   expect(owner.current().selected?.currentDecision?.decisionId).toBe(receipt.decisionId);
@@ -205,7 +205,7 @@ it("keeps a confirmed save and newer B after the current target read fails, then
   expect(calls("read_review_summary_page")).toHaveLength(summaries);
   expect(calls("write_review_decision")).toHaveLength(1);
   expect(reason).toHaveValue("B");
-  expect(screen.getByText("The action was recorded. Earlier evidence remains in project history.")).toBeVisible();
+  expect(screen.getByText("Decision saved. Earlier records remain in project history.")).toBeVisible();
 });
 
 it.each(["basis", "failure", "refresh", "hidden", "retired", "replaced"] as const)("does not dispatch a fresh action after its identity wait loses %s proof", async change => {
@@ -297,7 +297,7 @@ it("keeps the original unknown request retryable while the current target query 
   expect(calls("write_review_decision")).toHaveLength(2);
   expect(calls("write_review_decision")[1][1].request).toEqual(request);
   expect(reason).toHaveValue("New B");
-  expect(screen.getByText("The action was recorded. Earlier evidence remains in project history.")).toBeVisible();
+  expect(screen.getByText("Decision saved. Earlier records remain in project history.")).toBeVisible();
 });
 
 it("keeps dirty leave recovery available while only a current target query is waiting", async () => {

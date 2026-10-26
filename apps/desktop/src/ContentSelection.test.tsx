@@ -52,12 +52,12 @@ function capture(scopeId = originalScope): ReviewScopeCapture {
     readVersion: "fixed-view", units: members.map(row => ({ unitId: row.unitId, expectedBasis: row.basis, expectedDecisionId: null })) };
 }
 function calls(command: string) { return invoke.mock.calls.filter(([name]) => name === command); }
-function toolbar() { return screen.getByRole("group", { name: "Selected content range" }); }
+function toolbar() { return screen.getByRole("group", { name: "Selected entry range" }); }
 async function open() {
   const result = render(<Harness project={project} />);
   await userEvent.click(screen.getByRole("button", { name: "Translations" }));
-  await userEvent.click(screen.getByText("Find and range actions", { exact: true }));
-  await userEvent.click(screen.getByText("Range actions (0 selected)", { exact: true }));
+  await userEvent.click(screen.getByText("Search and batch selection", { exact: true }));
+  await userEvent.click(screen.getByText("Batch selection (0 selected)", { exact: true }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Select all matching entries across pages" })).toBeEnabled());
   return result;
 }
@@ -92,15 +92,15 @@ it("captures all 51 Core members, excludes page 2, and keeps original bases when
   await open(); await selectAll();
   expect(selection()?.capture.units).toEqual(capture().units);
   expect(within(toolbar()).getByText(/51 selected · 0 excluded/)).toBeVisible();
-  expect(screen.queryByRole("checkbox", { name: "Select a-51 for range actions" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "Select a-51 for batch actions" })).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Next page" }));
-  const last = await screen.findByRole("checkbox", { name: "Select a-51 for range actions" });
+  const last = await screen.findByRole("checkbox", { name: "Select a-51 for batch actions" });
   await waitFor(() => expect(last).toBeEnabled()); expect(last).toBeChecked(); await userEvent.click(last);
   const confirmed = selection(); expect(confirmed?.excluded).toEqual([rows[50].unitId]);
-  await userEvent.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "b");
+  await userEvent.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "b");
   await userEvent.click(screen.getByRole("button", { name: "Find" }));
-  expect(await screen.findByRole("checkbox", { name: "Select b-51 for range actions" })).toBeDisabled();
-  expect(selection()).toBe(confirmed); expect(within(toolbar()).getByText(/50 selected · 1 excluded.*Fixed search: All entries/)).toBeVisible();
+  expect(await screen.findByRole("checkbox", { name: "Select b-51 for batch actions" })).toBeDisabled();
+  expect(selection()).toBe(confirmed); expect(within(toolbar()).getByText(/50 selected · 1 excluded.*Search filter: All entries/)).toBeVisible();
   expect(calls("capture_review_scope")).toHaveLength(1);
   await selectAll(); expect(selection()?.capture.units).toEqual(capture(otherScope).units);
   expect(selection()?.excluded).toEqual([]); expect(selection()?.capture.query).toBe("b");
@@ -108,7 +108,7 @@ it("captures all 51 Core members, excludes page 2, and keeps original bases when
 
 it("retains a confirmed set through consumer unmount and transfers exactly its IDs and exclusions after explicit AI confirmation", async () => {
   const result = await open(); await selectAll();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Select a-1 for range actions" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "Select a-1 for batch actions" }));
   const confirmed = selection();
   result.rerender(<Harness project={project} consumer={false} />);
   result.rerender(<Harness project={project} />);
@@ -117,7 +117,7 @@ it("retains a confirmed set through consumer unmount and transfers exactly its I
   await userEvent.click(screen.getByRole("button", { name: "Prepare AI for selected entries" }));
   expect(transferred).not.toHaveBeenCalled();
   const dialog = screen.getByRole("dialog", { name: "Prepare AI for selected entries" });
-  expect(within(dialog).getByText(/Replace the AI form's current 2 selected entries/)).toBeVisible();
+  expect(within(dialog).getByText(/Replace the 2 entries \(zh-CN\) currently selected in AI preparation/)).toBeVisible();
   await userEvent.click(within(dialog).getByRole("button", { name: "Use this range in AI preparation" }));
   expect(transferred).toHaveBeenCalledExactlyOnceWith(confirmed, 7);
   expect(calls("prepare_work_plan")).toHaveLength(0); expect(calls("start_ai_translation")).toHaveLength(0);
@@ -129,10 +129,10 @@ it("preserves typed search B while capture A is pending and rejects a semantic c
   holdCapture = () => new Promise(done => { resolve = done; });
   await userEvent.click(screen.getByRole("button", { name: "Select all matching entries across pages" }));
   await waitFor(() => expect(calls("capture_review_scope")).toHaveLength(2));
-  await userEvent.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "b");
+  await userEvent.type(screen.getByRole("textbox", { name: "Search by key, source text, or translation" }), "b");
   await act(async () => { reads.invalidate(["source"]); resolve(capture()); });
   await waitFor(() => expect(screen.getByRole("alert")).toBeVisible());
-  expect(screen.getByRole("textbox", { name: "Find by key, source or translation" })).toHaveValue("b");
+  expect(screen.getByRole("textbox", { name: "Search by key, source text, or translation" })).toHaveValue("b");
   expect(selection()).toBe(previous); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -155,12 +155,12 @@ it("opens the production AI workspace with the confirmed cross-page set and no p
   await waitFor(() => expect(screen.getByRole("button", { name: "Find" })).toBeEnabled());
   await userEvent.click(screen.getByRole("button", { name: "Find" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Select all matching entries across pages" })).toBeEnabled());
-  await selectAll(); await userEvent.click(screen.getByRole("checkbox", { name: "Select a-1 for range actions" }));
+  await selectAll(); await userEvent.click(screen.getByRole("checkbox", { name: "Select a-1 for batch actions" }));
   await userEvent.click(screen.getByRole("button", { name: "Prepare AI for selected entries" }));
   const dialog = screen.getByRole("dialog", { name: "Prepare AI for selected entries" });
   await userEvent.click(within(dialog).getByRole("button", { name: "Use this range in AI preparation" }));
   expect(await screen.findByRole("heading", { name: i18n.t("ai.scope", { count: 50 }) })).toBeVisible();
-  expect(screen.queryByRole("group", { name: "Selected content range" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Selected entry range" })).not.toBeInTheDocument();
   expect(calls("capture_review_scope")).toHaveLength(1);
   for (const command of ["preview_ai_translation", "prepare_work_plan", "start_ai_translation", "start_work_plan"]) expect(calls(command)).toHaveLength(0);
 });

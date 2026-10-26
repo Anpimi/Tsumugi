@@ -132,7 +132,7 @@ it("invalidates all captured member material and consent when an independently s
   const consent = screen.getByRole("checkbox", { name: i18n.t("ai.team.consent") }); expect(consent).not.toBeChecked(); await user.click(consent);
   connections.snapshot.revision = "2"; connections.basis.revision = "2"; connections.snapshot.profiles[0].revision = "2";
   connections.references[0].revision = "2"; connections.references[0].digest = "b".repeat(64);
-  await user.click(member.getByRole("button", { name: "Read current connections" }));
+  await user.click(member.getByRole("button", { name: "Refresh connections" }));
   await waitFor(() => expect(owner.current().preparedPlan).toBeNull()); expect(owner.current().consent).toBe(false);
   expect(owner.current().teamDraft!.members[0].config.connectionProfile?.revision).toBe("1");
   expect(owner.current().teamDraft!.members[0].role).toBe("Translate and revisit original objections.");

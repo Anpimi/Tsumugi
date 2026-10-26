@@ -75,7 +75,7 @@ it("offers a saved correction by entry name and reaches the real immutable-candi
   expect(vi.mocked(strategyCommands.capture).mock.calls[0][0].capture).toMatchObject({ basis: resourceWire.responses.correctionBasis.basis,
     reason: "Preserve the extracted scene", exceptions: "Only this project and target language", sourceContext: { extracted: true, inferred: false, neighbors: false } });
   await screen.findByText(/Saved candidate: Preserve the extracted scene/);
-  expect(screen.getByText("The captured strategy version was saved. Any edits made during saving are kept separately.")).toBeVisible();
+  expect(screen.getByText(enUS.strategy.saved)).toBeVisible();
   expect(screen.getByRole("heading", { name: enUS.strategy.suite })).toBeVisible();
   expect(screen.queryByRole("textbox", { name: /selectionId|candidateId|unitId/i })).not.toBeInTheDocument();
 });
@@ -92,10 +92,10 @@ it("keeps newer text visible and exposes exact recovery after an uncertain candi
 });
 
 const rejectedGateCases = [
-  { language: "en-US", reason: "strategy-checks-incomplete", message: "The future default was not changed because some comparison results are missing independent QA. Complete the required QA for both slots of every evaluation entry, then try again." },
-  { language: "en-US", reason: "strategy-no-improvement", message: "The future default was not changed: none of the saved holdout comparisons prefers the candidate. Review the results and notes. Keep the current default unless the evidence supports preferring the candidate." },
-  { language: "zh-CN", reason: "strategy-checks-incomplete", message: "未来默认策略未更改：部分对比结果缺少独立 QA。请为每个评估条目的两个槽位完成必需 QA，再尝试采用。" },
-  { language: "zh-CN", reason: "strategy-no-improvement", message: "未来默认策略未更改：已保存的留出项比较均未偏好候选。请复核结果与备注；只有证据支持候选更好时再记录相应比较，否则保留当前默认值。" },
+  { language: "en-US", reason: "strategy-checks-incomplete", message: "The default for future drafts was not updated because some comparison results are still missing QA checks. Run the required QA checks on both sides of every evaluation entry, then try again." },
+  { language: "en-US", reason: "strategy-no-improvement", message: "The default for future drafts was not updated because none of the saved holdout comparisons favored the candidate. Review the results and notes—keep the current default unless the holdout comparisons show the candidate performs better." },
+  { language: "zh-CN", reason: "strategy-checks-incomplete", message: "未更新后续草稿的默认策略：部分对比结果尚未完成 QA 检查。请先为每个评估条目的两侧结果完成必需的 QA 检查后再试。" },
+  { language: "zh-CN", reason: "strategy-no-improvement", message: "未更新后续草稿的默认策略：已保存的留出集对比中没有偏向候选策略的结果。请复核对比结果与备注；除非留出集结果证明候选策略更优，否则请维持当前默认设置。" },
 ];
 it.each(rejectedGateCases)("explains a confirmed strategy gate $reason in $language", async ({ language, reason, message }) => {
   const user = await fill(); await act(async () => { await i18n.changeLanguage(language); });

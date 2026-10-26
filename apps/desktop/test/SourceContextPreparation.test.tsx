@@ -49,7 +49,7 @@ it("starts with all source groups off independently of existing term and human-c
   expect(sameAiConfig(defaultAiConfig, { ...defaultAiConfig, shareTerms: true })).toBe(false);
   expect(sameAiConfig(defaultAiConfig, { ...defaultAiConfig, shareContext: true })).toBe(false);
   render(<Choice />);
-  for (const name of ["Share extracted source facts", "Share source inferences and their rationale", "Share adjacent original text"])
+  for (const name of ["Include extracted source facts", "Include source inferences and rationale", "Include adjacent source lines"])
     expect(screen.getByRole("checkbox", { name })).not.toBeChecked();
   expect(screen.getByText(i18n.t("sourceContext.notSelected"))).toBeInTheDocument();
   expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
@@ -58,12 +58,12 @@ it("starts with all source groups off independently of existing term and human-c
 it("selects extracted facts, inferences and neighbors separately without changing other groups", async () => {
   const user = userEvent.setup();
   render(<Choice />);
-  const extracted = screen.getByRole("checkbox", { name: "Share extracted source facts" });
-  const inferred = screen.getByRole("checkbox", { name: "Share source inferences and their rationale" });
-  const neighbors = screen.getByRole("checkbox", { name: "Share adjacent original text" });
+  const extracted = screen.getByRole("checkbox", { name: "Include extracted source facts" });
+  const inferred = screen.getByRole("checkbox", { name: "Include source inferences and rationale" });
+  const neighbors = screen.getByRole("checkbox", { name: "Include adjacent source lines" });
   await user.click(inferred);
   expect(inferred).toBeChecked(); expect(extracted).not.toBeChecked(); expect(neighbors).not.toBeChecked();
-  expect(screen.getByText(/Additional source groups: 1/)).toBeInTheDocument();
+  expect(screen.getByText(/Selected categories: 1/)).toBeInTheDocument();
   await user.click(neighbors);
   expect(inferred).toBeChecked(); expect(neighbors).toBeChecked(); expect(extracted).not.toBeChecked();
   await user.click(inferred);
@@ -73,9 +73,9 @@ it("selects extracted facts, inferences and neighbors separately without changin
 it("keeps invalid budget input visible and rejects nonintegers and out-of-range values", async () => {
   const user = userEvent.setup();
   render(<Choice />);
-  await user.click(screen.getByRole("checkbox", { name: "Share extracted source facts" }));
-  const bytes = screen.getByRole("spinbutton", { name: "Source context budget (encoded bytes)" });
-  const items = screen.getByRole("spinbutton", { name: "Maximum source context entries" });
+  await user.click(screen.getByRole("checkbox", { name: "Include extracted source facts" }));
+  const bytes = screen.getByRole("spinbutton", { name: "Source context byte limit (UTF-8)" });
+  const items = screen.getByRole("spinbutton", { name: "Maximum source context items" });
   await user.clear(bytes);
   expect(bytes).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByText(i18n.t("sourceContext.invalidBudget"))).toBeInTheDocument();
@@ -116,7 +116,7 @@ it("shows original fact origins, inference rationale and local source ranges in 
   expect(within(preview).getByText("Mira 👩🏽‍🚀")).toBeInTheDocument();
   expect(within(preview).getByText("captain")).toBeInTheDocument();
   expect(within(preview).getByText(/Extracted from source/)).toBeInTheDocument();
-  expect(within(preview).getByText(/Inference, not a confirmed fact/)).toBeInTheDocument();
+  expect(within(preview).getByText(/Inferred \(unconfirmed\)/)).toBeInTheDocument();
   expect(within(preview).getByText("Inference rationale: the dialogue addresses the captain")).toBeInTheDocument();
   expect(within(preview).getAllByText("synthetic-source · utf8-byte range [0, 4)")).toHaveLength(2);
 });
@@ -128,14 +128,14 @@ it("shows adjacent original position and separately counts excluded, byte-limite
   capture.value.observations = { ...capture.value.observations, knownFacts: 7, neighborOccurrences: 2 };
   capture.value.omissions = { extracted: 3, inferred: 2, neighbors: 1, notSelected: 3, byteBudget: 2, itemLimit: 1, samples: [{kind:"fact",blockIndex:4,factIndex:1,reason:"byte-budget"},{kind:"neighbor",occurrenceId:id(14),reason:"not-selected"}] };
   render(<SourceContextPreview capture={capture} />);
-  expect(screen.getByText("Original adjacent before and after occurrences of this entry")).toBeInTheDocument();
+  expect(screen.getByText("Source line appearing both before and after occurrences of this entry")).toBeInTheDocument();
   expect(screen.getByText(i18n.t("sourceContext.excluded", { count: 3 }))).toBeInTheDocument();
   expect(screen.getByText(i18n.t("sourceContext.byteOmissions", { count: 2 }))).toBeInTheDocument();
   expect(screen.getByText(i18n.t("sourceContext.itemOmissions", { count: 1 }))).toBeInTheDocument();
   expect(screen.getByText(i18n.t("sourceContext.unsampled", {count:4}))).toBeInTheDocument();
-  expect(screen.getByText("Original block index 4, fact index 1: encoded-byte budget.")).toBeInTheDocument();
-  expect(screen.getByText(`Original occurrence ${id(14)}: category not selected.`)).toBeInTheDocument();
-  expect(screen.getByText("Omitted entries: extracted 3 · inferred 2 · adjacent originals 1.")).toBeInTheDocument();
+  expect(screen.getByText("Block 4, fact 1: byte limit reached.")).toBeInTheDocument();
+  expect(screen.getByText(`Source occurrence ${id(14)}: category not selected.`)).toBeInTheDocument();
+  expect(screen.getByText("Omitted items: extracted 3 · inferred 2 · adjacent lines 1.")).toBeInTheDocument();
 });
 
 it("keeps absent, explicitly empty and unavailable source-fact blocks distinct", () => {

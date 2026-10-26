@@ -30,7 +30,7 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
-it.each([["en-US", "Extensions", "Use included extensions", "I approve this included extension set"], ["zh-CN", "扩展", "使用随附扩展", "我批准此随附扩展集合"]])("reviews the exact included set and shows confirmed installation in %s", async (locale, entry, action, consent) => {
+it.each([["en-US", "Extensions", "Install bundled extensions", "I approve installing the bundled extensions"], ["zh-CN", "扩展", "安装内置扩展", "我批准安装内置扩展"]])("reviews the exact included set and shows confirmed installation in %s", async (locale, entry, action, consent) => {
   await i18n.changeLanguage(locale); const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: entry })); const button = await screen.findByRole("button", { name: action });
   expect(button).toBeDisabled(); await user.click(screen.getByRole("checkbox", { name: new RegExp(consent) })); await user.click(button);
@@ -49,8 +49,8 @@ it("retains the original complete selection after unknown setup and panel close"
     throw new Error(command);
   });
   const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
-  await user.click(screen.getByRole("button", { name: "Extensions" })); await user.click(await screen.findByRole("checkbox", { name: /I approve this included extension set/ }));
-  await user.click(screen.getByRole("button", { name: "Use included extensions" })); await screen.findByRole("button", { name: "Retry original operation" });
+  await user.click(screen.getByRole("button", { name: "Extensions" })); await user.click(await screen.findByRole("checkbox", { name: /I approve installing the bundled extensions/ }));
+  await user.click(screen.getByRole("button", { name: "Install bundled extensions" })); await screen.findByRole("button", { name: "Retry original operation" });
   await user.click(screen.getByRole("button", { name: "Close" })); await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Retry original operation" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Disable" })).toBeEnabled());
@@ -58,9 +58,9 @@ it("retains the original complete selection after unknown setup and panel close"
 });
 it("explains unavailable bundled files without offering approval or setup", async () => {
   invoke.mockResolvedValue(bundled("resources-unavailable")); const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
-  await user.click(screen.getByRole("button", { name: "Extensions" })); await screen.findByText(/Included extension files are unavailable/);
-  expect(screen.queryByRole("button", { name: "Use included extensions" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("checkbox", { name: /I approve this included extension set/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Extensions" })); await screen.findByText(/Bundled extension files are unavailable/);
+  expect(screen.queryByRole("button", { name: "Install bundled extensions" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /I approve installing the bundled extensions/ })).not.toBeInTheDocument();
 });
 it("a refreshed included selection cannot inherit old consent", async () => {
   let reads = 0; invoke.mockImplementation(async (command: string) => {
@@ -68,7 +68,7 @@ it("a refreshed included selection cannot inherit old consent", async () => {
     throw new Error(command);
   });
   const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
-  await user.click(screen.getByRole("button", { name: "Extensions" })); await user.click(await screen.findByRole("checkbox", { name: /I approve this included extension set/ }));
-  expect(screen.getByRole("button", { name: "Use included extensions" })).toBeEnabled(); await user.click(screen.getByRole("button", { name: "Read current state" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Use included extensions" })).toBeDisabled());
+  await user.click(screen.getByRole("button", { name: "Extensions" })); await user.click(await screen.findByRole("checkbox", { name: /I approve installing the bundled extensions/ }));
+  expect(screen.getByRole("button", { name: "Install bundled extensions" })).toBeEnabled(); await user.click(screen.getByRole("button", { name: "Refresh state" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Install bundled extensions" })).toBeDisabled());
 });

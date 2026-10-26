@@ -234,7 +234,7 @@ it("keeps one pure read across hidden or removed consumers and preserves B after
 
 it("ends only a proven non-enqueued original call after explicit acknowledgement",async()=>{
   unknown=true;reconciliation="not-enqueued";render(<WorkPlanAgentControls {...agentProps()}/>);const user=await startOriginal("tool");
-  const end=await screen.findByRole("button",{name:"End this unqueued preparation"});expect(agent.current().pending).not.toBeNull();
+  const end=await screen.findByRole("button",{name:"Close unqueued setup"});expect(agent.current().pending).not.toBeNull();
   act(()=>agent.update(before=>({...before,selected:[],toolHandle:"Kept B"})));await user.click(end);await waitFor(()=>expect(agent.current().pending).toBeNull());
   expect(agent.current().toolRun).toBeNull();expect(agent.current().toolHandle).toBe("Kept B");
   expect(calls("start_work_plan_agent_tool")).toHaveLength(1);expect(calls("create_execution_identity")).toHaveLength(2);

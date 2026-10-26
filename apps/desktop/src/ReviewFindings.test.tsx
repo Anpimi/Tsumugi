@@ -82,7 +82,7 @@ afterEach(cleanup);
 
 it.each([
   { locale:"en-US", title:"Advisory findings", legacyStatus:"Findings", reject:"Reject as false positive" },
-  { locale:"zh-CN", title:"参考建议问题", legacyStatus:"发现问题", reject:"作为误报拒绝" },
+  { locale:"zh-CN", title:"参考建议问题", legacyStatus:"发现问题", reject:"标记为误报" },
 ])("keeps the advisory panel and existing findings status distinct in $locale",async({locale,title,legacyStatus,reject})=>{
   await i18n.changeLanguage(locale);
   const user=userEvent.setup();
@@ -128,7 +128,7 @@ it("uses the AI finding's independent run while retaining mechanical QA and mode
   const { user, panel } = await open();
   const article = panel().getByText("Synthetic model meaning advice", { exact: false }).closest("article");
   if (!article) throw new Error("AI finding article required");
-  expect(within(article).getByText("AI advice from synthetic-review at https://model.example/v1/chat/completions · recipe semantic-review-1")).toBeVisible();
+  expect(within(article).getByText("AI suggestion from synthetic-review at https://model.example/v1/chat/completions · recipe semantic-review-1")).toBeVisible();
   await user.click(within(article).getByRole("button", { name: "Reject as false positive" }));
   await waitFor(() => expect(history).toHaveLength(1));
   expect(history[0].request.runId).toBe(aiRun); expect(history[0].request.runId).not.toBe(target.currentCheck!.runId);
@@ -241,7 +241,7 @@ it("reaches older repair requests using bounded history pages and leaves failed 
     history.unshift(saved);previous=saved;
   }
   const {user,panel}=await open();
-  const historyHeading=panel().getByText("Advisory finding disposition history");
+  const historyHeading=panel().getByText("Advisory finding decision history");
   const historyElement=historyHeading.closest("details");
   if(!historyElement)throw new Error("Finding history section required");
   const historyPanel=within(historyElement);

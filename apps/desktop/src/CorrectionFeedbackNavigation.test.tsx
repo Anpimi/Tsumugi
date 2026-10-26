@@ -149,9 +149,11 @@ async function reply(command: string, request: Record<string, unknown>): Promise
     case "read_correction_term_action":
       if (!resource.validateRequestResourceAction(request)) throw new Error("Invalid resource action request");
       return structuredClone(captureActions.get(request.actionId) ?? null);
-    case "read_resource_decision_action":
-      if (!resource.validateRequestResourceAction(request)) throw new Error("Invalid resource action request");
-      return structuredClone(decisionActions.get(request.actionId) ?? null);
+    case "read_resource_decision_action": {
+      if (!resource.validateRequestDecision(request)) throw new Error("Invalid resource decision action request");
+      const receipt = decisionActions.get(request.decision.actionId);
+      return receipt ? structuredClone({ request: receipt.request, receipt }) : null;
+    }
     case "read_resource_preview":
       if (!resource.validateRequestCapture(request) || !preview) throw new Error("Invalid captured correction preview request");
       expect(request).toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, captureId: preview.capture.captureId });
@@ -273,8 +275,8 @@ it.each(["en-US", "zh-CN"])("uses only the saved correction and labels its prove
   expect(invoke.mock.calls.some(([command]) => ["capture_correction_term", "decide_resource_entry", "save_term"].includes(command))).toBe(false);
   await openCandidate(user); await captureCandidate(user);
   const labels = language === "en-US"
-    ? { ready: "The source was captured. Review every change before adopting it.", history: "Previously captured sources", evidence: "Captured source evidence" }
-    : { ready: "来源已捕获。请逐项审阅后再采纳。", history: "先前捕获的来源", evidence: "捕获来源依据" };
+    ? { ready: "File loaded for preview. Review the changes below before applying them.", history: "Previously loaded files", evidence: "Source file details" }
+    : { ready: "文件已加载。请先审阅下方变更，再决定是否采纳。", history: "已加载的文件", evidence: "源文件详情" };
   expect(await screen.findByText(labels.ready)).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: labels.history })).toBeInTheDocument();
   expect(screen.getByText(labels.evidence)).toBeInTheDocument();

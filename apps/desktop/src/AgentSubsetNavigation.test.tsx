@@ -84,17 +84,17 @@ it("opens only the explicitly requested child Task through production navigation
           taskId: captured.prepared.taskId, attemptId: captured.prepared.attemptId, inputDigest: captured.prepared.inputDigest } } ] }] } }));
   });
   await act(async () => { expect(await handle.current!.navigate({ kind: "area", area: "ai" })).toBe(true); });
-  await screen.findByRole("button", { name: "Inspect this child’s task history" });
+  await screen.findByRole("button", { name: "View sub-session task history" });
   await act(async () => { expect(await handle.current!.navigate({ kind: "task", taskId: fixtureIdentity(4001), attemptId: captured.prepared.attemptId })).toBe(false); });
   expect(area).toBe("ai");
   await act(async () => { expect(await handle.current!.prepareExit()).toBeNull(); });
-  await waitFor(() => expect(screen.getByRole("button", { name: "Inspect this child’s task history" })).toBeEnabled());
-  await userEvent.click(screen.getByRole("button", { name: "Inspect this child’s task history" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "View sub-session task history" })).toBeEnabled());
+  await userEvent.click(screen.getByRole("button", { name: "View sub-session task history" }));
   await waitFor(() => expect(area).toBe("tasks"));
   expect(memory.read("tasks", "taskId")).toBe(captured.prepared.taskId); expect(memory.read("tasks", "attemptId")).toBe(captured.prepared.attemptId);
   expect(ai.agent.current().child.children[0].runs[0].phase).toBe("unknown");
   await act(async () => { expect(await handle.current!.navigate({ kind: "area", area: "ai" })).toBe(true); });
-  await screen.findByRole("button", { name: "Inspect this child’s task history" });
+  await screen.findByRole("button", { name: "View sub-session task history" });
   expect(ai.agent.current().child.children[0].consumer).toBe(captured.consumer);
   expect(ai.agent.current().child.children[0].runs[0].prepared).toBe(captured.prepared);
   expect(ai.current().config.model).toBe("Retained manual B"); expect(ai.current().dirty).toBe(true);
@@ -119,7 +119,7 @@ it("keeps original Stop and Take over controls reachable for an expired Active p
   await screen.findByRole("button", { name: i18n.t("ai.plan.stop") });
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("ai.plan.stop") })).toBeEnabled());
   expect(screen.getByRole("button", { name: i18n.t("ai.plan.takeOver") })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Generate within this child" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Generate in this sub-session" })).toBeDisabled();
   expect(ai.reserved()).toBe(true); expect(calls("control_work_plan")).toHaveLength(0);
 });
 
