@@ -6,7 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 pub const MAX_FRAME_BYTES: usize = tsumugi_plugin_sdk::MAX_PROCESS_FRAME_BYTES;
 pub const MAX_SESSION_BYTES: usize = 64 * 1024 * 1024;
 
@@ -20,7 +20,7 @@ macro_rules! wire {
 wire! {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct MemberFrame {
-        #[cfg_attr(feature = "wire-schema", schemars(range(min = 3, max = 3)))]
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 4, max = 4)))]
         pub protocol_version: u32,
         pub session_id: ExecutionId,
         pub sequence: u32,
@@ -33,14 +33,14 @@ wire! {
         pub endpoint: String,
         pub model: String,
         pub token_field: TokenField,
-        #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 16384)))]
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 0, max = 16384)))]
         pub max_output_tokens: u32,
         #[cfg_attr(feature = "wire-schema", schemars(range(min = 1)))]
         pub context_tokens: Option<u32>,
     }
 }
 wire! {
-    pub enum TokenField { #[serde(rename = "max_tokens")] MaxTokens, #[serde(rename = "max_completion_tokens")] MaxCompletionTokens }
+    pub enum TokenField { #[serde(rename = "max_tokens")] MaxTokens, #[serde(rename = "max_completion_tokens")] MaxCompletionTokens, #[serde(rename = "chatgpt_subscription")] ChatGptSubscription }
 }
 wire! {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -111,6 +111,14 @@ pub fn decode_frame(bytes: &[u8], limit: usize) -> Result<MemberFrame, Execution
             crate::execution::ErrorCode::InvalidInput,
             "member-protocol",
         ));
+    }
+    if let MemberBody::Start { profile, .. } = &frame.body {
+        let valid = match profile.token_field {
+            TokenField::ChatGptSubscription => profile.endpoint == super::provider::CHATGPT_RESPONSES_ENDPOINT
+                && profile.max_output_tokens == 0,
+            _ => (1..=16384).contains(&profile.max_output_tokens),
+        };
+        if !valid { return Err(ExecutionError::new(crate::execution::ErrorCode::InvalidInput, "member-profile")); }
     }
     Ok(frame)
 }

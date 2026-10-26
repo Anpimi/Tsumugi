@@ -21,6 +21,9 @@ export type UnsignedDecimal = string;
 export interface Requests {
   action: ConnectionActionRequest;
   change: ModelConnectionChange;
+  chatGptAccount: ChatGptAccountRequest;
+  chatGptBegin: ChatGptBeginRequest;
+  chatGptSession: ChatGptSessionRequest;
   resolve: ConnectionResolveRequest;
   snapshot: ConnectionSnapshotRequest;
 }
@@ -37,6 +40,7 @@ export interface ModelConnectionChange {
  * remain in the separately captured AiConfig; this value grants no execution.
  */
 export interface AiConnection {
+  chatgptAccount?: ExecutionId | null;
   credentialEnv: string;
   endpoint: string;
   model: string;
@@ -46,6 +50,15 @@ export interface ModelConnectionBasis {
   digest: string;
   revision: UnsignedDecimal;
   storeId?: ExecutionId | null;
+}
+export interface ChatGptAccountRequest {
+  account: ExecutionId;
+}
+export interface ChatGptBeginRequest {
+  registration?: ExecutionId | null;
+}
+export interface ChatGptSessionRequest {
+  sessionId: ExecutionId;
 }
 export interface ConnectionResolveRequest {
   reference: ModelConnectionReference;

@@ -5,11 +5,12 @@ import { useOptionalStrategyDraftSession, useStrategyDraftSession } from "./Stra
 import { strategyCommands, strategyKeys, type StrategyEvaluationView } from "./strategyCommands";
 import { SourceContextChoice, SourceContextPreview, SourceContextSelectionSummary, ProjectFactPreview } from "./SourceContextPreparation";
 import { ModelConnectionPicker, PreparationBudgetSummary } from "./ModelConnectionPicker";
+import { AiConnectionFields } from "./AiConnectionFields";
 import { AiOutputUsage, AiProviderBudget } from "./AiUsage";
 import { ReviewCheckerDetails, checkerIdentity, ruleIdentity } from "./ReviewCheckers";
 import { CommandFailureDetails, commandFailure, failureReason } from "./CommandFailure";
 import { sourceReads } from "./sourceQueries";
-import { mandatoryChecksClean, type AiConfig } from "./aiCommands";
+import { editedAiConfig, mandatoryChecksClean, type AiConfig } from "./aiCommands";
 import { isCommandError, type ProjectView } from "./projectCommands";
 import type { ArenaView } from "./arenaCommands";
 import { reviewRuleLabel } from "./reviewLabels";
@@ -24,6 +25,7 @@ export function StrategyWorkbench(props: Props) {
 }
 function StrategyPanel({ area, project, active, disabled, config, onOpenConnections }: Props) {
   const { t } = useTranslation(), owner = useStrategyDraftSession(), reads = useSessionReads(), state = owner.state;
+  const [connectionOpen, setConnectionOpen] = useState(false), [presetName, setPresetName] = useState("custom");
   const [expanded, setExpanded] = useState(() => owner.dirty() || owner.reserved()), [after, setAfter] = useState(0);
   const [candidateOffset, setCandidateOffset] = useState(0), [evaluationOffset, setEvaluationOffset] = useState(0), [historyOffset, setHistoryOffset] = useState(0);
   const failureRef = useRef<HTMLDivElement>(null), context = reads.context;
@@ -160,11 +162,8 @@ function StrategyPanel({ area, project, active, disabled, config, onOpenConnecti
           <h4>{t("strategy.conditions")}</h4><p>{t("strategy.conditionsHelp")}</p>
           <button type="button" className="secondary-button" disabled={locked} onClick={() => owner.copyConfig(config)}>{t("strategy.useConnection")}</button>
           <ModelConnectionPicker config={state.config} label={t("strategy.connection")} active={enabled} disabled={locked} editSeq={state.editSeq} onSelect={owner.selectConnection} onOpenSettings={onOpenConnections} />
-          <details><summary>{t("strategy.connectionLimits")}</summary><fieldset disabled={locked}>
-            {(["endpoint", "model", "credentialEnv"] as const).map(key => <label className="field" key={key}>{t(`ai.${key}`)}<input value={state.config[key]} onChange={event => owner.edit("config", { ...state.config, [key]: event.target.value, connectionProfile: null })} /></label>)}
-            {(["maxItems", "concurrency", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds"] as const).map(key => <label className="field" key={key}>{t(`ai.${key}`)}<input type="number" value={Number.isFinite(state.config[key]) ? state.config[key] : ""} min={key === "maxRetries" ? 0 : 1}
-              onChange={event => owner.edit("config", { ...state.config, [key]: event.target.valueAsNumber })} /></label>)}
-          </fieldset></details><PreparationBudgetSummary config={state.config} />
+          <fieldset disabled={locked}><AiConnectionFields config={state.config} setConfig={next=>{const before=owner.current().config;owner.edit("config",editedAiConfig(before,typeof next === "function" ? next(before) : next));}}
+            presetName={presetName} setPresetName={setPresetName} connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={null} idPrefix="strategy"/></fieldset><PreparationBudgetSummary config={state.config} />
           {!state.config.endpoint || !state.config.model ? <p>{t("strategy.noConnection")}</p> : null}
           <button type="button" className="secondary-button" disabled={locked || !state.candidate.evidence.current || selectedCandidate.data?.evidence.current === false || !!selectedCandidate.error || selectedCandidate.isFetching
             || calibration.length < 1 || holdout.length < 1 || roleIds.length > 20 || !state.config.endpoint || !state.config.model}

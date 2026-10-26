@@ -10,7 +10,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { editedAiConfig, sameAiConfig, validSourceContextSelection, type AiConfig, type AiItem } from "./aiCommands";
+import { connectionAiConfig, editedAiConfig, sameAiConfig, validAiLimits, type AiConfig, type AiItem } from "./aiCommands";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
@@ -39,7 +39,6 @@ interface State {
   pending: Pending | null; saved: Record<string, Receipt>; busy: boolean; failure: CommandFailure | null;
   notice: "saved" | "merged" | "selected" | "reconciled" | "repeatCost" | "identitiesVisible" | null;
 }
-const aiLimits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
 function sameConfig(left: ArenaConfig, right: ArenaConfig) {
   return left.maxItems === right.maxItems && left.maxRequests === right.maxRequests && left.concurrency === right.concurrency && left.blind === right.blind
     && (left.parentAttemptId ?? null) === (right.parentAttemptId ?? null) && left.variants.length === right.variants.length
@@ -50,8 +49,7 @@ function validConfig(config: ArenaConfig, count: number) {
     && count > 0 && count <= config.maxItems && count * config.variants.length <= 100
     && Number.isInteger(config.maxRequests) && config.maxRequests >= count * config.variants.length && config.maxRequests <= 300
     && Number.isInteger(config.concurrency) && config.concurrency >= 1 && config.concurrency <= 2
-    && config.variants.every(variant => validSourceContextSelection(variant.sourceContext)
-      && aiLimits.every(([key,min,max]) => Number.isInteger(variant[key]) && variant[key] >= min && variant[key] <= max));
+    && config.variants.every(validAiLimits);
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -160,7 +158,7 @@ function useArenaOwner(project: ProjectView) {
       if (!view || connections.current() !== view) return false;
       const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
       if (!reference || !profile) return false;
-      next = { ...config, ...profile.connection, connectionProfile: reference };
+      next = connectionAiConfig(config, profile.connection, reference);
     }
     edit("config", { ...before.config, variants: before.config.variants.map((value, index) => index === slot ? next : value) }); return true;
   }

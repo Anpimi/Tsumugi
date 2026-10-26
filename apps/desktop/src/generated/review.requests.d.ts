@@ -255,6 +255,7 @@ export interface AiSemanticReviewPrepareRequest {
   targets: AiSemanticReviewTarget[];
 }
 export interface AiConfig {
+  chatgptAccount?: ExecutionId | null;
   concurrency: number;
   /**
    * Captured non-secret profile identity. Accepted execution keeps this

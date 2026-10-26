@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useConnectionFacts, connectionConfigCurrent } from "./ApplicationReadProvider";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, type SessionRequest } from "./executionCommands";
-import { editedAiConfig, type AiConfig } from "./aiCommands";
+import { connectionAiConfig, editedAiConfig, type AiConfig } from "./aiCommands";
 import type { ConnectionReadView } from "./connectionCommands";
 import { validateRequestWorkPlanTeamRecoveryPrepare } from "./generated/ai.validators";
 import { jsonIdentity } from "./pluginToolChoices";
@@ -63,7 +63,7 @@ export function useTeamRecoverySession(live: () => boolean, context: SessionRequ
     const profile = view?.snapshot.profiles.find(profile => profile.id === id && !profile.archived), reference = view?.references.find(reference => reference.profileId === id);
     if (id && (!profile || !reference || view !== connections.current())) return false;
     edit(before => ({ ...before, members: before.members.map(member => member.key !== key ? member : { ...member,
-      config: id && profile && reference ? { ...member.config, ...profile.connection, connectionProfile: reference } : { ...member.config, connectionProfile: null } }) }));
+      config: id && profile && reference ? connectionAiConfig(member.config, profile.connection, reference) : { ...member.config, connectionProfile: null } }) }));
     return true;
   }
   function editConfig(key: number, change: AiConfig | ((before: AiConfig) => AiConfig)) {

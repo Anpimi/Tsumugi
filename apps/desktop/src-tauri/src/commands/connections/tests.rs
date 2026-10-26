@@ -45,6 +45,72 @@ fn application(
             .unwrap();
     (app, window)
 }
+
+#[test]
+fn registered_chatgpt_commands_keep_local_status_and_account_cas_without_remote_calls() {
+    let state = AppState::default();
+    assert!(
+        state
+            .chatgpt_accounts
+            .set(std::sync::Arc::new(chatgpt::ChatGptAccounts::synthetic()))
+            .is_ok()
+    );
+    let app = tauri::test::mock_builder()
+        .manage(state)
+        .invoke_handler(super::super::execution::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let initial = call(&window, "read_chatgpt_account", json!({})).unwrap();
+    assert_eq!(
+        initial,
+        json!({"account":null,"registrations":[],"login":null,"issue":null})
+    );
+    assert_eq!(
+        call(&window, "retry_chatgpt_storage", json!({})).unwrap(),
+        initial
+    );
+    let stale = ExecutionId::new();
+    assert_eq!(
+        call(&window, "cancel_chatgpt_login", json!({"sessionId":stale})).unwrap(),
+        initial
+    );
+    // These requests cannot fall back to another account, create a new
+    // registration, open a browser or obtain remote credentials.
+    assert!(call(&window, "logout_chatgpt_account", json!({"account":stale})).is_err());
+    assert!(call(&window, "read_chatgpt_models", json!({"account":stale})).is_err());
+    assert!(
+        call(
+            &window,
+            "begin_chatgpt_login",
+            json!({"registration":stale})
+        )
+        .is_err()
+    );
+    assert!(
+        call(
+            &window,
+            "read_chatgpt_account",
+            json!({"credential":"synthetic-forbidden"})
+        )
+        .is_err()
+    );
+    assert!(
+        call(
+            &window,
+            "retry_chatgpt_storage",
+            json!({"credential":"synthetic-forbidden"})
+        )
+        .is_err()
+    );
+    assert_eq!(
+        call(&window, "read_chatgpt_account", json!({})).unwrap(),
+        initial
+    );
+}
 fn snapshot(window: &tauri::WebviewWindow<tauri::test::MockRuntime>) -> ModelConnectionSnapshot {
     read_view(window).snapshot
 }
@@ -63,6 +129,7 @@ fn save(
             profile_id,
             name: name.into(),
             connection: AiConnection {
+                chatgpt_account: None,
                 endpoint: "https://example.test/v1/chat/completions".into(),
                 model: "Synthetic model".into(),
                 credential_env: "SYNTHETIC_CREDENTIAL_REFERENCE".into(),

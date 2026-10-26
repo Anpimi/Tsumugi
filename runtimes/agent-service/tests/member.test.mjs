@@ -3,12 +3,81 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { Type } from "@earendil-works/pi-ai";
 import { MemberKernel } from "../dist/agent-service/src/member.js";
+import { responsesSse } from "./responses-fixture.mjs";
 
 const servers = [];
 after(async () => { await Promise.all(servers.map(server => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }))); });
 const user = text => ({ role: "user", content: text, timestamp: 1 });
 const basis = { memberId: "translator", workItemId: "bounded-translation", contextVersion: "source-revision-1" };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+function subscriptionProfile() {
+  return { endpoint: "https://api.openai.com/v1/responses", model: {
+    id: "synthetic-subscription", name: "Synthetic subscription", api: "openai-responses", provider: "openai",
+    baseUrl: "https://api.openai.com/v1", input: ["text"], reasoning: false, contextWindow: 0, maxTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    compat: { supportsDeveloperRole: false, supportsMaxOutputTokens: false },
+  } };
+}
+
+test("public Responses subscription uses Pi serialization and original captured tool pairs without credentials", async () => {
+  const rawEvents = [];
+  const state = setup(subscriptionProfile(), {
+    request: async request => new Response(responsesSse({ tool: state.exchanges.length === 0 }), { headers: { "content-type": "text/event-stream" } }),
+  });
+  // Retain the standard capture in this no-network fixture.
+  state.options.ports.request = async request => {
+    state.exchanges.push(request);
+    return new Response(responsesSse({ tool: state.exchanges.length === 1 }), { headers: { "content-type": "text/event-stream" } });
+  };
+  state.options.ports.providerEvent = async (_identity, event) => { rawEvents.push(event); };
+  const result = await state.kernel.prompt(user("Translate original 👩🏽‍💻"));
+  assert.equal(state.exchanges.length, 2);
+  for (const request of state.exchanges) {
+    assert.equal(request.url, "https://api.openai.com/v1/responses");
+    assert.deepEqual(Object.keys(request).sort(), ["basis", "body", "requestId", "signal", "url"]);
+    const body = JSON.parse(request.body);
+    assert.equal(body.store, false); assert.equal(body.stream, true);
+    assert.equal(body.input.some(message => message.role === "system"), false);
+    assert.ok(body.input.some(message => message.role === "developer"));
+    assert.equal(body.tools[0].type, "namespace"); assert.equal(body.tools[0].name, "tsumugi");
+    assert.equal(body.tools[0].tools[0].name, "query_reference");
+    for (const key of ["max_output_tokens", "max_tokens", "max_completion_tokens", "temperature", "previous_response_id", "messages"]) {
+      assert.equal(Object.hasOwn(body, key), false);
+    }
+  }
+  const second = JSON.parse(state.exchanges[1].body).input;
+  const call = second.find(item => item.type === "function_call");
+  const output = second.find(item => item.type === "function_call_output");
+  assert.equal(call.call_id, output.call_id);
+  assert.equal(call.namespace, "tsumugi");
+  assert.ok(second.some(item => item.role === "user" && item.content.some(part => part.text === "Translate original 👩🏽‍💻")));
+  assert.ok(rawEvents.some(event => event.type === "response.completed"));
+  assert.equal(result.messages.at(-1).stopReason, "stop");
+  assert.equal(state.toolCalls.length, 1);
+  await state.kernel.close();
+});
+
+test("subscription model profile rejects alternate endpoints, API keys and a synthetic output cap", () => {
+  const profile = subscriptionProfile();
+  for (const change of [
+    { endpoint: "https://chatgpt.com/backend-api/codex/responses" },
+    { endpoint: "https://api.openai.com/v1/responses?account=other" },
+    { model: { ...profile.model, maxTokens: 1 } },
+    { model: { ...profile.model, headers: { Authorization: "synthetic-forbidden" } } },
+    { model: { ...profile.model, provider: "controlled" } },
+  ]) assert.throws(() => setup({ ...profile, ...change }));
+});
+
+test("Responses truncation and provider failures cannot become a successful Pi completion", async () => {
+  for (const response of [{ terminal: "incomplete" }, { terminal: "failed" }, { truncated: true },
+    { refusal: true, text: '{"candidate":"plausible but refused"}', usage: { input_tokens: 5, output_tokens: 2 } }]) {
+    const state = setup(subscriptionProfile(), { request: async () => new Response(responsesSse(response), { headers: { "content-type": "text/event-stream" } }) });
+    const result = await state.kernel.prompt(user("Captured source"));
+    assert.notEqual(result.messages.at(-1).stopReason, "stop");
+    assert.equal(state.toolCalls.length, 0);
+    await state.kernel.close();
+  }
+});
 function sse(tool, text = '{"candidate":"你好"}') {
   const delta = tool ? { role: "assistant", tool_calls: [{ index: 0, id: "query-1", type: "function", function: { name: "query_reference", arguments: '{"query":"original 👩🏽‍💻"}' } }] }
     : { role: "assistant", content: text };

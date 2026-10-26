@@ -10,7 +10,7 @@ import {useTranslation} from "react-i18next";
 import type {ProjectView} from "./projectCommands";
 import {executionContext} from "./executionCommands";
 import {sourceReads} from "./sourceQueries";
-import {aiTarget,type AiView} from "./aiCommands";
+import {aiTarget,isChatGptSubscription,type AiView} from "./aiCommands";
 import { AiConnectionFields } from "./AiConnectionFields";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import { TeamDiscussionHistory } from "./TeamDiscussionHistory";
@@ -468,7 +468,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation,onOpenExtens
     </section>:null}
     {sharing&&targetAvailable?<section><h3>{t("ai.previewTitle")}</h3>
       {!sharingPlan?.options.teamExecution?<p>{sharing.config.endpoint} · {sharing.config.model}</p>:null}
-      <p>{t("ai.limits",{defaultValue:enUS.ai.limits,requests:sharing.config.maxRequests,concurrency:sharing.config.concurrency,tokens:sharing.config.maxOutputTokens,retries:sharing.config.maxRetries})}</p>
+      <p>{t(isChatGptSubscription(sharing.config)?"connections.subscriptionInvocationSummary":"ai.limits",{items:String(sharing.config.maxItems),requests:String(sharing.config.maxRequests),concurrency:String(sharing.config.concurrency),tokens:String(sharing.config.maxOutputTokens),retries:String(sharing.config.maxRetries),timeout:String(sharing.config.timeoutSeconds)})}</p>
       <p>{t(sharingPlan?.options.teamExecution?sharingPlan.options.teamDiscussions?.profile==="current-plan-2"?"ai.team.artifactCostUnknown":"ai.team.costUnknown":sharingPlan?.options.teamDiscussions?.profile==="current-plan-2"?"ai.discussions.artifactCostUnknown":sharingPlan?.options.teamDiscussions?"ai.discussions.costUnknown":"ai.costUnknown")}</p><p>{t("ai.rateLimit")}</p>
       {sharingPlan?.options.teamExecution?<TeamExecutionDisclosure plan={sharingPlan}/>:<><AiPreviewItems items={sharing.items}/>{sharingPlan?<><TeamDiscussionDisclosure plan={sharingPlan}/><ToolGuidanceSharing plan={sharingPlan} config={sharing.config}/></>:null}</>}
       {capturedMcp?<section aria-label={t("ai.mcpTermQuery.confirmation")}><h4>{t("ai.mcpTermQuery.title")}</h4><p>{t("ai.mcpTermQuery.confirmation")}</p>

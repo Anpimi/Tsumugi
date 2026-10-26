@@ -12,6 +12,27 @@ use tsumugi_core::{
         ModelConnectionReference, ModelConnectionSnapshot, ModelConnectionStore,
     },
 };
+pub(super) mod chatgpt;
+use chatgpt::{ChatGptAccountStatus, ChatGptLoginView, ChatGptModelCatalog};
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ChatGptBeginRequest {
+    pub registration: Option<ExecutionId>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ChatGptSessionRequest {
+    pub session_id: ExecutionId,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ChatGptAccountRequest {
+    pub account: ExecutionId,
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -68,7 +89,156 @@ pub(super) fn configure(
     state
         .model_connections
         .set(store)
+        .map_err(|_| unavailable())?;
+    state
+        .chatgpt_accounts
+        .set(std::sync::Arc::new(
+            chatgpt::ChatGptAccounts::new(application_directory).map_err(map_error)?,
+        ))
         .map_err(|_| unavailable())
+}
+fn accounts(state: &AppState) -> Result<std::sync::Arc<chatgpt::ChatGptAccounts>, CommandError> {
+    state
+        .chatgpt_accounts
+        .get()
+        .cloned()
+        .ok_or_else(unavailable)
+}
+
+#[tauri::command]
+pub async fn read_chatgpt_account(
+    state: State<'_, AppState>,
+    request: ConnectionSnapshotRequest,
+) -> Result<ChatGptAccountStatus, CommandError> {
+    let _ = request;
+    let accounts = accounts(&state)?;
+    state
+        .io
+        .run(CommandStage::ModelConnections, move || {
+            accounts.status().map_err(map_error)
+        })
+        .await
+}
+#[tauri::command]
+pub async fn retry_chatgpt_storage(
+    state: State<'_, AppState>,
+    request: ConnectionSnapshotRequest,
+) -> Result<ChatGptAccountStatus, CommandError> {
+    let _ = request;
+    let accounts = accounts(&state)?;
+    state
+        .io
+        .run(CommandStage::ModelConnections, move || {
+            accounts.retry_storage().map_err(map_error)
+        })
+        .await
+}
+#[tauri::command]
+pub async fn begin_chatgpt_login(
+    state: State<'_, AppState>,
+    request: ChatGptBeginRequest,
+) -> Result<ChatGptLoginView, CommandError> {
+    let accounts = accounts(&state)?;
+    state
+        .io
+        .run(CommandStage::ModelConnections, move || {
+            let login = accounts.begin(request.registration).map_err(map_error)?;
+            if let Err(error) = open_chatgpt_authorization(&login.authorization_url) {
+                let _ = accounts.cancel(login.id);
+                return Err(map_error(error));
+            }
+            Ok(login)
+        })
+        .await
+}
+#[tauri::command]
+pub async fn cancel_chatgpt_login(
+    state: State<'_, AppState>,
+    request: ChatGptSessionRequest,
+) -> Result<ChatGptAccountStatus, CommandError> {
+    let accounts = accounts(&state)?;
+    state
+        .io
+        .run(CommandStage::ModelConnections, move || {
+            accounts.cancel(request.session_id).map_err(map_error)
+        })
+        .await
+}
+#[tauri::command]
+pub async fn logout_chatgpt_account(
+    state: State<'_, AppState>,
+    request: ChatGptAccountRequest,
+) -> Result<ChatGptAccountStatus, CommandError> {
+    let accounts = accounts(&state)?;
+    state
+        .io
+        .run(CommandStage::ModelConnections, move || {
+            accounts.logout(request.account).map_err(map_error)
+        })
+        .await
+}
+#[tauri::command]
+pub async fn read_chatgpt_models(
+    state: State<'_, AppState>,
+    request: ChatGptAccountRequest,
+) -> Result<ChatGptModelCatalog, CommandError> {
+    let accounts = accounts(&state)?;
+    state
+        .io
+        .run(CommandStage::ModelConnections, move || {
+            accounts.models(request.account).map_err(map_error)
+        })
+        .await
+}
+fn open_chatgpt_authorization(value: &str) -> Result<(), ExecutionError> {
+    let invalid = || ExecutionError::new(ErrorCode::InvalidInput, "chatgpt-login-browser");
+    let url = reqwest::Url::parse(value).map_err(|_| invalid())?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("auth.openai.com")
+        || url.port().is_some()
+        || url.path() != "/api/accounts/authorize"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.query_pairs().any(|(key, _)| key == "id_token_hint")
+    {
+        return Err(invalid());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut child = std::process::Command::new("/usr/bin/open")
+            .arg(value)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|_| invalid())?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    return if status.success() {
+                        Ok(())
+                    } else {
+                        Err(invalid())
+                    };
+                }
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(invalid());
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err(ExecutionError::new(
+        ErrorCode::Unauthorized,
+        "chatgpt-platform",
+    ))
 }
 fn unavailable() -> CommandError {
     CommandError::simple(
@@ -88,10 +258,16 @@ pub(super) fn verify_configs(
     store: Option<&ModelConnectionStore>,
     configs: &[AiConfig],
 ) -> Result<(), CommandError> {
-    if configs.iter().all(|config| config.connection_profile.is_none()) {
+    if configs
+        .iter()
+        .all(|config| config.connection_profile.is_none())
+    {
         return Ok(());
     }
-    store.ok_or_else(unavailable)?.verify_configs(configs).map_err(map_error)
+    store
+        .ok_or_else(unavailable)?
+        .verify_configs(configs)
+        .map_err(map_error)
 }
 fn map_error(error: ExecutionError) -> CommandError {
     let code = error.code;

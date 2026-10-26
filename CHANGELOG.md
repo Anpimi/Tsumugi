@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Add a separate macOS ChatGPT sign-in connection, verified OpenID identity, protected credentials and distinct account registrations. Subscription requests use the public Responses API through Pi and existing persistent request controls, without a hard output-token cap. API-key limits remain unchanged. Internal member protocol 4 requires matching regenerated contracts and runtime.
+
 - Desktop plugin management, captured domain capabilities and independent runtime approvals for source/translation import, checking, builds and artifact verification. Saved results require explicit adoption and retain their original package and execution evidence.
 - Pi core and pi-ai 1.3.0 member execution, dynamic team requests and discussions, human guidance and takeover, original tool-result recovery, and project-local context-strategy experiments. Unknown usage remains unknown; preparing or reopening work grants no execution permission.
 
@@ -56,6 +58,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
 ### Fixed
+
+- Reject protected-account access when macOS requires Keychain interaction. After a failed write, explicitly retry saving the withdrawn account state before signing in again; ordinary status reads do not write or restore old tokens. Preserve connection drafts and report current account-read failures.
+
+- Treat native Responses refusal content as a failure even without refusal delta events, while retaining reliable reported terminal usage.
 
 - Installed generation components retain their recorded progress after their own reference query spends the remaining tool allowance. New preparations still require available quota and unchanged captured scope.
 

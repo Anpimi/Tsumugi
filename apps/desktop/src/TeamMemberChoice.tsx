@@ -1,6 +1,6 @@
 import { useState, type SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
-import { AiConnectionEditor } from "./AiConnectionFields";
+import { AiBudgetInputs, AiConnectionEditor } from "./AiConnectionFields";
 import { ModelConnectionPicker } from "./ModelConnectionPicker";
 import { SourceContextChoice } from "./SourceContextPreparation";
 import { TeamWorkKindValues } from "./generated/ai.enums";
@@ -26,9 +26,7 @@ export function TeamMemberChoice({ member, number, selected, unitNames, tools, d
     <label className="source-check"><input type="checkbox" checked={member.config.shareContext} onChange={event => onConfig(before => ({ ...before, shareContext: event.target.checked }))}/>{t("ai.shareContext")}</label>
     <SourceContextChoice value={member.config.sourceContext} onChange={sourceContext => onConfig(before => ({ ...before, sourceContext }))}/>
     <details><summary>{t("ai.team.memberLimits")}</summary><p>{t("ai.team.memberLimitsHelp")}</p>
-      {(["maxItems", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds"] as const).map(key => <label className="field" key={key}>{t(`ai.${key}`)}
-        <input type="number" min={key === "maxRetries" ? 0 : 1} value={Number.isFinite(member.config[key]) ? member.config[key] : ""}
-          onChange={event => onConfig(before => ({ ...before, [key]: event.target.valueAsNumber }))}/></label>)}
+      <AiBudgetInputs config={member.config} setConfig={onConfig} fields={["maxItems", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds"]}/>
     </details>
     <fieldset><legend>{t("ai.team.units")}</legend><p>{t("ai.team.unitHelp")}</p>
       {allUnits.length ? allUnits.map((id, index) => <label className="source-check" key={id}><input type="checkbox" checked={member.unitIds.includes(id)}

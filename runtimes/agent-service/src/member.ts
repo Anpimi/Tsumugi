@@ -1,6 +1,7 @@
 import { Agent, type AgentEvent, type AgentMessage, type AgentOptions, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { Model, UserMessage } from "@earendil-works/pi-ai";
-import { streamSimple } from "@earendil-works/pi-ai/api/openai-completions";
+import { streamSimple as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
+import { streamSimple as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import type { MemberSharedView } from "./generated/frame.js";
 
 /** Captured by the application. These references never grant execution rights. */
@@ -39,14 +40,46 @@ export interface MemberPorts {
 export interface MemberRequestIdentity { basis: MemberBasis; requestId: string }
 export interface MemberOptions {
   basis: MemberBasis;
-  model: Model<"openai-completions">;
-  /** Exact authorized endpoint, including the chat/completions suffix. */
+  model: Model<"openai-completions"> | Model<"openai-responses">;
+  /** Exact authorized endpoint for the captured transport profile. */
   endpoint: string;
   systemPrompt: string;
   context: AgentMessage[];
   tools: AgentTool[];
   maxTurns: number;
   ports: MemberPorts;
+}
+
+/** The subscription preview requires developer messages and namespaced tools.
+ * Pi still owns message/tool serialization; its public payload hook adapts only
+ * these documented carrier requirements, without changing the agent transcript.
+ */
+function subscriptionPayload(payload: unknown): unknown {
+  if (payload === null || typeof payload !== "object" || !("input" in payload) || !Array.isArray(payload.input)) {
+    throw new Error("Invalid Pi Responses payload");
+  }
+  const input = payload.input.map(item => {
+    if (item !== null && typeof item === "object" && "role" in item && item.role === "system") {
+      return { ...item, role: "developer" };
+    }
+    return item;
+  });
+  const tools = "tools" in payload ? payload.tools : undefined;
+  if (tools !== undefined && (!Array.isArray(tools) || !tools.length)) throw new Error("Invalid Pi Responses tools");
+  return { ...payload, input, ...(tools ? { tools: [{ type: "namespace", name: "tsumugi",
+    description: "Tools admitted for this captured task.", tools }] } : {}) };
+}
+
+function responseRefusal(event: unknown): boolean {
+  if (event === null || typeof event !== "object" || !("type" in event) || typeof event.type !== "string") return false;
+  if (event.type.startsWith("response.refusal.")) return true;
+  const hasRefusal = (item: unknown) => item !== null && typeof item === "object" && "content" in item
+    && Array.isArray(item.content) && item.content.some(block => block !== null && typeof block === "object"
+      && "type" in block && block.type === "refusal");
+  if (event.type === "response.output_item.done" && "item" in event) return hasRefusal(event.item);
+  return event.type === "response.completed" && "response" in event && event.response !== null
+    && typeof event.response === "object" && "output" in event.response && Array.isArray(event.response.output)
+    && event.response.output.some(hasRefusal);
 }
 
 /** One Pi execution instance. The host remains the authorization/mutation owner. */
@@ -63,7 +96,7 @@ export class MemberKernel {
   private sharedView: Readonly<MemberSharedView> | null = null;
 
   constructor(options: MemberOptions) {
-    if (options.model.api !== "openai-completions" || !Number.isSafeInteger(options.maxTurns) || options.maxTurns < 1) {
+    if (!["openai-completions", "openai-responses"].includes(options.model.api) || !Number.isSafeInteger(options.maxTurns) || options.maxTurns < 1) {
       throw new Error("Unsupported member execution profile");
     }
     const endpoint = new URL(options.endpoint);
@@ -73,7 +106,11 @@ export class MemberKernel {
       throw new Error("Invalid controlled model endpoint");
     }
     const base = options.model.baseUrl.replace(/\/$/, "");
-    if (`${base}/chat/completions` !== endpoint.href || options.model.headers && Object.keys(options.model.headers).length) {
+    const subscription = options.model.api === "openai-responses";
+    if ((subscription && (endpoint.href !== "https://api.openai.com/v1/responses"
+        || options.model.provider !== "openai" || options.model.maxTokens !== 0)
+      || `${base}/${subscription ? "responses" : "chat/completions"}` !== endpoint.href)
+      || options.model.headers && Object.keys(options.model.headers).length) {
       throw new Error("Model endpoint or headers do not match the controlled profile");
     }
     this.endpoint = endpoint.href;
@@ -112,16 +149,27 @@ export class MemberKernel {
         return [...messages.slice(0, leading), shared, ...messages.slice(leading)];
       },
       streamFn: (_selected, context, runtime) => {
-        return streamSimple(model, context, {
+        let refused = false;
+        const streamOptions = {
           ...(runtime?.signal ? { signal: runtime.signal } : {}),
           apiKey: "controlled-host-transport",
           env: {},
           maxRetries: 0,
-          onProviderStreamEvent: event => this.ports.providerEvent(this.identity(), event),
-          transport: "sse",
+          ...(model.api === "openai-responses" ? { onPayload: subscriptionPayload } : {}),
+          onProviderStreamEvent: async (event: unknown) => {
+            await this.ports.providerEvent(this.identity(), event);
+            if (model.api === "openai-responses") refused ||= responseRefusal(event);
+            if (refused && event !== null && typeof event === "object" && "type" in event && event.type === "response.completed") {
+              throw new Error("The controlled model refused the request");
+            }
+          },
+          transport: "sse" as const,
           maxTokens: model.maxTokens,
-          fetch: (input, init) => this.fetch(input, init),
-        });
+          fetch: (input: Parameters<typeof globalThis.fetch>[0], init?: RequestInit) => this.fetch(input, init),
+        };
+        return model.api === "openai-responses"
+          ? streamResponses(model, context, streamOptions)
+          : streamCompletions(model, context, streamOptions);
       },
       beforeToolCall: (context, signal) => this.ports.beforeToolCall(this.identity(), context, signal),
       afterToolCall: (context, signal) => this.ports.afterToolCall(this.identity(), context, signal),

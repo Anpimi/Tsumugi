@@ -250,10 +250,13 @@ it("keeps the complete ordered selection rather than shrinking preparation to th
   expect(owner.selected).toEqual(payload.unitIds);
 });
 
-it("accepts canonical input order for work-plan previews without reordering either capture", async () => {
+it.each(["api", "subscription"] as const)("accepts canonical input order for %s work-plan previews without reordering either capture", async connection => {
   await open();
   const second = { ...item, unitId: fixtureIdentity(303), sourceRevisionId: fixtureIdentity(304), nativeKey: "second", sourceText: "Second source" };
   act(() => {
+    if (connection === "subscription") owner.setConfig({ ...owner.config,
+      endpoint: "https://api.openai.com/v1/responses", model: "synthetic-subscription-model", credentialEnv: "",
+      tokenField: "chatgpt_subscription", chatgptAccount: fixtureIdentity(305), maxOutputTokens: 0, maxRetries: 0 });
     owner.setSelected([second.unitId, item.unitId]);
   });
   const original = invoke.getMockImplementation()!;

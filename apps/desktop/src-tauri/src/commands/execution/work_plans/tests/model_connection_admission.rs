@@ -59,6 +59,64 @@ fn manual() -> AiConfig {
         ..Default::default()
     }
 }
+
+#[test]
+fn subscription_work_plan_preparation_preserves_saved_profile_without_dispatch() {
+    let fixture = Fixture::create_with_source(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../crates/core/tests/fixtures/quality-evaluation/smapi/s1/i18n/default.json"
+    )));
+    configured(&fixture);
+    let config = capture(
+        &fixture,
+        "Subscription",
+        AiConfig {
+            endpoint: "https://api.openai.com/v1/responses".into(),
+            model: "synthetic-subscription-model".into(),
+            credential_env: String::new(),
+            token_field: "chatgpt_subscription".into(),
+            chatgpt_account: Some(ExecutionId::new()),
+            max_items: 6,
+            max_requests: 6,
+            max_output_tokens: 0,
+            max_retries: 0,
+            timeout_seconds: 120,
+            ..Default::default()
+        },
+    );
+    let snapshot = fixture.snapshot;
+    let units: Vec<_> = fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let (_, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            store
+                .source_content(snapshot, 0, 6)
+                .unwrap()
+                .rows
+                .into_iter()
+                .map(|row| row.unit_id.unwrap())
+                .collect()
+        });
+    assert_eq!(units.len(), 6);
+    let attempts = fixture.attempt_count();
+    let plan = fixture
+        .call(
+            "prepare_work_plan",
+            json!({
+                "config": config, "locale": "zh-CN", "unitIds": units,
+                "options": PlanOptions::default(), "advisoryChecks": [], "toolSelection": null
+            }),
+        )
+        .unwrap();
+    assert_eq!(
+        plan["preview"]["config"],
+        serde_json::to_value(&config).unwrap()
+    );
+    assert_eq!(plan["preview"]["items"].as_array().unwrap().len(), 6);
+    assert_eq!(fixture.attempt_count(), attempts);
+}
 fn direct_preview(fixture: &Fixture, config: &AiConfig) -> Value {
     fixture
         .call(

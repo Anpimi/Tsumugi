@@ -380,6 +380,7 @@ pub struct AppState {
     review_check_cancellations: ReviewCheckRegistry,
     plugins: Arc<plugins::ApplicationPlugins>,
     model_connections: OnceLock<tsumugi_core::model_connections::ModelConnectionStore>,
+    chatgpt_accounts: Arc<OnceLock<Arc<connections::chatgpt::ChatGptAccounts>>>,
     #[cfg(test)]
     review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
 }
@@ -401,13 +402,15 @@ impl Default for AppState {
     fn default() -> Self {
         let plugins = Arc::new(plugins::ApplicationPlugins::default());
         let io = dispatch::BlockingExecutor::new(4);
+        let chatgpt_accounts = Arc::new(OnceLock::new());
         Self {
-            sessions: dispatch::SessionExecutor::with_io(plugins.clone(), io.clone()),
+            sessions: dispatch::SessionExecutor::with_accounts(plugins.clone(), io.clone(), chatgpt_accounts.clone()),
             io,
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
             plugins,
             model_connections: OnceLock::new(),
+            chatgpt_accounts,
             #[cfg(test)]
             review_compute_probe: Mutex::default(),
         }
@@ -416,6 +419,7 @@ impl Default for AppState {
 
 impl Drop for AppState {
     fn drop(&mut self) {
+        if let Some(accounts) = self.chatgpt_accounts.get() { accounts.close(); }
         self.sessions.close_external_disclosures();
         self.plugins.close();
     }
@@ -428,6 +432,7 @@ struct ProjectServiceContext {
     callback: dispatch::SessionCallback,
     plugins: Arc<plugins::ApplicationPlugins>,
     io: dispatch::BlockingExecutor,
+    chatgpt_accounts: Arc<OnceLock<Arc<connections::chatgpt::ChatGptAccounts>>>,
 }
 
 #[derive(Default)]

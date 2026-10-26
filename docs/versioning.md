@@ -111,3 +111,17 @@ This changes source storage/API compatibility within the unreleased development
 batch. It does not replace the frozen application alpha.1 distribution, SDK,
 plugins or runtime assets. The next distributed application must advance its
 prerelease and reassess the complete combination under the rules above.
+
+## ChatGPT subscription source profile
+
+ChatGPT sign-in adds a separate account reference and controlled Responses profile.
+The trusted desktop account owner keeps credentials in macOS Keychain; Core retains
+physical request reservations, unknown usage, cancellation and adoption authority.
+API-key limits, project schema 61, SDK Process and WorkPlan identities are unchanged.
+Internal member protocol advances from 3 to 4; regenerate its contracts and build
+the matching runtime together. Frozen member protocol 3 archives remain immutable.
+
+This source-only integration updates bilingual Unreleased entries and retains
+application/SDK metadata. It does not designate another alpha.1 distribution; the
+next distributed application and changed runtime must follow the prerelease and
+complete-combination review rules above.

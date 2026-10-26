@@ -8,6 +8,7 @@ import { CommandFailureDetails, commandFailure, failureReason } from "./CommandF
 import type { TranslationKey } from "./i18n/types";
 import type { ModelConnectionProfile } from "./connectionCommands";
 import type { SessionExitPermit } from "./sessionNavigation";
+import { ChatGptConnectionFields } from "./ChatGptConnectionFields";
 import "./ConnectionManager.css";
 
 export interface ConnectionManagerHandle { prepareExit: (current: () => boolean) => Promise<SessionExitPermit | null>; open: (returnTo?: HTMLElement) => void }
@@ -17,6 +18,8 @@ const reasons: Partial<Record<string, { field: string; message: TranslationKey }
   "ai-model": { field: "model", message: "connections.errors.model" },
   "ai-credential": { field: "credentialEnv", message: "connections.errors.credentialEnv" },
   "ai-token-field": { field: "tokenField", message: "connections.errors.tokenField" },
+  "ai-subscription-profile": { field: "subscription", message: "ai.errors.ai-subscription-profile" },
+  "ai-subscription-account": { field: "subscription", message: "ai.errors.ai-subscription-account" },
   "model-connection-name-duplicate": { field: "name", message: "connections.errors.duplicate" },
   "model-connections-capacity": { field: "capacity", message: "connections.errors.capacity" },
 };
@@ -39,6 +42,7 @@ export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disa
   const view = query.data;
   const changed = state.conflict || (confirmed ? owner.changed(confirmed) : false);
   const currentProfile = confirmed?.snapshot.profiles.find(profile => profile.id === editor.id);
+  const subscription = editor.values.connection.tokenField === "chatgpt_subscription";
   const fieldReason = failureReason(state.failure), issue = fieldReason ? reasons[fieldReason] : undefined, field = issue?.field;
   function fieldError(name: string) { return field === name && issue ? <p id={"connection-" + name + "-error"} role="alert">{t(issue.message)}</p> : null; }
   const close = () => { if (owner.current().exitHeld) return; if (owner.current().exitPrompt) owner.answerExit(false); setSwitchTarget(null); setOpen(false); };
@@ -99,6 +103,16 @@ export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disa
             aria-invalid={field === "name" || field === "duplicate"} aria-describedby={"connection-name-help" + (field === "name" || field === "duplicate" ? " connection-" + field + "-error" : "")} onChange={event => change("name", event.target.value)}/>
           <p id="connection-name-help">{t("connections.nameHelp", { count: Array.from(editor.values.name).length })}</p>
           {fieldError("name")}{fieldError("duplicate")}
+          <label htmlFor="connection-authentication">{t("connections.authentication")}</label>
+          <select id="connection-authentication" value={subscription ? "chatgpt" : "api"} disabled={state.exitHeld} onChange={event => {
+            const values = owner.current().editor.values;
+            owner.edit({ ...values, connection: event.target.value === "chatgpt"
+              ? { endpoint: "https://api.openai.com/v1/responses", model: "", credentialEnv: "", tokenField: "chatgpt_subscription", chatgptAccount: null }
+              : { endpoint: "https://api.openai.com/v1/chat/completions", model: "", credentialEnv: "OPENAI_API_KEY", tokenField: "max_completion_tokens", chatgptAccount: null } });
+          }}><option value="api">{t("connections.api")}</option><option value="chatgpt">{t("connections.chatgpt.connection")}</option></select>
+          <ChatGptConnectionFields connection={editor.values.connection} disabled={state.exitHeld || disabled || state.exitPrompt || switchTarget !== null} modelInvalid={field === "model"}
+            onChange={connection => owner.edit({ ...owner.current().editor.values, connection })}/>
+          {!subscription ? <>
           {(["endpoint", "model", "credentialEnv"] as const).map(key => <div key={key}><label htmlFor={"connection-" + key}>{t(labels[key])}</label>
             <input id={"connection-" + key} value={editor.values.connection[key]} disabled={state.exitHeld} spellCheck={false} autoCapitalize="none"
               aria-invalid={field === key} aria-describedby={[key === "credentialEnv" ? "connection-credential-help" : "", field === key ? "connection-" + key + "-error" : ""].filter(Boolean).join(" ") || undefined} onChange={event => change(key, event.target.value)}/>{fieldError(key)}</div>)}
@@ -106,6 +120,7 @@ export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disa
           <label htmlFor="connection-tokenField">{t("connections.tokenField")}</label><select id="connection-tokenField" value={editor.values.connection.tokenField} disabled={state.exitHeld} aria-invalid={field === "tokenField"} aria-describedby={field === "tokenField" ? "connection-tokenField-error" : undefined} onChange={event => change("tokenField", event.target.value)}>
             <option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select>
           {fieldError("tokenField")}
+          </> : <>{fieldError("model")}{fieldError("subscription")}<p>{t("connections.chatgpt.endpoint")}</p></>}
           {editor.baseline?.archived ? <p>{t("connections.archivedEdit")}</p> : null}
           {fieldError("capacity")}{!issue && state.failure ? <p role="alert">{t("connections.failed")}</p> : null}
           <CommandFailureDetails failure={state.failure}/>
@@ -113,7 +128,8 @@ export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disa
             <button type="button" disabled={blocked || !owner.dirty} onClick={() => owner.discard()}>{t("connections.discardDraft")}</button></div>
         </form>
         {changed ? <section className="connection-notice"><h3>{t("connections.changedTitle")}</h3><p>{t("connections.changedHelp")}</p>
-          {currentProfile ? <><dl><dt>{t("connections.savedName")}</dt><dd>{currentProfile.name}</dd><dt>{t("connections.model")}</dt><dd>{currentProfile.connection.model}</dd><dt>{t("connections.endpoint")}</dt><dd>{currentProfile.connection.endpoint}</dd><dt>{t("connections.credentialEnv")}</dt><dd>{currentProfile.connection.credentialEnv || t("connections.noCredential")}</dd><dt>{t("connections.tokenField")}</dt><dd>{currentProfile.connection.tokenField}</dd></dl>
+          {currentProfile ? <><dl><dt>{t("connections.savedName")}</dt><dd>{currentProfile.name}</dd><dt>{t("connections.model")}</dt><dd>{currentProfile.connection.model}</dd><dt>{t("connections.endpoint")}</dt><dd>{currentProfile.connection.endpoint}</dd><dt>{t("connections.credentialEnv")}</dt><dd>{currentProfile.connection.credentialEnv || t("connections.noCredential")}</dd><dt>{t("connections.tokenField")}</dt><dd>{currentProfile.connection.tokenField}</dd>
+            {currentProfile.connection.chatgptAccount ? <><dt>{t("connections.chatgpt.accountReference")}</dt><dd>{currentProfile.connection.chatgptAccount}</dd></> : null}</dl>
             <button type="button" disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, true)}>{t("connections.keepAndReview")}</button>
             <button type="button" disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, false)}>{t("connections.useSaved")}</button></> : <><p>{t("connections.unavailable")}</p><button type="button" disabled={blocked} onClick={() => owner.keepAsNew()}>{t("connections.saveAsNew")}</button></>}</section> : null}
         {state.pending?.uncertain ? <section className="connection-notice" aria-label={t("connections.recoveryTitle")}><h3>{t("connections.recoveryTitle")}</h3><p>{t("connections.unknown")}</p>

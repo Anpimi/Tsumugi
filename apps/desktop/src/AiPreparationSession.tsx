@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
 import { matchQuery, QueryObserver } from "@tanstack/react-query";
-import { aiCommands, defaultAiConfig, editedAiConfig, validSourceContextSelection, sameAiConfig as sameConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
+import { aiCommands, connectionAiConfig, defaultAiConfig, editedAiConfig, validAiLimits, sameAiConfig as sameConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
 import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
 import type { ConnectionReadView } from "./connectionCommands";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt, type AttemptDetail } from "./executionCommands";
@@ -54,8 +54,7 @@ interface State {
   failure: CommandFailure | null; notice: "started" | "saved" | "newer" | "maintenance" | null;
   strategyDefault: "loading" | "ready" | "failed"; strategyDefaultFailure: CommandFailure | null;
 }
-const limits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
-const validLimits = (config: AiConfig) => limits.every(([key,min,max]) => Number.isInteger(config[key]) && config[key] >= min && config[key] <= max) && validSourceContextSelection(config.sourceContext);
+const validLimits = validAiLimits;
 function validItem(item: AiItem) {
   return [item.unitId,item.sourceRevisionId,item.sourceSnapshotId,...item.terms.map(term => term.revisionId)].every(validateResponseIdentity)
     && (!item.context || [item.context.revisionId,item.context.unitId,...(item.context.previousRevisionId ? [item.context.previousRevisionId] : [])].every(validateResponseIdentity));
@@ -207,7 +206,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[],
     if (!view || connections.current() !== view) return false;
     const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
     if (!reference || !profile) return false;
-    edit("config", { ...before.config, ...profile.connection, connectionProfile: reference }); update(value => ({ ...value, presetName: "custom" })); return true;
+    edit("config", connectionAiConfig(before.config, profile.connection, reference)); update(value => ({ ...value, presetName: "custom" })); return true;
   }
   function invalidatePreview(reason: State["staleReason"] = null) {
     basis.current++; update(before => ({ ...before,capture:null,consent:false,staleReason:reason,
@@ -288,7 +287,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[],
     if (!view || connections.current() !== view) return false;
     const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
     if (!reference || !profile) return false;
-    editTeamConfig(key, { ...member.config, ...profile.connection, connectionProfile: reference }); return true;
+    editTeamConfig(key, connectionAiConfig(member.config, profile.connection, reference)); return true;
   }
   useLayoutEffect(() => {
     const view = connections.current(), before = current();

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { CapturedRequestLimits } from "./ModelConnectionPicker";
 import { AiPreviewItems } from "./AiPreviewItems";
 import { TeamDiscussionDisclosure } from "./TeamDiscussionDisclosure";
 import { ToolGuidanceSharing } from "./ToolGuidanceSharing";
@@ -21,7 +22,7 @@ export function TeamExecutionDisclosure({ plan }: { plan: WorkPlanView }) {
       if (!captured) return null;
       return <section key={member.memberId} aria-label={member.displayName}><h5>{member.displayName}</h5><pre className="ai-text">{member.role}</pre>
         <p>{t("ai.discussions.destination", { endpoint: captured.preview.config.endpoint, model: captured.preview.config.model })}</p>
-        <p>{t("ai.team.capturedMemberLimits", { requests: String(member.config.maxRequests), tokens: String(member.config.maxOutputTokens), timeout: String(member.config.timeoutSeconds), retries: String(member.config.maxRetries) })}</p>
+        <CapturedRequestLimits config={member.config} member/>
         <p>{t("ai.team.allowedKinds", { kinds: member.kinds.map(kind => t(`ai.team.workKinds.${kind}`)).join(", ") })}</p>
         <p>{t("ai.team.allowedEntries", { entries: member.unitIds.map(id => names.get(id) ?? "").join(", ") })}</p>
         {member.toolHandles.length ? <ul>{member.toolHandles.map(handle => <li key={handle}>{plan.tools?.entries.find(tool => tool.handle === handle)?.binding.declaration.title}</li>)}</ul> : <p>{t("ai.team.noTools")}</p>}

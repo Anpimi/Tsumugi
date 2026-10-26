@@ -9,6 +9,8 @@ mod provider_tests;
 mod connection_tests;
 #[path = "usage_tests.rs"]
 mod usage_tests;
+#[path = "subscription_tests.rs"]
+mod subscription_tests;
 use crate::{ProjectMetadata, ProjectStore, content::*};
 use std::{
     io::{Read, Write},

@@ -78,6 +78,9 @@ struct ConnectionRequests {
     change: tsumugi_core::model_connections::ModelConnectionChange,
     action: connections::ConnectionActionRequest,
     resolve: connections::ConnectionResolveRequest,
+    chat_gpt_begin: connections::ChatGptBeginRequest,
+    chat_gpt_session: connections::ChatGptSessionRequest,
+    chat_gpt_account: connections::ChatGptAccountRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -87,6 +90,9 @@ struct ConnectionResponses {
     receipt: tsumugi_core::model_connections::ModelConnectionReceipt,
     action: Option<tsumugi_core::model_connections::ModelConnectionReceipt>,
     connection: tsumugi_core::ai::AiConnection,
+    chat_gpt_status: connections::chatgpt::ChatGptAccountStatus,
+    chat_gpt_login: connections::chatgpt::ChatGptLoginView,
+    chat_gpt_catalog: connections::chatgpt::ChatGptModelCatalog,
     error: CommandError,
 }
 #[derive(JsonSchema)]

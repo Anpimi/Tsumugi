@@ -29,7 +29,8 @@ function confirmView(view: ConnectionReadView): ConnectionReadView {
   return view;
 }
 export function sameConnection(a: AiConnection, b: AiConnection): boolean {
-  return a.endpoint === b.endpoint && a.model === b.model && a.credentialEnv === b.credentialEnv && a.tokenField === b.tokenField;
+  return a.endpoint === b.endpoint && a.model === b.model && a.credentialEnv === b.credentialEnv && a.tokenField === b.tokenField
+    && (a.chatgptAccount ?? null) === (b.chatgptAccount ?? null);
 }
 export function sameConnectionReference(a: ModelConnectionReference | null | undefined, b: ModelConnectionReference | null | undefined): boolean {
   if (a == null || b == null) return a == null && b == null;

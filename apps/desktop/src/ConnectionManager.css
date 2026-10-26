@@ -9,4 +9,7 @@
 .connection-manager .connection-notice { border: 1px solid var(--border); padding: 12px; margin-block: 12px; overflow-wrap: anywhere; }
 .connection-manager .connection-notice dd { margin-inline-start: 0; white-space: pre-wrap; }
 .connection-manager .connection-editor .execution-actions { position: sticky; bottom: 0; background: var(--surface); padding-block: 12px; }
+.connection-manager .chatgpt-account .execution-actions { position: static; background: transparent; flex-wrap: wrap; }
+.connection-manager .chatgpt-account h3 { margin-top: 0; }
+.connection-manager .chatgpt-account select { margin-bottom: 8px; }
 @media (max-width: 680px) { .connection-manager .connection-layout { grid-template-columns: 1fr; } }

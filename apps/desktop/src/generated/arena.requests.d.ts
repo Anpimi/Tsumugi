@@ -62,6 +62,7 @@ export interface ArenaConfig {
   variants: AiConfig[];
 }
 export interface AiConfig {
+  chatgptAccount?: ExecutionId | null;
   concurrency: number;
   /**
    * Captured non-secret profile identity. Accepted execution keeps this

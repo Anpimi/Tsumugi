@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { useSessionAlive, useSessionReads } from "./SessionReadProvider";
 import { strategyCommands, strategyKeys, sameStrategyValue, sameSuiteCaptureRequest, confirmStrategyCandidate, type ContextStrategyCandidate,
   type StrategySuite, type Prepared, type StrategyEvaluationView, type StrategyActionReceipt } from "./strategyCommands";
-import { defaultAiConfig, validSourceContextSelection, sameAiConfig, type AiConfig } from "./aiCommands";
+import { connectionAiConfig, defaultAiConfig, validSourceContextSelection, sameAiConfig, type AiConfig } from "./aiCommands";
 import { arenaCommands, type ArenaView } from "./arenaCommands";
 import { confirmArenaView } from "./ArenaDraftSession";
 import { resourceCommands, type CorrectionTermEvidence } from "./resourceCommands";
@@ -240,7 +240,7 @@ function useStrategyOwner(project: ProjectView) {
     if (!view || connections.current() !== view) return false;
     const profile = view.snapshot.profiles.find(row => row.id === id && !row.archived), reference = view.references.find(row => row.profileId === id);
     if (!profile || !reference) return false;
-    edit("config", { ...current().config, ...profile.connection, connectionProfile: reference }); return true;
+    edit("config", connectionAiConfig(current().config, profile.connection, reference)); return true;
   }
   async function captureSuite() {
     const before = current(), candidate = before.candidate;
