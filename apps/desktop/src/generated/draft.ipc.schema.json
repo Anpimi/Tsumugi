@@ -126,6 +126,30 @@
         ],
         "type": "object"
       },
+      "DraftMergeOrigin": {
+        "additionalProperties": false,
+        "description": "Comparison provenance retained with local input; it grants no permission to\nsave, merge, or replace a project selection.",
+        "properties": {
+          "comparisonId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "comparisonId",
+          "contributors",
+          "expectedBasis"
+        ],
+        "type": "object"
+      },
       "DraftPending": {
         "description": "A frozen original request, without any session token or execution authority.",
         "oneOf": [
@@ -174,6 +198,31 @@
               "text"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "merge",
+                "type": "string"
+              },
+              "merge": {
+                "$ref": "#/definitions/MergeBasis"
+              },
+              "request": {
+                "$ref": "#/definitions/SaveTranslationRevision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "merge",
+              "submittedSeq"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -201,6 +250,16 @@
           },
           "editSeq": {
             "$ref": "#/definitions/Revision"
+          },
+          "merge": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/DraftMergeOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "pending": {
             "anyOf": [
@@ -265,6 +324,25 @@
       },
       "ExecutionId": {
         "type": "string"
+      },
+      "MergeBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributors",
+          "expectedBasis"
+        ],
+        "type": "object"
       },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
@@ -1045,6 +1123,30 @@
         ],
         "type": "object"
       },
+      "DraftMergeOrigin": {
+        "additionalProperties": false,
+        "description": "Comparison provenance retained with local input; it grants no permission to\nsave, merge, or replace a project selection.",
+        "properties": {
+          "comparisonId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "comparisonId",
+          "contributors",
+          "expectedBasis"
+        ],
+        "type": "object"
+      },
       "DraftPage": {
         "additionalProperties": false,
         "properties": {
@@ -1120,6 +1222,31 @@
               "text"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "merge",
+                "type": "string"
+              },
+              "merge": {
+                "$ref": "#/definitions/MergeBasis"
+              },
+              "request": {
+                "$ref": "#/definitions/SaveTranslationRevision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "merge",
+              "submittedSeq"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1185,6 +1312,16 @@
           "editSeq": {
             "$ref": "#/definitions/Revision"
           },
+          "merge": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/DraftMergeOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pending": {
             "anyOf": [
               {
@@ -1210,6 +1347,25 @@
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "MergeBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "expectedBasis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributors",
+          "expectedBasis"
+        ],
+        "type": "object"
       },
       "RecoveryAction": {
         "enum": [

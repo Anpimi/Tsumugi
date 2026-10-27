@@ -99,11 +99,12 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   const pending = value?.pending !== null && value?.pending !== undefined;
   const journalFailed = entry.failure?.kind === "journal";
   const journalConflict = entry.failure?.kind === "journal-conflict";
+  const mergeChanged = !!value?.merge && entry.failure?.kind === "basis-conflict";
   const basisChanged = !!value && entry.current.kind === "current" && !entry.basisCurrent;
   const blocked = readonly || snapshot.hydration !== "ready" || snapshot.mutationReserved || interaction.intentOwner !== null;
-  const canConfirm = !blocked && !!value && entry.basisCurrent && !pending && !entry.busy && entry.currentFailure === null && !journalFailed && !journalConflict;
+  const canConfirm = !mergeChanged && !blocked && !!value && entry.basisCurrent && !pending && !entry.busy && entry.currentFailure === null && !journalFailed && !journalConflict;
   const canRestore = !blocked && !!value && !pending && !entry.busy && !journalConflict && entry.current.kind === "current" && entry.currentFailure === null;
-  const showRestore = canRestore && (value?.text !== (value?.basis.text ?? "") || basisChanged);
+  const showRestore = canRestore && (!!value?.merge || value?.text !== (value?.basis.text ?? "") || basisChanged);
   const restoring = restore?.identity === identity && restore.sequence === value?.editSeq
     && entry.current.kind === "current" && sameDraftBasis(restore.basis, entry.current.basis);
   const copyResult = copied?.identity === identity && copied.text === value?.text ? copied.result : null;
@@ -209,8 +210,9 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     {snapshot.retired ? <Banner tone="warning">{t("editorSessionRetired")}</Banner> : null}
     {entry.current.kind === "unavailable" ? <Banner tone="warning">{t(entry.current.reason === "source-missing" ? "editorSourceMissing" : "editorLocaleRemoved")}</Banner> : null}
     {entry.currentFailure !== null ? <Banner tone="error" role="alert" action={<Button size="sm" disabled={readonly || entry.busy} onClick={retryRead}>{t("editorRetryRead")}</Button>}>{t("editorReadFailedHelp")}</Banner> : null}
+    {value?.merge ? <Banner tone={mergeChanged ? "warning" : "info"} action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict} onClick={() => { void drafts.refreshMerge(draftKey); }}>{t("editorMergeRefresh")}</Button>}>{t(mergeChanged ? "editorMergeChanged" : "editorMergeDraft")}</Banner> : null}
     {basisChanged ? <>
-      <Banner tone="warning" action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict || entry.currentFailure !== null} onClick={() => { void drafts.rebase(draftKey); }}>{t("editorRebase")}</Button>}>{t("editorBasisChanged")}</Banner>
+      <Banner tone="warning" action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict || entry.currentFailure !== null} onClick={() => { void drafts.rebase(draftKey); }}>{t(value?.merge ? "editorMergeRefresh" : "editorRebase")}</Button>}>{t("editorBasisChanged")}</Banner>
       <div role="group" aria-label={t("editorCurrentSelection")}><p className={styles.editHint}>{t("editorCurrentSelection")}</p><div>{entry.current.kind === "current" && entry.current.basis.text !== null
         ? entry.current.basis.text === "" ? t("editorEmptySelection") : <TokenizedText text={entry.current.basis.text} />
         : t("editorNoSelection")}</div></div>

@@ -25,6 +25,7 @@ export interface Requests {
   projectionStartAction: TranslationProjectionStartRequest;
   recoverSave: TranslationSaveRequest;
   recoverSelection: TranslationSelectRequest;
+  revision: TranslationRevisionRequest;
   save: TranslationSaveRequest;
   saveAction: TranslationSaveRequest;
   select: TranslationSelectRequest;
@@ -214,6 +215,13 @@ export interface TranslationSelectRequest {
   revisionId: ExecutionId;
   sessionToken: string;
   sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TranslationRevisionRequest {
+  locale: string;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+  sessionToken: string;
   unitId: ExecutionId;
 }
 export interface TranslationSourceRequest {

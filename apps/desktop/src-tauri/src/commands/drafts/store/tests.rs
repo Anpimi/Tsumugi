@@ -29,6 +29,7 @@ fn setup() -> (tempfile::TempDir, DraftStore, DraftWrite) {
             text: "Unconfirmed A".into(),
             edit_seq: revision(1),
             pending: None,
+            merge: None,
         },
     };
     (temp, store, request)
@@ -53,6 +54,280 @@ fn replace(request: &DraftWrite, head: &DraftHead, text: &str) -> DraftWrite {
     next.value.text = text.into();
     next.value.edit_seq = head.value.as_ref().unwrap().edit_seq.next().unwrap();
     next
+}
+
+fn merge_origin() -> DraftMergeOrigin {
+    DraftMergeOrigin {
+        comparison_id: ExecutionId::new(),
+        contributors: vec![ExecutionId::new(), ExecutionId::new()],
+        expected_basis: "a".repeat(64),
+    }
+}
+fn merge_pending(request: &DraftWrite) -> DraftPending {
+    let origin = request.value.merge.as_ref().unwrap();
+    DraftPending::Merge {
+        request: SaveTranslationRevision {
+            project_id: request.key.project_id,
+            action_id: ExecutionId::new(),
+            unit_id: request.key.unit_id,
+            locale: request.key.locale.clone(),
+            source_revision_id: request.value.basis.source_revision_id,
+            expected_selection_id: request.value.basis.selection_id,
+            text: request.value.text.clone(),
+        },
+        merge: tsumugi_core::MergeBasis {
+            contributors: origin.contributors.clone(),
+            expected_basis: origin.expected_basis.clone(),
+        },
+        submitted_seq: request.value.edit_seq,
+    }
+}
+fn disk_format(store: &DraftStore) -> i64 {
+    Connection::open(store.directory.join(DATABASE))
+        .unwrap()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn merge_draft_and_original_pending_preserve_contributors_unicode_and_newer_input() {
+    let (_temp, store, mut request) = setup();
+    request.value.merge = Some(merge_origin());
+    request.value.text = "Merge A {{name}}\r\ne\u{301} 👩🏽‍💻".into();
+    request.value.pending = Some(merge_pending(&request));
+    request.value.text = "Newer B <b>日本語</b>".into();
+    request.value.edit_seq = revision(2);
+    let saved = store.write(&request).unwrap();
+    assert_eq!(disk_format(&store), FORMAT);
+    let reopened = DraftStore::at(store.directory.clone()).unwrap();
+    assert_eq!(reopened.read(&request.key).unwrap(), saved);
+    assert_eq!(
+        reopened.write(&request).unwrap(),
+        saved,
+        "the exact original journal write remains idempotent"
+    );
+    assert_eq!(
+        reopened
+            .list(request.key.project_id, None, 1)
+            .unwrap()
+            .items[0]
+            .has_pending,
+        true
+    );
+    assert_eq!(
+        reopened
+            .clear(&DraftClear {
+                key: request.key.clone(),
+                expected_revision: saved.revision
+            })
+            .unwrap_err()
+            .stage,
+        "drafts-pending"
+    );
+    let DraftPending::Merge {
+        request: original,
+        merge,
+        submitted_seq,
+    } = request.value.pending.as_ref().unwrap()
+    else {
+        panic!("expected merge")
+    };
+    assert_eq!(original.text, "Merge A {{name}}\r\ne\u{301} 👩🏽‍💻");
+    assert_eq!(
+        merge.contributors,
+        request.value.merge.as_ref().unwrap().contributors
+    );
+    assert_eq!(*submitted_seq, revision(1));
+    let mut empty = request.clone();
+    empty.key.unit_id = ExecutionId::new();
+    empty.value.pending = None;
+    empty.value.text.clear();
+    assert_eq!(store.write(&empty).unwrap().value.unwrap().text, "");
+}
+
+#[test]
+fn merge_journal_rejects_lost_or_changed_origin_scope_sequence_and_same_seq_text() {
+    let (_temp, store, mut request) = setup();
+    request.value.merge = Some(merge_origin());
+    request.value.pending = Some(merge_pending(&request));
+    for kind in [
+        "missing-origin",
+        "duplicate",
+        "one",
+        "five",
+        "basis",
+        "contributors",
+        "scope",
+        "source",
+        "selection",
+        "sequence",
+        "text",
+        "save",
+    ] {
+        let mut wrong = request.clone();
+        if kind == "missing-origin" {
+            wrong.value.merge = None;
+        }
+        if kind == "save" {
+            wrong.value.pending = Some(pending(&wrong));
+        }
+        if let Some(origin) = &mut wrong.value.merge {
+            if kind == "duplicate" {
+                origin.contributors[1] = origin.contributors[0];
+            }
+            if kind == "one" {
+                origin.contributors.truncate(1);
+            }
+            if kind == "five" {
+                origin
+                    .contributors
+                    .extend((0..3).map(|_| ExecutionId::new()));
+            }
+            if kind == "basis" {
+                origin.expected_basis = "not-a-basis".into();
+            }
+            if kind == "contributors" {
+                origin.contributors.reverse();
+            }
+        }
+        if let Some(DraftPending::Merge {
+            request: original,
+            submitted_seq,
+            ..
+        }) = &mut wrong.value.pending
+        {
+            if kind == "scope" {
+                original.unit_id = ExecutionId::new();
+            }
+            if kind == "source" {
+                original.source_revision_id = ExecutionId::new();
+            }
+            if kind == "selection" {
+                original.expected_selection_id = Some(ExecutionId::new());
+            }
+            if kind == "sequence" {
+                *submitted_seq = revision(2);
+            }
+            if kind == "text" {
+                original.text.push('X');
+            }
+        }
+        assert_eq!(
+            store.write(&wrong).unwrap_err().code,
+            ErrorCode::InvalidInput,
+            "{kind}"
+        );
+    }
+    assert!(!store.directory.exists());
+}
+
+#[test]
+fn legacy_draft_reads_and_failed_cas_do_not_upgrade_then_a_valid_write_keeps_all_old_heads() {
+    let (_temp, store, mut request) = setup();
+    request.value.pending = Some(pending(&request));
+    let pending_head = store.write(&request).unwrap();
+    let mut plain = request.clone();
+    plain.key.unit_id = ExecutionId::new();
+    plain.value.pending = None;
+    let plain_head = store.write(&plain).unwrap();
+    let mut selected = plain.clone();
+    selected.key.unit_id = ExecutionId::new();
+    selected.value.pending = Some(DraftPending::Selection {
+        request: SelectTranslationRevision {
+            project_id: selected.key.project_id,
+            action_id: ExecutionId::new(),
+            unit_id: selected.key.unit_id,
+            locale: selected.key.locale.clone(),
+            source_revision_id: selected.value.basis.source_revision_id,
+            expected_selection_id: None,
+            revision_id: ExecutionId::new(),
+        },
+        submitted_seq: selected.value.edit_seq,
+        text: selected.value.text.clone(),
+    });
+    let selection_head = store.write(&selected).unwrap();
+    let mut tombstone = request.key.clone();
+    tombstone.unit_id = ExecutionId::new();
+    let cleared = store
+        .clear(&DraftClear {
+            key: tombstone.clone(),
+            expected_revision: revision(0),
+        })
+        .unwrap();
+    let path = store.directory.join(DATABASE);
+    let database = Connection::open(&path).unwrap();
+    database
+        .pragma_update(None, "user_version", LEGACY_FORMAT)
+        .unwrap();
+    drop(database);
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(store.read(&request.key).unwrap(), pending_head);
+    assert_eq!(store.read(&tombstone).unwrap(), cleared);
+    assert_eq!(
+        store
+            .list(request.key.project_id, None, 100)
+            .unwrap()
+            .items
+            .len(),
+        3
+    );
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        bytes,
+        "queries cannot rewrite legacy storage"
+    );
+    let mut stale = plain.clone();
+    stale.value.text = "stale write".into();
+    assert_eq!(store.write(&stale).unwrap_err().stage, "drafts-revision");
+    assert_eq!(disk_format(&store), LEGACY_FORMAT);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let mut merged = request.clone();
+    merged.key.unit_id = ExecutionId::new();
+    merged.value.pending = None;
+    merged.value.merge = Some(merge_origin());
+    store.write(&merged).unwrap();
+    assert_eq!(
+        disk_format(&store),
+        FORMAT,
+        "old clients reject the new format before decoding payloads"
+    );
+    assert_eq!(store.read(&request.key).unwrap(), pending_head);
+    assert_eq!(store.read(&plain.key).unwrap(), plain_head);
+    assert_eq!(store.read(&selected.key).unwrap(), selection_head);
+    assert_eq!(store.read(&tombstone).unwrap(), cleared);
+}
+
+#[test]
+fn legacy_upgrade_is_rolled_back_with_a_commit_failure_and_new_shapes_are_not_valid_v1() {
+    let (_temp, store, request) = setup();
+    let head = store.write(&request).unwrap();
+    let path = store.directory.join(DATABASE);
+    let blocker = Connection::open(&path).unwrap();
+    blocker
+        .pragma_update(None, "user_version", LEGACY_FORMAT)
+        .unwrap();
+    blocker
+        .execute_batch("BEGIN; SELECT * FROM draft_heads;")
+        .unwrap();
+    let mut next = replace(&request, &head, "Merge after legacy");
+    next.value.merge = Some(merge_origin());
+    assert_eq!(
+        store.write(&next).unwrap_err().code,
+        ErrorCode::OutcomeUnknown
+    );
+    blocker.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(disk_format(&store), LEGACY_FORMAT);
+    assert_eq!(store.read(&request.key).unwrap(), head);
+    let merged = store.write(&next).unwrap();
+    assert_eq!(disk_format(&store), FORMAT);
+    blocker
+        .pragma_update(None, "user_version", LEGACY_FORMAT)
+        .unwrap();
+    assert_eq!(
+        store.read(&merged.key).unwrap_err().code,
+        ErrorCode::CorruptLedger
+    );
+    assert_eq!(disk_format(&store), LEGACY_FORMAT);
 }
 
 #[test]

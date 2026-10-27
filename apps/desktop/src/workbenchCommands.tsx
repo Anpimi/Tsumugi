@@ -28,7 +28,7 @@ import { validateRequestPluginStart as validateTranslationPluginStart, validateR
 import type { ProjectView } from "./projectCommands";
 import { validateResponseProjectView } from "./generated/validators";
 
-type PlainWorkbenchCommandId = "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
+type PlainWorkbenchCommandId = "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
   | "workspace.agent" | "workspace.details" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
@@ -211,6 +211,9 @@ export interface TranslationStageCommandPayload {
   expectedSelectionId: string | null; expectedRevisionId: string | null; draftEditSeq: string; draftBasis: DraftBasis;
   evidence: TranslationStageEvidence;
 }
+export interface TranslationMergeStageCommandPayload extends Omit<TranslationStageCommandPayload, "kind" | "evidence"> {
+  kind: "translation-merge-stage"; comparisonId: string; contributors: string[]; expectedBasis: string; initialRevisionId: string;
+}
 export interface TranslationDraftCandidateCommandPayload extends Omit<TranslationStageCommandPayload, "kind"> {
   kind: "translation-draft-candidate"; disposition: CandidateDisposition; expectedDecisionId: string | null;
   actor: string; reason: string; decisionEditSeq: number;
@@ -275,6 +278,15 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "arena.compare-saved": ArenaCompareCommandPayload;
+  "arena.open-saved": ArenaOpenComparisonCommandPayload;
+  "arena.reveal-saved": ArenaRevealCommandPayload;
+  "arena.check-saved-comparison": ArenaPendingCommandPayload;
+  "arena.retry-saved-comparison": ArenaPendingCommandPayload;
+  "arena.recover-saved-check": ArenaPendingCommandPayload;
+  "arena.recover-saved-retry": ArenaPendingCommandPayload;
+  "arena.stage-compared": TranslationStageCommandPayload;
+  "arena.stage-merge": TranslationMergeStageCommandPayload;
   "translation.recover-candidate-check": TranslationCandidatePendingCommandPayload;
   "translation.recover-candidate-retry": TranslationCandidatePendingCommandPayload;
   "translation.recover-protection": TranslationProtectionPendingCommandPayload;
@@ -595,7 +607,8 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"translation-import-preview", "translation.capture-import-batch">
   | ResourceCommand<"translation-import-batch", "translation.apply-import-batch">
   | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
-  | ResourceCommand<"translation-stage", "translation.stage-candidate" | "translation.edit-candidate" | "translation.compare-candidate" | "translation.audit-candidate" | "translation.stage-inline-candidate" | "translation.edit-inline-candidate" | "translation.inspect-inline-candidate">
+  | ResourceCommand<"translation-stage", "translation.stage-candidate" | "translation.edit-candidate" | "translation.compare-candidate" | "translation.audit-candidate" | "translation.stage-inline-candidate" | "translation.edit-inline-candidate" | "translation.inspect-inline-candidate" | "arena.stage-compared">
+  | ResourceCommand<"translation-merge-stage", "arena.stage-merge">
   | ResourceCommand<"translation-draft-candidate", "translation.decide-draft-candidate">
   | ResourceCommand<"translation-revision", "translation.select-revision" | "translation.open-comparison">
   | ResourceCommand<"translation-context", "translation.edit-context">
@@ -622,14 +635,14 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"arena-preparation", "arena.preview">
   | ResourceCommand<"arena-start", "arena.start">
   | ResourceCommand<"arena-candidate", "arena.adopt-result">
-  | ResourceCommand<"arena-compare", "arena.create-comparison">
-  | ResourceCommand<"arena-reveal", "arena.reveal-identities">
+  | ResourceCommand<"arena-compare", "arena.create-comparison" | "arena.compare-saved">
+  | ResourceCommand<"arena-reveal", "arena.reveal-identities" | "arena.reveal-saved">
   | ResourceCommand<"arena-selection", "arena.select-candidate">
   | ResourceCommand<"arena-comparison", "arena.begin-merge">
   | ResourceCommand<"arena-merge-draft", "arena.save-merge" | "arena.refresh-merge-basis" | "arena.discard-merge">
   | ResourceCommand<"arena-round", "arena.new-round">
-  | ResourceCommand<"arena-open-comparison", "arena.open-comparison">
-  | ResourceCommand<"arena-pending", "arena.reconcile-pending" | "arena.retry-pending">
+  | ResourceCommand<"arena-open-comparison", "arena.open-comparison" | "arena.open-saved">
+  | ResourceCommand<"arena-pending", "arena.reconcile-pending" | "arena.retry-pending" | "arena.check-saved-comparison" | "arena.retry-saved-comparison" | "arena.recover-saved-check" | "arena.recover-saved-retry">
   | ResourceCommand<"arena-translation-target", "arena.open-translation">
   | ResourceCommand<"ai-preparation", "ai.preview">
   | ResourceCommand<"ai-start", "ai.start">
@@ -701,6 +714,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "translation-import-preview": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-import-batch": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-import-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-merge-stage": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-stage": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-draft-candidate": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-revision": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -867,6 +881,15 @@ function translationRow(value: TranslationImportRowTarget) {
   return !!value && typeof value === "object" && editSequence(value.ordinal) && [value.itemId,value.resultId,value.resultDigest,value.unitId,
     value.occurrenceId,value.sourceRevisionId].every(validIdentity) && nullableIdentity(value.expectedSelectionId);
 }
+function validStageTarget(payload: Omit<TranslationStageCommandPayload, "kind" | "evidence">) {
+  const basis = payload.draftBasis;
+  return !!basis && taskRevision(payload.draftEditSeq)
+    && [payload.unitId, payload.locale, payload.sourceRevisionId, payload.sourceSnapshotId, basis.sourceRevisionId].every(validIdentity)
+    && [payload.expectedSelectionId, payload.expectedRevisionId, basis.selectionId, basis.revisionId].every(nullableIdentity)
+    && (basis.text === null || typeof basis.text === "string") && basis.sourceRevisionId === payload.sourceRevisionId
+    && basis.selectionId === payload.expectedSelectionId && basis.revisionId === payload.expectedRevisionId
+    && (basis.selectionId === null ? basis.revisionId === null && basis.text === null : basis.revisionId !== null && basis.text !== null);
+}
 function validTranslationPayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`translation-${string}`}> {
   if (!payload || typeof payload !== "object") return false;
   switch (payload.kind) {
@@ -905,17 +928,16 @@ function validTranslationPayload(payload: CommandPayload | undefined): payload i
     case "translation-import-pending": return validateRequestAdopt(payload.request) && validIdentity(payload.recoveryUnitId)
       && (payload.previousSelectionSequence === null || taskRevision(payload.previousSelectionSequence));
     case "translation-stage": {
-      const basis = payload.draftBasis, evidence = payload.evidence;
-      if (!basis || !evidence || !taskRevision(payload.draftEditSeq)
-        || ![payload.unitId, payload.locale, payload.sourceRevisionId, payload.sourceSnapshotId, basis.sourceRevisionId].every(validIdentity)
-        || ![payload.expectedSelectionId, payload.expectedRevisionId, basis.selectionId, basis.revisionId].every(nullableIdentity)
-        || (basis.text !== null && typeof basis.text !== "string")
-        || basis.sourceRevisionId !== payload.sourceRevisionId || basis.selectionId !== payload.expectedSelectionId || basis.revisionId !== payload.expectedRevisionId
-        || (basis.selectionId === null ? basis.revisionId !== null || basis.text !== null : basis.revisionId === null || basis.text === null)) return false;
+      const evidence = payload.evidence;
+      if (!evidence || !validStageTarget(payload)) return false;
       return evidence.kind === "revision" ? [evidence.revisionId, evidence.actionId, evidence.sourceRevisionId, evidence.sourceSnapshotId].every(validIdentity)
         && taskRevision(evidence.ordinal) && evidence.ordinal !== "0" && nullableIdentity(evidence.decisionId)
         : evidence.kind === "tm" && [evidence.donorUnitId, evidence.translationRevisionId, evidence.sourceRevisionId].every(validIdentity);
     }
+    case "translation-merge-stage": return validStageTarget(payload) && validIdentity(payload.comparisonId)
+      && validIdentity(payload.expectedBasis) && validIdentity(payload.initialRevisionId) && Array.isArray(payload.contributors)
+      && payload.contributors.length >= 2 && payload.contributors.length <= 4 && payload.contributors.every(validIdentity)
+      && new Set(payload.contributors).size === payload.contributors.length && payload.contributors.includes(payload.initialRevisionId);
     case "translation-draft-candidate": return validTranslationPayload({ ...payload, kind: "translation-stage" })
       && payload.evidence.kind === "revision" && ["rejected", "restored"].includes(payload.disposition)
       && nullableIdentity(payload.expectedDecisionId) && payload.expectedDecisionId === payload.evidence.decisionId && editSequence(payload.decisionEditSeq)
@@ -1240,6 +1262,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "translation-import-row" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-import-batch" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-import-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-merge-stage" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-stage" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-draft-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-revision" && payload?.kind === command.payloadKind) command.handler(payload);

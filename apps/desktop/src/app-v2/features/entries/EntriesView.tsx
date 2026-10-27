@@ -120,7 +120,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     const entry = drafts && key ? drafts.getEntry(key) : null, state = drafts?.getSnapshot();
     return !disabled && isEditing() && state?.hydration === "ready" && !state.retired && !state.mutationReserved
       && !!entry?.value && entry.basisCurrent && !entry.value.pending && !entry.busy && !entry.currentFailure
-      && entry.failure?.kind !== "journal" && entry.failure?.kind !== "journal-conflict";
+      && !(entry.value.merge && entry.failure?.kind === "basis-conflict") && entry.failure?.kind !== "journal" && entry.failure?.kind !== "journal-conflict";
   };
   async function refresh() {
     if (disabled || !await navigate({ focus: null, editing: false, focusMode: false, queueActive: false, queueAnchor: null, queueScopeId: null, cursor: null, afterOrdinal: 0 })) return;

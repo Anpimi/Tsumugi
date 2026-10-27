@@ -31,7 +31,7 @@ export function sameCandidateCapture(input: TranslationStageCommandPayload | und
 }
 export function canStageCandidate(entry: DraftEntry | undefined, target: ReviewTarget, evidence: CandidateEvidence) {
   return candidateEntryCurrent(entry, target) && !!entry?.value && !entry.busy && !entry.value.pending
-    && entry.value.text === (entry.value.basis.text ?? "") && entry.failure === null
+    && !entry.value.merge && entry.value.text === (entry.value.basis.text ?? "") && entry.failure === null
     && (evidence.kind === "tm" ? evidence.value.targetLocale === target.locale
       : evidence.value.sourceRevisionId === target.sourceRevisionId && evidence.value.revisionId !== target.revisionId
         && evidence.value.candidateDecision?.request.disposition !== "rejected");

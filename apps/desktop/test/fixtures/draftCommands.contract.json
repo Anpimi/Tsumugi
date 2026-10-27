@@ -59,6 +59,56 @@
       "projectId": "11111111-1111-4111-8111-111111111111",
       "after": null,
       "limit": 50
+    },
+    "mergeWrite": {
+      "sessionToken": "isolated-session",
+      "write": {
+        "key": {
+          "projectId": "11111111-1111-4111-8111-111111111111",
+          "unitId": "66666666-6666-4666-8666-666666666666",
+          "locale": "zh-CN"
+        },
+        "expectedRevision": "2",
+        "writerId": "99999999-9999-4999-8999-999999999999",
+        "value": {
+          "basis": {
+            "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+            "selectionId": null,
+            "revisionId": null,
+            "text": null
+          },
+          "text": "更新的草稿 B 👩🏽‍💻\né",
+          "editSeq": "9007199254740993",
+          "pending": {
+            "kind": "merge",
+            "request": {
+              "projectId": "11111111-1111-4111-8111-111111111111",
+              "actionId": "55555555-5555-4555-8555-555555555555",
+              "unitId": "66666666-6666-4666-8666-666666666666",
+              "locale": "zh-CN",
+              "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+              "expectedSelectionId": null,
+              "text": "译文👩‍💻é"
+            },
+            "merge": {
+              "contributors": [
+                "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+              ],
+              "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "submittedSeq": "9007199254740992"
+          },
+          "merge": {
+            "comparisonId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "contributors": [
+              "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+            ],
+            "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      }
     }
   },
   "responses": {
@@ -164,6 +214,53 @@
         }
       ],
       "next": null
+    },
+    "mergeWritten": {
+      "key": {
+        "projectId": "11111111-1111-4111-8111-111111111111",
+        "unitId": "66666666-6666-4666-8666-666666666666",
+        "locale": "zh-CN"
+      },
+      "revision": "3",
+      "writerId": "99999999-9999-4999-8999-999999999999",
+      "value": {
+        "basis": {
+          "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+          "selectionId": null,
+          "revisionId": null,
+          "text": null
+        },
+        "text": "更新的草稿 B 👩🏽‍💻\né",
+        "editSeq": "9007199254740993",
+        "pending": {
+          "kind": "merge",
+          "request": {
+            "projectId": "11111111-1111-4111-8111-111111111111",
+            "actionId": "55555555-5555-4555-8555-555555555555",
+            "unitId": "66666666-6666-4666-8666-666666666666",
+            "locale": "zh-CN",
+            "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+            "expectedSelectionId": null,
+            "text": "译文👩‍💻é"
+          },
+          "merge": {
+            "contributors": [
+              "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+            ],
+            "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "submittedSeq": "9007199254740992"
+        },
+        "merge": {
+          "comparisonId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "contributors": [
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+          ],
+          "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
     }
   }
 }

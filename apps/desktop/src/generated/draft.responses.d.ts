@@ -16,6 +16,12 @@ export type DraftPending =
       request: SelectTranslationRevision;
       submittedSeq: Revision;
       text: string;
+    }
+  | {
+      kind: "merge";
+      merge: MergeBasis;
+      request: SaveTranslationRevision;
+      submittedSeq: Revision;
     };
 export type CommandErrorCode =
   | "invalid-input"
@@ -165,6 +171,7 @@ export interface DraftKey {
 export interface DraftValue {
   basis: DraftBasis;
   editSeq: Revision;
+  merge?: DraftMergeOrigin | null;
   pending: DraftPending | null;
   text: string;
 }
@@ -176,6 +183,15 @@ export interface DraftBasis {
   selectionId: ExecutionId | null;
   sourceRevisionId: ExecutionId;
   text: string | null;
+}
+/**
+ * Comparison provenance retained with local input; it grants no permission to
+ * save, merge, or replace a project selection.
+ */
+export interface DraftMergeOrigin {
+  comparisonId: ExecutionId;
+  contributors: ExecutionId[];
+  expectedBasis: string;
 }
 export interface SaveTranslationRevision {
   actionId: ExecutionId;
@@ -194,6 +210,10 @@ export interface SelectTranslationRevision {
   revisionId: ExecutionId;
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface MergeBasis {
+  contributors: ExecutionId[];
+  expectedBasis: string;
 }
 export interface CommandError {
   code: CommandErrorCode;

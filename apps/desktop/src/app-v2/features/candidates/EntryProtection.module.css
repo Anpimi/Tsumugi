@@ -1,0 +1,9 @@
+.section { padding: var(--space-5) var(--space-6); border-block-end: var(--border-width) solid var(--color-border-subtle); min-inline-size: 0; }
+.header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); }
+.header h3, .preview h4 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.status { margin-block: var(--space-3); }
+.meta { color: var(--color-text-secondary); font-size: var(--text-sm); margin-block: var(--space-3); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-block-start: var(--space-4); }
+.preview { display: grid; gap: var(--space-5); min-inline-size: 0; }
+.target { margin: 0; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; min-inline-size: 0; }

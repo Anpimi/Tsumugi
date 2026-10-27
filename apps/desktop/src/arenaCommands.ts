@@ -79,4 +79,14 @@ export const arenaCommands={
  },
  mergeAction:async(request:MergeRequest)=>confirmArenaMergeAction(request,
   await checkedInvoke("read_arena_merge_action",request,validators.validateResponseMergeAction)),
+ recoverMerge:async(request:MergeRequest)=>{
+  const value=await checkedInvoke("recover_arena_merge",request,validators.validateResponseRecoverMerge),saved=value.request;
+  requireConfirmation(saved.projectId===request.projectId&&saved.actionId===request.actionId&&saved.unitId===request.unitId
+   &&saved.locale===request.locale&&saved.sourceRevisionId===request.sourceRevisionId&&saved.text===request.text
+   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&value.merge.expectedBasis===request.merge.expectedBasis
+   &&value.merge.contributors.length===request.merge.contributors.length
+   &&value.merge.contributors.every((id,index)=>id===request.merge.contributors[index]));
+  if(value.outcome.kind==="recorded")confirmArenaMerge(request,value.outcome.receipt);
+  return value;
+ },
 };

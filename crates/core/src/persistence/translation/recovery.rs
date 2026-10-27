@@ -4,6 +4,7 @@ use super::{
     ErrorCode, ExecutionError, ProjectStore, SaveTranslationRevision, SelectTranslationRevision,
     TranslationSaveReceipt, TranslationSelection,
 };
+use crate::MergeBasis;
 use serde::{Deserialize, Serialize};
 
 /// Replay safety is not admission, fresh authority, or proof that an action never ran.
@@ -47,9 +48,19 @@ pub struct TranslationSelectionRecovery {
     pub outcome: TranslationActionOutcome<TranslationSelection>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationMergeRecovery {
+    pub request: SaveTranslationRevision,
+    pub merge: MergeBasis,
+    pub outcome: TranslationActionOutcome<TranslationSelection>,
+}
+
 fn outcome<T>(
     store: &ProjectStore,
     result: Result<Option<T>, ExecutionError>,
+    mismatch_stage: &str,
 ) -> Result<TranslationActionOutcome<T>, ExecutionError> {
     match result {
         Ok(Some(receipt)) => Ok(TranslationActionOutcome::Recorded { receipt }),
@@ -61,8 +72,7 @@ fn outcome<T>(
             },
         }),
         Err(failure)
-            if failure.code == ErrorCode::ResultMismatch
-                && failure.stage == "translation-action" =>
+            if failure.code == ErrorCode::ResultMismatch && failure.stage == mismatch_stage =>
         {
             Ok(TranslationActionOutcome::Mismatch {})
         }
@@ -81,7 +91,7 @@ impl ProjectStore {
         let result = self.translation_save_receipt_by_request(request);
         Ok(TranslationSaveRecovery {
             request: request.clone(),
-            outcome: outcome(self, result)?,
+            outcome: outcome(self, result, "translation-action")?,
         })
     }
 
@@ -94,7 +104,24 @@ impl ProjectStore {
         let result = self.translation_selection_by_request(request);
         Ok(TranslationSelectionRecovery {
             request: request.clone(),
-            outcome: outcome(self, result)?,
+            outcome: outcome(self, result, "translation-action")?,
+        })
+    }
+
+    /// Recover the exact original merge over its ordinary contributors and
+    /// selection ledger, even when current project facts have since changed.
+    pub fn recover_translation_merge(
+        &self,
+        request: &SaveTranslationRevision,
+        merge: &MergeBasis,
+    ) -> Result<TranslationMergeRecovery, ExecutionError> {
+        let result = self
+            .arena_merge_action_read(request, merge)
+            .map(|found| found.map(|value| value.receipt));
+        Ok(TranslationMergeRecovery {
+            request: request.clone(),
+            merge: merge.clone(),
+            outcome: outcome(self, result, "arena-merge-action")?,
         })
     }
 }

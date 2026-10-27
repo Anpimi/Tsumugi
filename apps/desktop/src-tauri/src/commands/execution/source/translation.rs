@@ -7,6 +7,9 @@ use tsumugi_core::{
 
 use tsumugi_core::{TranslationHistory, TranslationSaveReceipt};
 use tsumugi_core::TranslationPreview;
+#[cfg(test)]
+#[path = "translation_revision_tests.rs"]
+mod revision_tests;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TranslationFilesRequest {
@@ -131,6 +134,11 @@ request!(
         limit: u32,
     }
 );
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationRevisionRequest {
+    unit_id: ExecutionId,
+    locale: String,
+    revision_id: ExecutionId,
+});
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationSaveRequest {
     action_id: ExecutionId,
     unit_id: ExecutionId,
@@ -549,6 +557,18 @@ pub async fn prepare_translation_adoption(
 }
 
 #[tauri::command]
+pub async fn read_translation_revision(
+    state: State<'_, AppState>,
+    request: TranslationRevisionRequest,
+) -> Result<tsumugi_core::TranslationRevision, CommandError> {
+    state.sessions.run("read_translation_revision", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.translation_revision(request.project_id, request.unit_id, &request.locale, request.revision_id)
+            .map_err(map_source)
+    }).await
+}
+
+#[tauri::command]
 pub async fn read_translation_history(
     state: State<'_, AppState>,
     request: TranslationHistoryRequest,
@@ -816,6 +836,8 @@ mod contracts {
         let mut extra = original_read; extra["projectId"] = fixture["adopt"]["projectId"].clone();
         assert!(serde_json::from_value::<TranslationAdoptionActionRequest>(extra).is_err());
         round_trip!("history", TranslationHistoryRequest);
+        round_trip!("revisionRequest", TranslationRevisionRequest);
+        round_trip!("revisionResponse", tsumugi_core::TranslationRevision);
         round_trip!("save", TranslationSaveRequest);
         round_trip!("actionRequest", TranslationActionRequest);
         round_trip!("select", TranslationSelectRequest);

@@ -23,7 +23,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 1;
+const FORMAT: i64 = 2;
+const LEGACY_FORMAT: i64 = 1;
 const HEAD_SQL: &str = "CREATE TABLE draft_heads (project_id TEXT NOT NULL, locale TEXT NOT NULL, unit_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, source_revision_id TEXT, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,locale,unit_id), CHECK((edit_seq IS NULL AND source_revision_id IS NULL AND has_pending=0) OR (edit_seq>=0 AND source_revision_id IS NOT NULL)))";
 
 type Result<T> = std::result::Result<T, ExecutionError>;
@@ -92,8 +93,8 @@ impl DraftStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(sql)?;
-        verify_schema(&tx)?;
-        read_head(&tx, key)
+        let format = verify_schema(&tx)?;
+        read_head(&tx, key, format)
     }
 
     pub fn list(
@@ -120,7 +121,7 @@ impl DraftStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(sql)?;
-        verify_schema(&tx)?;
+        let format = verify_schema(&tx)?;
         // Scan tombstones as well: filtering on summary columns could hide a
         // real pending request if those columns no longer match its payload.
         let mut statement = tx.prepare("SELECT locale,unit_id,revision,edit_seq,source_revision_id,has_pending,CASE WHEN length(payload)<=?5 THEN payload END FROM draft_heads WHERE project_id=?1 AND (?2 IS NULL OR (locale,unit_id)>(?2,?3)) ORDER BY locale,unit_id LIMIT ?4").map_err(sql)?;
@@ -152,7 +153,7 @@ impl DraftStore {
                 unit_id: stored_id(&unit)?,
                 locale,
             };
-            let head = decode_head(&key, stored)?;
+            let head = decode_head(&key, stored, format)?;
             if index == limit as usize {
                 has_more = true;
                 break;
@@ -411,14 +412,14 @@ fn sync_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn verify_schema(connection: &Connection) -> Result<()> {
+fn verify_schema(connection: &Connection) -> Result<i64> {
     let application: i64 = connection
         .pragma_query_value(None, "application_id", |row| row.get(0))
         .map_err(sql)?;
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || format != FORMAT {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -440,7 +441,7 @@ fn verify_schema(connection: &Connection) -> Result<()> {
     if schema != vec![("draft_heads".into(), "table".into(), HEAD_SQL.into())] {
         return Err(fail(ErrorCode::CorruptLedger, "drafts-schema"));
     }
-    Ok(())
+    Ok(format)
 }
 
 fn validate_key(key: &DraftKey) -> Result<()> {
@@ -459,6 +460,9 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
     {
         return Err(fail(ErrorCode::InvalidInput, "drafts-basis"));
     }
+    if let Some(origin) = &value.merge {
+        validate_merge(&origin.contributors, &origin.expected_basis)?;
+    }
     let Some(pending) = &value.pending else {
         return Ok(());
     };
@@ -466,26 +470,61 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
         DraftPending::Save {
             request,
             submitted_seq,
-        } => (
-            request.project_id,
-            request.unit_id,
-            &request.locale,
-            request.source_revision_id,
-            request.expected_selection_id,
-            submitted_seq,
-        ),
+        } => {
+            if value.merge.is_some() {
+                return Err(fail(ErrorCode::InvalidInput, "drafts-merge-pending"));
+            }
+            (
+                request.project_id,
+                request.unit_id,
+                &request.locale,
+                request.source_revision_id,
+                request.expected_selection_id,
+                submitted_seq,
+            )
+        }
         DraftPending::Selection {
             request,
             submitted_seq,
             ..
-        } => (
-            request.project_id,
-            request.unit_id,
-            &request.locale,
-            request.source_revision_id,
-            request.expected_selection_id,
+        } => {
+            if value.merge.is_some() {
+                return Err(fail(ErrorCode::InvalidInput, "drafts-merge-pending"));
+            }
+            (
+                request.project_id,
+                request.unit_id,
+                &request.locale,
+                request.source_revision_id,
+                request.expected_selection_id,
+                submitted_seq,
+            )
+        }
+        DraftPending::Merge {
+            request,
+            merge,
             submitted_seq,
-        ),
+        } => {
+            validate_merge(&merge.contributors, &merge.expected_basis)?;
+            let origin = value
+                .merge
+                .as_ref()
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "drafts-merge-pending"))?;
+            if origin.contributors != merge.contributors
+                || origin.expected_basis != merge.expected_basis
+                || *submitted_seq == value.edit_seq && request.text != value.text
+            {
+                return Err(fail(ErrorCode::InvalidInput, "drafts-merge-pending"));
+            }
+            (
+                request.project_id,
+                request.unit_id,
+                &request.locale,
+                request.source_revision_id,
+                request.expected_selection_id,
+                submitted_seq,
+            )
+        }
     };
     if project != key.project_id
         || unit != key.unit_id
@@ -495,6 +534,23 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
         || *submitted > value.edit_seq
     {
         return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
+    }
+    Ok(())
+}
+
+fn validate_merge(contributors: &[ExecutionId], basis: &str) -> Result<()> {
+    if !(2..=4).contains(&contributors.len())
+        || contributors
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != contributors.len()
+        || basis.len() != 64
+        || !basis
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(fail(ErrorCode::InvalidInput, "drafts-merge"));
     }
     Ok(())
 }
@@ -590,15 +646,15 @@ fn stored_head_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<S
     })
 }
 
-fn read_head(connection: &Connection, key: &DraftKey) -> Result<DraftHead> {
+fn read_head(connection: &Connection, key: &DraftKey, format: i64) -> Result<DraftHead> {
     let row = connection.query_row("SELECT revision,edit_seq,source_revision_id,has_pending,CASE WHEN length(payload)<=?4 THEN payload END FROM draft_heads WHERE project_id=?1 AND locale=?2 AND unit_id=?3", params![key.project_id.to_string(), key.locale, key.unit_id.to_string(), MAX_DRAFT_RECORD_BYTES as i64], |row| stored_head_row(row, 0)).optional().map_err(sql)?;
     let Some(stored) = row else {
         return Ok(empty_head(key));
     };
-    decode_head(key, stored)
+    decode_head(key, stored, format)
 }
 
-fn decode_head(key: &DraftKey, stored: StoredHead) -> Result<DraftHead> {
+fn decode_head(key: &DraftKey, stored: StoredHead, format: i64) -> Result<DraftHead> {
     let StoredHead {
         revision,
         edit_seq: seq,
@@ -619,6 +675,10 @@ fn decode_head(key: &DraftKey, stored: StoredHead) -> Result<DraftHead> {
         || source != value.map(|value| value.basis.source_revision_id.to_string())
         || pending != i64::from(value.is_some_and(|value| value.pending.is_some()))
         || value.is_some_and(|value| validate_value(key, value).is_err())
+        || format == LEGACY_FORMAT
+            && value.is_some_and(|value| {
+                value.merge.is_some() || matches!(value.pending, Some(DraftPending::Merge { .. }))
+            })
         || encode(&head).map_err(|_| fail(ErrorCode::CorruptLedger, "drafts-record"))? != bytes
     {
         return Err(fail(ErrorCode::CorruptLedger, "drafts-record"));
@@ -667,10 +727,16 @@ fn mutate_existing(
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sql)?;
-    verify_schema(&tx)?;
-    let before = read_head(&tx, key)?;
+    let format = verify_schema(&tx)?;
+    let before = read_head(&tx, key, format)?;
     let after = apply(&before)?;
     if before == after {
+        if format == LEGACY_FORMAT {
+            tx.pragma_update(None, "user_version", FORMAT)
+                .map_err(sql)?;
+            tx.commit()
+                .map_err(|_| fail(ErrorCode::OutcomeUnknown, "drafts-commit"))?;
+        }
         return Ok(before);
     }
     let payload = encode(&after)?;
@@ -691,6 +757,10 @@ fn mutate_existing(
         limits,
     )?;
     persist_head(&tx, &after, &payload)?;
+    if format == LEGACY_FORMAT {
+        tx.pragma_update(None, "user_version", FORMAT)
+            .map_err(sql)?;
+    }
     test_hook("write-before-commit", Some(&tx));
     tx.commit()
         .map_err(|_| fail(ErrorCode::OutcomeUnknown, "drafts-commit"))?;

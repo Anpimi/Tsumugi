@@ -299,6 +299,7 @@ struct TranslationRequests {
     adopt: execution::source::translation::TranslationAdoptRequest,
     adoption_action: execution::source::translation::TranslationAdoptionActionRequest,
     history: execution::source::translation::TranslationHistoryRequest,
+    revision: execution::source::translation::TranslationRevisionRequest,
     save: execution::source::translation::TranslationSaveRequest,
     action: execution::source::translation::TranslationActionRequest,
     select: execution::source::translation::TranslationSelectRequest,
@@ -327,6 +328,7 @@ struct TranslationResponses {
     prepared: tsumugi_core::execution::AdoptionAction,
     adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     history: tsumugi_core::TranslationHistory,
+    revision: tsumugi_core::TranslationRevision,
     action: Option<tsumugi_core::TranslationSelection>,
     saved: tsumugi_core::TranslationSaveReceipt,
     selected: tsumugi_core::TranslationSelection,
@@ -639,6 +641,7 @@ struct ArenaRequests {
     reveal_target: execution::arena::ComparisonRead,
     merge: execution::arena::MergeRequest,
     merge_action: execution::arena::MergeRequest,
+    recover_merge: execution::arena::MergeRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -651,6 +654,7 @@ struct ArenaResponses {
     comparison: tsumugi_core::ComparisonView,
     comparison_action: Option<tsumugi_core::ComparisonRequest>,
     merge_action: Option<tsumugi_core::ArenaMergeActionRead>,
+    recover_merge: tsumugi_core::TranslationMergeRecovery,
     comparisons: Vec<tsumugi_core::ComparisonSummary>,
     reveal: (),
     reveal_target: Option<tsumugi_core::ArenaRevealTarget>,

@@ -58,7 +58,7 @@ export function deriveEntryStatus(row: SegmentRow, draft?: EntryStatusDraft | nu
     ? status("stale", "entryStatusRetainedDraftSourceChanged") : status("draft", "entryStatusRetainedDraft");
   if (draft?.value) {
     const { value } = draft;
-    const hasDraft = value.pending !== null || value.text !== (value.basis.text ?? "")
+    const hasDraft = value.pending !== null || (value.merge != null || value.text !== (value.basis.text ?? ""))
       || draft.newerInputAfterConfirmation;
     if (hasDraft && !draft.basisCurrent) return status("stale", "entryStatusDraftBasisChanged");
     if (hasDraft) return status("draft", value.pending !== null ? "entryStatusPendingConfirmation"

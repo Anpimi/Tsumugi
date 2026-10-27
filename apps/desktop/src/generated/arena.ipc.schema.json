@@ -519,6 +519,9 @@
       "read": {
         "$ref": "#/definitions/ReadRequest"
       },
+      "recoverMerge": {
+        "$ref": "#/definitions/MergeRequest"
+      },
       "reveal": {
         "$ref": "#/definitions/RevealRequest"
       },
@@ -547,7 +550,8 @@
       "reveal",
       "revealTarget",
       "merge",
-      "mergeAction"
+      "mergeAction",
+      "recoverMerge"
     ],
     "title": "Requests",
     "type": "object",
@@ -2733,6 +2737,86 @@
         ],
         "type": "object"
       },
+      "TranslationActionOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/TranslationSelection"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "No receipt was found. This does not assert that work is still running or\nthat the original action cannot subsequently be submitted.",
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              },
+              "replay": {
+                "$ref": "#/definitions/TranslationActionReplay"
+              }
+            },
+            "required": [
+              "kind",
+              "replay"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mismatch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TranslationActionReplay": {
+        "description": "Replay safety is not admission, fresh authority, or proof that an action never ran.",
+        "enum": [
+          "explicit-same-request",
+          "blocked"
+        ],
+        "type": "string"
+      },
+      "TranslationMergeRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "merge": {
+            "$ref": "#/definitions/MergeBasis"
+          },
+          "outcome": {
+            "$ref": "#/definitions/TranslationActionOutcome"
+          },
+          "request": {
+            "$ref": "#/definitions/SaveTranslationRevision"
+          }
+        },
+        "required": [
+          "request",
+          "merge",
+          "outcome"
+        ],
+        "type": "object"
+      },
       "TranslationOrigin": {
         "enum": [
           "import",
@@ -2928,6 +3012,9 @@
       "prepared": {
         "$ref": "#/definitions/Prepared"
       },
+      "recoverMerge": {
+        "$ref": "#/definitions/TranslationMergeRecovery"
+      },
       "reveal": {
         "type": "null"
       },
@@ -2966,6 +3053,7 @@
       "comparison",
       "comparisonAction",
       "mergeAction",
+      "recoverMerge",
       "comparisons",
       "reveal",
       "revealTarget",

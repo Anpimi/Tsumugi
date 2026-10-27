@@ -112,6 +112,7 @@ export interface Responses {
   projectionStartAction: TranslationProjectionStartRead | null;
   recoverSave: TranslationSaveRecovery;
   recoverSelection: TranslationSelectionRecovery;
+  revision: TranslationRevision;
   saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;

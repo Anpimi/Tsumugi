@@ -1,4 +1,6 @@
-import { draftCommands, sameDraftBasis, sameDraftValue, type DraftBasis, type DraftHead, type DraftKey, type DraftPending, type DraftReadView, type DraftSummary, type DraftValue } from "../../../draftCommands";
+import { draftCommands, sameDraftBasis, sameDraftMerge, sameDraftValue, type DraftBasis, type DraftHead, type DraftKey, type DraftMergeOrigin, type DraftPending, type DraftReadView, type DraftSummary, type DraftValue } from "../../../draftCommands";
+import { arenaCommands, type ComparisonView } from "../../../arenaCommands";
+import { comparisonBasis, confirmComparisonRead } from "../../../arenaComparison";
 import { executionCommands, type SessionRequest } from "../../../executionCommands";
 import { hasUnknownOutcome } from "../../../projectCommands";
 import { resourceCommands, type TmSuggestion } from "../../../resourceCommands";
@@ -47,6 +49,9 @@ export interface TranslationDraftPorts {
   recoverSelection: typeof translationCommands.recoverSelection;
   history: typeof translationCommands.history;
   suggestions: typeof resourceCommands.suggestions;
+  comparison: typeof arenaCommands.comparison;
+  merge: typeof arenaCommands.merge;
+  recoverMerge: typeof arenaCommands.recoverMerge;
   writerId: () => string;
 }
 export interface TranslationDraftOptions {
@@ -73,8 +78,18 @@ const identity = (key: DraftKey) => JSON.stringify([key.projectId, key.unitId, k
 function freezeValue(value: DraftValue | null) {
   if (!value) return;
   Object.freeze(value.basis);
+  if (value.merge) { Object.freeze(value.merge.contributors); Object.freeze(value.merge); }
+  if (value.pending?.kind === "merge") { Object.freeze(value.pending.merge.contributors); Object.freeze(value.pending.merge); }
   if (value.pending) { Object.freeze(value.pending.request); Object.freeze(value.pending); }
   Object.freeze(value);
+}
+function mergeMatches(view: ComparisonView, origin: DraftMergeOrigin, key: DraftKey, basis: DraftBasis, currentBasis = true) {
+  confirmComparisonRead(view, origin.comparisonId);
+  return view.unitId === key.unitId && view.locale === key.locale && view.sourceRevisionId === basis.sourceRevisionId
+    && view.selectionId === basis.selectionId && view.selectedRevisionId === basis.revisionId && view.selectedText === basis.text
+    && (!currentBasis || view.basis === origin.expectedBasis) && view.rows.length === origin.contributors.length
+    && view.rows.every((row, index) => row.revisionId === origin.contributors[index]
+      && row.basisCurrent && row.sourceRevisionId === basis.sourceRevisionId && row.candidateDisposition !== "rejected");
 }
 function immutableEntry(entry: DraftEntry): DraftEntry {
   freezeValue(entry.value); freezeValue(entry.head.value);
@@ -105,6 +120,7 @@ export class TranslationDrafts {
       select: translationCommands.select, recoverSave: translationCommands.recoverSave,
       recoverSelection: translationCommands.recoverSelection, history: translationCommands.history,
       suggestions: resourceCommands.suggestions,
+      comparison: arenaCommands.comparison, merge: arenaCommands.merge, recoverMerge: arenaCommands.recoverMerge,
       writerId: () => crypto.randomUUID(), ...options.ports };
     this.writerId = this.ports.writerId();
   }
@@ -295,7 +311,8 @@ export class TranslationDrafts {
 
   private fresh(record: RecordState) {
     return this.kernel.live && !!record.entry.value && !record.entry.busy && !record.entry.value.pending
-      && record.entry.basisCurrent && record.entry.currentFailure === null && record.entry.failure?.kind !== "journal-conflict";
+      && record.entry.basisCurrent && record.entry.currentFailure === null && record.entry.failure?.kind !== "journal-conflict"
+      && !(record.entry.value.merge && record.entry.failure?.kind === "basis-conflict");
   }
   /** Candidate adoption only creates local input. Formal revision creation remains confirm's job. */
   async stageRevision(key: DraftKey, revision: TranslationRevision, expected: RevisionStageCapture, proof: () => boolean): Promise<RevisionStageResult> {
@@ -334,15 +351,47 @@ export class TranslationDrafts {
         ? candidate.translationText : null;
     });
   }
+  async stageMerge(key: DraftKey, view: ComparisonView, text: string, expected: RevisionStageCapture, proof: () => boolean): Promise<RevisionStageResult> {
+    if (view.comparisonId === null) return { staged: false, durable: false };
+    const origin: DraftMergeOrigin = { comparisonId: view.comparisonId, contributors: view.rows.map(row => row.revisionId), expectedBasis: view.basis };
+    const target = { ...key }, captured = comparisonBasis(view);
+    if (!mergeMatches(view, origin, target, expected.basis)) return { staged: false, durable: false };
+    return this.stageInput(target, expected, proof, async capture => {
+      const current = await this.ports.comparison({ ...this.context, comparisonId: origin.comparisonId });
+      return comparisonBasis(current) === captured && mergeMatches(current, origin, target, capture.basis) ? text : null;
+    }, origin);
+  }
+  /** Explicitly rechecks the original contributors while retaining the user's current text. */
+  async refreshMerge(key: DraftKey): Promise<boolean> {
+    const record = this.records.get(identity(key)), before = record?.entry.value;
+    if (!record || !before?.merge || record.entry.busy || before.pending || record.entry.failure?.kind === "journal-conflict") return false;
+    const token = this.reserveMutation(); if (!token) return false;
+    const unchanged = () => this.kernel.owns(token) && !!record.entry.value && record.entry.value.editSeq === before.editSeq
+      && record.entry.value.text === before.text && sameDraftBasis(record.entry.value.basis, before.basis) && sameDraftMerge(record.entry.value.merge, before.merge);
+    this.update(record, { busy: true });
+    try {
+      const view = await this.ports.comparison({ ...this.context, comparisonId: before.merge.comparisonId });
+      if (!unchanged()) return false;
+      await this.open(key);
+      if (!unchanged() || record.entry.current.kind !== "current" || record.entry.currentFailure !== null) return false;
+      if (!mergeMatches(view, before.merge, key, record.entry.current.basis, false)) {
+        this.update(record, { failure: { kind: "basis-conflict", cause: new Error("Merge contributors changed") } }); return false;
+      }
+      this.inputRevision++; record.needsWrite = true;
+      this.update(record, { value: { ...before, basis: record.entry.current.basis, merge: { ...before.merge, expectedBasis: view.basis }, editSeq: nextEditSeq(before.editSeq) }, failure: null });
+      return await this.flush(key);
+    } catch (cause) { this.update(record, { failure: { kind: "read", cause } }); return false; }
+    finally { this.releaseMutation(token); this.update(record, { busy: false }); }
+  }
   private async stageInput(key: DraftKey, expected: RevisionStageCapture, proof: () => boolean,
-    readText: (capture: RevisionStageCapture) => Promise<string | null>): Promise<RevisionStageResult> {
+    readText: (capture: RevisionStageCapture) => Promise<string | null>, merge?: DraftMergeOrigin): Promise<RevisionStageResult> {
     const declined = (): RevisionStageResult => ({ staged: false, durable: false });
     const record = this.records.get(identity(key));
     if (!record || !this.validKey(key) || !this.fresh(record) || record.entry.current.kind !== "current") return declined();
     const capture = { editSeq: expected.editSeq, basis: { ...expected.basis } }, sourceText = record.entry.current.sourceText;
     const unchanged = () => this.kernel.live && proof() && !!record.entry.value
       && record.entry.value.editSeq === capture.editSeq && sameDraftBasis(record.entry.value.basis, capture.basis)
-      && record.entry.value.text === (capture.basis.text ?? "") && !record.entry.value.pending
+      && record.entry.value.text === (capture.basis.text ?? "") && !record.entry.value.pending && !record.entry.value.merge
       && record.entry.current.kind === "current" && record.entry.current.sourceText === sourceText
       && record.entry.basisCurrent && record.entry.currentFailure === null && record.entry.failure?.kind !== "journal-conflict";
     if (!unchanged()) return declined();
@@ -358,6 +407,7 @@ export class TranslationDrafts {
       await this.open(key);
       if (!this.kernel.owns(token) || !unchanged()) return declined();
       if (!this.edit(key, text)) return declined();
+      if (merge) this.update(record, { value: { ...record.entry.value!, merge } });
       return { staged: true, durable: await this.flush(key) };
     } catch (cause) {
       this.update(record, { failure: { kind: "read", cause } }); return declined();
@@ -366,7 +416,7 @@ export class TranslationDrafts {
   confirm(key: DraftKey): Promise<ConfirmationResult> { return this.start(key); }
   selectRevision(key: DraftKey, revision: TranslationRevision): Promise<ConfirmationResult> {
     const value = this.getEntry(key)?.value;
-    if (!value || value.text !== (value.basis.text ?? "") || revision.unitId !== key.unitId || revision.locale !== key.locale
+    if (!value || value.merge || value.text !== (value.basis.text ?? "") || revision.unitId !== key.unitId || revision.locale !== key.locale
       || revision.candidateDecision?.request.disposition === "rejected") return Promise.resolve(unconfirmed());
     return this.start(key, revision);
   }
@@ -388,11 +438,16 @@ export class TranslationDrafts {
       if (!record.entry.basisCurrent || record.entry.currentFailure !== null || !sameDraftBasis(record.entry.value!.basis, start.basis)) {
         this.update(record, { failure: { kind: "basis-conflict", cause: new Error("Translation basis changed") } }); return unconfirmed();
       }
+      if (start.merge && !mergeMatches(await this.ports.comparison({ ...this.context, comparisonId: start.merge.comparisonId }), start.merge, key, start.basis)) {
+        this.update(record, { failure: { kind: "basis-conflict", cause: new Error("Merge basis changed") } }); return unconfirmed();
+      }
+      if (!this.kernel.owns(token)) return unconfirmed();
       const request = { projectId: this.context.projectId, actionId, unitId: key.unitId, locale: key.locale,
         sourceRevisionId: start.basis.sourceRevisionId, expectedSelectionId: start.basis.selectionId };
       const pending: DraftPending = revision
         ? { kind: "selection", request: { ...request, revisionId: revision.revisionId }, submittedSeq: start.editSeq, text: revision.text }
-        : { kind: "save", request: { ...request, text: start.text }, submittedSeq: start.editSeq };
+        : start.merge ? { kind: "merge", request: { ...request, text: start.text }, merge: { contributors: [...start.merge.contributors], expectedBasis: start.merge.expectedBasis }, submittedSeq: start.editSeq }
+          : { kind: "save", request: { ...request, text: start.text }, submittedSeq: start.editSeq };
       record.needsWrite = true;
       this.update(record, { value: { ...record.entry.value!, pending }, recovery: "unchecked" });
       if (!await this.flush(key) || !this.kernel.owns(token)) return unconfirmed();
@@ -407,7 +462,8 @@ export class TranslationDrafts {
     try {
       receipt = pending.kind === "save"
         ? await this.ports.save({ ...pending.request, sessionToken: this.context.sessionToken })
-        : await this.ports.select({ ...pending.request, sessionToken: this.context.sessionToken });
+        : pending.kind === "merge" ? await this.ports.merge({ ...pending.request, sessionToken: this.context.sessionToken, merge: pending.merge })
+          : await this.ports.select({ ...pending.request, sessionToken: this.context.sessionToken });
     } catch (cause) {
       if (!this.kernel.live || record.entry.value?.pending !== pending) return unconfirmed();
       if (!recovering && !hasUnknownOutcome(cause)) {
@@ -435,7 +491,8 @@ export class TranslationDrafts {
     try {
       const result = pending.kind === "save"
         ? await this.ports.recoverSave({ ...pending.request, sessionToken: this.context.sessionToken })
-        : await this.ports.recoverSelection({ ...pending.request, sessionToken: this.context.sessionToken });
+        : pending.kind === "merge" ? await this.ports.recoverMerge({ ...pending.request, sessionToken: this.context.sessionToken, merge: pending.merge })
+          : await this.ports.recoverSelection({ ...pending.request, sessionToken: this.context.sessionToken });
       if (!this.kernel.live || record.entry.value?.pending !== pending) return unconfirmed();
       if (result.outcome.kind === "recorded") return this.settle(record, pending, result.outcome.receipt);
       this.update(record, { recovery: result.outcome.kind,
@@ -460,13 +517,15 @@ export class TranslationDrafts {
     const before = record.entry.value;
     if (!this.kernel.live || before?.pending !== pending) return unconfirmed();
     const selection = "selection" in receipt ? receipt.selection : receipt;
-    const text = pending.kind === "save" ? pending.request.text : pending.text;
+    const text = pending.kind === "selection" ? pending.text : pending.request.text;
     const basis: DraftBasis = { sourceRevisionId: pending.request.sourceRevisionId,
       selectionId: selection.eventId, revisionId: selection.revisionId, text };
     const sameInput = before.editSeq === pending.submittedSeq && (pending.kind === "selection" || before.text === text);
     record.needsWrite = true;
-    this.update(record, { value: { ...before, basis, text: sameInput ? text : before.text, pending: null }, recovery: null,
-      replayAllowed: false, failure: null, newerInputAfterConfirmation: !sameInput });
+    this.update(record, { value: { ...before, basis, text: sameInput ? text : before.text, pending: null,
+      ...(pending.kind === "merge" && sameInput ? { merge: null } : {}) }, recovery: null,
+      replayAllowed: false, failure: pending.kind === "merge" && !sameInput
+        ? { kind: "basis-conflict", cause: new Error("Merge sources need rechecking for newer input") } : null, newerInputAfterConfirmation: !sameInput });
     this.options.reads.invalidate(["translation", "review"], false);
     const durable = await this.flush(record.entry.key);
     if (!this.kernel.live) return unconfirmed();
@@ -482,6 +541,7 @@ export class TranslationDrafts {
   async rebase(key: DraftKey): Promise<boolean> {
     const record = this.records.get(identity(key));
     if (!this.kernel.live || !record?.entry.value || record.entry.busy || record.entry.value.pending || record.entry.failure?.kind === "journal-conflict") return false;
+    if (record.entry.value.merge) return this.refreshMerge(key);
     const before = record.entry.value;
     if (!await this.open(key) || !this.kernel.live || record.entry.value !== before || record.entry.current.kind !== "current") return false;
     this.inputRevision++; record.needsWrite = true;

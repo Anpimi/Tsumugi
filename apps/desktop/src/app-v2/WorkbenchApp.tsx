@@ -31,6 +31,8 @@ import type { EditorCommand, SegmentEditorHandle } from "./features/editor/Segme
 import type { LifecycleParticipant } from "./platform/projectLifecycle";
 import type { ImportOwners } from "./features/import/importTypes";
 import type { CandidateOwners } from "./features/candidates/candidateTypes";
+import type { ComparisonSession } from "./features/comparison/ComparisonSession";
+import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
 import { TokenizedText } from "../design-system/TokenizedText";
 import { installWorkspaceMenu } from "./nativeMenu";
@@ -46,6 +48,8 @@ const TranslationImportPanel = lazy(() => import("./features/import/TranslationI
 const CandidateOwnerHost = lazy(() => import("./features/candidates/CandidateOwnerHost"));
 const CandidateRecovery = lazy(() => import("./features/candidates/CandidateRecovery"));
 const FocusedCandidate = lazy(() => import("./features/entries/FocusedCandidate"));
+const ComparisonOwnerHost = lazy(() => import("./features/comparison/ComparisonOwnerHost"));
+const ComparisonRecovery = lazy(() => import("./features/comparison/ComparisonRecovery"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
@@ -53,7 +57,8 @@ type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; re
 type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void;
   drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
   importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void;
-  candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void };
+  candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void;
+  comparisonOwner: ComparisonSession | null; requestComparisons: () => void };
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
@@ -78,6 +83,10 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const requestCandidates = useCallback(() => { candidateStatus.current.requested = true; setCandidatesRequested(true); }, []);
   const revealCandidates = requestCandidates;
   const publishCandidateOwners = useCallback((value: CandidateOwners | null) => { candidateStatus.current.owners = value; setCandidateOwners(value); }, []);
+  const [comparisonsRequested, setComparisonsRequested] = useState(false), [comparisonOwner, setComparisonOwner] = useState<ComparisonSession | null>(null);
+  const comparisonStatus = useRef({ requested: false, owner: null as ComparisonSession | null });
+  const requestComparisons = useCallback(() => { comparisonStatus.current.requested = true; setComparisonsRequested(true); }, []);
+  const publishComparisonOwner = useCallback((owner: ComparisonSession | null) => { comparisonStatus.current.owner = owner; setComparisonOwner(owner); }, []);
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   readonlyRef.current = readOnly;
   // A stable registration protects the gap before the heavy draft module loads.
@@ -100,6 +109,12 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
         revision: candidateStatus.current.requested ? candidateStatus.current.owners ? "candidate-owner-ready" : "candidate-owner-loading" : "candidate-not-requested" },
     prepareLeave: async () => false, reveal: revealCandidates,
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealCandidates]);
+  useLayoutEffect(() => lifecycle.register({ id: "saved-comparisons-loading", area: "translation", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-comparison-presentation" }
+      : { status: comparisonStatus.current.requested && !comparisonStatus.current.owner ? "blocked" : "ready",
+        revision: comparisonStatus.current.requested ? comparisonStatus.current.owner ? "comparison-owner-ready" : "comparison-owner-loading" : "comparison-not-requested" },
+    prepareLeave: async () => false, reveal: requestComparisons,
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, requestComparisons]);
   useEffect(() => {
     let alive = true, owner: TranslationDrafts | undefined;
     setDrafts(null); setDraftLoadFailed(false);
@@ -135,12 +150,15 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
-    candidateOwners, requestCandidates, revealCandidates }}>
+    candidateOwners, requestCandidates, revealCandidates, comparisonOwner, requestComparisons }}>
     {importRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
       <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
     </Suspense></FeatureBoundary> : null}
     {candidatesRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("candidateUnavailable")} description={t("candidateUnavailableHelp")} />}><Suspense fallback={null}>
       <CandidateOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishCandidateOwners} onReveal={revealCandidates}/>
+    </Suspense></FeatureBoundary> : null}
+    {comparisonsRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("comparisonUnavailable")} description={t("comparisonUnavailableHelp")} />}><Suspense fallback={null}>
+      <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
     </Suspense></FeatureBoundary> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <RouterProvider router={runtime.router} />
@@ -150,7 +168,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
 function WorkspaceShell() {
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
-    candidateOwners, requestCandidates, revealCandidates } = useWorkspaceContext();
+    candidateOwners, requestCandidates, revealCandidates, comparisonOwner, requestComparisons } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
@@ -164,6 +182,11 @@ function WorkspaceShell() {
   const [palette, setPalette] = useState(false), [drawer, setDrawer] = useState(false);
   const paletteRelease = useRef<(() => void) | null>(null), drawerRelease = useRef<(() => void) | null>(null);
   const [commandFailed, setCommandFailed] = useState(false);
+  const [presented, setPresented] = useState<{ candidates: string | null; protection: string | null; comparison: string | null }>({ candidates: null, protection: null, comparison: null });
+  const reportPresented = useCallback((viewId: string, kind: "candidates" | "protection" | "comparison", visible: boolean) => setPresented(before => {
+    const next = visible ? viewId : before[kind] === viewId ? null : before[kind];
+    return next === before[kind] ? before : { ...before, [kind]: next };
+  }), []);
   const [pendingImport, setPendingImport] = useState<{ viewId: string | null; locale: string | null } | null>(null);
   const entries = useRef<EntriesHandle>(null), dock = useRef<HTMLDivElement>(null);
   const recoveryEditor = useRef<SegmentEditorHandle>(null);
@@ -243,7 +266,7 @@ function WorkspaceShell() {
     canAdvance: () => recoveryKey === null && !!entries.current?.isEditing(),
     canConfirm: () => recoveryKey ? !!drafts && !readOnly && !lifecycleState.pending && draftState.hydration === "ready" && !draftState.retired && !draftState.mutationReserved
       && !!recoveryEntry?.value && !recoveryEntry.value.pending && !recoveryEntry.busy && recoveryEntry.basisCurrent && recoveryEntry.currentFailure === null
-      && recoveryEntry.failure?.kind !== "journal" && recoveryEntry.failure?.kind !== "journal-conflict" : !!entries.current?.canConfirm(),
+      && !(recoveryEntry.value.merge && recoveryEntry.failure?.kind === "basis-conflict") && recoveryEntry.failure?.kind !== "journal" && recoveryEntry.failure?.kind !== "journal-conflict" : !!entries.current?.canConfirm(),
   };
   useEffect(() => {
     if (!pendingImport || !importOwners) return;
@@ -294,14 +317,32 @@ function WorkspaceShell() {
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
   const importNeedsAttention = !!importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending()
     || !session.reads.retired && importOwners.imports.hasActive() || importOwners.tasks.unresolved());
-  const candidatePanelVisible = !importVisible && view?.dock === "details" && (!narrow || drawer)
-    && (view.detailTab === "candidates" || view.detailTab === "history");
-  async function openCandidateEditor(unitId: string, locale: string): Promise<boolean> {
-    if (!gate.canDispatch({ viewId: currentId, source: "button" })) return false;
+  const candidatePanelVisible = currentId !== null && presented.candidates === currentId;
+  const protectionPanelVisible = currentId !== null && presented.protection === currentId;
+  const comparisonPanelVisible = currentId !== null && presented.comparison === currentId;
+  async function openCandidateEditor(unitId: string, locale: string, parentDialogId?: string): Promise<boolean> {
+    if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
+    if (parentDialogId === "workspace-dock" && narrow && drawer) closeDrawer();
     const target = { entryMode: "table" as const, locale, focus: unitId, editing: true, queueActive: true, queueAnchor: unitId, focusMode: false };
     try {
       return view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
         : await runtime.navigation.open({ kind: "entries", ...target });
+    } catch { setCommandFailed(true); return false; }
+  }
+  async function openSavedComparison(comparison: ComparisonView, parentDialogId?: string): Promise<boolean> {
+    if (!comparison.comparisonId || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
+    const target = { entryMode: "table" as const, locale: comparison.locale, focus: comparison.unitId, dock: "details" as const,
+      detailTab: "candidates" as const, candidateCompareOpen: true, candidateComparisonId: comparison.comparisonId, focusMode: false };
+    try {
+      // This only changes presentation in the same entity. Keep its parent Sheet open.
+      if (view?.kind === "entries" && view.focus === comparison.unitId && view.locale === comparison.locale) {
+        store.getState().patch(view.id, target); return true;
+      }
+      if (parentDialogId === "workspace-dock" && narrow && drawer) closeDrawer();
+      const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
+        : await runtime.navigation.open({ kind: "entries", ...target, editing: false, queueActive: false });
+      if (accepted && narrow) showDock();
+      return accepted;
     } catch { setCommandFailed(true); return false; }
   }
   async function inspectCandidate(unitId: string, locale: string, revisionId: string | null) {
@@ -346,7 +387,9 @@ function WorkspaceShell() {
       <TabsContent value="agent" className={styles.dockContent}><EmptyState icon={<Sparkles />} title={message("agent")} description={message("agentHelp")} /></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}><EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
-        patch={patch => { if (view) store.getState().patch(view.id, patch); }} onEdit={openCandidateEditor}/></Suspense></FeatureBoundary></TabsContent>
+        patch={patch => { if (view) store.getState().patch(view.id, patch); }} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
+        comparisonOwner={comparisonOwner} requestComparisons={requestComparisons} onOpenComparison={comparison => openSavedComparison(comparison, narrow && drawer ? "workspace-dock" : undefined)}
+        parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/></Suspense></FeatureBoundary></TabsContent>
     </TabsRoot>;
   }
   return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
@@ -366,7 +409,9 @@ function WorkspaceShell() {
     {pendingDrafts.length ? <Banner tone="warning" action={<Button onClick={() => revealDraft(pendingDrafts[0].key)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: pendingDrafts.length })}</Banner> : null}
     {importNeedsAttention && !importVisible ? <Banner tone="warning" action={<Button onClick={revealImport}>{message("importOpen")}</Button>}>{message("importPendingNotice")}</Banner> : null}
     {candidateOwners && commandsReady && commands ? <Suspense fallback={null}><CandidateRecovery project={session.project} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
-      disabled={disabled} visible={!candidatePanelVisible} onOpen={(unitId, locale) => { void inspectCandidate(unitId, locale, null).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
+      disabled={disabled} visible showDecisions={!candidatePanelVisible} showProtection={!protectionPanelVisible} onOpen={(unitId, locale) => { void inspectCandidate(unitId, locale, null).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
+    {comparisonOwner && commandsReady && commands ? <Suspense fallback={null}><ComparisonRecovery project={session.project} owner={comparisonOwner} commands={commands} gate={gate} viewId={currentId}
+      disabled={disabled} visible={!comparisonPanelVisible} onOpenComparison={comparison => openSavedComparison(comparison)}/></Suspense> : null}
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
         {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined}><IconButton label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} disabled={id !== "entries" || disabled} title={id !== "entries" ? message("comingLater") : undefined} onClick={event => {

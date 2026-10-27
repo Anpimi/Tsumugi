@@ -118,6 +118,13 @@ it("shows unconfirmed input after it is durable and without requiring an active 
   expect(deriveEntryStatus(row, draft(row, "")).state).toBe("draft");
 });
 
+it("keeps a retained merge unconfirmed when its text matches the selected version", () => {
+  const row = selected(), entry = draft(row, row.content.translationPreview ?? "");
+  entry.value.merge = { comparisonId: "comparison", contributors: ["parent-a", "parent-b"], expectedBasis: "a".repeat(64) };
+  entry.journalPending = false; entry.durableSeq = entry.value.editSeq;
+  expect(deriveEntryStatus(row, entry)).toMatchObject({ state: "draft", labelKey: "entryStatusDraft" });
+});
+
 it("keeps pending selection and newer input unconfirmed even when text matches the editing basis", () => {
   const row = selected(), entry = draft(row, row.content.translationPreview ?? "");
   const value = entry.value;

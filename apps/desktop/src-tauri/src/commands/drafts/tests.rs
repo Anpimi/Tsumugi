@@ -51,12 +51,73 @@ fn draft_wire_fixture_binds_complete_input_without_session_credentials() {
     round_trip::<DraftHead>(&fixture["responses"]["written"]);
     round_trip::<DraftHead>(&fixture["responses"]["cleared"]);
     round_trip::<DraftPage>(&fixture["responses"]["page"]);
+    round_trip::<DraftWriteRequest>(&fixture["requests"]["mergeWrite"]);
+    round_trip::<DraftHead>(&fixture["responses"]["mergeWritten"]);
     let mut credential = fixture["requests"]["write"].clone();
     credential["write"]["value"]["pending"]["request"]["sessionToken"] = json!("forged");
     assert!(serde_json::from_value::<DraftWriteRequest>(credential).is_err());
+    let mut credential = fixture["requests"]["mergeWrite"].clone();
+    credential["write"]["value"]["pending"]["request"]["sessionToken"] = json!("forged");
+    assert!(serde_json::from_value::<DraftWriteRequest>(credential).is_err());
+    let mut explicit_null = fixture["requests"]["write"].clone();
+    explicit_null["write"]["value"]["merge"] = Value::Null;
+    assert!(serde_json::from_value::<DraftWriteRequest>(explicit_null).unwrap().write.value.merge.is_none());
     let mut rounded = fixture["responses"]["written"].clone();
     rounded["value"]["editSeq"] = json!(9_007_199_254_740_993u64);
     assert!(serde_json::from_value::<DraftHead>(rounded).is_err());
+}
+
+#[test]
+fn merge_draft_ipc_preserves_pending_source_and_recovers_original_merge_with_a_new_session() {
+    let (source_directory, mut core, rows) = source_fixture::source_fixture();
+    let project_id = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
+    let key = DraftKey { project_id, unit_id: rows[0].unit_id.unwrap(), locale: "zh-CN".into() };
+    let original = SaveTranslationRevision { project_id, action_id: ExecutionId::new(), unit_id: key.unit_id,
+        locale: key.locale.clone(), source_revision_id: rows[0].source_revision_id.unwrap(), expected_selection_id: None, text: "First contributor".into() };
+    let first = core.save_translation_revision(&original).unwrap();
+    let second = core.save_translation_revision(&SaveTranslationRevision { action_id: ExecutionId::new(), expected_selection_id: Some(first.event_id), text: "Second contributor".into(), ..original.clone() }).unwrap();
+    core.close().unwrap();
+    let application = tempfile::tempdir().unwrap();
+    let state = AppState::default(); state.local_drafts.set(DraftStore::at(application.path().join("drafts")).unwrap()).ok().unwrap();
+    let app = tauri::test::mock_builder().manage(state).invoke_handler(super::super::execution::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let project_path = source_directory.path().join("project");
+    let opened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+    let token = opened["sessionToken"].clone();
+    let comparison_id = ExecutionId::new();
+    let comparison = call(&window, "create_arena_comparison", json!({"sessionToken":token,"projectId":project_id,
+        "actionId":comparison_id,"unitId":key.unit_id,"locale":key.locale,"revisionIds":[first.revision_id,second.revision_id],"blind":false})).unwrap();
+    let current = call(&window, "read_local_draft", json!({"sessionToken":token,"key":key})).unwrap();
+    let basis: DraftBasis = serde_json::from_value(current["current"]["basis"].clone()).unwrap();
+    let origin = DraftMergeOrigin { comparison_id, contributors: vec![first.revision_id,second.revision_id], expected_basis: comparison["basis"].as_str().unwrap().into() };
+    let merge = tsumugi_core::MergeBasis { contributors: origin.contributors.clone(), expected_basis: origin.expected_basis.clone() };
+    let request = SaveTranslationRevision { action_id: ExecutionId::new(), expected_selection_id: Some(second.event_id), text: "Merged A {{name}} e\u{301} 👩🏽‍💻".into(), ..original };
+    let mut value = DraftValue { basis, text: request.text.clone(), edit_seq: Revision::new(1).unwrap(), merge: Some(origin),
+        pending: Some(DraftPending::Merge { request: request.clone(), merge: merge.clone(), submitted_seq: Revision::new(1).unwrap() }) };
+    value.text = "Newer local B — kept with contributors".into(); value.edit_seq = Revision::new(2).unwrap();
+    let writer = ExecutionId::new();
+    call(&window, "write_local_draft", json!({"sessionToken":token,"write":{"key":key,"expectedRevision":"0","writerId":writer,"value":value}})).unwrap();
+    let mut recovery = serde_json::to_value(&request).unwrap(); recovery["merge"] = serde_json::to_value(&merge).unwrap(); recovery["sessionToken"] = token.clone();
+    let before = call(&window, "recover_arena_merge", recovery.clone()).unwrap();
+    assert_eq!(before["outcome"], json!({"kind":"pending","replay":"explicit-same-request"}));
+    let receipt = call(&window, "save_arena_merge", recovery.clone()).unwrap();
+    assert_eq!(call(&window, "recover_arena_merge", recovery.clone()).unwrap()["outcome"], json!({"kind":"recorded","receipt":receipt}));
+    let mut changed = recovery.clone(); changed["text"] = json!("Changed original");
+    assert_eq!(call(&window, "recover_arena_merge", changed).unwrap()["outcome"], json!({"kind":"mismatch"}));
+    call(&window, "close_project", json!({"sessionToken":token})).unwrap();
+    let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+    assert!(call(&window, "recover_arena_merge", recovery.clone()).is_err());
+    recovery["sessionToken"] = reopened["sessionToken"].clone();
+    let recorded = call(&window, "recover_arena_merge", recovery).unwrap();
+    assert_eq!(recorded["request"], serde_json::to_value(&request).unwrap());
+    assert_eq!(recorded["merge"], serde_json::to_value(&merge).unwrap());
+    assert_eq!(recorded["outcome"], json!({"kind":"recorded","receipt":receipt}));
+    assert_eq!(call(&window, "read_local_draft", json!({"sessionToken":reopened["sessionToken"],"key":key})).unwrap()["head"]["value"], serde_json::to_value(&value).unwrap());
+    let history = app.state::<AppState>().sessions.with(move |sessions| sessions.active.as_ref().unwrap().store.translation_history(project_id,key.unit_id,&key.locale,0,10).unwrap());
+    assert_eq!(history.total, 3);
+    assert_eq!(history.rows.last().unwrap().contributors, merge.contributors);
+    assert!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().execution.is_none()), "recovery reads do not create a runtime");
 }
 
 #[test]
@@ -141,6 +202,7 @@ fn local_draft_ipc_preserves_input_across_real_confirmation_and_project_reopen()
         text: original.text.clone(),
         edit_seq: Revision::new(1).unwrap(),
         pending: None,
+        merge: None,
     };
     let write = |version: &str, value: &DraftValue| json!({"sessionToken":token,"write":{"key":key,"expectedRevision":version,"writerId":writer,"value":value}});
     assert_eq!(

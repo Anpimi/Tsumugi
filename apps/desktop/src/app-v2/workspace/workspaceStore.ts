@@ -14,6 +14,10 @@ export interface WorkspaceView {
   detailTab: "detail" | "context" | "candidates" | "issues" | "history";
   candidateAfterOrdinal: string;
   candidateInitialRevisionId: string | null;
+  candidateCompareOpen: boolean;
+  candidateComparisonId: string | null;
+  candidateCompareRefs: readonly string[];
+  candidateCompareBlind: boolean;
   locale: string;
   preset: string;
   query: string;
@@ -73,6 +77,10 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     detailTab: input.detailTab ?? "detail",
     candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
     candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
+    candidateCompareOpen: input.candidateCompareOpen ?? false,
+    candidateComparisonId: input.candidateComparisonId ?? null,
+    candidateCompareRefs: Object.freeze([...(input.candidateCompareRefs ?? [])]),
+    candidateCompareBlind: input.candidateCompareBlind ?? false,
     locale: input.locale,
     preset: input.preset ?? "all",
     query: input.query ?? "",
@@ -151,8 +159,8 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
         || patch.preset !== undefined && patch.preset !== view.preset;
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
-      const next = { ...view, ...patch, ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
-        ...(changedTarget ? { candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null } : {}),
+      const next = { ...view, ...patch, ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
+        ...(changedTarget ? { candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null, candidateCompareOpen: patch.candidateCompareOpen ?? false, candidateComparisonId: patch.candidateComparisonId ?? null, candidateCompareRefs: Object.freeze([...(patch.candidateCompareRefs ?? [])]) } : {}),
         ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
           queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,
           focusMode: (patch.editing ?? patch.focus != null) ? patch.focusMode ?? view.focusMode : false } : {}) };

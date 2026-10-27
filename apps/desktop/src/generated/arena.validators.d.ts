@@ -8,6 +8,7 @@ export declare function validateRequestMerge(value: unknown): value is Requests[
 export declare function validateRequestMergeAction(value: unknown): value is Requests["mergeAction"];
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
+export declare function validateRequestRecoverMerge(value: unknown): value is Requests["recoverMerge"];
 export declare function validateRequestReveal(value: unknown): value is Requests["reveal"];
 export declare function validateRequestRevealTarget(value: unknown): value is Requests["revealTarget"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
@@ -19,6 +20,7 @@ export declare function validateResponseComparisons(value: unknown): value is Re
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponseMergeAction(value: unknown): value is Responses["mergeAction"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
+export declare function validateResponseRecoverMerge(value: unknown): value is Responses["recoverMerge"];
 export declare function validateResponseReveal(value: unknown): value is Responses["reveal"];
 export declare function validateResponseRevealTarget(value: unknown): value is Responses["revealTarget"];
 export declare function validateResponseSelection(value: unknown): value is Responses["selection"];

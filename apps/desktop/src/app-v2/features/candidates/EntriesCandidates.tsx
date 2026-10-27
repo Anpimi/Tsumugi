@@ -21,11 +21,11 @@ export interface EntriesCandidatesProps {
   project: ProjectView; target: ReviewTarget; drafts: TranslationDrafts; owners: CandidateOwners; commands: WorkbenchCommands;
   gate: InteractionGate; viewId: string | null; disabled: boolean; visible: boolean; mode: "candidates" | "history";
   afterOrdinal: string; onPage: (after: string) => void; onEdit: (unitId: string, locale: string) => Promise<boolean>;
-  initialRevisionId?: string | null;
+  initialRevisionId?: string | null; parentDialogId?: string;
 }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 
-export default function EntriesCandidates({ project, target, drafts, owners, commands, gate, viewId, disabled, visible, mode, afterOrdinal, onPage, onEdit, initialRevisionId }: EntriesCandidatesProps) {
+export default function EntriesCandidates({ project, target, drafts, owners, commands, gate, viewId, disabled, visible, mode, afterOrdinal, onPage, onEdit, initialRevisionId, parentDialogId }: EntriesCandidatesProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const { t: legacy } = useTranslation();
   const reads = useSessionReads(), snapshot = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
@@ -39,8 +39,8 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
   const comparisonFocus = useRef<{ identity: string; viewId: string | null; id: string; trigger: HTMLButtonElement | null; phase: "open" | "close" } | null>(null);
   const [audit, setAudit] = useState<{ identity: string; revisionId: string } | null>(null);
   const [feedback, setFeedback] = useState<{ identity: string; key: "candidateStaged" | "candidateStageBlocked" | "candidateStageUndurable" | "candidateActionFailed" } | null>(null);
-  const [busy, setBusy] = useState(false), mounted = useRef(true), live = useRef({ visible, disabled, identity, viewId });
-  useLayoutEffect(() => { live.current = { visible, disabled, identity, viewId }; });
+  const [busy, setBusy] = useState(false), mounted = useRef(true), live = useRef({ visible, disabled, identity, viewId, parentDialogId });
+  useLayoutEffect(() => { live.current = { visible, disabled, identity, viewId, parentDialogId }; });
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useLayoutEffect(() => () => gate.releaseOwner(inputOwner), [gate, inputOwner, identity, viewId, visible]);
   useEffect(() => {
@@ -53,13 +53,13 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
   const chosen = comparison?.identity === identity ? evidence.find(item => candidateEvidenceId(item) === comparison.id) : undefined;
   const auditRevision = audit?.identity === identity ? history.data?.rows.find(row => row.revisionId === audit.revisionId) : undefined;
   const present = () => visible && !disabled && mounted.current && gate.getSnapshot().visibleViewId === viewId && !reads.retired && !drafts.getSnapshot().retired;
-  const stillPresent = () => present() && live.current.visible && !live.current.disabled && live.current.identity === identity && live.current.viewId === viewId;
+  const stillPresent = () => present() && live.current.visible && !live.current.disabled && live.current.identity === identity && live.current.viewId === viewId && live.current.parentDialogId === parentDialogId;
   useLayoutEffect(() => {
     const pending = comparisonFocus.current;
     if (!pending) return;
     comparisonFocus.current = null;
     if (pending.identity !== identity || pending.viewId !== viewId || !stillPresent()
-      || !gate.canDispatch({ viewId, source: "button" })) return;
+      || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) return;
     if (pending.phase === "open") {
       if (!chosen || comparison?.id !== pending.id) return;
       comparisonRegion.current?.focus();
@@ -70,7 +70,7 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
     }
   }, [comparison, chosen !== undefined, identity, viewId, visible, disabled]);
   const common = (): CommandAvailability => !visible ? { enabled: false, reason: "hidden" } : !present() || busy || state.busy
-    || snapshot.hydration !== "ready" || snapshot.mutationReserved || !gate.canDispatch({ viewId, source: "button" }) ? unavailable : { enabled: true };
+    || snapshot.hydration !== "ready" || snapshot.mutationReserved || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId }) ? unavailable : { enabled: true };
   const readKey = (item: CandidateEvidence) => item.kind === "revision" ? candidateHistoryKey(target, afterOrdinal) : candidateTmKey(target);
   const readData = (item: CandidateEvidence) => item.kind === "revision" ? history.data : tm.data;
   const currentEvidence = (input: TranslationStageCommandPayload | undefined) => evidence.find(item => sameCandidateCapture(input, candidateStagePayload(drafts.getEntry(key), target, item)));
@@ -108,7 +108,7 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
   const pendingInput = (): TranslationCandidatePendingCommandPayload | null => state.pending ? { kind: "translation-candidate-pending", request: state.pending } : null;
   const pendingAvailability = (input: TranslationCandidatePendingCommandPayload | undefined, retry = false): CommandAvailability =>
     present() && !busy && !state.busy && !!input && input.request === owners.decisions.current().pending && (!retry || state.checkedMissing)
-      && gate.canDispatch({ viewId, source: "button" }) ? { enabled: true } : unavailable;
+      && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId }) ? { enabled: true } : unavailable;
   useLayoutEffect(() => {
     if (!visible) return;
     const meta = { category: "translation" as const, scope, binding: null, confirmation: "none" as const };

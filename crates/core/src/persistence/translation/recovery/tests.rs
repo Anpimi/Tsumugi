@@ -67,6 +67,101 @@ fn business_state(store: &ProjectStore) -> BusinessState {
 }
 
 #[test]
+fn merge_recovery_keeps_exact_request_and_contributors_after_newer_work_and_reopen() {
+    let (directory, mut store, rows) = project_with_source();
+    let first = save_request(&store, &rows[0]);
+    let saved_first = store.save_translation_revision(&first).unwrap();
+    let second = SaveTranslationRevision {
+        action_id: ExecutionId::new(),
+        expected_selection_id: Some(saved_first.event_id),
+        text: "Second proposal".into(),
+        ..first.clone()
+    };
+    let saved_second = store.save_translation_revision(&second).unwrap();
+    let comparison = store
+        .create_comparison(&crate::ComparisonRequest {
+            project_id: first.project_id,
+            action_id: ExecutionId::new(),
+            unit_id: first.unit_id,
+            locale: first.locale.clone(),
+            revision_ids: vec![saved_first.revision_id, saved_second.revision_id],
+            blind: false,
+        })
+        .unwrap();
+    let request = SaveTranslationRevision {
+        action_id: ExecutionId::new(),
+        expected_selection_id: Some(saved_second.event_id),
+        text: "Merged A {{name}}\r\ne\u{301} 👩🏽‍💻".into(),
+        ..first.clone()
+    };
+    let merge = MergeBasis {
+        contributors: comparison.rows.iter().map(|row| row.revision_id).collect(),
+        expected_basis: comparison.basis,
+    };
+    let before = business_state(&store);
+    assert_eq!(
+        store
+            .recover_translation_merge(&request, &merge)
+            .unwrap()
+            .outcome,
+        TranslationActionOutcome::Pending {
+            replay: TranslationActionReplay::ExplicitSameRequest
+        }
+    );
+    assert_eq!(business_state(&store), before);
+    let receipt = store.save_merged_translation(&request, &merge).unwrap();
+    let expected = TranslationMergeRecovery {
+        request: request.clone(),
+        merge: merge.clone(),
+        outcome: TranslationActionOutcome::Recorded {
+            receipt: receipt.clone(),
+        },
+    };
+    let newer = SaveTranslationRevision {
+        action_id: ExecutionId::new(),
+        expected_selection_id: Some(receipt.event_id),
+        text: "Newer human text B".into(),
+        ..request.clone()
+    };
+    store.save_translation_edit(&newer).unwrap();
+    let after = business_state(&store);
+    assert_eq!(
+        store.recover_translation_merge(&request, &merge).unwrap(),
+        expected
+    );
+    let changed = SaveTranslationRevision {
+        text: "Changed old request".into(),
+        ..request.clone()
+    };
+    assert_eq!(
+        store
+            .recover_translation_merge(&changed, &merge)
+            .unwrap()
+            .outcome,
+        TranslationActionOutcome::Mismatch {}
+    );
+    let mut changed_merge = merge.clone();
+    changed_merge.contributors.reverse();
+    assert_eq!(
+        store
+            .recover_translation_merge(&request, &changed_merge)
+            .unwrap()
+            .outcome,
+        TranslationActionOutcome::Mismatch {}
+    );
+    assert_eq!(business_state(&store), after);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_eq!(
+        reopened
+            .recover_translation_merge(&request, &merge)
+            .unwrap(),
+        expected
+    );
+    assert_eq!(business_state(&reopened), after);
+}
+
+#[test]
 fn absent_recovery_stays_pending_and_only_explicit_read_reconciles_commit_uncertainty() {
     let (_temp, mut store, rows) = project_with_source();
     let request = save_request(&store, &rows[0]);
@@ -127,6 +222,9 @@ fn absent_recovery_stays_pending_and_only_explicit_read_reconciles_commit_uncert
             replay: TranslationActionReplay::Blocked
         }
     );
+    assert_eq!(store.recover_translation_merge(&request, &MergeBasis {
+        contributors: vec![ExecutionId::new(), ExecutionId::new()], expected_basis: "a".repeat(64),
+    }).unwrap().outcome, TranslationActionOutcome::Pending { replay: TranslationActionReplay::Blocked });
     assert!(store.is_reconciling());
     assert_eq!(
         store.save_translation_edit(&request).unwrap_err().code,

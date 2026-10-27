@@ -4,7 +4,7 @@ import type { StartRequest, RevealRequest } from "./generated/arena.requests";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt } from "./executionCommands";
 import { translationCommands, confirmTranslationSelection, type TranslationSelectRequest, type TranslationSelection } from "./translationCommands";
 import { validateResponseIdentity, validateResponseAction, validateResponseAdoption, validateResponseAdoptionAction } from "./generated/execution.validators";
-import { validateResponsePrepared, validateResponseView, validateResponseComparison, validateResponseStartAction, validateResponseRevealTarget } from "./generated/arena.validators";
+import { validateResponsePrepared, validateResponseView, validateResponseStartAction, validateResponseRevealTarget } from "./generated/arena.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
@@ -15,6 +15,7 @@ import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadPr
 import type { ConnectionReadView } from "./connectionCommands";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import type { TranslationHistory } from "./translationCommands";
+import { comparisonBasis, confirmComparisonRead } from "./arenaComparison";
 
 interface MergeCapture {
   comparisonId: string; unitId: string; locale: string; sourceRevisionId: string; sourceText: string; nativeKey: string;
@@ -115,17 +116,6 @@ export function confirmArenaView(view: ArenaView, attemptId: string, prepared?: 
   }))) invalidAck();
   // A blind read omits configurations and the digest. Core's original request digest remains authoritative.
 }
-function comparisonBasis(view: ComparisonView) {
-  return JSON.stringify([view.comparisonId,view.unitId,view.locale,view.sourceRevisionId,view.sourceText,view.selectionId,view.basis,
-    view.rows.map(row => [row.revisionId,row.sourceRevisionId,row.text,row.basisCurrent,row.candidateDisposition])]);
-}
-function confirmComparisonRead(view: ComparisonView, comparisonId: string) {
-  if (!validateResponseComparison(view) || view.comparisonId !== comparisonId || view.rows.length < 2 || view.rows.length > 4
-    || new Set(view.rows.map(row => row.revisionId)).size !== view.rows.length
-    || (!view.blind && !view.revealed)
-    || (view.blind && !view.revealed && view.rows.some(row => row.model !== null || row.recipe !== null))) invalidAck();
-}
-
 function useArenaOwner(project: ProjectView) {
   const reads = useSessionReads(), translations = useTranslationDraftSession(), tasks = useExecutionTaskSession();
   const connections = useConnectionFacts();

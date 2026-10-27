@@ -11,6 +11,7 @@ export interface Requests {
   mergeAction: MergeRequest;
   preview: PreviewRequest;
   read: ReadRequest;
+  recoverMerge: MergeRequest;
   reveal: RevealRequest;
   revealTarget: ComparisonRead;
   session: SessionRequest;

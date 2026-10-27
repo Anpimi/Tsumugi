@@ -105,6 +105,8 @@ mod wire_tests {
         round_trip!("requests", "session", SessionRequest);
         round_trip!("requests", "reveal", RevealRequest);
         round_trip!("requests", "merge", MergeRequest);
+        round_trip!("requests", "recoverMerge", MergeRequest);
+        round_trip!("responses", "recoverMerge", tsumugi_core::TranslationMergeRecovery);
         round_trip!("responses", "prepared", Prepared);
         round_trip!("responses", "identity", ExecutionId);
         round_trip!("responses", "view", View);
@@ -500,6 +502,26 @@ pub async fn read_arena_merge_action(
                 expected_selection_id:request.expected_selection_id,text:request.text},&request.merge).map_err(map_read)
     }).await
 }
+#[tauri::command]
+pub async fn recover_arena_merge(
+    state: State<'_, AppState>, request: MergeRequest,
+) -> Result<tsumugi_core::TranslationMergeRecovery, CommandError> {
+    state.sessions.run("recover_arena_merge", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let mut recovery = active.store.recover_translation_merge(&SaveTranslationRevision {
+            project_id: request.project_id, action_id: request.action_id, unit_id: request.unit_id,
+            locale: request.locale, source_revision_id: request.source_revision_id,
+            expected_selection_id: request.expected_selection_id, text: request.text,
+        }, &request.merge).map_err(map_read)?;
+        if active.execution.as_ref().is_some_and(ExecutionHost::is_quiescing) {
+            if let tsumugi_core::TranslationActionOutcome::Pending { replay } = &mut recovery.outcome {
+                *replay = tsumugi_core::TranslationActionReplay::Blocked;
+            }
+        }
+        Ok(recovery)
+    }).await
+}
+
 #[tauri::command]
 pub async fn save_arena_merge(
     state: State<'_, AppState>,

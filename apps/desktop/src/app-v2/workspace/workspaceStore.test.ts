@@ -6,11 +6,16 @@ const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, loca
 describe("workspace view state", () => {
   it("retains comparison and inspector tabs per view and resets candidate paging for another target", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
-    store.getState().patch("one", { compareSource: true, detailTab: "candidates", candidateAfterOrdinal: "50", candidateInitialRevisionId: "revision-a" });
+    const references = ["revision-a", "revision-b"];
+    store.getState().patch("one", { compareSource: true, detailTab: "candidates", candidateAfterOrdinal: "50", candidateInitialRevisionId: "revision-a",
+      candidateCompareOpen: true, candidateComparisonId: "comparison-a", candidateCompareRefs: references, candidateCompareBlind: true });
+    references.push("unrelated-revision");
+    expect(store.getState().views.one.candidateCompareRefs).toEqual(["revision-a", "revision-b"]);
     store.getState().open({ id: "two", kind: "entries", locale: "ja" });
-    expect(store.getState().views.two).toMatchObject({ compareSource: false, detailTab: "detail", candidateAfterOrdinal: "0" });
+    expect(store.getState().views.two).toMatchObject({ compareSource: false, detailTab: "detail", candidateAfterOrdinal: "0", candidateCompareOpen: false, candidateCompareRefs: [] });
     store.getState().patch("one", { focus: "unit-b" });
-    expect(store.getState().views.one).toMatchObject({ compareSource: true, detailTab: "candidates", candidateAfterOrdinal: "0", candidateInitialRevisionId: null });
+    expect(store.getState().views.one).toMatchObject({ compareSource: true, detailTab: "candidates", candidateAfterOrdinal: "0", candidateInitialRevisionId: null,
+      candidateCompareOpen: false, candidateComparisonId: null, candidateCompareRefs: [], candidateCompareBlind: true });
     store.getState().patch("one", { candidateAfterOrdinal: "100", locale: "ja" });
     expect(store.getState().views.one.candidateAfterOrdinal).toBe("100");
     store.getState().patch("one", { locale: "zh-CN" });

@@ -660,6 +660,34 @@
         ],
         "type": "object"
       },
+      "TranslationRevisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "revisionId"
+        ],
+        "type": "object"
+      },
       "TranslationSaveRequest": {
         "additionalProperties": false,
         "properties": {
@@ -884,6 +912,9 @@
       "recoverSelection": {
         "$ref": "#/definitions/TranslationSelectRequest"
       },
+      "revision": {
+        "$ref": "#/definitions/TranslationRevisionRequest"
+      },
       "save": {
         "$ref": "#/definitions/TranslationSaveRequest"
       },
@@ -924,6 +955,7 @@
       "adopt",
       "adoptionAction",
       "history",
+      "revision",
       "save",
       "action",
       "select",
@@ -2974,6 +3006,9 @@
       "recoverSelection": {
         "$ref": "#/definitions/TranslationSelectionRecovery"
       },
+      "revision": {
+        "$ref": "#/definitions/TranslationRevision"
+      },
       "saveAction": {
         "anyOf": [
           {
@@ -3030,6 +3065,7 @@
       "prepared",
       "adoptionAction",
       "history",
+      "revision",
       "action",
       "saved",
       "selected",

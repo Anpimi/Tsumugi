@@ -3,7 +3,7 @@ import type { Requests } from "./generated/draft.requests";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "./generated/draft.responses";
 import { validateResponseCleared, validateResponsePage, validateResponseRead, validateResponseWritten } from "./generated/draft.validators";
 
-export type { DraftBasis, DraftHead, DraftKey, DraftPending, DraftValue, DraftPage, DraftSummary, DraftReadView } from "./generated/draft.responses";
+export type { DraftBasis, DraftHead, DraftKey, DraftMergeOrigin, DraftPending, DraftValue, DraftPage, DraftSummary, DraftReadView } from "./generated/draft.responses";
 type DraftValueInput = Requests["write"]["write"]["value"];
 
 export function sameDraftKey(left: DraftKey, right: DraftKey) {
@@ -12,6 +12,11 @@ export function sameDraftKey(left: DraftKey, right: DraftKey) {
 export function sameDraftBasis(left: DraftValueInput["basis"], right: DraftValueInput["basis"]) {
   return left.sourceRevisionId === right.sourceRevisionId && (left.selectionId ?? null) === (right.selectionId ?? null)
     && (left.revisionId ?? null) === (right.revisionId ?? null) && (left.text ?? null) === (right.text ?? null);
+}
+export function sameDraftMerge(left: DraftValueInput["merge"], right: DraftValueInput["merge"]) {
+  return left == null || right == null ? (left ?? null) === (right ?? null)
+    : left.comparisonId === right.comparisonId && left.expectedBasis === right.expectedBasis
+      && left.contributors.length === right.contributors.length && left.contributors.every((id, index) => id === right.contributors[index]);
 }
 function samePending(left: DraftValueInput["pending"], right: DraftValueInput["pending"]): boolean {
   if (left == null || right == null) return (left ?? null) === (right ?? null);
@@ -22,11 +27,14 @@ function samePending(left: DraftValueInput["pending"], right: DraftValueInput["p
     && (a.expectedSelectionId ?? null) === (b.expectedSelectionId ?? null)
     && (left.kind === "save" && right.kind === "save" ? left.request.text === right.request.text
       : left.kind === "selection" && right.kind === "selection"
-        && left.request.revisionId === right.request.revisionId && left.text === right.text);
+        ? left.request.revisionId === right.request.revisionId && left.text === right.text
+        : left.kind === "merge" && right.kind === "merge" && left.request.text === right.request.text
+          && left.merge.expectedBasis === right.merge.expectedBasis && left.merge.contributors.length === right.merge.contributors.length
+          && left.merge.contributors.every((id, index) => id === right.merge.contributors[index]));
 }
 export function sameDraftValue(left: DraftValueInput, right: DraftValueInput) {
   return left.editSeq === right.editSeq && left.text === right.text && sameDraftBasis(left.basis, right.basis)
-    && samePending(left.pending, right.pending);
+    && sameDraftMerge(left.merge, right.merge) && samePending(left.pending, right.pending);
 }
 function relatedBasis(basis: DraftBasis) {
   return basis.selectionId === null ? basis.revisionId === null && basis.text === null
@@ -37,7 +45,11 @@ function relatedValue(key: DraftKey, value: DraftValue) {
   return relatedBasis(value.basis) && (pending === null || (sameDraftKey(key, pending.request)
     && pending.request.sourceRevisionId === value.basis.sourceRevisionId
     && pending.request.expectedSelectionId === value.basis.selectionId
-    && BigInt(pending.submittedSeq) <= BigInt(value.editSeq)));
+    && BigInt(pending.submittedSeq) <= BigInt(value.editSeq)
+    && (pending.kind === "merge" ? !!value.merge && value.merge.expectedBasis === pending.merge.expectedBasis
+      && value.merge.contributors.length === pending.merge.contributors.length
+      && value.merge.contributors.every((id, index) => id === pending.merge.contributors[index])
+      && (pending.submittedSeq !== value.editSeq || pending.request.text === value.text) : value.merge == null)));
 }
 function relatedHead(head: DraftHead) {
   return head.value === null ? head.writerId === null

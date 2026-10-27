@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FileText } from "lucide-react";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
@@ -12,22 +12,45 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ViewPatch, WorkspaceView } from "../../workspace/workspaceStore";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { CandidateOwners } from "../candidates/candidateTypes";
+import type { ComparisonSession } from "../comparison/ComparisonSession";
+import type { ComparisonView } from "../../../arenaCommands";
 import { readEntryDetails } from "./entryReads";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./EntryDetails.module.css";
 
 const EntriesCandidates = lazy(() => import("../candidates/EntriesCandidates"));
+const EntryProtection = lazy(() => import("../candidates/EntryProtection"));
+const ComparisonPanel = lazy(() => import("../comparison/ComparisonPanel"));
 const tabs = ["detail", "context", "candidates", "issues", "history"] as const;
 interface Props {
   project: ProjectView; view: WorkspaceView | null; locale: string; disabled: boolean; visible: boolean;
   drafts: TranslationDrafts | null; owners: CandidateOwners | null; commands: WorkbenchCommands | null; gate: InteractionGate;
   patch: (patch: ViewPatch) => void; onEdit: (unitId: string, locale: string) => Promise<boolean>;
+  parentDialogId?: string; comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
+  onOpenComparison: (view: ComparisonView) => Promise<boolean>;
+  onPresented: (viewId: string, kind: "candidates" | "protection" | "comparison", visible: boolean) => void;
 }
-export default function EntryDetails({ project, view, locale, disabled, visible, drafts, owners, commands, gate, patch, onEdit }: Props) {
+export default function EntryDetails({ project, view, locale, disabled, visible, drafts, owners, commands, gate, patch, onEdit, parentDialogId,
+  comparisonOwner, requestComparisons, onOpenComparison, onPresented }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads(), unitId = view?.focus ?? null;
+  const comparisonButton = useRef<HTMLButtonElement>(null), previousComparison = useRef({ viewId: view?.id, unitId, open: view?.candidateCompareOpen });
   const query = useSessionQuery({ key: ["workbench-entry-details", unitId, locale], scopes: ["source", "translation", "resources", "review"],
     enabled: !!unitId && !!locale && visible && !disabled, read: () => { if (!unitId) throw new Error("No entry selected"); return readEntryDetails(reads, unitId, locale); } });
+  useLayoutEffect(() => {
+    const previous = previousComparison.current;
+    previousComparison.current = { viewId: view?.id, unitId, open: view?.candidateCompareOpen };
+    if (previous.open && !view?.candidateCompareOpen && previous.viewId === view?.id && previous.unitId === unitId
+      && view?.detailTab === "candidates" && visible && !disabled && gate.canDispatch({ viewId: view.id, source: "button", dialogId: parentDialogId })) comparisonButton.current?.focus();
+  }, [view?.id, view?.candidateCompareOpen, view?.detailTab, unitId, visible, disabled, gate, parentDialogId]);
+  useLayoutEffect(() => {
+    if (!view) return;
+    const ready = visible && !!unitId && !!query.data && !query.isError && !!drafts && !!commands;
+    onPresented(view.id, "protection", ready && !!owners && view.detailTab === "detail");
+    onPresented(view.id, "candidates", ready && !!owners && ["candidates", "history"].includes(view.detailTab) && !view.candidateCompareOpen);
+    onPresented(view.id, "comparison", ready && !!comparisonOwner && view.detailTab === "candidates" && view.candidateCompareOpen);
+    return () => { for (const kind of ["protection", "candidates", "comparison"] as const) onPresented(view.id, kind, false); };
+  }, [view?.id, view?.detailTab, view?.candidateCompareOpen, visible, unitId, query.data !== undefined, query.isError, drafts, commands, owners, comparisonOwner, onPresented]);
   if (!unitId || !view) return <EmptyState icon={<FileText />} title={t("chooseEntry")} description={t("chooseEntryHelp")} />;
   if (query.isError) return <ErrorState title={t("readFailed")} description={t("readFailedHelp")} action={<Button disabled={disabled} onClick={() => void query.refetch()}>{t("refresh")}</Button>} />;
   if (!query.data) return <LoadingState label={t("loadingDetails")} />;
@@ -46,6 +69,8 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         <div><dt>{t("context")}</dt><dd>{target.termConflict ? t("termConflict") : t("noTermConflict")}</dd></div>
         <div><dt>{t("entrySourceRevision")}</dt><dd className={styles.key}>{target.sourceRevisionId}</dd></div></dl>
       <p className={styles.meta}>{t("factsHelp")}</p>
+      {drafts && owners && commands ? <Suspense fallback={<LoadingState label={t("entryProtectionLoading")} />}><EntryProtection project={project} target={target} drafts={drafts} owners={owners} commands={commands} gate={gate}
+        viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/></Suspense> : null}
       <h3>{t("source", { locale: "" })}</h3><p className={local.text}><TokenizedText text={target.sourceText} /></p>
       <h3>{t("translation", { locale })}</h3><p className={local.text}>{target.translationText === null ? t("noTranslation") : target.translationText === "" ? t("editorEmptySelection") : <TokenizedText text={target.translationText} />}</p>
     </TabsContent>
@@ -64,8 +89,16 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
       <Button disabled={disabled || query.isFetching || !gate.canDispatch({ viewId: view.id, source: "button" })} onClick={() => { void onEdit(unitId, locale); }}>{t("entryFixTranslation")}</Button>
     </TabsContent>
     {candidatePanel ? <TabsContent value={view.detailTab} className={local.candidates}>
-      {drafts && owners && commands ? <Suspense fallback={<LoadingState label={t("candidateLoading")} />}><EntriesCandidates project={project} target={target} drafts={drafts} owners={owners} commands={commands} gate={gate} viewId={view.id}
-        disabled={disabled || query.isFetching} visible={visible} mode={view.detailTab === "history" ? "history" : "candidates"} afterOrdinal={view.candidateAfterOrdinal}
+      {view.detailTab === "candidates" && !view.candidateCompareOpen ? <Button ref={comparisonButton} size="sm" disabled={disabled || !gate.canDispatch({ viewId: view.id, source: "button", dialogId: parentDialogId })}
+        onClick={() => { requestComparisons(); patch({ candidateCompareOpen: true }); }}>{t("comparisonOpen")}</Button> : null}
+      {view.detailTab === "candidates" && view.candidateCompareOpen ? drafts && comparisonOwner && commands ? <Suspense fallback={<LoadingState label={t("comparisonLoading")} />}><ComparisonPanel
+        project={project} target={target} drafts={drafts} owner={comparisonOwner} commands={commands} gate={gate} viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId}
+        comparisonId={view.candidateComparisonId} revisionIds={view.candidateCompareRefs} blind={view.candidateCompareBlind} afterOrdinal={view.candidateAfterOrdinal}
+        onReferences={ids => patch({ candidateCompareRefs: ids })} onBlind={blind => patch({ candidateCompareBlind: blind })} onPage={after => patch({ candidateAfterOrdinal: after })}
+        onOpenComparison={onOpenComparison} onBack={() => patch({ candidateCompareOpen: false })} onSetup={() => patch({ candidateComparisonId: null })} onEdit={onEdit}/></Suspense>
+        : <LoadingState label={t("comparisonLoading")} />
+        : drafts && owners && commands ? <Suspense fallback={<LoadingState label={t("candidateLoading")} />}><EntriesCandidates project={project} target={target} drafts={drafts} owners={owners} commands={commands} gate={gate} viewId={view.id}
+        disabled={disabled || query.isFetching} visible={visible} mode={view.detailTab === "history" ? "history" : "candidates"} afterOrdinal={view.candidateAfterOrdinal} parentDialogId={parentDialogId}
         onPage={after => patch({ candidateAfterOrdinal: after, candidateInitialRevisionId: null })} onEdit={onEdit} initialRevisionId={view.candidateInitialRevisionId}/></Suspense>
         : <LoadingState label={t("candidateLoading")} />}
     </TabsContent> : null}

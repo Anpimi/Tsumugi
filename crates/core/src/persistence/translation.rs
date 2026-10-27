@@ -15,7 +15,7 @@ mod recovery;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
 pub use recovery::{
     TranslationActionOutcome, TranslationActionReplay, TranslationSaveRecovery,
-    TranslationSelectionRecovery,
+    TranslationMergeRecovery, TranslationSelectionRecovery,
 };
 pub(in crate::persistence) use candidates::selectable as candidate_selectable;
 pub(in crate::persistence) use candidates::rejected as candidate_rejected;
@@ -1481,6 +1481,42 @@ impl ProjectStore {
         Ok(page)
     }
 
+    /// Exact saved identity for a bounded user action, with the same complete
+    /// history metadata. Historical ownership does not imply current eligibility.
+    pub fn translation_revision(
+        &self,
+        project: ExecutionId,
+        unit: ExecutionId,
+        locale: &str,
+        revision: ExecutionId,
+    ) -> Result<TranslationRevision, ExecutionError> {
+        let parsed = crate::Locale::parse(locale)
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-locale"))?;
+        if parsed.as_str() != locale {
+            return Err(error(ErrorCode::InvalidInput, "translation-locale"));
+        }
+        let connection = self.connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        super::review::read_snapshot(connection, |connection| {
+            if !super::content::unit_owned_by_project(connection, project, unit)? {
+                return Err(error(ErrorCode::Unauthorized, "translation-project"));
+            }
+            let belongs: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM translation_revisions WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND revision_id=?4)",
+                params![project.to_string(), unit.to_string(), locale, revision.to_string()], |row| row.get(0),
+            ).map_err(super::ledger::sql_error)?;
+            if !belongs {
+                return Err(error(ErrorCode::DependencyConflict, "translation-revision-scope"));
+            }
+            let value = revision_view_in(connection, revision_in(connection, project, revision)?)?;
+            if value.unit_id != unit || value.locale != locale || value.revision_id != revision {
+                return Err(error(ErrorCode::CorruptLedger, "translation-scope"));
+            }
+            codec::encode(&value, crate::content::MAX_CONTENT_PAGE_BYTES)?;
+            Ok(value)
+        })
+    }
+
     pub fn translation_history(
         &self,
         project: ExecutionId,
@@ -1559,9 +1595,7 @@ impl ProjectStore {
                 break;
             }
             let raw = RawRevision::from_row(row).map_err(super::ledger::sql_error)?;
-            let mut revision = raw.parse()?;
-            revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
-            revision.candidate_decision = candidates::latest(connection, revision.revision_id)?;
+            let revision = revision_view_in(connection, raw.parse()?)?;
             if revision.unit_id != unit || revision.locale != locale {
                 return Err(error(ErrorCode::CorruptLedger, "translation-scope"));
             }
@@ -2062,6 +2096,14 @@ pub(super) fn revision_in(
         )
         .map_err(super::ledger::sql_error)?
         .parse()
+}
+
+/// History and exact reads expose the same original contribution and decision
+/// records. Receipt-only readers retain their original representation.
+fn revision_view_in(connection: &Connection, mut revision: TranslationRevision) -> Result<TranslationRevision, ExecutionError> {
+    revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
+    revision.candidate_decision = candidates::latest(connection, revision.revision_id)?;
+    Ok(revision)
 }
 
 struct RawRevision {

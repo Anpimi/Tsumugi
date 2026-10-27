@@ -14,6 +14,30 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 beforeEach(() => invoke.mockReset());
+it("reads an exact saved translation revision without scanning history and preserves full metadata", async () => {
+  const request = fixture.revisionRequest;
+  expect(validators.validateRequestRevision(request)).toBe(true);
+  expect(validators.validateResponseRevision(fixture.revisionResponse)).toBe(true);
+  invoke.mockResolvedValueOnce(fixture.revisionResponse);
+  expect(await translationCommands.revision(request)).toEqual(fixture.revisionResponse);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("read_translation_revision", { request });
+  const empty = { ...fixture.revisionResponse, text: "", contributors: [fixture.save.unitId, fixture.save.actionId] };
+  invoke.mockResolvedValueOnce(empty);
+  expect((await translationCommands.revision(request)).text).toBe("");
+  expect(invoke.mock.calls.every(([command]) => command === "read_translation_revision")).toBe(true);
+});
+
+it.each(["unit", "locale", "revision", "duplicate-contributor", "null"])("rejects an unrelated exact revision response: %s", async kind => {
+  const value: unknown = structuredClone(fixture.revisionResponse);
+  if (!validators.validateResponseRevision(value)) throw new Error("Invalid exact revision fixture");
+  if (kind === "unit") value.unitId = fixture.save.actionId;
+  if (kind === "locale") value.locale = "ja";
+  if (kind === "revision") value.revisionId = fixture.save.actionId;
+  if (kind === "duplicate-contributor") value.contributors = [fixture.save.actionId, fixture.save.actionId];
+  invoke.mockResolvedValueOnce(kind === "null" ? null : value);
+  await expect(translationCommands.revision(fixture.revisionRequest)).rejects.toThrow("Invalid IPC response: read_translation_revision");
+});
+
 it("reads the complete frozen import request and recovery unit with a required nullable receipt", async () => {
   const adoption: unknown = structuredClone(fixture.adopt),unitId = fixture.prepared.unitId;
   if (!validators.validateRequestAdopt(adoption)) throw new Error("Invalid original import request fixture");

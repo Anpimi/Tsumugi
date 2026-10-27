@@ -145,6 +145,22 @@ export type SourceContextOmissionSample =
       reason: SourceContextOmissionReason;
     };
 export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
+export type TranslationActionOutcome =
+  | {
+      kind: "recorded";
+      receipt: TranslationSelection;
+    }
+  | {
+      kind: "pending";
+      replay: TranslationActionReplay;
+    }
+  | {
+      kind: "mismatch";
+    };
+/**
+ * Replay safety is not admission, fresh authority, or proof that an action never ran.
+ */
+export type TranslationActionReplay = "explicit-same-request" | "blocked";
 export type ArenaRevealTargetKind = "comparison" | "attempt";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
@@ -159,6 +175,7 @@ export interface Responses {
   identity: ExecutionId;
   mergeAction: ArenaMergeActionRead | null;
   prepared: Prepared;
+  recoverMerge: TranslationMergeRecovery;
   reveal: null;
   revealTarget: ArenaRevealTarget | null;
   selection: TranslationSelection;
@@ -454,6 +471,11 @@ export interface SharedTerm {
   revisionId: ExecutionId;
   source: string;
   target: string;
+}
+export interface TranslationMergeRecovery {
+  merge: MergeBasis;
+  outcome: TranslationActionOutcome;
+  request: SaveTranslationRevision;
 }
 /**
  * Visibility is a target fact, not a receipt for a particular reveal action.

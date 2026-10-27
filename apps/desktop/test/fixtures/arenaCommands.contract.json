@@ -116,6 +116,23 @@
       "text": "Merged 木桶 👩🏽‍💻 é {name}",
       "expectedSelectionId": "60000000-0000-4000-8000-000000000012",
       "projectId": "60000000-0000-4000-8000-000000000001"
+    },
+    "recoverMerge": {
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000016",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "merge": {
+        "contributors": [
+          "60000000-0000-4000-8000-000000000013",
+          "60000000-0000-4000-8000-000000000014"
+        ],
+        "expectedBasis": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "locale": "zh-CN",
+      "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+      "text": "Merged 木桶 👩🏽‍💻 é {name}",
+      "expectedSelectionId": "60000000-0000-4000-8000-000000000012",
+      "projectId": "60000000-0000-4000-8000-000000000001"
     }
   },
   "responses": {
@@ -531,6 +548,28 @@
       "nativeKey": "barrel",
       "selectedText": "木桶 👩🏽‍💻 é {name}",
       "sourceRevisionId": "60000000-0000-4000-8000-000000000004"
+    },
+    "recoverMerge": {
+      "request": {
+        "actionId": "60000000-0000-4000-8000-000000000016",
+        "unitId": "60000000-0000-4000-8000-000000000003",
+        "locale": "zh-CN",
+        "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+        "text": "Merged 木桶 👩🏽‍💻 é {name}",
+        "expectedSelectionId": "60000000-0000-4000-8000-000000000012",
+        "projectId": "60000000-0000-4000-8000-000000000001"
+      },
+      "merge": {
+        "contributors": [
+          "60000000-0000-4000-8000-000000000013",
+          "60000000-0000-4000-8000-000000000014"
+        ],
+        "expectedBasis": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "outcome": {
+        "kind": "pending",
+        "replay": "explicit-same-request"
+      }
     }
   }
 }

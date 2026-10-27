@@ -13,9 +13,12 @@ import { validateRequestAdopt, validateResponseCheckReview, validateResponseProj
 import { validateResponseAdoption } from "./generated/execution.validators";
 import { validateResponseProjectionStartAction, validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
 import { validateResponseRecoverSave, validateResponseRecoverSelection } from "./generated/translation.validators";
+import { validateResponseRevision } from "./generated/translation.validators";
+import type { TranslationRevisionRequest } from "./generated/translation.requests";
 import type { CandidateDecisionRequest } from "./generated/translation.requests";
 import type { CandidateDecision } from "./generated/translation.responses";
 export type { CandidateDecisionRequest } from "./generated/translation.requests";
+export type { TranslationRevisionRequest } from "./generated/translation.requests";
 export type { CandidateDecision, CandidateDecisionWrite, CandidateDisposition } from "./generated/translation.responses";
 
 export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
@@ -58,6 +61,14 @@ export const translationCommands = {
   prepare: (request: TranslationAdoptRequest) => checkedInvoke("prepare_translation_adoption", request, validateResponsePrepared),
   adoptionAction: (request: Requests["adoptionAction"]): Promise<Responses["adoptionAction"]> => checkedInvoke("read_translation_adoption_action", request, validateResponseAdoptionAction),
   history: (request: TranslationHistoryRequest) => checkedInvoke("read_translation_history", request, validateResponseHistory),
+  revision: (request: TranslationRevisionRequest) => checkedInvoke("read_translation_revision", request,
+    (value): value is Responses["revision"] => validateResponseRevision(value)
+      && value.unitId === request.unitId && value.locale === request.locale && value.revisionId === request.revisionId
+      && (!value.candidateDecision || value.candidateDecision.request.projectId === request.projectId
+        && value.candidateDecision.request.unitId === request.unitId && value.candidateDecision.request.locale === request.locale
+        && value.candidateDecision.request.revisionId === request.revisionId
+        && value.candidateDecision.request.sourceRevisionId === value.sourceRevisionId)
+      && new Set(value.contributors).size === value.contributors.length),
   action: (request: TranslationActionRequest) => checkedInvoke("read_translation_action", request, validateResponseAction),
   saveAction: async (request: TranslationSaveRequest) => {
     const receipt = await checkedInvoke("read_translation_save_action", request, validateResponseSaveAction);

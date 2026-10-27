@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tsumugi_core::{
-    SaveTranslationRevision, SelectTranslationRevision,
+    MergeBasis, SaveTranslationRevision, SelectTranslationRevision,
     execution::{ExecutionId, Revision},
 };
 
@@ -24,6 +24,17 @@ pub struct DraftBasis {
     pub text: Option<String>,
 }
 
+/// Comparison provenance retained with local input; it grants no permission to
+/// save, merge, or replace a project selection.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct DraftMergeOrigin {
+    pub comparison_id: ExecutionId,
+    pub contributors: Vec<ExecutionId>,
+    pub expected_basis: String,
+}
+
 /// A frozen original request, without any session token or execution authority.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -43,6 +54,11 @@ pub enum DraftPending {
         submitted_seq: Revision,
         text: String,
     },
+    Merge {
+        request: SaveTranslationRevision,
+        merge: MergeBasis,
+        submitted_seq: Revision,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -53,6 +69,8 @@ pub struct DraftValue {
     pub text: String,
     pub edit_seq: Revision,
     pub pending: Option<DraftPending>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<DraftMergeOrigin>,
 }
 
 /// A tombstone retains its revision so an old writer cannot resurrect input.
