@@ -903,6 +903,26 @@ pub struct SourceChange {
     pub new: Option<SourceOccurrence>,
     pub candidates: Vec<ContentRow>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SourceVersionEndpoint {
+    pub source_revision_id: ExecutionId,
+    pub text: String,
+}
+
+/// Persisted unit endpoints. Candidate lineage does not establish correspondence;
+/// a missing prior member is distinct from an existing empty source text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SourceVersionComparison {
+    pub unit_id: ExecutionId,
+    pub change_kind: SourceChangeKind,
+    pub old: Option<SourceVersionEndpoint>,
+    pub current: SourceVersionEndpoint,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

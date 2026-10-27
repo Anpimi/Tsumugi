@@ -5,7 +5,7 @@ import fixture from "../../../../test/fixtures/translation-commands.json";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { sourceCommands } from "../../../sourceCommands";
-import { segmentCommands, type SegmentPage, type SegmentQueueWindow, type SegmentRow } from "../../../segmentCommands";
+import { segmentCommands, type SegmentPage, type SegmentQueueWindow, type SegmentRow, type SegmentSourceComparison } from "../../../segmentCommands";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "../../../draftCommands";
 import type { TranslationSaveReceipt, TranslationSaveRequest } from "../../../translationCommands";
 import type { ProjectView } from "../../../projectCommands";
@@ -65,6 +65,11 @@ async function harness(initialView: Partial<NewWorkspaceView> = {}) {
       rows: units.slice(start, start + 2).map(unit => row(unit, request.locale)), previousUnitId: units[start - 1] ?? null, nextUnitId: units[start + 2] ?? null } satisfies SegmentQueueWindow;
   });
   const source = vi.spyOn(sourceCommands, "scope").mockResolvedValue({ currentSnapshot: "snapshot", revision: "1" });
+  const comparison = vi.spyOn(segmentCommands, "sourceComparison").mockImplementation(async request => ({
+    projectId: context.projectId, locale: request.locale, scopeId: request.scopeId, currentSnapshotId: "snapshot", baseSnapshotId: "previous-snapshot", nextAfter: null,
+    rows: request.unitIds.map(unitId => ({ unitId, changeKind: "changed", old: { sourceRevisionId: "old-revision", text: `Previous ${unitId} é 👩🏽‍💻` },
+      current: { sourceRevisionId: initial.sourceRevisionId, text: `Complete source ${unitId}` } })),
+  } satisfies SegmentSourceComparison));
   const disk = new Map<string, DraftHead>(), current = new Map<string, DraftBasis>();
   const entity = (key: DraftKey) => JSON.stringify([key.unitId, key.locale]);
   const commit = (request: TranslationSaveRequest) => {
@@ -109,8 +114,61 @@ async function harness(initialView: Partial<NewWorkspaceView> = {}) {
   render(<SessionReadProvider context={context} reads={reads} bridge={false}><Surface /></SessionReadProvider>);
   const view = () => getWorkspaceView(store.getState(), store.getState().activeViewId);
   const open = async (unit = unitA) => { fireEvent.click(await screen.findByRole("button", { name: `entryEdit:key.${unit}` })); return screen.findByRole<HTMLTextAreaElement>("textbox", { name: `editorLabel:key.${unit}` }); };
-  return { reads, store, gate, drafts, ports, ref, page, queue, source, navigate, navigationAllowed, view, open, commit };
+  return { reads, store, gate, drafts, ports, ref, page, queue, source, comparison, navigate, navigationAllowed, view, open, commit };
 }
+
+it("loads comparison for only the current page and keeps the same editor through toggles, failure and retry", async () => {
+  const h = await harness(), field = await h.open();
+  fireEvent.change(field, { target: { value: "Keep {{name}} — é 👩🏽‍💻" } }); field.setSelectionRange(5, 13, "backward");
+  expect(h.comparison).not.toHaveBeenCalled();
+  h.comparison.mockRejectedValueOnce(new Error("Scope read unavailable"));
+  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("sourceComparisonFailed");
+  expect(h.view()).toMatchObject({ compareSource: true, focus: unitA, editing: true });
+  expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+  expect(field).toHaveValue("Keep {{name}} — é 👩🏽‍💻");
+  const selected = h.view()?.selection;
+  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonRetry" }));
+  await waitFor(() => expect(document.querySelector('[data-source-version="previous"]')).toBeInTheDocument());
+  expect(h.comparison.mock.calls.every(([request]) => request.unitIds.length === 2 && request.scopeId === "fixed-scope")).toBe(true);
+  expect(h.view()?.selection).toBe(selected);
+  expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+  expect(field.selectionStart).toBe(5); expect(field.selectionEnd).toBe(13); expect(field.selectionDirection).toBe("backward");
+  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  expect(document.querySelector('[data-source-version="previous"]')).toBeNull();
+  expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+  expect(field).toHaveValue("Keep {{name}} — é 👩🏽‍💻");
+});
+
+it("does not display a late previous-source response after comparison is switched off", async () => {
+  const h = await harness(), pending = deferred<SegmentSourceComparison>();
+  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  h.comparison.mockReturnValueOnce(pending.promise);
+  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  await waitFor(() => expect(h.comparison).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("status")).toHaveTextContent("sourceComparisonLoading");
+  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  const request = h.comparison.mock.calls[0][0];
+  await act(async () => { pending.resolve({ projectId: context.projectId, locale: request.locale, scopeId: request.scopeId,
+    currentSnapshotId: "snapshot", baseSnapshotId: "previous-snapshot", nextAfter: null,
+    rows: request.unitIds.map(unitId => ({ unitId, changeKind: "changed", old: { sourceRevisionId: "old-revision", text: "Late previous source" },
+      current: { sourceRevisionId: initial.sourceRevisionId, text: `Complete source ${unitId}` } })) }); });
+  expect(screen.queryByText("Late previous source")).not.toBeInTheDocument();
+  expect(h.view()?.compareSource).toBe(false);
+});
+
+it("explains the first source version while retaining empty source text as a real endpoint", async () => {
+  const h = await harness();
+  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  h.comparison.mockImplementationOnce(async request => ({ projectId: context.projectId, locale: request.locale, scopeId: request.scopeId,
+    currentSnapshotId: "snapshot", baseSnapshotId: null, nextAfter: null,
+    rows: request.unitIds.map(unitId => ({ unitId, changeKind: "added", old: null, current: { sourceRevisionId: initial.sourceRevisionId, text: "" } })) }));
+  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  expect(await screen.findByText("sourceComparisonFirstVersion")).toBeVisible();
+  expect(screen.getAllByText("sourceComparisonNoPrevious").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("sourceComparisonEmptyText").length).toBeGreaterThan(0);
+  expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(1);
+});
 
 it("confirms and advances through the same fixed queue, including its next window", async () => {
   const h = await harness(), field = await h.open();

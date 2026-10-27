@@ -25,8 +25,10 @@ function useReadVisibility(reads: SessionReads, queryKey: QueryKey, enabled: boo
       const cached = reads.client.getQueryCache().find({ queryKey, exact: true });
       // Cancellation restores the previous state. Mark it stale afterwards so
       // reopening also rereads a cancelled load-more query's retained pages.
-      if (cached && !cached.isActive()) void reads.client.cancelQueries({ queryKey, exact: true });
-      void reads.client.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+      if (cached && !cached.isActive()) {
+        void reads.client.cancelQueries({ queryKey, exact: true });
+        void reads.client.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+      }
     }
   }, [reads, enabled, identity]);
 }

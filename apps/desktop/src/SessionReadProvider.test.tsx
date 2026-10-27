@@ -24,6 +24,22 @@ it("ignores a pending response after hiding the view and rereads when it is open
   view.rerender(ui(true)); await screen.findByText("Reopened result");
 });
 
+it("keeps a shared snapshot current when one of two observers is hidden", async () => {
+  const read = vi.fn().mockResolvedValue("Shared entry");
+  let reads!: SessionReads;
+  function Control() { reads = useSessionReads(); return null; }
+  const ui = (visible: boolean) => <SessionReadProvider context={context} bridge={false}>
+    <Control/><Probe read={read}/><Probe read={read} enabled={visible}/>
+  </SessionReadProvider>;
+  const view = render(ui(true));
+  await waitFor(() => expect(screen.getAllByText("Shared entry")).toHaveLength(2));
+  view.rerender(ui(false));
+  expect(reads.client.getQueryState(reads.key(["same-attempt"]))?.isInvalidated).toBe(false);
+  expect(read).toHaveBeenCalledTimes(1);
+  await act(async () => { reads.invalidate(["execution"]); });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+});
+
 it("observes an explicit fresh read without duplicating it and still refreshes on semantic invalidation", async () => {
   const read = vi.fn<() => Promise<string>>().mockResolvedValueOnce("Explicit current facts").mockResolvedValue("Changed current facts");
   let reads!: SessionReads;

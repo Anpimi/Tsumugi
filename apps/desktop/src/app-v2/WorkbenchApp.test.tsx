@@ -72,7 +72,7 @@ async function openImportWorkspace(opened: ProjectView = project) {
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
   fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: opened.locator } });
   fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
-  const button = await screen.findByRole("button", { name: i18n.t("workbenchV2.importTitle") });
+  const button = await screen.findByRole("button", { name: i18n.t("workbenchV2.importTitle") }, { timeout: 5000 });
   await waitFor(() => expect(button).toBeEnabled());
   return { close, register, button };
 }

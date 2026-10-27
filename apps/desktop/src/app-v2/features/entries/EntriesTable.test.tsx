@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { DraftHead, DraftValue } from "../../../draftCommands";
-import type { SegmentRow } from "../../../segmentCommands";
+import type { SegmentRow, SegmentSourceComparison } from "../../../segmentCommands";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { makeWorkspaceView } from "../../workspace/workspaceStore";
 import { TranslationDrafts, type TranslationDraftPorts } from "../editor/translationDrafts";
@@ -75,6 +75,69 @@ function surface(overrides: Partial<EntriesTableProps> = {}) {
 }
 function viewport() { return screen.getByRole("region", { name: "entriesTableLabel" }); }
 function scrollTo(top: number) { fireEvent.scroll(viewport(), { target: { scrollTop: top } }); }
+
+it("shows the shared status glyph directly and keeps details beside the source key", () => {
+  const summary = row(0); summary.candidateCount = summary.aiCandidateCount = 1; summary.protection.protected = true;
+  const h = surface({ rows: [summary], view: makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", entryPageMode: true }, "entries") });
+  const glyph = screen.getByRole("img", { name: "entryStatusCandidate" });
+  expect(glyph.closest("button")).toBeNull();
+  expect(screen.getByRole("img", { name: "entryStatusProtected" }).closest("button")).toBeNull();
+  expect(screen.queryByText("candidateCount")).not.toBeInTheDocument();
+  expect(screen.queryByText("protectedEntry")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "showEntryDetails:key.unit-0" }));
+  expect(h.props.onDetails).toHaveBeenCalledWith("unit-0");
+});
+
+it("mounts candidate actions only in the focused row", () => {
+  const renderCandidate = vi.fn((summary: SegmentRow) => <span>{`Candidate for ${summary.content.unitId}`}</span>);
+  const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", entryPageMode: true }, "entries");
+  const h = surface({ rows: [row(0), row(1)], view, renderCandidate });
+  expect(screen.getByText("Candidate for unit-0")).toBeVisible();
+  expect(screen.queryByText("Candidate for unit-1")).not.toBeInTheDocument();
+  expect(renderCandidate.mock.calls.every(([summary]) => summary.content.unitId === "unit-0")).toBe(true);
+  h.update({ view: { ...view, focus: "unit-1" } });
+  expect(screen.getByText("Candidate for unit-1")).toBeVisible();
+  expect(screen.queryByText("Candidate for unit-0")).not.toBeInTheDocument();
+});
+
+it("renders exact previous and current Unicode endpoints without remounting the active editor", async () => {
+  const drafts = await draftOwner("unit-0");
+  const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true, entryPageMode: true }, "entries");
+  const h = surface({ rows: [row(0)], drafts, view });
+  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:key.unit-0" });
+  fireEvent.change(field, { target: { value: "Keep {{name}} é 👩🏽‍💻" } }); field.setSelectionRange(2, 9, "backward");
+  fireEvent.compositionStart(field);
+  const previous = "Previous {{name}}\r\né 👩🏽‍💻", current = "Current <b>日本語</b>\n🙂";
+  const sourceComparison: SegmentSourceComparison = { projectId: "project", locale: "zh-CN", scopeId: "scope", currentSnapshotId: "snapshot", baseSnapshotId: "base", nextAfter: null,
+    rows: [{ unitId: "unit-0", changeKind: "changed", old: { sourceRevisionId: "old", text: previous }, current: { sourceRevisionId: "revision", text: current } }] };
+  h.update({ view: { ...view, compareSource: true }, sourceComparison });
+  expect(document.querySelector('[data-source-version="previous"]')?.lastElementChild?.textContent).toBe(previous);
+  expect(document.querySelector('[data-source-version="current"]')?.lastElementChild?.textContent).toBe(current);
+  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  expect(field).toHaveValue("Keep {{name}} é 👩🏽‍💻");
+  expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(9); expect(field.selectionDirection).toBe("backward");
+  expect(h.gate.getSnapshot().composingOwners).toHaveLength(1);
+  h.update({ view: { ...view, compareSource: false } });
+  expect(document.querySelector('[data-source-version="previous"]')).toBeNull();
+  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  fireEvent.compositionEnd(field);
+});
+
+it("distinguishes a missing prior unit from real empty source text", () => {
+  const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", entryPageMode: true, compareSource: true }, "entries");
+  const sourceComparison: SegmentSourceComparison = { projectId: "project", locale: "zh-CN", scopeId: "scope", currentSnapshotId: "snapshot", baseSnapshotId: "base", nextAfter: null,
+    rows: [
+      { unitId: "unit-0", changeKind: "added", old: null, current: { sourceRevisionId: "revision", text: "" } },
+      { unitId: "unit-1", changeKind: "unchanged", old: { sourceRevisionId: "revision", text: "" }, current: { sourceRevisionId: "revision", text: "" } },
+    ] };
+  surface({ rows: [row(0), row(1)], view, sourceComparison });
+  const newEntry = screen.getByRole("listitem", { name: "key.unit-0" }), emptyEntry = screen.getByRole("listitem", { name: "key.unit-1" });
+  expect(within(newEntry).getByText("sourceComparisonNoPrevious")).toBeVisible();
+  expect(within(newEntry).getAllByText("sourceComparisonEmptyText")).toHaveLength(1);
+  expect(within(emptyEntry).queryByText("sourceComparisonNoPrevious")).not.toBeInTheDocument();
+  expect(within(emptyEntry).getAllByText("sourceComparisonEmptyText")).toHaveLength(2);
+});
+
 async function draftOwner(unitId: string) {
   const heads = new Map<string, DraftHead>();
   const ports: Partial<TranslationDraftPorts> = {

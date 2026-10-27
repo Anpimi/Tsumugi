@@ -45,6 +45,7 @@ export interface Requests {
   semanticRead: AiSemanticReviewReadRequest;
   semanticStart: AiSemanticReviewStartRequest;
   semanticStartAction: AiSemanticReviewStartRequest;
+  sourceComparison: SegmentSourceComparisonRequest;
   summary: ReviewSummaryPageRequest;
   target: ReviewTargetRequest;
   waiver: WaiverRequest;
@@ -352,6 +353,17 @@ export interface AiSemanticReviewStartRequest {
   digest: string;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface SegmentSourceComparisonRequest {
+  locale: string;
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
 }
 export interface ReviewSummaryPageRequest {
   afterOrdinal: number;

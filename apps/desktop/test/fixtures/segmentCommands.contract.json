@@ -29,6 +29,15 @@
       "scopeId": "40000000-0000-4000-8000-000000000013",
       "anchorUnitId": "40000000-0000-4000-8000-000000000002",
       "limit": 50
+    },
+    "sourceComparison": {
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "unitIds": [
+        "40000000-0000-4000-8000-000000000002"
+      ]
     }
   },
   "responses": {
@@ -323,6 +332,28 @@
       "firstPosition": 0,
       "previousUnitId": null,
       "nextUnitId": null
+    },
+    "sourceComparison": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "currentSnapshotId": "40000000-0000-4000-8000-000000000003",
+      "baseSnapshotId": "40000000-0000-4000-8000-000000000099",
+      "rows": [
+        {
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "changeKind": "changed",
+          "old": {
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000098",
+            "text": "Old {{name}} é 👩🏽‍💻"
+          },
+          "current": {
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "text": "Hello {{name}} é 👩🏽‍💻"
+          }
+        }
+      ],
+      "nextAfter": null
     }
   }
 }

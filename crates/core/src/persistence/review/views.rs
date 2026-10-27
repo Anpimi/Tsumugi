@@ -2,7 +2,7 @@
 use super::*;
 use std::{cell::RefCell, collections::VecDeque};
 mod segments;
-pub use segments::{SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter, SegmentStatusFilter,
+pub use segments::{SegmentSourceComparison, SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter, SegmentStatusFilter,
     SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary};
 
 const MAX_READ_SCOPES: usize = 8;

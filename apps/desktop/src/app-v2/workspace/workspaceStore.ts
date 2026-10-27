@@ -10,6 +10,10 @@ export interface WorkspaceView {
   kind: ViewKind;
   entryMode: "table" | "import";
   entryPageMode: boolean;
+  compareSource: boolean;
+  detailTab: "detail" | "context" | "candidates" | "issues" | "history";
+  candidateAfterOrdinal: string;
+  candidateInitialRevisionId: string | null;
   locale: string;
   preset: string;
   query: string;
@@ -65,6 +69,10 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     kind: input.kind,
     entryMode: input.entryMode ?? "table",
     entryPageMode: input.entryPageMode ?? false,
+    compareSource: input.compareSource ?? false,
+    detailTab: input.detailTab ?? "detail",
+    candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
+    candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
     locale: input.locale,
     preset: input.preset ?? "all",
     query: input.query ?? "",
@@ -142,7 +150,9 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const changedScope = patch.query !== undefined && patch.query !== view.query || patch.locale !== undefined && patch.locale !== view.locale
         || patch.preset !== undefined && patch.preset !== view.preset;
       const target = patch.focus !== undefined ? patch.focus : view.focus;
+      const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
       const next = { ...view, ...patch, ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
+        ...(changedTarget ? { candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null } : {}),
         ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
           queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,
           focusMode: (patch.editing ?? patch.focus != null) ? patch.focusMode ?? view.focusMode : false } : {}) };

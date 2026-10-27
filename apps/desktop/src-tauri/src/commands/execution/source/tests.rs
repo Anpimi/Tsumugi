@@ -766,6 +766,33 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     println!("segment ipc-fixture data=3 page=1 bytes={} round_trip_us={}", serde_json::to_vec(&first).unwrap().len(), read_started.elapsed().as_micros());
     let typed: tsumugi_core::SegmentPage = serde_json::from_value(first.clone()).unwrap();
     assert_eq!(typed.total, 3);
+    let mut comparison_request = context.clone();
+    comparison_request["locale"] = json!("zh-CN");
+    comparison_request["scopeId"] = first["scopeId"].clone();
+    comparison_request["unitIds"] = json!([first["rows"][0]["content"]["unitId"]]);
+    let source_comparison = call(&view, "read_segment_source_comparison", comparison_request.clone()).unwrap();
+    let decoded: tsumugi_core::SegmentSourceComparison = serde_json::from_value(source_comparison.clone()).unwrap();
+    assert_eq!(decoded.current_snapshot_id, typed.source_snapshot_id);
+    assert_eq!(decoded.base_snapshot_id, None);
+    assert_eq!(decoded.rows[0].old, None);
+    assert_eq!(decoded.rows[0].current.text, source_text);
+    assert_eq!(decoded.rows[0].current.source_revision_id, typed.rows[0].content.source_revision_id);
+    for (field, value) in [("projectId", json!(ExecutionId::new())), ("sessionToken", json!("foreign-session"))] {
+        let mut wrong = comparison_request.clone();
+        wrong[field] = value;
+        assert_eq!(call(&view, "read_segment_source_comparison", wrong).unwrap_err()["code"], "session-invalid");
+    }
+    for ids in [json!([]), json!([ExecutionId::new()]),
+        json!([typed.rows[0].content.unit_id,typed.rows[0].content.unit_id]),
+        json!((0..51).map(|_| ExecutionId::new()).collect::<Vec<_>>())] {
+        let mut wrong = comparison_request.clone();
+        wrong["unitIds"] = ids;
+        assert!(call(&view, "read_segment_source_comparison", wrong).is_err());
+    }
+    let mut wrong = comparison_request.clone();
+    wrong["locale"] = json!("fr-FR");
+    assert!(call(&view, "read_segment_source_comparison", wrong).is_err());
+
     assert_eq!(typed.rows.len(), 1);
     assert_eq!(first["projectId"], context["projectId"]);
     assert_eq!(first["query"]["status"], "all", "old requests normalize the default status");
@@ -850,6 +877,9 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     let saved = call(&view, "save_translation_revision", save.clone()).unwrap();
     assert!(call(&view, "read_segment_page", continuation).is_err());
     assert!(call(&view, "capture_segment_scope", scope).is_err());
+    assert_eq!(call(&view, "read_segment_source_comparison", comparison_request).unwrap(), source_comparison,
+        "local translation commits do not change fixed queue source endpoints");
+
     assert_eq!(frozen_typed.capture.units.len(), 3, "an earlier captured value remains fixed");
     request["query"]["selection"] = json!("selected");
     let selected = call(&view, "read_segment_page", request.clone()).unwrap();

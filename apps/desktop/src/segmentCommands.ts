@@ -1,10 +1,11 @@
 import { checkedInvoke } from "./ipc";
-import type { SegmentPageRequest, SegmentScopeRequest, SegmentQueueWindowRequest } from "./generated/review.requests";
-import type { SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
+import type { SegmentSourceComparisonRequest as SourceComparisonWireRequest, SegmentPageRequest, SegmentScopeRequest, SegmentQueueWindowRequest } from "./generated/review.requests";
+import type { SegmentSourceComparison, SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
 import * as validators from "./generated/review.validators";
 
 export type { SegmentPageRequest, SegmentScopeRequest, SegmentQuery, SegmentSelectionFilter, SegmentStatusFilter } from "./generated/review.requests";
-export type { SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
+export type { SegmentSourceComparison, SourceVersionComparison, SourceVersionEndpoint, SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
+export type SegmentSourceComparisonRequest = Omit<SourceComparisonWireRequest, "unitIds"> & { unitIds: string[] };
 
 function boundedReferences(total: number, length: number, truncated: boolean) {
   return length === Math.min(total, 8) && truncated === (total > length);
@@ -41,6 +42,20 @@ function relatedSummary(row: SegmentRow) {
 }
 
 export const segmentCommands = {
+  sourceComparison: (request: SegmentSourceComparisonRequest) => checkedInvoke("read_segment_source_comparison", request,
+    (page): page is SegmentSourceComparison => validators.validateResponseSourceComparison(page)
+      && page.projectId === request.projectId && page.locale === request.locale && page.scopeId === request.scopeId
+      && page.baseSnapshotId !== page.currentSnapshotId
+      && request.unitIds.length > 0 && request.unitIds.length <= 50
+      && new Set(request.unitIds).size === request.unitIds.length
+      && page.rows.length > 0 && page.rows.length <= request.unitIds.length
+      && (page.nextAfter === null ? page.rows.length === request.unitIds.length
+        : page.nextAfter === page.rows.length && page.rows.length < request.unitIds.length)
+      && page.rows.every((row, index) => row.unitId === request.unitIds[index]
+        && (row.old === null ? row.changeKind === "added"
+          : page.baseSnapshotId !== null && ["unchanged", "moved", "changed"].includes(row.changeKind))
+        && (row.changeKind !== "unchanged" && row.changeKind !== "moved"
+          || row.old?.sourceRevisionId === row.current.sourceRevisionId && row.old?.text === row.current.text))),
   queueWindow: (request: SegmentQueueWindowRequest) => checkedInvoke("read_segment_queue_window", request,
     (window): window is SegmentQueueWindow => validators.validateResponseQueueWindow(window)
       && window.projectId === request.projectId && window.locale === request.locale && window.scopeId === request.scopeId

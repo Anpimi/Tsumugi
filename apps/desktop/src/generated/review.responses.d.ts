@@ -275,6 +275,8 @@ export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | 
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+export type SourceChangeKind =
+  "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 
 export interface Responses {
   cancelCheck: boolean;
@@ -302,6 +304,7 @@ export interface Responses {
   semanticRead: AiSemanticReviewLookup;
   semanticStart: ExecutionId;
   semanticStartAction: AiSemanticReviewStartRead | null;
+  sourceComparison: SegmentSourceComparison;
   summary: ReviewSummaryPage;
   target: ReviewTarget;
   waiver: Waiver;
@@ -1461,6 +1464,33 @@ export interface AiSemanticReviewStartRead {
   preview: AiSemanticReviewPreviewView;
   projectId: ExecutionId;
   taskId: ExecutionId;
+}
+export interface SegmentSourceComparison {
+  baseSnapshotId: ExecutionId | null;
+  currentSnapshotId: ExecutionId;
+  locale: string;
+  /**
+   * Requested identities consumed when a continuation is needed. Send the
+   * remaining identities with the same scope; no text is ever truncated.
+   */
+  nextAfter: number | null;
+  projectId: ExecutionId;
+  rows: SourceVersionComparison[];
+  scopeId: ExecutionId;
+}
+/**
+ * Persisted unit endpoints. Candidate lineage does not establish correspondence;
+ * a missing prior member is distinct from an existing empty source text.
+ */
+export interface SourceVersionComparison {
+  changeKind: SourceChangeKind;
+  current: SourceVersionEndpoint;
+  old: SourceVersionEndpoint | null;
+  unitId: ExecutionId;
+}
+export interface SourceVersionEndpoint {
+  sourceRevisionId: ExecutionId;
+  text: string;
 }
 export interface ReviewSummaryPage {
   nextOrdinal: number | null;

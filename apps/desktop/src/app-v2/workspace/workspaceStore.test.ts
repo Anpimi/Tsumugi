@@ -4,6 +4,19 @@ import { workspaceViewHref } from "./workspaceRouter";
 const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
+  it("retains comparison and inspector tabs per view and resets candidate paging for another target", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
+    store.getState().patch("one", { compareSource: true, detailTab: "candidates", candidateAfterOrdinal: "50", candidateInitialRevisionId: "revision-a" });
+    store.getState().open({ id: "two", kind: "entries", locale: "ja" });
+    expect(store.getState().views.two).toMatchObject({ compareSource: false, detailTab: "detail", candidateAfterOrdinal: "0" });
+    store.getState().patch("one", { focus: "unit-b" });
+    expect(store.getState().views.one).toMatchObject({ compareSource: true, detailTab: "candidates", candidateAfterOrdinal: "0", candidateInitialRevisionId: null });
+    store.getState().patch("one", { candidateAfterOrdinal: "100", locale: "ja" });
+    expect(store.getState().views.one.candidateAfterOrdinal).toBe("100");
+    store.getState().patch("one", { locale: "zh-CN" });
+    expect(store.getState().views.one.candidateAfterOrdinal).toBe("0");
+    expect(workspaceViewHref(store.getState().views.one)).not.toMatch(/compare|candidate|detailTab/);
+  });
   it("keeps the entry presentation mode local to each tab and out of the URL", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
     expect(store.getState().views.one.entryMode).toBe("table");

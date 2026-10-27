@@ -2,6 +2,100 @@ use super::*;
 use rusqlite::OptionalExtension;
 use std::collections::BTreeMap;
 
+/// Keep capture, receipt, and lineage validation in the existing source owner.
+pub(in crate::persistence) fn adopted_comparison_for_units(
+    connection: &Connection,
+    current: ExecutionId,
+    units: &[ExecutionId],
+) -> Result<(Option<ExecutionId>, Vec<SourceVersionComparison>), ExecutionError> {
+    let state = scope(connection)?;
+    let (revision, (input, _, _, current_rows)) = snapshot_rows(connection, current, true)?;
+    if state.current_snapshot != Some(current) || state.revision.get() != revision {
+        return Err(corrupt());
+    }
+    let action_bytes: Vec<u8> = connection.query_row(
+        "SELECT a.request FROM execution_actions a JOIN adoption_receipts r ON r.action_id=a.action_id WHERE r.attempt_id=?1",
+        [input.envelope().attempt_id.to_string()], |row| row.get(0),
+    ).map_err(sql_error)?;
+    let action: AdoptionAction = codec::decode(&action_bytes, MAX_INPUT_BYTES)?;
+    let confirmation: SourceConfirmation = from_value(&action.parameters)?;
+    let base = confirmation.expected_current_snapshot;
+    let old_rows = if let Some(base) = base {
+        let (base_revision, (_, _, _, rows)) = snapshot_rows(connection, base, true)?;
+        if base_revision.checked_add(1) != Some(revision) {
+            return Err(corrupt());
+        }
+        rows
+    } else {
+        if revision != 2 {
+            return Err(corrupt());
+        }
+        Vec::new()
+    };
+    let by_unit = |rows: Vec<ContentRow>| {
+        let mut grouped: BTreeMap<ExecutionId, Vec<ContentRow>> = BTreeMap::new();
+        for row in rows {
+            grouped
+                .entry(row.unit_id.ok_or_else(corrupt)?)
+                .or_default()
+                .push(row);
+        }
+        Ok::<_, ExecutionError>(grouped)
+    };
+    let current_rows = by_unit(current_rows)?;
+    let old_rows = by_unit(old_rows)?;
+    let endpoint = |row: &ContentRow| {
+        Ok::<_, ExecutionError>(SourceVersionEndpoint {
+            source_revision_id: row.source_revision_id.ok_or_else(corrupt)?,
+            text: row.occurrence.text.clone(),
+        })
+    };
+    let rows = units
+        .iter()
+        .map(|unit| {
+            let current_group = current_rows.get(unit).ok_or_else(corrupt)?;
+            let current = current_group.first().ok_or_else(corrupt)?;
+            let old_group = old_rows.get(unit);
+            let old = old_group.and_then(|rows| rows.first());
+            let kind = match old_group {
+                None => SourceChangeKind::Added,
+                Some(old) => {
+                    // The unit correspondence is already adopted. Reuse the
+                    // occurrence classifier for changes within that unit;
+                    // candidate labels do not reopen an adopted relationship.
+                    let current = current_group
+                        .iter()
+                        .map(|row| row.occurrence.clone())
+                        .collect::<Vec<_>>();
+                    let changes = compare_rows(old, &current);
+                    if changes.iter().any(|change| {
+                        !matches!(
+                            change.kind,
+                            SourceChangeKind::Unchanged | SourceChangeKind::Moved
+                        )
+                    }) {
+                        SourceChangeKind::Changed
+                    } else if changes
+                        .iter()
+                        .any(|change| change.kind == SourceChangeKind::Moved)
+                    {
+                        SourceChangeKind::Moved
+                    } else {
+                        SourceChangeKind::Unchanged
+                    }
+                }
+            };
+            Ok(SourceVersionComparison {
+                unit_id: *unit,
+                change_kind: kind,
+                old: old.map(endpoint).transpose()?,
+                current: endpoint(current)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ExecutionError>>()?;
+    Ok((base, rows))
+}
+
 // All rows passed here have been validated against their immutable source capture.
 // Keep at most eight validated historical snapshots for this read, never a durable cache.
 fn lineage_evidence_in(

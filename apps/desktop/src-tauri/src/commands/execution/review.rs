@@ -67,6 +67,8 @@ mod contracts {
         segment_round_trip::<SegmentScopeRequest>(&segment_fixture["requests"]["segmentScope"]);
         segment_round_trip::<SegmentPage>(&segment_fixture["responses"]["segmentPage"]);
         segment_round_trip::<SegmentQueueWindowRequest>(&segment_fixture["requests"]["queueWindow"]);
+        segment_round_trip::<SegmentSourceComparisonRequest>(&segment_fixture["requests"]["sourceComparison"]);
+        segment_round_trip::<tsumugi_core::SegmentSourceComparison>(&segment_fixture["responses"]["sourceComparison"]);
         segment_round_trip::<tsumugi_core::SegmentQueueWindow>(&segment_fixture["responses"]["queueWindow"]);
         segment_round_trip::<SegmentScopeCapture>(&segment_fixture["responses"]["segmentScope"]);
         let mut legacy_query = segment_fixture["requests"]["segmentPage"].clone();
@@ -192,6 +194,12 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Segm
     anchor_unit_id: Option<ExecutionId>,
     limit: u32
 });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SegmentSourceComparisonRequest {
+    locale: String,
+    scope_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 50)))]
+    unit_ids: Vec<ExecutionId>
+});
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SegmentScopeRequest {
     locale: String,
     scope_id: ExecutionId,
@@ -313,6 +321,18 @@ pub async fn read_segment_queue_window(
         authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
             .store.read_segment_queue_window(request.project_id, &request.locale, request.scope_id,
                 request.anchor_unit_id, request.limit).map_err(map_read)
+    }).await
+}
+
+#[tauri::command]
+pub async fn read_segment_source_comparison(
+    state: State<'_, AppState>,
+    request: SegmentSourceComparisonRequest,
+) -> Result<tsumugi_core::SegmentSourceComparison, CommandError> {
+    state.sessions.run("read_segment_source_comparison", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.read_segment_source_comparison(request.project_id, &request.locale, request.scope_id,
+                &request.unit_ids).map_err(map_read)
     }).await
 }
 

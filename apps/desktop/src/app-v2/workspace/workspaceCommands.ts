@@ -4,7 +4,7 @@ import { InteractionGate, type CommandSource } from "./interactionGate";
 import { getWorkspaceView, type WorkspaceStore } from "./workspaceStore";
 import type { WorkspaceNavigation } from "./workspaceRouter";
 
-export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "translation.import", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode"] as const;
+export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "translation.import", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode", "translation.stage-focused-ai"] as const;
 export type WorkspaceCommandId = typeof workspaceCommandIds[number];
 const commandIds = new Set<string>(workspaceCommandIds);
 
@@ -115,8 +115,12 @@ export function createWorkspaceCommandDispatcher({ gate, getContext, modifier }:
     if (!context || context.viewId !== request.viewId || !gate.canDispatch(request)) return false;
     if (request.dialogId === "draft-recovery" && !id.startsWith("translation.")) return false;
     if (request.dialogId === "draft-recovery" && id === "translation.confirm-next") return false;
-    if (request.source === "keyboard" && id.startsWith("translation.") && (!request.inputOwner?.startsWith("segment-editor-")
-      || gate.getSnapshot().inputOwner?.ownerId !== request.inputOwner)) return false;
+    if (request.source === "keyboard" && id.startsWith("translation.")) {
+      const actual = gate.getSnapshot().inputOwner?.ownerId;
+      if (id === "translation.stage-focused-ai") {
+        if (actual !== undefined && (actual !== `entry-list-${request.viewId}` || actual !== request.inputOwner)) return false;
+      } else if (!request.inputOwner?.startsWith("segment-editor-") || actual !== request.inputOwner) return false;
+    }
     return context.commands.dispatch(id, context.scope);
   }
 

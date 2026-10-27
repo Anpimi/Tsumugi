@@ -1,6 +1,6 @@
 import type { SessionReads } from "../../../sessionReads";
 import { reviewCommands } from "../../../reviewCommands";
-import { segmentCommands, type SegmentPage, type SegmentQuery } from "../../../segmentCommands";
+import { segmentCommands, type SegmentPage, type SegmentQuery, type SegmentRow, type SegmentSourceComparison, type SourceVersionComparison } from "../../../segmentCommands";
 import { fixedContentSelection } from "../../../contentSelection";
 
 export type EntryCapture = { scopeId: string; snapshotId: string; queryFingerprint: string; readVersion: string };
@@ -21,6 +21,40 @@ export function sameEntryQuery(left: SegmentQuery, right: SegmentQuery): boolean
 }
 export const entryPageKey = (locale: string, query: SegmentQuery, capture: EntryCapture, cursor: string | null) =>
   ["workbench-entries", locale, query, capture.scopeId, capture.readVersion, cursor] as const;
+export const entrySourceComparisonKey = (locale: string, capture: EntryCapture, rows: readonly SegmentRow[]) =>
+  ["workbench-entry-source-comparison", locale, capture.scopeId, capture.snapshotId,
+    rows.map(row => [row.content.unitId, row.content.sourceRevisionId])] as const;
+
+/** Full texts are fetched once per loaded page, splitting only at complete rows
+ * when the source owner's byte budget requires a continuation. */
+export async function readEntrySourceComparison(reads: SessionReads, locale: string, capture: EntryCapture, rows: readonly SegmentRow[]): Promise<SegmentSourceComparison> {
+  const unitIds = rows.map(row => row.content.unitId);
+  if (rows.length === 0 || rows.length > 50 || new Set(unitIds).size !== rows.length
+    || rows.some(row => row.content.locale !== locale || row.content.sourceSnapshotId !== capture.snapshotId)) {
+    throw new Error("Invalid source comparison members");
+  }
+  const complete: SourceVersionComparison[] = [];
+  let first: SegmentSourceComparison | null = null;
+  while (complete.length < rows.length) {
+    if (reads.retired) throw new Error("Project session has ended");
+    const remaining = unitIds.slice(complete.length);
+    const page = await segmentCommands.sourceComparison({ ...reads.context, locale, scopeId: capture.scopeId, unitIds: remaining });
+    if (reads.retired || page.projectId !== reads.context.projectId || page.locale !== locale || page.scopeId !== capture.scopeId
+      || page.currentSnapshotId !== capture.snapshotId || page.baseSnapshotId === page.currentSnapshotId
+      || first !== null && page.baseSnapshotId !== first.baseSnapshotId
+      || page.rows.length === 0 || page.rows.length > remaining.length
+      || (page.nextAfter === null ? page.rows.length !== remaining.length
+        : page.nextAfter !== page.rows.length || page.rows.length >= remaining.length)
+      || page.rows.some((row, index) => row.unitId !== remaining[index]
+        || row.current.sourceRevisionId !== rows[complete.length + index].content.sourceRevisionId)) {
+      throw new Error("Source comparison does not match the captured page");
+    }
+    first ??= page;
+    complete.push(...page.rows);
+  }
+  if (first === null) throw new Error("Source comparison returned no rows");
+  return { ...first, rows: complete, nextAfter: null };
+}
 
 /** Captures one fixed read basis. Automatic page reads keep that same basis. */
 export async function captureEntries(reads: SessionReads, locale: string, query: SegmentQuery, refresh = false): Promise<EntryCapture> {

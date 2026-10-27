@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/segmentCommands.contract.json";
-import { segmentCommands, type SegmentPage, type SegmentPageRequest, type SegmentScopeRequest } from "./segmentCommands";
+import { segmentCommands, type SegmentSourceComparison, type SegmentSourceComparisonRequest, type SegmentPage, type SegmentPageRequest, type SegmentScopeRequest } from "./segmentCommands";
 import * as validators from "./generated/review.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -22,6 +22,81 @@ function pageResponse(): SegmentPage {
   if (!validators.validateResponseSegmentPage(response)) throw new Error("Invalid segment response fixture");
   return response;
 }
+
+function sourceComparisonRequest(): SegmentSourceComparisonRequest {
+  const request: unknown = structuredClone(fixture.requests.sourceComparison);
+  if (!validators.validateRequestSourceComparison(request)) throw new Error("Invalid source comparison request fixture");
+  return request;
+}
+function sourceComparisonResponse(): SegmentSourceComparison {
+  const response: unknown = structuredClone(fixture.responses.sourceComparison);
+  if (!validators.validateResponseSourceComparison(response)) throw new Error("Invalid source comparison response fixture");
+  return response;
+}
+
+it("reads bounded full source endpoints with explicit missing and empty prior values", async () => {
+  const request = sourceComparisonRequest(), page = sourceComparisonResponse();
+  invoke.mockResolvedValueOnce(page);
+  expect(await segmentCommands.sourceComparison(request)).toEqual(page);
+  expect(invoke).toHaveBeenLastCalledWith("read_segment_source_comparison", { request });
+  expect(page.rows[0].old!.text).toBe("Old {{name}} é 👩🏽‍💻");
+  const first = sourceComparisonResponse();
+  first.baseSnapshotId = null;
+  first.rows[0].old = null;
+  first.rows[0].changeKind = "added";
+  first.rows[0].current.text = "";
+  invoke.mockResolvedValueOnce(first);
+  expect((await segmentCommands.sourceComparison(request)).rows[0].old).toBeNull();
+  const empty = sourceComparisonResponse();
+  empty.rows[0].old!.text = "";
+  empty.rows[0].current.text = "";
+  empty.rows[0].old!.sourceRevisionId = empty.rows[0].current.sourceRevisionId;
+  empty.rows[0].changeKind = "unchanged";
+  invoke.mockResolvedValueOnce(empty);
+  expect((await segmentCommands.sourceComparison(request)).rows[0].old!.text).toBe("");
+});
+
+it("accepts complete row prefixes with a precise continuation and preserves Unicode text", async () => {
+  const request = sourceComparisonRequest(), page = sourceComparisonResponse();
+  request.unitIds.push(page.baseSnapshotId!);
+  page.nextAfter = 1;
+  page.rows[0].current.text = "Keep {{name}} é 👩🏽‍💻\r\n日本語 ".repeat(300);
+  invoke.mockResolvedValueOnce(page);
+  expect(await segmentCommands.sourceComparison(request)).toEqual(page);
+  const next = sourceComparisonResponse();
+  next.rows[0].unitId = request.unitIds[1];
+  invoke.mockResolvedValueOnce(next);
+  expect(await segmentCommands.sourceComparison({ ...request, unitIds: request.unitIds.slice(page.nextAfter) })).toEqual(next);
+  expect(validators.validateRequestSourceComparison({ ...request, unitIds: [] })).toBe(false);
+  expect(validators.validateRequestSourceComparison({ ...request, unitIds: Array.from({ length: 51 }, () => request.unitIds[0]) })).toBe(false);
+});
+
+it.each(["project", "locale", "scope", "snapshot", "unit", "duplicate-request", "empty-page", "missing-row", "next-after", "same-snapshot", "missing-base", "missing-old", "wrong-kind", "inconsistent-revision", "inconsistent-text"])(
+  "rejects unrelated or contradictory source comparison observations: %s", async kind => {
+    const request = sourceComparisonRequest(), page = sourceComparisonResponse();
+    if (kind === "project") page.projectId = page.currentSnapshotId;
+    if (kind === "locale") page.locale = "fr-FR";
+    if (kind === "scope") page.scopeId = page.currentSnapshotId;
+    if (kind === "snapshot") page.baseSnapshotId = page.currentSnapshotId;
+    if (kind === "unit") page.rows[0].unitId = page.currentSnapshotId;
+    if (kind === "duplicate-request") request.unitIds.push(request.unitIds[0]);
+    if (kind === "empty-page") page.rows = [];
+    if (kind === "missing-row") request.unitIds.push(page.currentSnapshotId);
+    if (kind === "next-after") page.nextAfter = 0;
+    if (kind === "same-snapshot") page.baseSnapshotId = page.currentSnapshotId;
+    if (kind === "missing-base") page.baseSnapshotId = null;
+    if (kind === "missing-old") page.rows[0].old = null;
+    if (kind === "wrong-kind") page.rows[0].changeKind = "removed";
+    if (kind === "inconsistent-revision") page.rows[0].changeKind = "unchanged";
+    if (kind === "inconsistent-text") {
+      page.rows[0].changeKind = "moved";
+      page.rows[0].old!.sourceRevisionId = page.rows[0].current.sourceRevisionId;
+    }
+    expect(validators.validateResponseSourceComparison(page)).toBe(true);
+    invoke.mockResolvedValueOnce(page);
+    await expect(segmentCommands.sourceComparison(request)).rejects.toThrow("Invalid IPC response: read_segment_source_comparison");
+  },
+);
 
 it("validates the shared Rust wire fixtures and dispatches both read-only commands", async () => {
   const page = pageRequest(), scope = scopeRequest();

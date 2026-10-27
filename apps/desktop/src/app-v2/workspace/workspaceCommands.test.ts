@@ -8,6 +8,22 @@ const scope: CommandScope = { projectId: "project-a", sessionToken: "session-a",
 const navigation = () => ({ open: vi.fn(async () => true), activate: vi.fn(async () => true), close: vi.fn(async () => true), update: vi.fn(async () => true) });
 
 describe("workspace commands in the existing registry", () => {
+  it("stages focused AI only from the current list and respects input, IME and modal ownership", () => {
+    const gate = new InteractionGate(), commands = new WorkbenchCommands(), stage = vi.fn(); gate.setVisibleOwner("one");
+    commands.register({ id: "translation.stage-focused-ai", nameKey: "translation.addCandidate", category: "translation", risk: "writes-translation", confirmation: "none", binding: "Mod+Shift+A", scope,
+      availability: () => ({ enabled: true }), handler: stage });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: "one", scope, commands }), modifier: "meta" });
+    const key = () => new KeyboardEvent("keydown", { key: "A", metaKey: true, shiftKey: true, cancelable: true });
+    expect(dispatcher.handleKeyDown(key(), "one")).toBe(true);
+    for (const owner of ["entry-search-one", "candidate-audit-one", "segment-editor-one", "entry-list-two"]) {
+      gate.setInputOwner("one", owner); expect(dispatcher.handleKeyDown(key(), "one", owner)).toBe(false);
+    }
+    gate.setInputOwner("one", "entry-list-one"); expect(dispatcher.handleKeyDown(key(), "one", "entry-list-one")).toBe(true);
+    gate.setComposing("entry-list-one", true); expect(dispatcher.handleKeyDown(key(), "one", "entry-list-one")).toBe(false);
+    gate.setComposing("entry-list-one", false); const close = gate.pushDialog("other");
+    expect(dispatcher.handleKeyDown(key(), "one", "entry-list-one")).toBe(false); close();
+    expect(stage).toHaveBeenCalledTimes(2);
+  });
   it("uses one import command for toolbar, palette and native menu including an empty workspace", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] });
     const gate = new InteractionGate(), commands = new WorkbenchCommands(), openImport = vi.fn(); let ready = false;

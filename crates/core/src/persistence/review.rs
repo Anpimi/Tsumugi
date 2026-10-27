@@ -50,7 +50,7 @@ pub(super) use views::ReadScopes;
 pub use views::{
     ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture,
     ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
-    SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter, SegmentStatusFilter,
+    SegmentSourceComparison, SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter, SegmentStatusFilter,
     SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary,
 };
 

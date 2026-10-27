@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckSquare, ChevronDown, Layers, RefreshCw, Search, X } from "lucide-react";
 import type { ProjectView } from "../../../projectCommands";
@@ -10,12 +10,12 @@ import { Button, IconButton } from "../../../design-system/Button";
 import { TextInput } from "../../../design-system/Field";
 import { Menu } from "../../../design-system/Menu";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-system/Feedback";
-import type { SegmentQuery } from "../../../segmentCommands";
+import type { SegmentQuery, SegmentRow } from "../../../segmentCommands";
 import type { WorkspaceView } from "../../workspace/workspaceStore";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import { type SegmentEditorProps } from "../editor/SegmentEditor";
 import type { TranslationDrafts } from "../editor/translationDrafts";
-import { captureEntries, captureEntrySelection, entryPageKey, entryPresets, entryQuery, readEntryPage, readEntryQueueWindow, retainedEntryCapture, sameEntryQuery, type RetainedEntryCapture } from "./entryReads";
+import { captureEntries, captureEntrySelection, entryPageKey, entryPresets, entryQuery, entrySourceComparisonKey, readEntrySourceComparison, readEntryPage, readEntryQueueWindow, retainedEntryCapture, sameEntryQuery, type RetainedEntryCapture } from "./entryReads";
 import { toggleWorkspaceSelection, workspaceSelectionIds, workspaceSelectionMatches } from "../../workspace/workspaceSelection";
 import EntriesTable, { type EntriesTableHandle } from "./EntriesTable";
 import styles from "../../WorkbenchLayout.module.css";
@@ -29,6 +29,7 @@ type Props = {
   dispatch: SegmentEditorProps["dispatch"];
   onRevealDraft: (key: DraftKey) => void;
   onImport?: () => void;
+  renderCandidate?: (row: SegmentRow) => ReactNode;
   ref?: Ref<EntriesHandle>;
 };
 export interface EntriesHandle {
@@ -39,7 +40,7 @@ export interface EntriesHandle {
 const noSubscription = () => () => {};
 const noDraftSnapshot = () => null;
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, renderCandidate, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
@@ -104,6 +105,15 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     read: () => { if (!capture) throw new Error("No fixed entry queue"); return readEntryQueueWindow(reads, view.locale, query, capture, view.queueAnchor); } });
   const result = view.queueActive ? queue : page;
   const current = !result.error && result.data?.scopeId === capture?.scopeId ? result.data : null;
+  const comparison = useSessionQuery({ key: entrySourceComparisonKey(view.locale, capture ?? emptyCapture, current?.rows ?? []),
+    scopes: ["source"], enabled: enabled && view.compareSource && !!current?.rows.length,
+    refetchOnMount: query => query.state.isInvalidated,
+    read: () => {
+      if (!capture || !current) throw new Error("No source comparison scope");
+      return readEntrySourceComparison(reads, view.locale, capture, current.rows);
+    } });
+  const currentComparison = view.compareSource && !comparison.error && comparison.data && capture
+    && comparison.data.scopeId === capture.scopeId && comparison.data.currentSnapshotId === capture.snapshotId ? comparison.data : null;
   const key: DraftKey | null = view.focus ? { projectId: reads.context.projectId, unitId: view.focus, locale: view.locale } : null;
   const isEditing = () => view.editing && key !== null;
   const canConfirm = () => {
@@ -239,6 +249,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
         { id: "clear", label: t("entryClearSelection"), onSelect: () => patch({ selection: null }), disabled: !view.selection },
       ]} />
       <Button size="sm" disabled={disabled} aria-pressed={view.entryPageMode} onClick={() => patch({ entryPageMode: !view.entryPageMode })}>{t(view.entryPageMode ? "entryWindowDisplay" : "entryFullPage")}</Button>
+      <Button size="sm" disabled={disabled || !availableLocale} aria-pressed={view.compareSource} onClick={() => patch({ compareSource: !view.compareSource })}>{t("sourceComparisonToggle")}</Button>
       {onImport ? <Button size="sm" disabled={disabled || !drafts || drafts.getSnapshot().hydration !== "ready" || drafts.getSnapshot().retired} onClick={onImport}>{t("importTitle")}</Button> : null}
       {current ? <span className={styles.count} title={view.queueActive ? t("fixedQueueHelp") : undefined}>{t(view.queueActive ? "fixedQueue" : "entryCount", { count: current.total })}</span> : null}
       {isEditing() ? <Button size="sm" onClick={() => { void toggleFocus(); }}>{t(view.focusMode ? "editorTableMode" : "editorFocusMode")}</Button> : null}
@@ -253,9 +264,13 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     {view.focusMode ? <div className={styles.actions}><Button size="sm" onClick={() => { void toggleFocus(); }}>{t("editorTableMode")}</Button></div> : null}
     {searchTooLong ? <Banner id={`entry-search-error-${view.id}`} tone="error">{t("searchTooLong")}</Banner> : null}
     {queueEnd ? <Banner>{t("queueEnd")}</Banner> : null}
+    {view.compareSource && current?.rows.length ? comparison.isError ? <Banner tone="error" role="alert" action={<Button disabled={disabled || comparison.isFetching} onClick={() => { void comparison.refetch(); }}>{t("sourceComparisonRetry")}</Button>}>{t("sourceComparisonFailed")}</Banner>
+      : comparison.isPending || comparison.isFetching ? <Banner role="status">{t("sourceComparisonLoading")}</Banner>
+        : currentComparison?.baseSnapshotId === null ? <Banner role="status">{t("sourceComparisonFirstVersion")}</Banner> : null : null}
     {!configuredQuery ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <EntriesTable ref={table} rows={current.rows} firstPosition={view.queueActive ? queue.data?.firstPosition ?? 0 : view.afterOrdinal} total={current.total}
       projectId={reads.context.projectId} sourceLocale={project.metadata.sourceLocale} view={view} drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} scroll={view.scroll}
       selectedIds={selectionMatches ? selectedIds : []} canSelect={canSelect} onScroll={position => patch({ scroll: position })} onEdit={openEditor}
+      sourceComparison={currentComparison} renderCandidate={renderCandidate}
       onDetails={unitId => { void navigate({ focus: unitId, dock: "details", ...(view.editing ? { queueAnchor: unitId } : {}) }); }}
       onMove={(direction, unitId) => { void moveRow(direction, unitId); }} onSelection={(unitId, selected) => chooseRows([unitId], selected)} footer={footer} />}
   </div>;

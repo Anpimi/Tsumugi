@@ -1,9 +1,10 @@
 import { draftCommands, sameDraftBasis, sameDraftValue, type DraftBasis, type DraftHead, type DraftKey, type DraftPending, type DraftReadView, type DraftSummary, type DraftValue } from "../../../draftCommands";
 import { executionCommands, type SessionRequest } from "../../../executionCommands";
 import { hasUnknownOutcome } from "../../../projectCommands";
+import { resourceCommands, type TmSuggestion } from "../../../resourceCommands";
 import type { SessionReads } from "../../../sessionReads";
 import { translationCommands, type TranslationRevision, type TranslationSaveReceipt, type TranslationSelection } from "../../../translationCommands";
-import type { LifecycleParticipant } from "../../platform/projectLifecycle";
+import type { LeaveIntent, LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
 
 export interface DraftFailure {
@@ -44,6 +45,8 @@ export interface TranslationDraftPorts {
   select: typeof translationCommands.select;
   recoverSave: typeof translationCommands.recoverSave;
   recoverSelection: typeof translationCommands.recoverSelection;
+  history: typeof translationCommands.history;
+  suggestions: typeof resourceCommands.suggestions;
   writerId: () => string;
 }
 export interface TranslationDraftOptions {
@@ -53,6 +56,8 @@ export interface TranslationDraftOptions {
   ports?: Partial<TranslationDraftPorts>;
 }
 export interface ConfirmationResult { confirmed: boolean; savedCurrent: boolean }
+export interface RevisionStageCapture { editSeq: string; basis: DraftBasis }
+export interface RevisionStageResult { staged: boolean; durable: boolean }
 interface RecordState {
   entry: DraftEntry;
   needsWrite: boolean;
@@ -91,13 +96,16 @@ export class TranslationDrafts {
   private hydration: Promise<boolean> | null = null;
   private inputRevision = 0;
   private retiredReservation = false;
+  private navigationReservation: symbol | null = null;
   private state: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false, mutationReserved: false, summaries: [] };
 
   constructor(private readonly options: TranslationDraftOptions) {
     this.context = Object.freeze({ ...options.context });
     this.ports = { ...draftCommands, identity: executionCommands.identity, save: translationCommands.save,
       select: translationCommands.select, recoverSave: translationCommands.recoverSave,
-      recoverSelection: translationCommands.recoverSelection, writerId: () => crypto.randomUUID(), ...options.ports };
+      recoverSelection: translationCommands.recoverSelection, history: translationCommands.history,
+      suggestions: resourceCommands.suggestions,
+      writerId: () => crypto.randomUUID(), ...options.ports };
     this.writerId = this.ports.writerId();
   }
 
@@ -276,16 +284,84 @@ export class TranslationDrafts {
     return flushing;
   }
 
-  reserveMutation(): symbol | null {
+  reserveMutation(mode: "exclusive" | "retained-for-navigation" = "exclusive"): symbol | null {
     if (this.state.hydration !== "ready" || this.pending()) return null;
-    const token = this.kernel.reserve(); if (token) this.notify(); return token;
+    const token = this.kernel.reserve();
+    if (token) { this.navigationReservation = mode === "retained-for-navigation" ? token : null; this.notify(); }
+    return token;
   }
   ownsMutation(token: symbol) { return this.kernel.owns(token); }
-  releaseMutation(token: symbol) { this.kernel.release(token); this.notify(); }
+  releaseMutation(token: symbol) { if (this.navigationReservation === token) this.navigationReservation = null; this.kernel.release(token); this.notify(); }
 
   private fresh(record: RecordState) {
     return this.kernel.live && !!record.entry.value && !record.entry.busy && !record.entry.value.pending
       && record.entry.basisCurrent && record.entry.currentFailure === null && record.entry.failure?.kind !== "journal-conflict";
+  }
+  /** Candidate adoption only creates local input. Formal revision creation remains confirm's job. */
+  async stageRevision(key: DraftKey, revision: TranslationRevision, expected: RevisionStageCapture, proof: () => boolean): Promise<RevisionStageResult> {
+    const target = { ...key };
+    const selected = { revisionId: revision.revisionId, text: revision.text, ordinal: revision.ordinal,
+      decisionId: revision.candidateDecision?.request.actionId ?? null };
+    if (revision.unitId !== target.unitId || revision.locale !== target.locale || revision.sourceRevisionId !== expected.basis.sourceRevisionId
+      || revision.revisionId === expected.basis.revisionId || revision.candidateDecision?.request.disposition === "rejected") return { staged: false, durable: false };
+    return this.stageInput(target, expected, proof, async capture => {
+      const history = await this.ports.history({ ...this.context, unitId: target.unitId, locale: target.locale,
+        afterOrdinal: (BigInt(selected.ordinal) - 1n).toString(), limit: 1 });
+      const candidate = history.rows.find(row => row.revisionId === selected.revisionId);
+      if (history.unitId !== target.unitId || history.locale !== target.locale || !candidate
+        || candidate.unitId !== target.unitId || candidate.locale !== target.locale || candidate.text !== selected.text
+        || candidate.sourceRevisionId !== capture.basis.sourceRevisionId || candidate.ordinal !== selected.ordinal
+        || candidate.candidateDecision?.request.disposition === "rejected"
+        || (candidate.candidateDecision?.request.actionId ?? null) !== selected.decisionId
+        || (history.current?.eventId ?? null) !== capture.basis.selectionId
+        || (history.current?.revisionId ?? null) !== capture.basis.revisionId || history.currentText !== capture.basis.text) return null;
+      return candidate.text;
+    });
+  }
+  async stageSuggestion(key: DraftKey, suggestion: TmSuggestion, expected: RevisionStageCapture, proof: () => boolean): Promise<RevisionStageResult> {
+    const target = { ...key }, selected = { ...suggestion };
+    if (selected.targetLocale !== target.locale) return { staged: false, durable: false };
+    return this.stageInput(target, expected, proof, async () => {
+      const suggestions = await this.ports.suggestions({ ...this.context, unitId: target.unitId, locale: target.locale, offset: 0, limit: 20 });
+      // A TM match retains its donor identity. Equal text from a different unit
+      // cannot replace the suggestion that the user actually inspected.
+      const candidate = suggestions.find(row => row.translationRevisionId === selected.translationRevisionId);
+      return candidate && candidate.unitId === selected.unitId && candidate.sourceRevisionId === selected.sourceRevisionId
+        && candidate.sourceText === selected.sourceText && candidate.translationText === selected.translationText
+        && candidate.targetLocale === selected.targetLocale && candidate.originKind === selected.originKind
+        && candidate.matchKind === selected.matchKind && candidate.scorePercent === selected.scorePercent
+        && candidate.isCurrentSelection === selected.isCurrentSelection && candidate.hasHumanApproval === selected.hasHumanApproval
+        ? candidate.translationText : null;
+    });
+  }
+  private async stageInput(key: DraftKey, expected: RevisionStageCapture, proof: () => boolean,
+    readText: (capture: RevisionStageCapture) => Promise<string | null>): Promise<RevisionStageResult> {
+    const declined = (): RevisionStageResult => ({ staged: false, durable: false });
+    const record = this.records.get(identity(key));
+    if (!record || !this.validKey(key) || !this.fresh(record) || record.entry.current.kind !== "current") return declined();
+    const capture = { editSeq: expected.editSeq, basis: { ...expected.basis } }, sourceText = record.entry.current.sourceText;
+    const unchanged = () => this.kernel.live && proof() && !!record.entry.value
+      && record.entry.value.editSeq === capture.editSeq && sameDraftBasis(record.entry.value.basis, capture.basis)
+      && record.entry.value.text === (capture.basis.text ?? "") && !record.entry.value.pending
+      && record.entry.current.kind === "current" && record.entry.current.sourceText === sourceText
+      && record.entry.basisCurrent && record.entry.currentFailure === null && record.entry.failure?.kind !== "journal-conflict";
+    if (!unchanged()) return declined();
+    const token = this.reserveMutation(); if (!token) return declined();
+    this.update(record, { busy: true });
+    try {
+      const text = await readText(capture);
+      if (text === null || !this.kernel.owns(token) || !unchanged()) return declined();
+      // Wait out an earlier read, then issue a new one. Its stale snapshot cannot
+      // authorize adoption after the source, locale, or selection has changed.
+      const reading = this.opening.get(identity(key)); if (reading) await reading;
+      if (!this.kernel.owns(token) || !unchanged()) return declined();
+      await this.open(key);
+      if (!this.kernel.owns(token) || !unchanged()) return declined();
+      if (!this.edit(key, text)) return declined();
+      return { staged: true, durable: await this.flush(key) };
+    } catch (cause) {
+      this.update(record, { failure: { kind: "read", cause } }); return declined();
+    } finally { this.releaseMutation(token); this.update(record, { busy: false }); }
   }
   confirm(key: DraftKey): Promise<ConfirmationResult> { return this.start(key); }
   selectRevision(key: DraftKey, revision: TranslationRevision): Promise<ConfirmationResult> {
@@ -451,22 +527,27 @@ export class TranslationDrafts {
 
   lifecycleParticipant(onReveal = this.options.onReveal): LifecycleParticipant {
     const unresolved = () => [...this.records.values()].find(record => record.entry.value?.pending || record.entry.journalPending || record.entry.failure?.kind === "journal" || record.entry.failure?.kind === "journal-conflict");
+    const navigation = (intent: LeaveIntent) => intent.kind === "navigate" || intent.kind === "language" || intent.kind === "close-view";
+    const retainsReservation = (intent: LeaveIntent) => navigation(intent) && this.navigationReservation !== null && this.kernel.owns(this.navigationReservation);
     return { id: "translation-drafts", area: "translation", scope: { kind: "project", ...this.context },
       inspect: intent => {
         if (intent.kind === "restore") return { status: "ready", revision: "initial-presentation" };
         // Retiring execution cannot revoke a permit for unchanged durable input
         // while the checked Core close is followed by application drain.
         const reserved = this.kernel.reserved || this.retiredReservation;
-        return { status: this.state.hydration !== "ready" || reserved || this.pending() ? "blocked" : unresolved() ? "dirty" : "ready",
-          revision: JSON.stringify([this.state.hydration, this.inputRevision, reserved,
+        const retained = retainsReservation(intent);
+        return { status: this.state.hydration !== "ready" || reserved && !retained || this.pending() ? "blocked" : unresolved() ? "dirty" : "ready",
+          revision: JSON.stringify([this.state.hydration, this.inputRevision, reserved, retained,
             [...this.records.values()].map(({ entry }) => [identity(entry.key), entry.value?.editSeq, entry.value?.pending, entry.journalPending, entry.failure?.kind])]) };
       },
-      prepareLeave: async (_intent, proof, current) => {
-        if (!proof() || !current() || this.state.hydration !== "ready" || this.pending() || this.kernel.reserved) return false;
-        const input = this.inputRevision;
+      prepareLeave: async (intent, proof, current) => {
+        if (!proof() || !current() || this.state.hydration !== "ready" || this.pending() || this.retiredReservation
+          || this.kernel.reserved && !retainsReservation(intent)) return false;
+        const input = this.inputRevision, token = navigation(intent) ? this.navigationReservation : null;
         const flushed = await this.flush();
         // The coordinator accepts this owner's flush; later input still revokes its permit.
-        return flushed && current() && this.kernel.live && input === this.inputRevision && !this.pending() && !unresolved();
+        return flushed && current() && this.kernel.live && input === this.inputRevision && !this.pending() && !unresolved()
+          && (!this.kernel.reserved || token !== null && this.navigationReservation === token && this.kernel.owns(token));
       },
       reveal: () => { const record = unresolved(); if (record) onReveal?.(record.entry.key); },
     };
@@ -475,6 +556,7 @@ export class TranslationDrafts {
   retire() {
     if (!this.kernel.live) return;
     this.retiredReservation = this.kernel.reserved;
+    this.navigationReservation = null;
     this.kernel.retire();
     this.state = { ...this.state, retired: true, revision: this.state.revision + 1, mutationReserved: false };
     this.listeners.forEach(listener => listener());

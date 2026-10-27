@@ -1278,6 +1278,39 @@
         ],
         "type": "string"
       },
+      "SegmentSourceComparisonRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "scopeId",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "SegmentStatusFilter": {
         "oneOf": [
           {
@@ -1629,6 +1662,9 @@
       "semanticStartAction": {
         "$ref": "#/definitions/AiSemanticReviewStartRequest"
       },
+      "sourceComparison": {
+        "$ref": "#/definitions/SegmentSourceComparisonRequest"
+      },
       "summary": {
         "$ref": "#/definitions/ReviewSummaryPageRequest"
       },
@@ -1656,6 +1692,7 @@
       "summary",
       "segmentPage",
       "queueWindow",
+      "sourceComparison",
       "segmentScope",
       "neighbor",
       "scope",
@@ -6298,6 +6335,59 @@
         ],
         "type": "string"
       },
+      "SegmentSourceComparison": {
+        "additionalProperties": false,
+        "properties": {
+          "baseSnapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextAfter": {
+            "description": "Requested identities consumed when a continuation is needed. Send the\nremaining identities with the same scope; no text is ever truncated.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/SourceVersionComparison"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "locale",
+          "scopeId",
+          "currentSnapshotId",
+          "baseSnapshotId",
+          "rows",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
       "SegmentStatusFilter": {
         "oneOf": [
           {
@@ -6522,6 +6612,18 @@
           "protected"
         ],
         "type": "object"
+      },
+      "SourceChangeKind": {
+        "enum": [
+          "unchanged",
+          "moved",
+          "changed",
+          "added",
+          "rename-candidate",
+          "ambiguous",
+          "removed"
+        ],
+        "type": "string"
       },
       "SourceContextAdjacency": {
         "additionalProperties": false,
@@ -7028,6 +7130,54 @@
         "required": [
           "declaration",
           "checker"
+        ],
+        "type": "object"
+      },
+      "SourceVersionComparison": {
+        "additionalProperties": false,
+        "description": "Persisted unit endpoints. Candidate lineage does not establish correspondence;\na missing prior member is distinct from an existing empty source text.",
+        "properties": {
+          "changeKind": {
+            "$ref": "#/definitions/SourceChangeKind"
+          },
+          "current": {
+            "$ref": "#/definitions/SourceVersionEndpoint"
+          },
+          "old": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceVersionEndpoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "changeKind",
+          "old",
+          "current"
+        ],
+        "type": "object"
+      },
+      "SourceVersionEndpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceRevisionId",
+          "text"
         ],
         "type": "object"
       },
@@ -8043,6 +8193,9 @@
           }
         ]
       },
+      "sourceComparison": {
+        "$ref": "#/definitions/SegmentSourceComparison"
+      },
       "summary": {
         "$ref": "#/definitions/ReviewSummaryPage"
       },
@@ -8077,6 +8230,7 @@
       "summary",
       "segmentPage",
       "queueWindow",
+      "sourceComparison",
       "segmentScope",
       "neighbor",
       "scope",

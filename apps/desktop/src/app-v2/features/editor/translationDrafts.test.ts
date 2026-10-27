@@ -1,13 +1,18 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../../../../test/fixtures/translation-commands.json";
 import { type DraftBasis, type DraftHead, type DraftKey, type DraftPending, type DraftReadView, type DraftValue } from "../../../draftCommands";
-import type { TranslationSaveRequest, TranslationSaveReceipt, TranslationSelectRequest, TranslationSelection, TranslationRevision } from "../../../translationCommands";
+import type { TmSuggestion } from "../../../resourceCommands";
+import type { CandidateDecision, TranslationHistory, TranslationSaveRequest, TranslationSaveReceipt, TranslationSelectRequest, TranslationSelection, TranslationRevision } from "../../../translationCommands";
 import { TranslationDrafts, type TranslationDraftPorts } from "./translationDrafts";
 
 const key: DraftKey = { projectId: fixture.save.projectId, unitId: fixture.save.unitId, locale: fixture.save.locale };
 const context = { projectId: key.projectId, sessionToken: "reopened-session" };
 const initial: DraftBasis = { sourceRevisionId: fixture.save.sourceRevisionId, selectionId: null, revisionId: null, text: null };
 const writerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const candidate: TranslationRevision = { ...fixture.receipt.revision, originKind: "ai", text: "Candidate translation" };
+const suggestion: TmSuggestion = { unitId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", sourceRevisionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  translationRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", sourceText: "Original source text", translationText: "TM translation",
+  targetLocale: key.locale, originKind: "manual", isCurrentSelection: true, hasHumanApproval: false, matchKind: "exact", scorePercent: 100 };
 const copy = <T,>(value: T): T => structuredClone(value);
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (reason: unknown) => void;
@@ -66,6 +71,9 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
       return receipt;
     }),
     select: vi.fn<TranslationDraftPorts["select"]>(async request => selected(request)),
+    history: vi.fn<TranslationDraftPorts["history"]>(async () => ({ unitId: key.unitId, locale: key.locale,
+      current: null, currentText: null, total: "1", rows: [copy(candidate)], nextOrdinal: null })),
+    suggestions: vi.fn<TranslationDraftPorts["suggestions"]>(async () => [copy(suggestion)]),
     recoverSave: vi.fn<TranslationDraftPorts["recoverSave"]>(async request => {
       const { sessionToken: _credential, ...business } = request;
       const receipt = receipts.get(request.actionId);
@@ -357,4 +365,162 @@ it("ignores a late receipt after retirement and sends no recovery or replacement
   expect(h.owner.getEntry(key)).toBe(before);
   expect(h.ports.read).toHaveBeenCalledTimes(readCount); expect(h.ports.recoverSave).not.toHaveBeenCalled();
   expect(h.owner.edit(key, "Later B")).toBe(false);
+});
+
+it("stages a checked candidate into the existing Host journal and only creates a formal revision on confirmation", async () => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  expect(await h.owner.stageRevision(key, candidate, { editSeq, basis }, () => true)).toEqual({ staged: true, durable: true });
+  expect(h.disk().value).toMatchObject({ text: candidate.text, basis: initial, editSeq: "1", pending: null });
+  expect(h.ports.history).toHaveBeenCalledWith({ ...context, unitId: key.unitId, locale: key.locale,
+    afterOrdinal: (BigInt(candidate.ordinal) - 1n).toString(), limit: 1 });
+  expect(h.ports.identity).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+  expect(await h.owner.confirm(key)).toEqual({ confirmed: true, savedCurrent: true });
+  expect(h.ports.save.mock.calls[0][0].text).toBe(candidate.text); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it("keeps an existing dirty draft and its original edit sequence instead of adopting over it", async () => {
+  const h = harness(retained()); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  expect(await h.owner.stageRevision(key, candidate, { editSeq, basis }, () => true)).toEqual({ staged: false, durable: false });
+  expect(h.owner.getEntry(key)?.value?.text).toBe("Recovered B"); expect(h.ports.history).not.toHaveBeenCalled();
+});
+
+it.each(["input", "proof", "source", "locale", "selection", "retire"] as const)("refuses candidate adoption when %s changes while real history is pending", async change => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!, history = deferred<TranslationHistory>();
+  let valid = true;
+  h.ports.history.mockReturnValueOnce(history.promise);
+  const staging = h.owner.stageRevision(key, candidate, { editSeq, basis }, () => valid);
+  if (change === "input") h.owner.edit(key, "Newer manual B");
+  else if (change === "proof") valid = false;
+  else if (change === "source") h.setCurrent(currentView({ ...initial, sourceRevisionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }));
+  else if (change === "locale") h.setCurrent({ kind: "unavailable", reason: "locale-removed" });
+  else if (change === "selection") h.setCurrent(currentView({ ...initial, selectionId: fixture.receipt.selection.eventId,
+    revisionId: fixture.receipt.revision.revisionId, text: "Someone else's selection" }));
+  else h.owner.retire();
+  history.resolve({ unitId: key.unitId, locale: key.locale, current: null, currentText: null, total: "1", rows: [candidate], nextOrdinal: null });
+  expect(await staging).toEqual({ staged: false, durable: false });
+  expect(h.owner.getEntry(key)?.value?.text).toBe(change === "input" ? "Newer manual B" : "");
+  expect(h.ports.identity).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it("checks the original view proof again after the fresh current-basis read", async () => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!, current = deferred<DraftReadView>();
+  let valid = true; h.ports.read.mockReturnValueOnce(current.promise);
+  const staging = h.owner.stageRevision(key, candidate, { editSeq, basis }, () => valid);
+  await vi.waitFor(() => expect(h.ports.read).toHaveBeenCalledTimes(2));
+  valid = false; current.resolve({ head: copy(h.disk()), current: currentView(initial) });
+  expect(await staging).toEqual({ staged: false, durable: false }); expect(h.ports.write).not.toHaveBeenCalled();
+});
+
+it("rejects a candidate newly rejected in real history, even when its older displayed revision was eligible", async () => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  const decision: CandidateDecision = { sourceSnapshotId: candidate.sourceSnapshotId,
+    request: { projectId: key.projectId, actionId: fixture.save.actionId, unitId: key.unitId, locale: key.locale,
+      revisionId: candidate.revisionId, sourceRevisionId: candidate.sourceRevisionId, expectedSelectionId: null,
+      expectedDecisionId: null, disposition: "rejected", actor: "Reviewer", reason: "Different meaning" } };
+  h.ports.history.mockResolvedValueOnce({ unitId: key.unitId, locale: key.locale, current: null, currentText: null,
+    total: "1", rows: [{ ...candidate, candidateDecision: decision }], nextOrdinal: null });
+  expect(await h.owner.stageRevision(key, candidate, { editSeq, basis }, () => true)).toEqual({ staged: false, durable: false });
+  expect(h.ports.write).not.toHaveBeenCalled(); expect(h.owner.getEntry(key)?.value?.text).toBe("");
+});
+
+it("retains staged input and reports an unacknowledged Host journal write without claiming durability", async () => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  h.ports.write.mockRejectedValueOnce(new Error("Disk full"));
+  expect(await h.owner.stageRevision(key, candidate, { editSeq, basis }, () => true)).toEqual({ staged: true, durable: false });
+  expect(h.owner.getEntry(key)).toMatchObject({ value: { text: candidate.text, pending: null }, failure: { kind: "journal" } });
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it.each(["  TM 👩🏽‍💻 é {{name}}\nSecond line  ", ""])("adopts a real cross-unit TM suggestion with its exact text %j into the current entity's Host draft", async text => {
+  const h = harness(); await h.ready();
+  const chosen = { ...suggestion, translationText: text }, { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  h.ports.suggestions.mockResolvedValueOnce([chosen]);
+  expect(await h.owner.stageSuggestion(key, chosen, { editSeq, basis }, () => true)).toEqual({ staged: true, durable: true });
+  expect(h.ports.suggestions).toHaveBeenCalledWith({ ...context, unitId: key.unitId, locale: key.locale, offset: 0, limit: 20 });
+  expect(chosen.unitId).not.toBe(key.unitId);
+  expect(h.disk()).toMatchObject({ key, value: { basis: initial, text, editSeq: "1", pending: null } });
+  expect(h.ports.history).not.toHaveBeenCalled(); expect(h.ports.identity).not.toHaveBeenCalled();
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it.each(["input", "proof", "source-text", "source-revision", "locale", "selection", "retire"] as const)("refuses late TM adoption after the target's %s changes", async change => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!, suggestions = deferred<TmSuggestion[]>();
+  let valid = true; h.ports.suggestions.mockReturnValueOnce(suggestions.promise);
+  const staging = h.owner.stageSuggestion(key, suggestion, { editSeq, basis }, () => valid);
+  if (change === "input") h.owner.edit(key, "Newer manual input");
+  else if (change === "proof") valid = false;
+  else if (change === "source-text") h.setCurrent({ ...currentView(initial), sourceText: "Changed source text" });
+  else if (change === "source-revision") h.setCurrent(currentView({ ...initial, sourceRevisionId: suggestion.sourceRevisionId }));
+  else if (change === "locale") h.setCurrent({ kind: "unavailable", reason: "locale-removed" });
+  else if (change === "selection") h.setCurrent(currentView({ ...initial, selectionId: fixture.receipt.selection.eventId,
+    revisionId: fixture.receipt.revision.revisionId, text: "Other selected translation" }));
+  else h.owner.retire();
+  suggestions.resolve([suggestion]);
+  expect(await staging).toEqual({ staged: false, durable: false });
+  expect(h.owner.getEntry(key)?.value?.text).toBe(change === "input" ? "Newer manual input" : "");
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it.each(["text", "source-text", "unit", "source-revision", "translation-revision", "locale", "origin", "removed"] as const)("refuses TM adoption when the inspected suggestion's %s no longer matches the real result", async change => {
+  const h = harness(); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  const different = { ...suggestion };
+  if (change === "text") different.translationText = "Different returned translation";
+  else if (change === "source-text") different.sourceText = "Different donor source";
+  else if (change === "unit") different.unitId = key.unitId;
+  else if (change === "source-revision") different.sourceRevisionId = initial.sourceRevisionId;
+  else if (change === "translation-revision") different.translationRevisionId = candidate.revisionId;
+  else if (change === "locale") different.targetLocale = "fr-FR";
+  else if (change === "origin") different.originKind = "ai";
+  h.ports.suggestions.mockResolvedValueOnce(change === "removed" ? [] : [different]);
+  expect(await h.owner.stageSuggestion(key, suggestion, { editSeq, basis }, () => true)).toEqual({ staged: false, durable: false });
+  expect(h.owner.getEntry(key)?.value?.text).toBe(""); expect(h.ports.write).not.toHaveBeenCalled();
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+it("keeps an existing dirty draft instead of replacing it with a TM suggestion", async () => {
+  const h = harness(retained()); await h.ready();
+  const { editSeq, basis } = h.owner.getEntry(key)!.value!;
+  expect(await h.owner.stageSuggestion(key, suggestion, { editSeq, basis }, () => true)).toEqual({ staged: false, durable: false });
+  expect(h.owner.getEntry(key)?.value?.text).toBe("Recovered B"); expect(h.ports.suggestions).not.toHaveBeenCalled();
+});
+
+it("only allows retained project-session reservations to survive ordinary navigation, and keeps project exits blocked", async () => {
+  const h = harness(); await h.ready();
+  const participant = h.owner.lifecycleParticipant(), exclusive = h.owner.reserveMutation();
+  if (!exclusive) throw new Error("Expected an exclusive mutation reservation");
+  for (const kind of ["navigate", "language", "close-view", "close-project"] as const) expect(participant.inspect({ kind }).status).toBe("blocked");
+  h.owner.releaseMutation(exclusive);
+  const retained = h.owner.reserveMutation("retained-for-navigation");
+  if (!retained) throw new Error("Expected a retained mutation reservation");
+  for (const kind of ["navigate", "language", "close-view"] as const) expect(participant.inspect({ kind }).status).toBe("ready");
+  for (const kind of ["open-project", "close-project", "close-window"] as const) expect(participant.inspect({ kind }).status).toBe("blocked");
+  h.owner.releaseMutation(retained);
+  expect(participant.inspect({ kind: "close-project" }).status).toBe("ready");
+  const next = h.owner.reserveMutation("retained-for-navigation"); expect(next).not.toBeNull();
+  h.owner.retire();
+  expect(participant.inspect({ kind: "close-window" }).status).toBe("blocked");
+});
+
+it.each([false, true])("requires durable, unchanged local input before leaving with a retained reservation (newer input: %s)", async newerInput => {
+  const h = harness(); await h.ready();
+  expect(h.owner.reserveMutation("retained-for-navigation")).not.toBeNull();
+  const first = deferred<DraftHead>(); h.ports.write.mockReturnValueOnce(first.promise);
+  h.owner.edit(key, "Local A");
+  await vi.waitFor(() => expect(h.ports.write).toHaveBeenCalledTimes(1));
+  const participant = h.owner.lifecycleParticipant();
+  expect(participant.inspect({ kind: "close-view" }).status).toBe("dirty");
+  const leaving = participant.prepareLeave({ kind: "close-view" }, () => true, () => true);
+  if (newerInput) h.owner.edit(key, "Newer B");
+  first.resolve(await h.commitWrite(h.ports.write.mock.calls[0][0]));
+  expect(await leaving).toBe(!newerInput);
+  expect(h.disk().value?.text).toBe(newerInput ? "Newer B" : "Local A");
+  expect(participant.inspect({ kind: "close-project" }).status).toBe("blocked");
 });

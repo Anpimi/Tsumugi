@@ -1,14 +1,15 @@
-import { memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type Ref } from "react";
+import { memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button, IconButton } from "../../../design-system/Button";
 import { TokenizedText } from "../../../design-system/TokenizedText";
-import type { SegmentRow } from "../../../segmentCommands";
+import type { SegmentRow, SegmentSourceComparison, SourceVersionComparison } from "../../../segmentCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { WorkspaceView } from "../../workspace/workspaceStore";
 import SegmentEditor, { type SegmentEditorHandle, type SegmentEditorProps } from "../editor/SegmentEditor";
 import type { TranslationDrafts } from "../editor/translationDrafts";
+import EntryStatus from "./EntryStatus";
 import styles from "./EntriesTable.module.css";
 
 export interface EntriesTableHandle {
@@ -34,6 +35,8 @@ export interface EntriesTableProps {
   onMove: (direction: 1 | -1, fromUnitId: string) => void;
   onSelection: (unitId: string, checked: boolean) => void;
   canSelect: (unitId: string) => boolean;
+  sourceComparison?: SegmentSourceComparison | null;
+  renderCandidate?: (row: SegmentRow) => ReactNode;
   footer?: ReactNode;
   ref?: Ref<EntriesTableHandle>;
 }
@@ -41,47 +44,49 @@ const noSubscription = () => () => {};
 const noSnapshot = () => null;
 const estimatedRowHeight = 112;
 
-function EntryFacts({ row }: { row: SegmentRow }) {
-  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
-  if (!row.candidateCount && !row.protection.protected && !row.terms.applicableEntryCount && row.applicability.capturedBasisCurrent !== false && !row.applicability.resourceReviewRequired) return null;
-  return <div className={styles.entryMeta}>
-    {row.candidateCount ? <span title={t("candidateHelp")}>{t("candidateCount", { count: row.candidateCount })}</span> : null}
-    {row.protection.protected ? <span title={t("protectionHelp")}>{t("protectedEntry")}</span> : null}
-    {row.terms.applicableEntryCount ? <span title={t("applicableTermsHelp")}>{t("applicableTerms", { count: row.terms.applicableEntryCount })}</span> : null}
-    {row.terms.conflictingEntryCount ? <span>{t("conflictingTerms", { count: row.terms.conflictingEntryCount })}</span> : null}
-    {row.applicability.resourceReviewRequired ? <span>{t("resourceReviewRequired")}</span> : row.applicability.capturedBasisCurrent === false ? <span title={t("basisChangedHelp")}>{t("basisChanged")}</span> : null}
-  </div>;
-}
-
-function EntrySource({ summary, active, drafts, projectId, locale }: { summary: SegmentRow; active: boolean; drafts: TranslationDrafts | null; projectId: string; locale: string }) {
+function EntrySource({ summary, active, drafts, projectId, locale, comparison }: { summary: SegmentRow; active: boolean; drafts: TranslationDrafts | null; projectId: string; locale: string; comparison: SourceVersionComparison | undefined }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   useSyncExternalStore(active && drafts ? drafts.subscribe : noSubscription, active && drafts ? drafts.getSnapshot : noSnapshot, noSnapshot);
   const current = active ? drafts?.getEntry({ projectId, unitId: summary.content.unitId, locale })?.current : null;
   const complete = current?.kind === "current";
+  if (comparison) return <div className={styles.sourceVersions}>
+    <div className={styles.previousVersion} data-source-version="previous">
+      <span className={styles.versionLabel}>{t("sourceComparisonPrevious")}</span>
+      {comparison.old === null ? <span className={styles.meta}>{t("sourceComparisonNoPrevious")}</span>
+        : <><TokenizedText text={comparison.old.text} />{comparison.old.text === "" ? <span className={styles.meta}>{t("sourceComparisonEmptyText")}</span> : null}</>}
+    </div>
+    <div data-source-version="current">
+      <span className={styles.versionLabel}>{t("sourceComparisonCurrent")}</span>
+      <TokenizedText text={comparison.current.text} />{comparison.current.text === "" ? <span className={styles.meta}>{t("sourceComparisonEmptyText")}</span> : null}
+    </div>
+  </div>;
   return <><TokenizedText text={complete ? current.sourceText : summary.content.sourcePreview} />{summary.sourceTruncated && !complete ? <span title={t("textShortened")}>…</span> : null}</>;
 }
 
-const EntryContent = memo(function EntryContent({ summary, active, focused, projectId, sourceLocale, locale, viewId, drafts, gate, disabled, dispatch, editorRef }: {
+const EntryContent = memo(function EntryContent({ summary, active, focused, projectId, sourceLocale, locale, viewId, drafts, gate, disabled, dispatch, editorRef, comparison, renderCandidate, onDetails }: {
   summary: SegmentRow; active: boolean; focused: boolean; projectId: string; sourceLocale: string; locale: string; viewId: string;
   drafts: TranslationDrafts | null; gate: InteractionGate; disabled: boolean; dispatch: SegmentEditorProps["dispatch"]; editorRef: Ref<SegmentEditorHandle>;
+  comparison: SourceVersionComparison | undefined; renderCandidate: EntriesTableProps["renderCandidate"]; onDetails: EntriesTableProps["onDetails"];
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const row = summary.content;
   return <>
-    <div className={styles.source} lang={sourceLocale}><EntrySource summary={summary} active={active} drafts={drafts} projectId={projectId} locale={locale} />
-      {focused ? <div className={styles.entryMeta}><span className={styles.key}>{row.nativeKey}</span></div> : null}
+    <div className={styles.source} lang={sourceLocale}><EntrySource summary={summary} active={active} drafts={drafts} projectId={projectId} locale={locale} comparison={comparison} />
+      <div className={styles.sourceActions}>{focused ? <span className={styles.key}>{row.nativeKey}</span> : null}
+        <IconButton size="xs" label={t("showEntryDetails", { key: row.nativeKey })} onClick={() => onDetails(row.unitId)}><MoreHorizontal /></IconButton>
+      </div>
     </div>
     <div className={styles.target} lang={locale}>{active && drafts
       ? <SegmentEditor ref={editorRef} drafts={drafts} draftKey={{ projectId, unitId: row.unitId, locale }} viewId={viewId} gate={gate} disabled={disabled} nativeKey={row.nativeKey} dispatch={dispatch} />
       : row.translationPreview === null ? <span className={styles.meta}>{t("noTranslation")}</span>
         : <><TokenizedText text={row.translationPreview} />{summary.translationTruncated ? <span title={t("textShortened")}>…</span> : null}</>}
-      <EntryFacts row={summary} />
+      {focused && renderCandidate ? renderCandidate(summary) : null}
     </div>
   </>;
 });
 
 /** Backend pages bound the data; this viewport bounds the mounted row DOM. */
-export default function EntriesTable({ rows, firstPosition, total, projectId, sourceLocale, view, drafts, gate, disabled, dispatch, scroll, selectedIds, onScroll, onEdit, onDetails, onMove, onSelection, canSelect, footer, ref }: EntriesTableProps) {
+export default function EntriesTable({ rows, firstPosition, total, projectId, sourceLocale, view, drafts, gate, disabled, dispatch, scroll, selectedIds, onScroll, onEdit, onDetails, onMove, onSelection, canSelect, sourceComparison, renderCandidate, footer, ref }: EntriesTableProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const rangeId = useId(), listOwner = `entry-list-${view.id}`;
   const viewport = useRef<HTMLDivElement>(null), activeEditor = useRef<SegmentEditorHandle>(null);
@@ -89,6 +94,7 @@ export default function EntriesTable({ rows, firstPosition, total, projectId, so
   const composing = useRef(new Set<string>()), measuredHeights = useRef(new Map<string, number>());
   const [focusedId, setFocusedId] = useState<string | null>(null), [compositionRevision, setCompositionRevision] = useState(0);
   const activeId = view.editing ? view.focus : null;
+  const sourceByUnit = useMemo(() => new Map(sourceComparison?.rows.map(row => [row.unitId, row])), [sourceComparison]);
   const activeIndex = rows.findIndex(row => row.content.unitId === activeId);
   const focusedIndex = rows.findIndex(row => row.content.unitId === focusedId);
   const getItemKey = useCallback((index: number) => rows[index].content.unitId, [rows]);
@@ -182,7 +188,7 @@ export default function EntriesTable({ rows, firstPosition, total, projectId, so
   }
 
   return <div className={styles.table}>
-    <div className={styles.tableHeader} aria-hidden="true"><span>{t("row")}</span><span>{t("detail")}</span><span>{t("source", { locale: sourceLocale })}</span><span>{t("translation", { locale: view.locale })}</span></div>
+    <div className={styles.tableHeader} aria-hidden="true"><span>{t("row")}</span><span>{t("entryStatusColumn")}</span><span>{t(view.compareSource ? "sourceComparisonColumn" : "source", { locale: sourceLocale })}</span><span>{t("translation", { locale: view.locale })}</span></div>
     <div className={styles.scroll} ref={viewport} role="region" aria-label={t("entriesTableLabel")} aria-describedby={rangeId}
     onScroll={event => { if (!view.focusMode) onScroll({ top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft }); }}>
     <p className={styles.range} id={rangeId}>{t("entriesVisibleRange", { first: String(rows.length ? firstPosition + firstVisible + 1 : 0), last: String(rows.length ? firstPosition + lastVisible + 1 : 0), total: String(total) })}</p>
@@ -213,9 +219,10 @@ export default function EntriesTable({ rows, firstPosition, total, projectId, so
             <Button size="xs" data-entry-navigation aria-label={t("entryEdit", { key: row.nativeKey })} disabled={disabled || !drafts} onClick={() => onEdit(row.unitId)}>{firstPosition + item.index + 1}</Button>
             <label className={styles.selection}><input type="checkbox" checked={selected.has(row.unitId)} disabled={disabled || !canSelect(row.unitId)} onChange={event => onSelection(row.unitId, event.currentTarget.checked)} /><span className={styles.range}>{t("entrySelect", { key: row.nativeKey })}</span></label>
           </div>
-          <div className={styles.entryStatus}><IconButton label={t("showEntryDetails", { key: row.nativeKey })} onClick={() => onDetails(row.unitId)}><MoreHorizontal /></IconButton></div>
+          <div className={styles.entryStatus}><EntryStatus row={summary} projectId={projectId} drafts={drafts} /></div>
           <EntryContent summary={summary} active={active} focused={view.focus === row.unitId} projectId={projectId} sourceLocale={sourceLocale} locale={view.locale} viewId={view.id}
-            drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} editorRef={activeEditor} />
+            drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} editorRef={activeEditor}
+            comparison={view.compareSource ? sourceByUnit.get(row.unitId) : undefined} renderCandidate={renderCandidate} onDetails={onDetails} />
         </article>;
       })}
     </div>

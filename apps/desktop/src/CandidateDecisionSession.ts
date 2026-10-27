@@ -21,7 +21,7 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
   const settledSequence = useRef(0), pendingSequence = useRef(0);
   const [session] = useState(() => executionContext(project));
   useLayoutEffect(() => { projectRef.current = project; ownerRef.current = owner; });
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; release(); }; }, []);
   function current() { return currentState.current; }
   function update(change: (before: CandidateDecisionState) => CandidateDecisionState) {
     if (!alive.current) return;
@@ -65,7 +65,8 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
     }
     catch (error) { if (alive.current && current().pending === request) update(before => ({ ...before, failure: commandFailure(error) })); }
   }
-  async function decide(revision: TranslationRevision, disposition: CandidateDisposition, proof: () => boolean = () => true, readBasis: () => CandidateBasis | null = () => ownerRef.current.current()) {
+  async function decide(revision: TranslationRevision, disposition: CandidateDisposition, proof: () => boolean = () => true,
+    readBasis: () => CandidateBasis | null = () => ownerRef.current.current(), refreshBasis?: () => Promise<void>) {
     const draft = readBasis(), before = current(), metadata = projectRef.current.metadata;
     if (!alive.current || before.busy || before.pending || !draft || !proof() || !before.actor.trim() || !before.reason.trim()
       || !metadata.targetLocales.includes(draft.locale) || revision.originKind !== "ai" || revision.unitId !== draft.unitId
@@ -74,7 +75,10 @@ export function useCandidateDecisionSession(project: ProjectView, owner: {
     const token = ownerRef.current.reserve(); if (!token) return; reservation.current = token;
     update(value => ({ ...value, busy: true, recorded: null, failure: null }));
     try {
-      const actionId = await executionCommands.identity(session), latest = readBasis();
+      const actionId = await executionCommands.identity(session);
+      if (!alive.current || !proof()) return;
+      if (refreshBasis) await refreshBasis();
+      const latest = readBasis();
       if (!alive.current || !proof() || projectRef.current.metadata.sourceLocale !== metadata.sourceLocale || !projectRef.current.metadata.targetLocales.includes(draft.locale) || latest?.unitId !== draft.unitId
         || latest.locale !== draft.locale || latest.sourceRevisionId !== draft.sourceRevisionId || latest.baseSelectionId !== draft.baseSelectionId || latest.baseRevisionId !== draft.baseRevisionId) return;
       const request: CandidateDecisionRequest = { ...session, decision: { projectId: session.projectId, actionId, unitId: draft.unitId, locale: draft.locale,

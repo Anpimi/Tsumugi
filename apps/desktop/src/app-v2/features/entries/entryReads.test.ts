@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { segmentCommands, type SegmentPage, type SegmentQuery, type SegmentQueueWindow } from "../../../segmentCommands";
+import { segmentCommands, type SegmentPage, type SegmentQuery, type SegmentQueueWindow, type SegmentRow, type SegmentSourceComparison } from "../../../segmentCommands";
+import fixture from "../../../../test/fixtures/segmentCommands.contract.json";
+import { validateResponseSegmentPage } from "../../../generated/review.validators";
 import { SessionReads } from "../../../sessionReads";
-import { captureEntries, entryPageKey, readEntryPage, readEntryQueueWindow, retainedEntryCapture } from "./entryReads";
+import { captureEntries, entryPageKey, entrySourceComparisonKey, readEntrySourceComparison, readEntryPage, readEntryQueueWindow, retainedEntryCapture } from "./entryReads";
 
 const context = { projectId: "project", sessionToken: "session" };
 const query = { text: "hello", selection: "all", status: "all" } as const satisfies SegmentQuery;
@@ -9,8 +11,78 @@ const page: SegmentPage = { projectId: "project", locale: "zh-CN", query: { ...q
 const window: SegmentQueueWindow = { projectId: "project", locale: "zh-CN", query: { ...query, status: "all" }, queryFingerprint: page.queryFingerprint,
   epoch: "epoch", sequence: "2", scopeId: "capture", sourceSnapshotId: "snapshot", rows: [], total: 0,
   firstPosition: 0, previousUnitId: null, nextUnitId: null };
+const capture = { scopeId: "capture", snapshotId: "snapshot", queryFingerprint: "query-fingerprint", readVersion: "1" };
+function sourceRows(ids: string[]): SegmentRow[] {
+  const value: unknown = structuredClone(fixture.responses.segmentPage);
+  if (!validateResponseSegmentPage(value)) throw new Error("Invalid Segment fixture");
+  return ids.map(unitId => ({ ...value.rows[0], content: { ...value.rows[0].content, unitId,
+    locale: "zh-CN", sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision" } }));
+}
+function sourceComparison(ids: string[], nextAfter: number | null = null): SegmentSourceComparison {
+  return { projectId: "project", locale: "zh-CN", scopeId: "capture", currentSnapshotId: "snapshot", baseSnapshotId: "base", nextAfter,
+    rows: ids.map(unitId => ({ unitId, changeKind: "changed", old: { sourceRevisionId: "old-revision", text: `Old ${unitId} é 👩🏽‍💻` },
+      current: { sourceRevisionId: "source-revision", text: `Current ${unitId} {{name}}\r\n日本語` } })) };
+}
 
 describe("workbench entry reads", () => {
+  it("reads only one bounded source comparison per loaded page and keeps complete Unicode", async () => {
+    const reads = new SessionReads(context), rows = sourceRows(["a", "b"]);
+    const read = vi.spyOn(segmentCommands, "sourceComparison").mockResolvedValue(sourceComparison(["a", "b"]));
+    const result = await readEntrySourceComparison(reads, "zh-CN", capture, rows);
+    expect(read).toHaveBeenCalledExactlyOnceWith({ ...context, locale: "zh-CN", scopeId: "capture", unitIds: ["a", "b"] });
+    expect(result.rows[0].current.text).toBe("Current a {{name}}\r\n日本語");
+    expect(result.rows[0].old!.text).toBe("Old a é 👩🏽‍💻");
+    expect(entrySourceComparisonKey("zh-CN", capture, rows)).not.toEqual(entrySourceComparisonKey("fr-FR", capture, rows));
+    expect(entrySourceComparisonKey("zh-CN", capture, rows)).not.toEqual(entrySourceComparisonKey("zh-CN", { ...capture, snapshotId: "other" }, rows));
+    reads.retire();
+  });
+
+  it("accumulates precise complete-row continuations using only remaining page members", async () => {
+    const reads = new SessionReads(context), rows = sourceRows(["a", "b", "c"]);
+    const read = vi.spyOn(segmentCommands, "sourceComparison")
+      .mockResolvedValueOnce(sourceComparison(["a"], 1))
+      .mockResolvedValueOnce(sourceComparison(["b"], 1))
+      .mockResolvedValueOnce(sourceComparison(["c"]));
+    const result = await readEntrySourceComparison(reads, "zh-CN", capture, rows);
+    expect(read.mock.calls.map(([request]) => request.unitIds)).toEqual([["a", "b", "c"], ["b", "c"], ["c"]]);
+    expect(result.rows.map(row => row.unitId)).toEqual(["a", "b", "c"]); expect(result.nextAfter).toBeNull();
+    reads.retire();
+  });
+
+  it.each(["project", "locale", "scope", "current", "base", "order", "repeat", "revision", "next", "empty", "partial-end"])(
+    "rejects a source continuation that changes its page association: %s", async kind => {
+      const reads = new SessionReads(context), rows = sourceRows(["a", "b", "c"]);
+      const second = sourceComparison(["b", "c"]);
+      if (kind === "project") second.projectId = "other";
+      if (kind === "locale") second.locale = "fr-FR";
+      if (kind === "scope") second.scopeId = "other";
+      if (kind === "current") second.currentSnapshotId = "other";
+      if (kind === "base") second.baseSnapshotId = "other";
+      if (kind === "order") second.rows.reverse();
+      if (kind === "repeat") second.rows[0].unitId = "a";
+      if (kind === "revision") second.rows[0].current.sourceRevisionId = "other";
+      if (kind === "next") second.nextAfter = 0;
+      if (kind === "empty") { second.rows = []; second.nextAfter = 0; }
+      if (kind === "partial-end") second.rows.pop();
+      const read = vi.spyOn(segmentCommands, "sourceComparison").mockResolvedValueOnce(sourceComparison(["a"], 1)).mockResolvedValueOnce(second);
+      await expect(readEntrySourceComparison(reads, "zh-CN", capture, rows)).rejects.toThrow("captured page");
+      expect(read).toHaveBeenCalledTimes(2); reads.retire();
+    },
+  );
+
+  it("rejects duplicate or oversized pages before dispatch and stops continuations when the session retires", async () => {
+    const reads = new SessionReads(context), read = vi.spyOn(segmentCommands, "sourceComparison");
+    await expect(readEntrySourceComparison(reads, "zh-CN", capture, sourceRows(["a", "a"]))).rejects.toThrow("members");
+    await expect(readEntrySourceComparison(reads, "zh-CN", capture, sourceRows(Array.from({ length: 51 }, (_, index) => String(index))))).rejects.toThrow("members");
+    expect(read).not.toHaveBeenCalled();
+    let resolve!: (value: SegmentSourceComparison) => void;
+    read.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const pending = readEntrySourceComparison(reads, "zh-CN", capture, sourceRows(["a", "b"]));
+    const rejected = expect(pending).rejects.toBeDefined();
+    reads.retire(); resolve(sourceComparison(["a"], 1)); await rejected;
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
   it("shares a captured page between views and rereads the original scope without recapturing", async () => {
     const reads = new SessionReads(context);
     const summary = vi.spyOn(segmentCommands, "page").mockResolvedValue(page);

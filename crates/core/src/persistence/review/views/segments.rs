@@ -4,6 +4,8 @@ use crate::execution::Revision;
 mod filters;
 mod queue;
 mod rows;
+mod source_comparison;
+pub use source_comparison::SegmentSourceComparison;
 #[cfg(test)]
 mod tests;
 pub use queue::SegmentQueueWindow;
