@@ -104,7 +104,7 @@ pub use review::{
     ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus,
     ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,
     ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
-    SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
+    SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
     SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary, SegmentQaCounts, SegmentQaSummary,
 };
 pub use translation::{

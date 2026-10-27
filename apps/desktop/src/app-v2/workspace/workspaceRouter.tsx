@@ -56,7 +56,9 @@ function viewFromHref(href: string, store: WorkspaceStore, defaultLocale: string
   const id = input.id;
   if (id === undefined) return undefined;
   const existing = getWorkspaceView(store.getState(), id);
-  return makeWorkspaceView({ ...existing, ...input }, id);
+  const changedTarget = existing && (existing.locale !== input.locale || existing.preset !== input.preset || existing.query !== input.query || existing.focus !== input.focus);
+  return makeWorkspaceView({ ...existing, ...input, ...(changedTarget ? { queueScopeId: null, queueAnchor: input.focus ?? null,
+    queueActive: input.focus != null, editing: input.focus != null } : {}) }, id);
 }
 
 export function createWorkspaceRouter({ store, gate, guard, onError, history: suppliedHistory, component = () => null }: {
@@ -104,6 +106,7 @@ export function createWorkspaceRouter({ store, gate, guard, onError, history: su
       const changedScope = changedQuery || current.locale !== to.locale || current.preset !== to.preset;
       store.getState().patch(to.id, {
         locale: to.locale, preset: to.preset, query: to.query, focus: to.focus,
+        editing: to.editing, queueActive: to.queueActive, queueAnchor: to.queueAnchor, queueScopeId: to.queueScopeId, focusMode: to.focusMode,
         ...(changedQuery ? { searchInput: to.query } : {}),
         ...(changedScope ? { afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 }, selection: [] } : {}),
       });

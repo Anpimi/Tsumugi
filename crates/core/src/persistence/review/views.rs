@@ -2,7 +2,7 @@
 use super::*;
 use std::{cell::RefCell, collections::VecDeque};
 mod segments;
-pub use segments::{SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
+pub use segments::{SegmentPage, SegmentQuery, SegmentQueueWindow, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
     SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary};
 
 const MAX_READ_SCOPES: usize = 8;
@@ -279,6 +279,20 @@ impl ProjectStore {
         locale: &str,
         scope_id: ExecutionId,
     ) -> Result<ReadScope, ExecutionError> {
+        let scope = self.retained_review_membership(connection, project_id, locale, scope_id)?;
+        if let Some(context) = &scope.segment {
+            segments::check_read_basis(self, connection, context)?;
+        }
+        Ok(scope)
+    }
+
+    fn retained_review_membership(
+        &self,
+        connection: &Connection,
+        project_id: ExecutionId,
+        locale: &str,
+        scope_id: ExecutionId,
+    ) -> Result<ReadScope, ExecutionError> {
         check_project(connection, project_id, locale)?;
         let scope = self
             .review_scopes
@@ -303,9 +317,6 @@ impl ProjectStore {
                 ErrorCode::DependencyConflict,
                 "review-scope-source-changed",
             ));
-        }
-        if let Some(context) = &scope.segment {
-            segments::check_read_basis(self, connection, context)?;
         }
         Ok(scope)
     }

@@ -17,6 +17,7 @@ export declare function validateRequestHistory(value: unknown): value is Request
 export declare function validateRequestNeighbor(value: unknown): value is Requests["neighbor"];
 export declare function validateRequestPage(value: unknown): value is Requests["page"];
 export declare function validateRequestPrepareCheck(value: unknown): value is Requests["prepareCheck"];
+export declare function validateRequestQueueWindow(value: unknown): value is Requests["queueWindow"];
 export declare function validateRequestScope(value: unknown): value is Requests["scope"];
 export declare function validateRequestSegmentPage(value: unknown): value is Requests["segmentPage"];
 export declare function validateRequestSegmentScope(value: unknown): value is Requests["segmentScope"];
@@ -46,6 +47,7 @@ export declare function validateResponseHistory(value: unknown): value is Respon
 export declare function validateResponseNeighbor(value: unknown): value is Responses["neighbor"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponsePrepareCheck(value: unknown): value is Responses["prepareCheck"];
+export declare function validateResponseQueueWindow(value: unknown): value is Responses["queueWindow"];
 export declare function validateResponseScope(value: unknown): value is Responses["scope"];
 export declare function validateResponseSegmentPage(value: unknown): value is Responses["segmentPage"];
 export declare function validateResponseSegmentScope(value: unknown): value is Responses["segmentScope"];

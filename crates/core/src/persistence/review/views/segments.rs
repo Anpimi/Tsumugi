@@ -1,7 +1,11 @@
 //! Strict pages share the existing review scope and committed change clock.
 use super::*;
 use crate::execution::Revision;
+mod queue;
 mod rows;
+#[cfg(test)]
+mod tests;
+pub use queue::SegmentQueueWindow;
 pub use rows::{SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentRow, SegmentTermRef, SegmentTermSummary};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

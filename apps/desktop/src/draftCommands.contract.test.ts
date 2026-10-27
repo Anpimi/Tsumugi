@@ -49,9 +49,9 @@ it("keeps empty selected text different from no current translation", async () =
   const value = structuredClone(fixture.responses.read);
   const basis = { ...value.current.basis, selectionId: fixture.responses.written.writerId,
     revisionId: fixture.requests.read.key.unitId, text: "" };
-  invoke.mockResolvedValueOnce({ ...value, current: { kind: "current", basis } });
-  expect((await draftCommands.read(fixture.requests.read)).current).toEqual({ kind: "current", basis });
-  invoke.mockResolvedValueOnce({ ...value, current: { kind: "current", basis: { ...basis, revisionId: null } } });
+  invoke.mockResolvedValueOnce({ ...value, current: { ...value.current, kind: "current", basis } });
+  expect((await draftCommands.read(fixture.requests.read)).current).toEqual({ ...value.current, kind: "current", basis });
+  invoke.mockResolvedValueOnce({ ...value, current: { ...value.current, kind: "current", basis: { ...basis, revisionId: null } } });
   await expect(draftCommands.read(fixture.requests.read)).rejects.toThrow();
 });
 

@@ -6329,7 +6329,7 @@ return errors === 0;
 export const validateResponseRead = validate100;
 const schema137 = {"$id":"urn:tsumugi:ipc:draft:responses:read","$ref":"urn:tsumugi:ipc:draft:responses#/properties/read"};
 const schema120 = {"additionalProperties":false,"description":"The journal and project have separate owners. Current basis is observed\nafter reading the journal; it is never an authority to skip Core admission.","properties":{"current":{"$ref":"#/definitions/DraftCurrent"},"head":{"$ref":"#/definitions/DraftHead"}},"required":["head","current"],"type":"object"};
-const schema121 = {"oneOf":[{"additionalProperties":false,"properties":{"basis":{"$ref":"#/definitions/DraftBasis"},"kind":{"const":"current","type":"string"}},"required":["kind","basis"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"unavailable","type":"string"},"reason":{"$ref":"#/definitions/DraftUnavailableReason"}},"required":["kind","reason"],"type":"object"}]};
+const schema121 = {"oneOf":[{"additionalProperties":false,"properties":{"basis":{"$ref":"#/definitions/DraftBasis"},"kind":{"const":"current","type":"string"},"nativeKey":{"type":"string"},"sourceText":{"type":"string"}},"required":["kind","basis","nativeKey","sourceText"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"unavailable","type":"string"},"reason":{"$ref":"#/definitions/DraftUnavailableReason"}},"required":["kind","reason"],"type":"object"}]};
 const schema122 = {"enum":["source-missing","locale-removed"],"type":"string"};
 
 function validate81(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
@@ -6342,7 +6342,7 @@ const _errs1 = errors;
 if(errors === _errs1){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if(((data.kind === undefined) && (missing0 = "kind")) || ((data.basis === undefined) && (missing0 = "basis"))){
+if(((((data.kind === undefined) && (missing0 = "kind")) || ((data.basis === undefined) && (missing0 = "basis"))) || ((data.nativeKey === undefined) && (missing0 = "nativeKey"))) || ((data.sourceText === undefined) && (missing0 = "sourceText"))){
 const err0 = {instancePath,schemaPath:"#/oneOf/0/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"};
 if(vErrors === null){
 vErrors = [err0];
@@ -6355,7 +6355,7 @@ errors++;
 else {
 const _errs3 = errors;
 for(const key0 in data){
-if(!((key0 === "basis") || (key0 === "kind"))){
+if(!((((key0 === "basis") || (key0 === "kind")) || (key0 === "nativeKey")) || (key0 === "sourceText"))){
 const err1 = {instancePath,schemaPath:"#/oneOf/0/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err1];
@@ -6408,17 +6408,55 @@ var valid1 = _errs5 === errors;
 else {
 var valid1 = true;
 }
-}
-}
-}
-}
-else {
-const err4 = {instancePath,schemaPath:"#/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(valid1){
+if(data.nativeKey !== undefined){
+const _errs7 = errors;
+if(typeof data.nativeKey !== "string"){
+const err4 = {instancePath:instancePath+"/nativeKey",schemaPath:"#/oneOf/0/properties/nativeKey/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err4];
 }
 else {
 vErrors.push(err4);
+}
+errors++;
+}
+var valid1 = _errs7 === errors;
+}
+else {
+var valid1 = true;
+}
+if(valid1){
+if(data.sourceText !== undefined){
+const _errs9 = errors;
+if(typeof data.sourceText !== "string"){
+const err5 = {instancePath:instancePath+"/sourceText",schemaPath:"#/oneOf/0/properties/sourceText/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err5];
+}
+else {
+vErrors.push(err5);
+}
+errors++;
+}
+var valid1 = _errs9 === errors;
+}
+else {
+var valid1 = true;
+}
+}
+}
+}
+}
+}
+}
+else {
+const err6 = {instancePath,schemaPath:"#/oneOf/0/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err6];
+}
+else {
+vErrors.push(err6);
 }
 errors++;
 }
@@ -6428,41 +6466,12 @@ if(_valid0){
 valid0 = true;
 passing0 = 0;
 }
-const _errs7 = errors;
-if(errors === _errs7){
+const _errs11 = errors;
+if(errors === _errs11){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing1;
 if(((data.kind === undefined) && (missing1 = "kind")) || ((data.reason === undefined) && (missing1 = "reason"))){
-const err5 = {instancePath,schemaPath:"#/oneOf/1/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
-if(vErrors === null){
-vErrors = [err5];
-}
-else {
-vErrors.push(err5);
-}
-errors++;
-}
-else {
-const _errs9 = errors;
-for(const key1 in data){
-if(!((key1 === "kind") || (key1 === "reason"))){
-const err6 = {instancePath,schemaPath:"#/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
-if(vErrors === null){
-vErrors = [err6];
-}
-else {
-vErrors.push(err6);
-}
-errors++;
-break;
-}
-}
-if(_errs9 === errors){
-if(data.kind !== undefined){
-let data2 = data.kind;
-const _errs10 = errors;
-if(typeof data2 !== "string"){
-const err7 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+const err7 = {instancePath,schemaPath:"#/oneOf/1/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"};
 if(vErrors === null){
 vErrors = [err7];
 }
@@ -6471,8 +6480,11 @@ vErrors.push(err7);
 }
 errors++;
 }
-if("unavailable" !== data2){
-const err8 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "unavailable"},message:"must be equal to constant"};
+else {
+const _errs13 = errors;
+for(const key1 in data){
+if(!((key1 === "kind") || (key1 === "reason"))){
+const err8 = {instancePath,schemaPath:"#/oneOf/1/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"};
 if(vErrors === null){
 vErrors = [err8];
 }
@@ -6480,18 +6492,15 @@ else {
 vErrors.push(err8);
 }
 errors++;
+break;
 }
-var valid2 = _errs10 === errors;
 }
-else {
-var valid2 = true;
-}
-if(valid2){
-if(data.reason !== undefined){
-let data3 = data.reason;
-const _errs12 = errors;
-if(typeof data3 !== "string"){
-const err9 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/DraftUnavailableReason/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(_errs13 === errors){
+if(data.kind !== undefined){
+let data4 = data.kind;
+const _errs14 = errors;
+if(typeof data4 !== "string"){
+const err9 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/1/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err9];
 }
@@ -6500,8 +6509,8 @@ vErrors.push(err9);
 }
 errors++;
 }
-if(!((data3 === "source-missing") || (data3 === "locale-removed"))){
-const err10 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/DraftUnavailableReason/enum",keyword:"enum",params:{allowedValues: schema122.enum},message:"must be equal to one of the allowed values"};
+if("unavailable" !== data4){
+const err10 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/1/properties/kind/const",keyword:"const",params:{allowedValue: "unavailable"},message:"must be equal to constant"};
 if(vErrors === null){
 vErrors = [err10];
 }
@@ -6510,7 +6519,36 @@ vErrors.push(err10);
 }
 errors++;
 }
-var valid2 = _errs12 === errors;
+var valid2 = _errs14 === errors;
+}
+else {
+var valid2 = true;
+}
+if(valid2){
+if(data.reason !== undefined){
+let data5 = data.reason;
+const _errs16 = errors;
+if(typeof data5 !== "string"){
+const err11 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/DraftUnavailableReason/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err11];
+}
+else {
+vErrors.push(err11);
+}
+errors++;
+}
+if(!((data5 === "source-missing") || (data5 === "locale-removed"))){
+const err12 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/DraftUnavailableReason/enum",keyword:"enum",params:{allowedValues: schema122.enum},message:"must be equal to one of the allowed values"};
+if(vErrors === null){
+vErrors = [err12];
+}
+else {
+vErrors.push(err12);
+}
+errors++;
+}
+var valid2 = _errs16 === errors;
 }
 else {
 var valid2 = true;
@@ -6520,17 +6558,17 @@ var valid2 = true;
 }
 }
 else {
-const err11 = {instancePath,schemaPath:"#/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
+const err13 = {instancePath,schemaPath:"#/oneOf/1/type",keyword:"type",params:{type: "object"},message:"must be object"};
 if(vErrors === null){
-vErrors = [err11];
+vErrors = [err13];
 }
 else {
-vErrors.push(err11);
+vErrors.push(err13);
 }
 errors++;
 }
 }
-var _valid0 = _errs7 === errors;
+var _valid0 = _errs11 === errors;
 if(_valid0 && valid0){
 valid0 = false;
 passing0 = [passing0, 1];
@@ -6542,12 +6580,12 @@ passing0 = 1;
 }
 }
 if(!valid0){
-const err12 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const err14 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
 if(vErrors === null){
-vErrors = [err12];
+vErrors = [err14];
 }
 else {
-vErrors.push(err12);
+vErrors.push(err14);
 }
 errors++;
 validate81.errors = vErrors;

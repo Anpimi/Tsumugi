@@ -292,6 +292,7 @@ export interface Responses {
   neighbor: ReviewNeighbor;
   page: ReviewPage;
   prepareCheck: ReviewCheckPreparation;
+  queueWindow: SegmentQueueWindow;
   scope: ReviewScopeCapture;
   segmentPage: SegmentPage;
   segmentScope: SegmentScopeCapture;
@@ -974,27 +975,15 @@ export interface PluginTextReviewView {
   runtimeOrigin: PluginOriginView;
   settingsRevision: UnsignedDecimal;
 }
-export interface ReviewScopeCapture {
-  locale: string;
-  query: string;
-  readVersion: string;
-  scopeId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  units: ReviewScopeUnit[];
-}
-export interface ReviewScopeUnit {
-  expectedBasis: string;
-  expectedDecisionId: ExecutionId | null;
-  unitId: ExecutionId;
-}
-export interface SegmentPage {
+export interface SegmentQueueWindow {
   epoch: ExecutionId;
+  firstPosition: number;
   locale: string;
-  nextCursor: ExecutionId | null;
+  nextUnitId: ExecutionId | null;
+  previousUnitId: ExecutionId | null;
   projectId: ExecutionId;
   query: SegmentQuery;
   queryFingerprint: string;
-  readVersion: string;
   rows: SegmentRow[];
   scopeId: ExecutionId;
   sequence: Revision;
@@ -1111,6 +1100,33 @@ export interface SegmentTermSummary {
 export interface SegmentTermRef {
   revisionId: ExecutionId;
   termId: string;
+}
+export interface ReviewScopeCapture {
+  locale: string;
+  query: string;
+  readVersion: string;
+  scopeId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  units: ReviewScopeUnit[];
+}
+export interface ReviewScopeUnit {
+  expectedBasis: string;
+  expectedDecisionId: ExecutionId | null;
+  unitId: ExecutionId;
+}
+export interface SegmentPage {
+  epoch: ExecutionId;
+  locale: string;
+  nextCursor: ExecutionId | null;
+  projectId: ExecutionId;
+  query: SegmentQuery;
+  queryFingerprint: string;
+  readVersion: string;
+  rows: SegmentRow[];
+  scopeId: ExecutionId;
+  sequence: Revision;
+  sourceSnapshotId: ExecutionId;
+  total: number;
 }
 export interface SegmentScopeCapture {
   capture: ReviewScopeCapture;

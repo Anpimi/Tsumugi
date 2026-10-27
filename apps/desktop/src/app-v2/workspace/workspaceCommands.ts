@@ -4,7 +4,7 @@ import { InteractionGate, type CommandSource } from "./interactionGate";
 import { getWorkspaceView, type WorkspaceStore } from "./workspaceStore";
 import type { WorkspaceNavigation } from "./workspaceRouter";
 
-export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands"] as const;
+export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode"] as const;
 export type WorkspaceCommandId = typeof workspaceCommandIds[number];
 const commandIds = new Set<string>(workspaceCommandIds);
 
@@ -21,6 +21,12 @@ export interface WorkspaceCommandActions {
   focusAgent?: () => void;
   focusDetails?: () => void;
   openCommands?: () => void;
+  confirm?: (advance: boolean) => void | Promise<unknown>;
+  exitEditor?: () => void | Promise<unknown>;
+  toggleFocus?: () => void | Promise<unknown>;
+  isEditing?: () => boolean;
+  canConfirm?: () => boolean;
+  canAdvance?: () => boolean;
 }
 
 /** Registers presentation actions in the existing registry; it owns no business handlers. */
@@ -61,6 +67,10 @@ export function registerWorkspaceCommands({ commands, store, gate, viewId, scope
     commands.register({ ...metadata, id: "workspace.search", nameKey: "workbenchV2.search", binding: null, availability: () => available(view()?.kind === "entries"), handler: run(() => { const current = view(); return current ? navigation.update(current.id, { query: current.searchInput, afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 }, focus: null, selection: [] }) : undefined; }) }),
     commands.register({ ...metadata, id: "workspace.refresh", nameKey: "workbenchV2.refresh", binding: null, availability: () => available(!!actions.refresh), handler: run(() => actions.refresh?.()) }),
     commands.register({ ...metadata, id: "workspace.commands", nameKey: "workbenchV2.commands", binding: "Mod+K", availability: () => available(!!actions.openCommands), handler: run(() => actions.openCommands?.()) }),
+    commands.register({ ...metadata, category: "translation", risk: "writes-translation", id: "translation.confirm", nameKey: "workbenchV2.editorConfirm", binding: "Mod+S", availability: () => available(!!actions.confirm && !!actions.canConfirm?.()), handler: run(() => actions.confirm?.(false)) }),
+    commands.register({ ...metadata, category: "translation", risk: "writes-translation", id: "translation.confirm-next", nameKey: "workbenchV2.confirmNext", binding: "Mod+Enter", availability: () => available(!!actions.confirm && !!actions.canConfirm?.() && (actions.canAdvance?.() ?? true)), handler: run(() => actions.confirm?.(true)) }),
+    commands.register({ ...metadata, id: "translation.exit-editor", nameKey: "workbenchV2.editorExit", binding: "Escape", availability: () => available(!!actions.exitEditor && !!actions.isEditing?.()), handler: run(() => actions.exitEditor?.()) }),
+    commands.register({ ...metadata, id: "translation.focus-mode", nameKey: "workbenchV2.editorFocusMode", binding: "Mod+Shift+F", availability: () => available(!!actions.toggleFocus && !!actions.isEditing?.()), handler: run(() => actions.toggleFocus?.()) }),
   ];
   return () => cleanup.forEach(remove => remove());
 }
@@ -80,7 +90,7 @@ export interface WorkspaceDispatchRequest {
 
 function matchesBinding(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">, binding: string, modifier: "meta" | "ctrl"): boolean {
   const parts = binding.split("+");
-  return (modifier === "meta" ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+  return (parts.includes("Mod") ? modifier === "meta" ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey : !event.metaKey && !event.ctrlKey)
     && event.shiftKey === parts.includes("Shift") && !event.altKey && event.key.toLowerCase() === parts.at(-1)?.toLowerCase();
 }
 
@@ -100,15 +110,19 @@ export function createWorkspaceCommandDispatcher({ gate, getContext, modifier }:
   function dispatch(id: WorkspaceCommandId, request: WorkspaceDispatchRequest): boolean {
     const context = getContext();
     if (!context || context.viewId !== request.viewId || !gate.canDispatch(request)) return false;
+    if (request.dialogId === "draft-recovery" && !id.startsWith("translation.")) return false;
+    if (request.dialogId === "draft-recovery" && id === "translation.confirm-next") return false;
+    if (request.source === "keyboard" && id.startsWith("translation.") && (!request.inputOwner?.startsWith("segment-editor-")
+      || gate.getSnapshot().inputOwner?.ownerId !== request.inputOwner)) return false;
     return context.commands.dispatch(id, context.scope);
   }
 
-  function handleKeyDown(event: KeyboardEvent, viewId: string | null, inputOwner?: string): boolean {
+  function handleKeyDown(event: KeyboardEvent, viewId: string | null, inputOwner?: string, dialogId?: string): boolean {
     if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return false;
-    const command = list({ source: "keyboard" }).find(candidate => candidate.binding && matchesBinding(event, candidate.binding, modifier));
+    const command = list({ source: "keyboard", dialogId }).find(candidate => candidate.binding && matchesBinding(event, candidate.binding, modifier));
     if (!command || !commandIds.has(command.id)) return false;
     const id = workspaceCommandIds.find(value => value === command.id);
-    if (!id || !dispatch(id, { viewId, source: "keyboard", inputOwner })) return false;
+    if (!id || !dispatch(id, { viewId, source: "keyboard", inputOwner, dialogId })) return false;
     event.preventDefault();
     return true;
   }

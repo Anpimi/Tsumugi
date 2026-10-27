@@ -102,7 +102,7 @@ macro_rules! handlers {
         review::semantic::prepare_ai_semantic_review,review::semantic::start_ai_semantic_review,review::semantic::read_ai_semantic_review,review::semantic::read_ai_semantic_review_start_action,
         review::read_review_page,review::read_review_target,review::read_review_diagnostic_location,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
-        review::read_segment_page,review::capture_segment_scope,
+        review::read_segment_page,review::capture_segment_scope,review::read_segment_queue_window,
         review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
         release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,

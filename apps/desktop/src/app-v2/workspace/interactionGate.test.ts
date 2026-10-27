@@ -39,4 +39,19 @@ describe("workspace input ownership", () => {
     gate.dispose();
     expect(gate.acquireIntent("navigate")).toBeNull();
   });
+
+  it("owns an editor with no open view without admitting a hidden or stale view", () => {
+    const gate = new InteractionGate();
+    gate.setInputOwner("closed-view", "hidden-editor");
+    expect(gate.getSnapshot().inputOwner).toBeNull();
+    gate.setInputOwner(null, "segment-editor-recovery");
+    expect(gate.getSnapshot()).toMatchObject({ visibleViewId: null, inputOwner: { viewId: null, ownerId: "segment-editor-recovery" } });
+    const close = gate.pushDialog("draft-recovery");
+    expect(gate.canDispatch({ viewId: null, source: "keyboard", inputOwner: "segment-editor-recovery", dialogId: "draft-recovery" })).toBe(true);
+    expect(gate.canDispatch({ viewId: "closed-view", source: "keyboard", inputOwner: "segment-editor-recovery", dialogId: "draft-recovery" })).toBe(false);
+    close(); gate.setVisibleOwner("new-view");
+    expect(gate.getSnapshot().inputOwner).toBeNull();
+    gate.setInputOwner(null, "stale-recovery-editor");
+    expect(gate.getSnapshot().inputOwner).toBeNull();
+  });
 });

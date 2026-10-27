@@ -132,6 +132,8 @@ export type DraftCurrent =
   | {
       basis: DraftBasis;
       kind: "current";
+      nativeKey: string;
+      sourceText: string;
     }
   | {
       kind: "unavailable";

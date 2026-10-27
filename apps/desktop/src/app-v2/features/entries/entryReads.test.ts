@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { segmentCommands, type SegmentPage, type SegmentQuery } from "../../../segmentCommands";
+import { segmentCommands, type SegmentPage, type SegmentQuery, type SegmentQueueWindow } from "../../../segmentCommands";
 import { SessionReads } from "../../../sessionReads";
-import { captureEntries, entryPageKey, readEntryPage } from "./entryReads";
+import { captureEntries, entryPageKey, readEntryPage, readEntryQueueWindow, retainedEntryCapture } from "./entryReads";
 
 const context = { projectId: "project", sessionToken: "session" };
 const query: SegmentQuery = { text: "hello", selection: "all" };
 const page: SegmentPage = { projectId: "project", locale: "zh-CN", query, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "1", scopeId: "capture", sourceSnapshotId: "snapshot", readVersion: "1", rows: [], nextCursor: null, total: 0 };
+const window: SegmentQueueWindow = { projectId: "project", locale: "zh-CN", query, queryFingerprint: page.queryFingerprint,
+  epoch: "epoch", sequence: "2", scopeId: "capture", sourceSnapshotId: "snapshot", rows: [], total: 0,
+  firstPosition: 0, previousUnitId: null, nextUnitId: null };
 
 describe("workbench entry reads", () => {
   it("shares a captured page between views and rereads the original scope without recapturing", async () => {
@@ -38,6 +41,45 @@ describe("workbench entry reads", () => {
     read.mockResolvedValue({ ...page, readVersion: "newer-basis" });
     await expect(readEntryPage(reads, "zh-CN", query, capture, "opaque-next")).rejects.toThrow("captured read basis");
     expect(reads.client.getQueryData(reads.key(entryPageKey("zh-CN", query, capture, null)))).toEqual(page);
+    reads.retire();
+  });
+
+  it("retains the original fixed scope across fact invalidation and an explicit fresh capture", async () => {
+    const reads = new SessionReads(context), otherSession = new SessionReads({ ...context, sessionToken: "another-session" });
+    const read = vi.spyOn(segmentCommands, "page").mockResolvedValueOnce(page).mockResolvedValueOnce({ ...page, scopeId: "new-capture", readVersion: "2" });
+    const original = await captureEntries(reads, "zh-CN", query);
+    reads.invalidate(["translation", "review"], false);
+    expect(retainedEntryCapture(reads, original.scopeId)).toEqual({ locale: "zh-CN", query, scope: original });
+    expect(retainedEntryCapture(otherSession, original.scopeId)).toBeUndefined();
+    const refreshed = await captureEntries(reads, "zh-CN", query, true);
+    expect(refreshed.scopeId).toBe("new-capture"); expect(read).toHaveBeenCalledTimes(2);
+    expect(retainedEntryCapture(reads, original.scopeId)?.scope).toEqual(original);
+    expect(retainedEntryCapture(reads, refreshed.scopeId)?.scope).toEqual(refreshed);
+    reads.retire(); otherSession.retire();
+  });
+
+  it("reads a queue window from its retained scope and anchor after translation facts change", async () => {
+    const reads = new SessionReads(context);
+    vi.spyOn(segmentCommands, "page").mockResolvedValue(page);
+    const queue = vi.spyOn(segmentCommands, "queueWindow").mockResolvedValue(window);
+    const capture = await captureEntries(reads, "zh-CN", query);
+    reads.invalidate(["translation"], false);
+    expect(await readEntryQueueWindow(reads, "zh-CN", query, capture, "anchor-unit")).toEqual(window);
+    expect(queue).toHaveBeenCalledWith({ ...context, locale: "zh-CN", scopeId: capture.scopeId, anchorUnitId: "anchor-unit", limit: 50 });
+    expect(retainedEntryCapture(reads, capture.scopeId)?.scope).toEqual(capture);
+    reads.retire();
+  });
+
+  it.each([
+    { sourceSnapshotId: "different-source" }, { queryFingerprint: "different-query" },
+    { query: { ...query, text: "different search" } }, { query: { ...query, selection: "selected" as const } },
+  ])("rejects a queue window whose captured scope changed: %j", async changed => {
+    const reads = new SessionReads(context);
+    vi.spyOn(segmentCommands, "page").mockResolvedValue(page);
+    vi.spyOn(segmentCommands, "queueWindow").mockResolvedValue({ ...window, ...changed });
+    const capture = await captureEntries(reads, "zh-CN", query);
+    await expect(readEntryQueueWindow(reads, "zh-CN", query, capture, null)).rejects.toThrow("fixed queue");
+    expect(retainedEntryCapture(reads, capture.scopeId)?.scope).toEqual(capture);
     reads.retire();
   });
 });

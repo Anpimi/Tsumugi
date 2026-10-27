@@ -1182,6 +1182,47 @@
         ],
         "type": "object"
       },
+      "SegmentQueueWindowRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "anchorUnitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "scopeId",
+          "limit"
+        ],
+        "type": "object"
+      },
       "SegmentScopeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1516,6 +1557,9 @@
       "prepareCheck": {
         "$ref": "#/definitions/ReviewCheckRequest"
       },
+      "queueWindow": {
+        "$ref": "#/definitions/SegmentQueueWindowRequest"
+      },
       "scope": {
         "$ref": "#/definitions/ReviewScopeRequest"
       },
@@ -1563,6 +1607,7 @@
       "diagnosticLocation",
       "summary",
       "segmentPage",
+      "queueWindow",
       "segmentScope",
       "neighbor",
       "scope",
@@ -5977,6 +6022,89 @@
         ],
         "type": "object"
       },
+      "SegmentQueueWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "firstPosition": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextUnitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previousUnitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "$ref": "#/definitions/SegmentQuery"
+          },
+          "queryFingerprint": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/SegmentRow"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "projectId",
+          "locale",
+          "scopeId",
+          "sourceSnapshotId",
+          "query",
+          "queryFingerprint",
+          "epoch",
+          "sequence",
+          "rows",
+          "firstPosition",
+          "total",
+          "previousUnitId",
+          "nextUnitId"
+        ],
+        "type": "object"
+      },
       "SegmentReason": {
         "additionalProperties": false,
         "properties": {
@@ -7779,6 +7907,9 @@
       "prepareCheck": {
         "$ref": "#/definitions/ReviewCheckPreparation"
       },
+      "queueWindow": {
+        "$ref": "#/definitions/SegmentQueueWindow"
+      },
       "scope": {
         "$ref": "#/definitions/ReviewScopeCapture"
       },
@@ -7840,6 +7971,7 @@
       "diagnosticLocation",
       "summary",
       "segmentPage",
+      "queueWindow",
       "segmentScope",
       "neighbor",
       "scope",

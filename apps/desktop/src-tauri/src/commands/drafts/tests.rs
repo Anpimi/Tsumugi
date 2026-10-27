@@ -184,7 +184,18 @@ fn local_draft_ipc_preserves_input_across_real_confirmation_and_project_reopen()
     );
     let mut save = serde_json::to_value(&original).unwrap();
     save["sessionToken"] = token.clone();
+    let captured = call(&window, "read_segment_page", json!({"sessionToken":token,"projectId":key.project_id,
+        "locale":key.locale,"query":{"text":"","selection":"unselected"},"scopeId":null,"cursor":null,"limit":1})).unwrap();
+    let queue_request = json!({"sessionToken":token,"projectId":key.project_id,"locale":key.locale,
+        "scopeId":captured["scopeId"],"anchorUnitId":key.unit_id,"limit":2});
     let receipt = call(&window, "save_translation_revision", save.clone()).unwrap();
+    let window_after = call(&window, "read_segment_queue_window", queue_request.clone()).unwrap();
+    assert_eq!(window_after["total"], 2);
+    assert_eq!(window_after["rows"][0]["content"]["selectionId"], receipt["selection"]["eventId"]);
+    assert_eq!(window_after["rows"][1]["content"]["unitId"], json!(rows[1].unit_id.unwrap()));
+    assert_eq!(window_after["query"]["selection"], "unselected");
+    assert_eq!(call(&window, "read_segment_page", json!({"sessionToken":token,"projectId":key.project_id,
+        "locale":key.locale,"query":{"text":"","selection":"unselected"},"scopeId":captured["scopeId"],"cursor":captured["nextCursor"],"limit":1})).unwrap_err()["code"], "dependency-conflict");
     let retained = call(&window, "read_local_draft", read.clone()).unwrap();
     assert_eq!(retained["head"]["value"]["text"], "Newer B — kept locally");
     assert_eq!(
@@ -229,6 +240,9 @@ fn local_draft_ipc_preserves_input_across_real_confirmation_and_project_reopen()
     );
     call(&window, "close_project", json!({"sessionToken":token})).unwrap();
     let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+    let mut expired_queue = queue_request;
+    expired_queue["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&window, "read_segment_queue_window", expired_queue).unwrap_err()["code"], "dependency-conflict");
     assert!(call(&window, "read_local_draft", read).is_err());
     let restored = call(
         &window,

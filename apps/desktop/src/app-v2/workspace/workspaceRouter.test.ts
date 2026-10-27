@@ -20,15 +20,24 @@ function setup(guard: WorkspaceGuard = async (_transition, current) => ({ curren
 
 describe("guarded workspace routing", () => {
   it("allows only view parameters in restored URLs and keeps search punctuation", async () => {
-    window.history.replaceState({ __TSR_index: 0 }, "", "#/view/deep?kind=entries&locale=ja&query=A%3FB&sessionToken=test-only&grant=test-only");
+    window.history.replaceState({ __TSR_index: 0 }, "", "#/view/deep?kind=entries&locale=ja&query=A%3FB&focus=unit&queueScopeId=test-only&editing=true&sessionToken=test-only&grant=test-only");
     const workspace = setup();
     expect(await workspace.ready).toBe(true);
     const view = workspace.store.getState().views.deep;
-    expect(view).toMatchObject({ locale: "ja", query: "A?B", searchInput: "A?B" });
-    expect(workspaceViewHref(view)).not.toMatch(/sessionToken|grant/);
-    expect(workspace.history.location.href).not.toMatch(/sessionToken|grant/);
+    expect(view).toMatchObject({ locale: "ja", query: "A?B", searchInput: "A?B", focus: "unit", editing: true, queueAnchor: "unit", queueScopeId: null });
+    expect(workspaceViewHref(view)).not.toMatch(/sessionToken|grant|queueScopeId|editing/);
+    expect(workspace.history.location.href).not.toMatch(/sessionToken|grant|queueScopeId|editing/);
     expect(parseWorkspaceHref("/view/one?query=what?next", "zh-CN")).toMatchObject({ query: "what?next" });
     expect(parseWorkspaceHref("/outside", "zh-CN")).toBeUndefined();
+  });
+
+  it("preserves local focus mode on a focus change while clearing a queue when language changes", async () => {
+    const workspace = setup(); await workspace.ready;
+    await workspace.navigation.update("one", { focus: "unit-a", editing: true, queueActive: true, queueScopeId: "read-scope", queueAnchor: "unit-a", focusMode: true });
+    expect(workspace.store.getState().views.one).toMatchObject({ editing: true, queueScopeId: "read-scope", focusMode: true });
+    await workspace.navigation.update("one", { locale: "ja" });
+    expect(workspace.store.getState().views.one).toMatchObject({ locale: "ja", queueScopeId: null, cursor: null, editing: true, queueAnchor: "unit-a", focusMode: true });
+    expect(workspace.history.location.href).not.toContain("read-scope");
   });
 
   it("rejects a stale permit without moving or clearing newer search input", async () => {

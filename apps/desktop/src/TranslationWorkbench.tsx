@@ -36,6 +36,7 @@ import type { WorkspaceDestination, TranslationFindFocusRequest } from "./sessio
 import { diagnosticMatchesEditor, diagnosticTextareaSelection, textareaDisplayText, type ReviewDiagnosticAnchor } from "./reviewDiagnosticNavigation";
 import { semanticReviewRead } from "./aiSemanticReviewQueries";
 import { reviewFindingsRead } from "./reviewQueries";
+import { readExactPaste, type ExactPasteResult } from "./exactPaste";
 
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 type EditorReadIntent = { id: number; unitId: string; locale: string };
@@ -661,16 +662,15 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       sourceRevisionId: current.sourceRevisionId, editSeq: current.editSeq, value: field.value,
       start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection, valid: true, applying: false };
     pasteFlight.current = flight; setPasteFeedback("reading");
-    let text: string, reading: Promise<string>;
+    let reading: Promise<ExactPasteResult>;
     try {
-      text = event.clipboardData.getData("text/plain");
-      if (typeof navigator.clipboard?.readText !== "function") { finishPaste(flight, "unavailable"); return; }
-      // Start synchronously while the original native paste gesture is active.
-      reading = navigator.clipboard.readText();
+      const started = readExactPaste(event.clipboardData);
+      if (!started) { finishPaste(flight, "unavailable"); return; }
+      reading = started;
     } catch { finishPaste(flight, "failed"); return; }
-    void reading.then(original => {
+    void reading.then(({ text: original, matches }) => {
       if (pasteFlight.current !== flight) return;
-      if (!pasteCurrent(flight) || textareaDisplayText(original).normalize("NFC") !== textareaDisplayText(text).normalize("NFC")) { finishPaste(flight, "changed"); return; }
+      if (!pasteCurrent(flight) || !matches) { finishPaste(flight, "changed"); return; }
       if (original === "") { finishPaste(flight, null); return; }
       const expected = flight.value.slice(0, flight.start) + textareaDisplayText(original) + flight.value.slice(flight.end);
       let inserted = false;

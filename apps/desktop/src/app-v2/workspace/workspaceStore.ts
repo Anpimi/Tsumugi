@@ -14,6 +14,11 @@ export interface WorkspaceView {
   scroll: { top: number; left: number };
   selection: string[];
   focus: string | null;
+  editing: boolean;
+  queueActive: boolean;
+  queueAnchor: string | null;
+  queueScopeId: string | null;
+  focusMode: boolean;
   dock: "agent" | "details";
   dockOpen: boolean;
   dockSize: number | null;
@@ -62,6 +67,11 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     scroll: { top: input.scroll?.top ?? 0, left: input.scroll?.left ?? 0 },
     selection: [...(input.selection ?? [])],
     focus: input.focus ?? null,
+    editing: input.editing ?? input.focus != null,
+    queueActive: input.queueActive ?? input.focus != null,
+    queueAnchor: input.queueAnchor ?? input.focus ?? null,
+    queueScopeId: input.queueScopeId ?? null,
+    focusMode: input.focusMode ?? false,
     dock: input.dock ?? "agent",
     dockOpen: input.dockOpen ?? true,
     dockSize: input.dockSize ?? null,
@@ -124,7 +134,14 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const state = get();
       const view = getWorkspaceView(state, viewId);
       if (!view) return false;
-      set({ views: { ...state.views, [viewId]: { ...view, ...patch, ...(patch.selection ? { selection: [...patch.selection] } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}) } } });
+      const changedScope = patch.query !== undefined && patch.query !== view.query || patch.locale !== undefined && patch.locale !== view.locale
+        || patch.preset !== undefined && patch.preset !== view.preset;
+      const target = patch.focus !== undefined ? patch.focus : view.focus;
+      const next = { ...view, ...patch, ...(patch.selection ? { selection: [...patch.selection] } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
+        ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
+          queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,
+          focusMode: (patch.editing ?? patch.focus != null) ? patch.focusMode ?? view.focusMode : false } : {}) };
+      set({ views: { ...state.views, [viewId]: next } });
       return true;
     },
   }));

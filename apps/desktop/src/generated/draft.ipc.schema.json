@@ -951,11 +951,19 @@
               "kind": {
                 "const": "current",
                 "type": "string"
+              },
+              "nativeKey": {
+                "type": "string"
+              },
+              "sourceText": {
+                "type": "string"
               }
             },
             "required": [
               "kind",
-              "basis"
+              "basis",
+              "nativeKey",
+              "sourceText"
             ],
             "type": "object"
           },

@@ -205,3 +205,23 @@ it.each(["project", "fingerprint", "version", "scope", "locale", "duplicate", "e
     await expect(segmentCommands.captureScope(request)).rejects.toThrow("Invalid IPC response: capture_segment_scope");
   },
 );
+
+
+it("keeps original queue membership after a current row gains a selected translation", async () => {
+  const request = structuredClone(fixture.requests.queueWindow), queue = structuredClone(fixture.responses.queueWindow);
+  queue.query.selection = "unselected";
+  invoke.mockResolvedValueOnce(queue);
+  expect(await segmentCommands.queueWindow(request)).toEqual(queue);
+  expect(invoke).toHaveBeenLastCalledWith("read_segment_queue_window", { request });
+});
+
+it.each(["anchor", "position", "scope", "duplicate", "missing-next"])("rejects an inconsistent fixed queue window: %s", async kind => {
+  const request = structuredClone(fixture.requests.queueWindow), queue = structuredClone(fixture.responses.queueWindow);
+  if (kind === "anchor") request.anchorUnitId = queue.sourceSnapshotId;
+  if (kind === "position") queue.firstPosition = queue.total;
+  if (kind === "scope") queue.scopeId = queue.sourceSnapshotId;
+  if (kind === "duplicate") queue.rows.push(queue.rows[0]);
+  if (kind === "missing-next") { queue.total = queue.rows.length + 1; queue.nextUnitId = null; }
+  invoke.mockResolvedValueOnce(queue);
+  await expect(segmentCommands.queueWindow(request)).rejects.toThrow("Invalid IPC response: read_segment_queue_window");
+});

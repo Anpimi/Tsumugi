@@ -54,10 +54,10 @@ pub enum DraftUnavailableReason {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DraftCurrent {
-    Current { basis: DraftBasis },
+    Current { basis: DraftBasis, native_key: String, source_text: String },
     Unavailable { reason: DraftUnavailableReason },
 }
 
@@ -126,6 +126,8 @@ fn current_basis(store: &ProjectStore, key: &DraftKey) -> Result<DraftCurrent, C
     }
     match store.review_target(key.project_id, key.unit_id, &key.locale) {
         Ok(target) => Ok(DraftCurrent::Current {
+            native_key: target.native_key,
+            source_text: target.source_text,
             basis: DraftBasis {
                 source_revision_id: target.source_revision_id,
                 selection_id: target.selection_id,

@@ -3,7 +3,12 @@ import { reviewCommands } from "../../../reviewCommands";
 import { segmentCommands, type SegmentPage, type SegmentQuery, type SegmentSelectionFilter } from "../../../segmentCommands";
 
 export type EntryCapture = { scopeId: string; snapshotId: string; queryFingerprint: string; readVersion: string };
+export type RetainedEntryCapture = { locale: string; query: SegmentQuery; scope: EntryCapture };
 const scopes = ["source", "translation", "review", "resources"] as const;
+const captureRecordKey = (scopeId: string) => ["workbench-entry-scope", scopeId] as const;
+export function retainedEntryCapture(reads: SessionReads, scopeId: string): RetainedEntryCapture | undefined {
+  return reads.client.getQueryData<RetainedEntryCapture>(reads.key(captureRecordKey(scopeId)));
+}
 export function entrySelectionFilter(preset: string): SegmentSelectionFilter | null {
   return preset === "all" || preset === "selected" || preset === "unselected" ? preset : null;
 }
@@ -22,6 +27,11 @@ export async function captureEntries(reads: SessionReads, locale: string, query:
       const page = await segmentCommands.page({ ...reads.context, locale, query, scopeId: null, cursor: null, limit: 50 });
       if (signal.aborted || reads.retired) throw new Error("Project read cancelled");
       const capture = { scopeId: page.scopeId, snapshotId: page.sourceSnapshotId, queryFingerprint: page.queryFingerprint, readVersion: page.readVersion };
+      // Views retain this read-only scope reference; fact invalidation never
+      // recaptures a fixed queue behind an inactive tab.
+      const retainedKey = reads.key(captureRecordKey(capture.scopeId));
+      reads.client.setQueryDefaults(retainedKey, { gcTime: Infinity });
+      reads.client.setQueryData(retainedKey, { locale, query, scope: capture });
       const record = reads.client.getQueryCache().build<SegmentPage>(reads.client, {
         queryKey: reads.key(entryPageKey(locale, query, capture, null)), meta: { scopes: [...scopes] },
         queryFn: () => readEntryPage(reads, locale, query, capture, null),
@@ -30,6 +40,13 @@ export async function captureEntries(reads: SessionReads, locale: string, query:
       return capture;
     },
   });
+}
+
+export async function readEntryQueueWindow(reads: SessionReads, locale: string, query: SegmentQuery, capture: EntryCapture, anchorUnitId: string | null) {
+  const window = await segmentCommands.queueWindow({ ...reads.context, locale, scopeId: capture.scopeId, anchorUnitId, limit: 50 });
+  if (reads.retired || window.sourceSnapshotId !== capture.snapshotId || window.queryFingerprint !== capture.queryFingerprint
+    || window.query.text !== query.text || window.query.selection !== query.selection) throw new Error("Entry window does not match the fixed queue");
+  return window;
 }
 
 export async function readEntryPage(reads: SessionReads, locale: string, query: SegmentQuery, capture: EntryCapture, cursor: string | null) {

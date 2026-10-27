@@ -1,10 +1,10 @@
 import { checkedInvoke } from "./ipc";
-import type { SegmentPageRequest, SegmentScopeRequest } from "./generated/review.requests";
-import type { SegmentPage, SegmentRow, SegmentScopeCapture } from "./generated/review.responses";
+import type { SegmentPageRequest, SegmentScopeRequest, SegmentQueueWindowRequest } from "./generated/review.requests";
+import type { SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
 import * as validators from "./generated/review.validators";
 
 export type { SegmentPageRequest, SegmentScopeRequest, SegmentQuery, SegmentSelectionFilter } from "./generated/review.requests";
-export type { SegmentPage, SegmentRow, SegmentScopeCapture } from "./generated/review.responses";
+export type { SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
 
 function boundedReferences(total: number, length: number, truncated: boolean) {
   return length === Math.min(total, 8) && truncated === (total > length);
@@ -40,6 +40,20 @@ function relatedSummary(row: SegmentRow) {
 }
 
 export const segmentCommands = {
+  queueWindow: (request: SegmentQueueWindowRequest) => checkedInvoke("read_segment_queue_window", request,
+    (window): window is SegmentQueueWindow => validators.validateResponseQueueWindow(window)
+      && window.projectId === request.projectId && window.locale === request.locale && window.scopeId === request.scopeId
+      && window.queryFingerprint.length > 0 && window.epoch.length > 0
+      && window.rows.length <= request.limit && window.firstPosition + window.rows.length <= window.total
+      && (window.total === 0 ? window.rows.length === 0 && window.firstPosition === 0
+        : window.rows.length > 0)
+      && (request.anchorUnitId == null || window.rows[0]?.content.unitId === request.anchorUnitId)
+      && (window.previousUnitId !== null) === (window.firstPosition > 0)
+      && (window.nextUnitId !== null) === (window.firstPosition + window.rows.length < window.total)
+      && (window.previousUnitId === null || window.previousUnitId !== window.nextUnitId)
+      && new Set(window.rows.map(row => row.content.unitId)).size === window.rows.length
+      && window.rows.every(row => row.content.locale === request.locale && row.content.sourceSnapshotId === window.sourceSnapshotId
+        && row.content.unitId !== window.previousUnitId && row.content.unitId !== window.nextUnitId && relatedSummary(row))),
   page: (request: SegmentPageRequest) => checkedInvoke("read_segment_page", request,
     (page): page is SegmentPage => validators.validateResponseSegmentPage(page)
       && page.projectId === request.projectId && page.locale === request.locale

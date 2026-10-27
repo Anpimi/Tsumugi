@@ -2,7 +2,7 @@ export type CommandSource = "keyboard" | "button" | "menu" | "context-menu" | "p
 
 export interface InteractionSnapshot {
   visibleViewId: string | null;
-  inputOwner: { viewId: string; ownerId: string } | null;
+  inputOwner: { viewId: string | null; ownerId: string } | null;
   composingOwners: readonly string[];
   dialogs: readonly string[];
   intentOwner: string | null;
@@ -35,7 +35,7 @@ export class InteractionGate {
     this.update({ visibleViewId: viewId, inputOwner: null });
   }
 
-  setInputOwner(viewId: string, ownerId: string | null) {
+  setInputOwner(viewId: string | null, ownerId: string | null) {
     if (viewId !== this.snapshot.visibleViewId) return;
     this.update({ inputOwner: ownerId ? { viewId, ownerId } : null });
   }

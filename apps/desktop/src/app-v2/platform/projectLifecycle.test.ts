@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProjectView } from "../../projectCommands";
 import type { ApplicationShutdownView } from "../../executionCommands";
 import { ProjectLifecycle, type LifecycleParticipant, type ProjectLifecyclePorts } from "./projectLifecycle";
+import draftFixture from "../../../test/fixtures/draftCommands.contract.json";
+import { validateResponseRead, validateResponseWritten } from "../../generated/draft.validators";
+import { TranslationDrafts, type TranslationDraftPorts } from "../features/editor/translationDrafts";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => { throw new Error("Unexpected native request"); }) }));
 
@@ -32,6 +35,100 @@ function owner(controller: ProjectLifecycle, status: "ready" | "dirty" | "blocke
     inspect: () => ({ ...state }), prepareLeave: vi.fn(async () => false), reveal: vi.fn() };
   const unregister = controller.register(participant);
   return { state, participant, unregister };
+}
+
+describe("real draft owner during native shutdown", () => {
+  it("destroys the window after a durable owner retires while the application drains", async () => {
+    const stopped = deferred<ApplicationShutdownView>(), { controller, ports } = fixture();
+    await controller.open(first.locator);
+    const session = controller.getSnapshot().session!, { drafts, participant, key } = await actualDraftOwner(controller);
+    const before = participant.inspect({ kind: "close-window" }), input = drafts.getEntry(key)!.value!.text;
+    expect(before.status).toBe("ready");
+    ports.stopCleanup.mockImplementationOnce(() => stopped.promise);
+    const destroy = vi.fn(async () => {}), closing = controller.closeWindow(destroy);
+    await vi.waitFor(() => expect(ports.stopCleanup).toHaveBeenCalledOnce());
+    expect(controller.getSnapshot().closingSession).toBe(session);
+    expect(session.reads.retired).toBe(true);
+    // Mirrors the application's readOnly effect after Core's checked close ACK.
+    drafts.retire();
+    stopped.resolve({ actionId: ports.actionId.mock.results[0].value, state: "stopped" });
+    expect(await closing).toBe(true);
+    expect(participant.inspect({ kind: "close-window" })).toEqual(before);
+    expect(drafts.edit(key, "Must not write after retirement")).toBe(false);
+    expect(drafts.getEntry(key)?.value?.text).toBe(input);
+    expect(controller.getSnapshot().retainedSession).toBeNull();
+    expect(controller.getSnapshot().pending).toBeNull();
+    expect(destroy).toHaveBeenCalledOnce(); controller.dispose();
+  });
+
+  it("still retains newer B when the Core close acknowledgement follows new input", async () => {
+    const closed = deferred<{ closed: boolean }>(), { controller, ports } = fixture();
+    await controller.open(first.locator);
+    const session = controller.getSnapshot().session!, { drafts, key } = await actualDraftOwner(controller);
+    ports.close.mockImplementationOnce(() => closed.promise);
+    const destroy = vi.fn(async () => {}), closing = controller.closeWindow(destroy);
+    await vi.waitFor(() => expect(ports.close).toHaveBeenCalledOnce());
+    expect(drafts.edit(key, "Newer B after the close was prepared")).toBe(true);
+    expect(await drafts.flush(key)).toBe(true);
+    closed.resolve({ closed: true }); expect(await closing).toBe(false);
+    drafts.retire();
+    expect(drafts.getEntry(key)?.value?.text).toBe("Newer B after the close was prepared");
+    expect(controller.getSnapshot().retainedSession).toBe(session);
+    expect(ports.stopCleanup).not.toHaveBeenCalled(); expect(destroy).not.toHaveBeenCalled(); controller.dispose();
+  });
+
+  it("keeps a retired owner with an unresolved original action blocked before Core close", async () => {
+    const { controller, ports } = fixture(); await controller.open(first.locator);
+    const { drafts, participant, key } = await actualDraftOwner(controller, true);
+    await drafts.recover(key);
+    expect(drafts.getEntry(key)?.recovery).toBe("pending");
+    const before = participant.inspect({ kind: "close-window" });
+    drafts.retire();
+    expect(participant.inspect({ kind: "close-window" })).toEqual(before);
+    const destroy = vi.fn(async () => {});
+    expect(await controller.closeWindow(destroy)).toBe(false);
+    expect(drafts.getEntry(key)?.value?.pending).not.toBeNull();
+    expect(ports.close).not.toHaveBeenCalled(); expect(ports.stopCleanup).not.toHaveBeenCalled();
+    expect(destroy).not.toHaveBeenCalled(); controller.dispose();
+  });
+
+  it("does not release an existing mutation reservation from its exit disposition on retirement", async () => {
+    const { controller } = fixture(); await controller.open(first.locator);
+    const { drafts, participant } = await actualDraftOwner(controller);
+    expect(drafts.reserveMutation()).not.toBeNull();
+    const before = participant.inspect({ kind: "close-window" });
+    drafts.retire();
+    expect(participant.inspect({ kind: "close-window" })).toEqual(before);
+    expect(before.status).toBe("blocked"); controller.dispose();
+  });
+});
+
+async function actualDraftOwner(controller: ProjectLifecycle, pending = false) {
+  const retained: unknown = structuredClone(draftFixture.responses.read);
+  if (!validateResponseRead(retained) || !retained.head.value) throw new Error("Invalid real draft lifecycle fixture");
+  if (!pending) retained.head.value.pending = null;
+  let head = retained.head;
+  const session = controller.getSnapshot().session;
+  if (!session) throw new Error("A live project session is required");
+  const read = vi.fn<TranslationDraftPorts["read"]>(async () => ({ head: structuredClone(head), current: structuredClone(retained.current) }));
+  const write = vi.fn<TranslationDraftPorts["write"]>(async ({ write }) => {
+    expect(write.expectedRevision).toBe(head.revision);
+    const value: unknown = { key: write.key, revision: (BigInt(head.revision) + 1n).toString(), writerId: write.writerId, value: structuredClone(write.value) };
+    if (!validateResponseWritten(value)) throw new Error("Invalid durable draft acknowledgement");
+    head = value; return structuredClone(head);
+  });
+  const drafts = new TranslationDrafts({ context: session.reads.context, reads: session.reads, ports: { read, write,
+    list: async () => ({ items: head.value ? [{ key: head.key, revision: head.revision, editSeq: head.value.editSeq,
+      sourceRevisionId: head.value.basis.sourceRevisionId, hasPending: head.value.pending !== null }] : [], next: null }),
+    recoverSave: async request => {
+      const { sessionToken: _credential, ...business } = request;
+      return { request: { ...business, expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
+    },
+  } });
+  expect(await drafts.initialize()).toBe(true); expect(await drafts.open(head.key)).toBeDefined();
+  const participant = drafts.lifecycleParticipant();
+  controller.register(participant);
+  return { drafts, participant, key: head.key, read, write };
 }
 
 describe("project lifecycle", () => {

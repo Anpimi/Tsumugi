@@ -4,6 +4,7 @@ import { createWorkspaceStore } from "./workspaceStore";
 describe("workspace view state", () => {
   it("keeps submitted search, unfinished input and position separate for each tab and session", () => {
     const first = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
+    first.getState().patch("one", { query: "harvest" });
     first.getState().patch("one", { query: "harvest", searchInput: "harvest festival", selection: ["unit-a"], afterOrdinal: 80, scroll: { top: 640, left: 12 }, dock: "details", focus: "unit-a" });
     first.getState().open({ id: "two", kind: "entries", locale: "ja" });
     first.getState().patch("two", { query: "letter", searchInput: "letter to a friend", selection: ["unit-b"] });
@@ -37,5 +38,15 @@ describe("workspace view state", () => {
     expect(store.getState().activate("constructor")).toBe(false);
     store.getState().open({ id: "constructor", kind: "entries", locale: "zh-CN" });
     expect(store.getState().views.constructor).toMatchObject({ id: "constructor", kind: "entries" });
+  });
+
+  it("keeps editing and the fixed queue in a view, and clears their scope when its query context changes", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
+    expect(store.getState().views.one).toMatchObject({ editing: true, queueActive: true, queueAnchor: "unit-a", queueScopeId: null, focusMode: false });
+    store.getState().patch("one", { queueScopeId: "original-scope", cursor: "original-cursor", focusMode: true });
+    store.getState().patch("one", { preset: "unselected" });
+    expect(store.getState().views.one).toMatchObject({ focus: "unit-a", editing: false, queueActive: false, queueScopeId: null, cursor: null, queueAnchor: "unit-a", focusMode: false });
+    store.getState().patch("one", { locale: "ja", focus: "unit-b", editing: true, queueActive: true });
+    expect(store.getState().views.one).toMatchObject({ locale: "ja", editing: true, queueActive: true, queueAnchor: "unit-b", queueScopeId: null });
   });
 });

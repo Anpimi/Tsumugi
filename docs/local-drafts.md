@@ -1,6 +1,6 @@
 # Local draft journal
 
-The desktop Host has a local journal for unconfirmed translation input. Its storage and IPC interfaces are available in the current source, but the editor recovery flow has not yet been connected to them. They do not by themselves make drafts recoverable through the desktop interface.
+The opt-in desktop workspace uses a local journal for unconfirmed translation input. Its editor keeps input by project, entry, and language, and the recovery panel lists both ordinary drafts and requests whose results still need checking. Draft recovery after closing and reopening a project has been observed in a native macOS build; recovery after quitting and restarting the whole app has not yet been verified.
 
 ## What is stored
 
@@ -16,4 +16,4 @@ The encoded head is limited to 256 KiB. The journal limits the combined encoded 
 
 The journal belongs to the app data profile, not the project folder. Moving or copying a project does not move its drafts. Deleting app data removes the journal; switching profiles looks in the new profile's app data. Reinstallation only finds the journal if the same app data remains available; preservation depends on the platform and how the app was removed. Keep the database and any accompanying SQLite journal intact when preserving a damaged or interrupted store.
 
-Reading a draft returns its saved basis and a later observation of the current project basis, or reports that the source entry or target language is unavailable. A consumer must compare the two before offering to apply recovered input. It can retrieve the text for copying, but an arbitrary-path recovery export is not implemented. An unresolved save or selection must be checked through its original result owner; reading a draft does not retry the request or restore its authorization. The journal does not create a translation revision, review, QA result, or model request.
+Reading a draft returns its saved basis and a later observation of the current project basis, or reports that the source entry or target language is unavailable. The editor checks the basis before confirming recovered input. Recovery can provide text for copying, but an arbitrary-path recovery export is not implemented. An unresolved save or selection must be checked against its original request; reading a draft does not retry the request or restore its authorization. Confirming a translation uses the existing manual revision or selection and protection rules. The journal itself does not create a translation revision, review, QA result, or model request.

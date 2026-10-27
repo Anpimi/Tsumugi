@@ -66,6 +66,8 @@ mod contracts {
         segment_round_trip::<SegmentPageRequest>(&segment_fixture["requests"]["segmentPage"]);
         segment_round_trip::<SegmentScopeRequest>(&segment_fixture["requests"]["segmentScope"]);
         segment_round_trip::<SegmentPage>(&segment_fixture["responses"]["segmentPage"]);
+        segment_round_trip::<SegmentQueueWindowRequest>(&segment_fixture["requests"]["queueWindow"]);
+        segment_round_trip::<tsumugi_core::SegmentQueueWindow>(&segment_fixture["responses"]["queueWindow"]);
         segment_round_trip::<SegmentScopeCapture>(&segment_fixture["responses"]["segmentScope"]);
         let mut unknown_filter = segment_fixture["requests"]["segmentPage"].clone();
         unknown_filter["query"]["selection"] = serde_json::json!("approved");
@@ -170,6 +172,12 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Segm
     query: SegmentQuery,
     scope_id: Option<ExecutionId>,
     cursor: Option<ExecutionId>,
+    limit: u32
+});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SegmentQueueWindowRequest {
+    locale: String,
+    scope_id: ExecutionId,
+    anchor_unit_id: Option<ExecutionId>,
     limit: u32
 });
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SegmentScopeRequest {
@@ -282,6 +290,18 @@ pub async fn read_segment_page(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn read_segment_queue_window(
+    state: State<'_, AppState>,
+    request: SegmentQueueWindowRequest,
+) -> Result<tsumugi_core::SegmentQueueWindow, CommandError> {
+    state.sessions.run("read_segment_queue_window", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.read_segment_queue_window(request.project_id, &request.locale, request.scope_id,
+                request.anchor_unit_id, request.limit).map_err(map_read)
+    }).await
 }
 
 #[tauri::command]
