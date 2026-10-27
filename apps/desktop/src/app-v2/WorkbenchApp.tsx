@@ -273,7 +273,7 @@ function WorkspaceShell() {
   }
   async function openImportedEntry(unitId: string, locale: string) {
     const target = { entryMode: "table" as const, locale, focus: unitId, query: "", searchInput: "", preset: "all", queueScopeId: null,
-      queueAnchor: unitId, queueActive: true, editing: true, focusMode: false, cursor: null, afterOrdinal: 0, scroll: { top: 0, left: 0 }, selection: [] };
+      queueAnchor: unitId, queueActive: true, editing: true, focusMode: false, cursor: null, afterOrdinal: 0, scroll: { top: 0, left: 0 } };
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
       : await runtime.navigation.open({ kind: "entries", ...target });
     if (accepted) hideImportRecovery();

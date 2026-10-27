@@ -1172,6 +1172,14 @@
           "selection": {
             "$ref": "#/definitions/SegmentSelectionFilter"
           },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SegmentStatusFilter"
+              }
+            ],
+            "default": "all"
+          },
           "text": {
             "type": "string"
           }
@@ -1269,6 +1277,46 @@
           "unselected"
         ],
         "type": "string"
+      },
+      "SegmentStatusFilter": {
+        "oneOf": [
+          {
+            "enum": [
+              "all"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "untranslated",
+            "description": "No current selection; a selected empty string does not match.",
+            "type": "string"
+          },
+          {
+            "const": "needs-review",
+            "description": "Selected text without a current approval, including requested changes.",
+            "type": "string"
+          },
+          {
+            "const": "issues",
+            "description": "Current review changes, term conflicts, QA findings or incomplete QA.",
+            "type": "string"
+          },
+          {
+            "const": "affected",
+            "description": "An older selected source basis or recorded resource impact history.",
+            "type": "string"
+          },
+          {
+            "const": "blocking",
+            "description": "At least one blocker from the current delivery eligibility policy.",
+            "type": "string"
+          },
+          {
+            "const": "ai-pending",
+            "description": "A saved, unselected AI candidate whose latest disposition is not rejected.",
+            "type": "string"
+          }
+        ]
       },
       "SourceContextSelection": {
         "additionalProperties": false,
@@ -6012,13 +6060,22 @@
           "selection": {
             "$ref": "#/definitions/SegmentSelectionFilter"
           },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SegmentStatusFilter"
+              }
+            ],
+            "default": "all"
+          },
           "text": {
             "type": "string"
           }
         },
         "required": [
           "text",
-          "selection"
+          "selection",
+          "status"
         ],
         "type": "object"
       },
@@ -6157,6 +6214,13 @@
       "SegmentRow": {
         "additionalProperties": false,
         "properties": {
+          "aiCandidateCount": {
+            "description": "Saved, unselected AI revisions whose latest disposition is not rejected.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
           "applicability": {
             "$ref": "#/definitions/SegmentApplicability"
           },
@@ -6193,6 +6257,7 @@
           "sourceTruncated",
           "translationTruncated",
           "candidateCount",
+          "aiCandidateCount",
           "protection",
           "qa",
           "terms",
@@ -6232,6 +6297,46 @@
           "unselected"
         ],
         "type": "string"
+      },
+      "SegmentStatusFilter": {
+        "oneOf": [
+          {
+            "enum": [
+              "all"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "untranslated",
+            "description": "No current selection; a selected empty string does not match.",
+            "type": "string"
+          },
+          {
+            "const": "needs-review",
+            "description": "Selected text without a current approval, including requested changes.",
+            "type": "string"
+          },
+          {
+            "const": "issues",
+            "description": "Current review changes, term conflicts, QA findings or incomplete QA.",
+            "type": "string"
+          },
+          {
+            "const": "affected",
+            "description": "An older selected source basis or recorded resource impact history.",
+            "type": "string"
+          },
+          {
+            "const": "blocking",
+            "description": "At least one blocker from the current delivery eligibility policy.",
+            "type": "string"
+          },
+          {
+            "const": "ai-pending",
+            "description": "A saved, unselected AI candidate whose latest disposition is not rejected.",
+            "type": "string"
+          }
+        ]
       },
       "SegmentTermRef": {
         "additionalProperties": false,

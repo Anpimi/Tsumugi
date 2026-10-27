@@ -6,7 +6,8 @@
       "locale": "zh-CN",
       "query": {
         "text": "",
-        "selection": "all"
+        "selection": "all",
+        "status": "all"
       },
       "scopeId": null,
       "cursor": null,
@@ -38,7 +39,8 @@
       "scopeId": "40000000-0000-4000-8000-000000000013",
       "query": {
         "text": "",
-        "selection": "all"
+        "selection": "all",
+        "status": "all"
       },
       "queryFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -159,7 +161,8 @@
             ],
             "exceptions": [],
             "truncated": false
-          }
+          },
+          "aiCandidateCount": 1
         }
       ],
       "nextCursor": null,
@@ -191,7 +194,8 @@
       "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
       "query": {
         "text": "",
-        "selection": "all"
+        "selection": "all",
+        "status": "all"
       },
       "queryFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "epoch": "40000000-0000-4000-8000-000000000020",
@@ -311,7 +315,8 @@
             ],
             "exceptions": [],
             "truncated": false
-          }
+          },
+          "aiCandidateCount": 1
         }
       ],
       "total": 1,

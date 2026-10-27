@@ -16,6 +16,8 @@ export type TextReviewField = "source" | "translation";
 export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
 export type SegmentSelectionFilter = "all" | "selected" | "unselected";
+export type SegmentStatusFilter =
+  "all" | "untranslated" | "needs-review" | "issues" | "affected" | "blocking" | "ai-pending";
 export type AiSemanticReviewRule = "meaning" | "style";
 
 export interface Requests {
@@ -270,6 +272,7 @@ export interface SegmentPageRequest {
 }
 export interface SegmentQuery {
   selection: SegmentSelectionFilter;
+  status?: SegmentStatusFilter & string;
   text: string;
 }
 export interface SegmentScopeRequest {

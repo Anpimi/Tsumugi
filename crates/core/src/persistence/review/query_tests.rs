@@ -771,6 +771,7 @@ fn segment_query(text: &str, selection: SegmentSelectionFilter) -> SegmentQuery 
     SegmentQuery {
         text: text.into(),
         selection,
+        status: SegmentStatusFilter::All,
     }
 }
 
@@ -1242,4 +1243,13 @@ fn segment_row_facts_keep_resource_history_review_qa_and_protection_independent(
     assert!(!row.applicability.resource_review_required, "the original review owner resolves the current follow-up");
     assert_eq!(row.applicability.captured_basis_current, Some(false), "captured basis is independent of human acceptance");
     assert_eq!(row.qualification.blocker_count, 0);
+    let affected = store.read_segment_page(project, "zh-CN", &SegmentQuery {
+        status: SegmentStatusFilter::Affected, ..query.clone()
+    }, None, None, 100).unwrap();
+    assert_eq!(affected.total, 1, "rechecked impact history remains discoverable");
+    let blocking = store.read_segment_page(project, "zh-CN", &SegmentQuery {
+        status: SegmentStatusFilter::Blocking, ..query
+    }, None, None, 100).unwrap();
+    assert!(!blocking.rows.iter().any(|row| row.content.unit_id == units[0]),
+        "impact history does not override the current eligibility owner");
 }

@@ -102,6 +102,8 @@ The desktop app organizes work into dedicated views accessible from the sidebar.
 - **Tasks**: Monitor persisted execution progress, cancel running work, reconcile interrupted operations, and adopt completed outputs.
 - **Build & Export**: Build verified language files from approved translations and export them to local folders.
 
+In the opt-in desktop workspace, the entries view can filter by translation, review, issue, impact, delivery-blocking, and AI candidate status. Select the current page or capture all matching entries as a fixed set; changing the filter does not expand that selection. Use the arrow keys or J/K to move through the editing queue and Enter to edit the focused entry. The full-page display shows the current loaded page.
+
 Browser-style shortcuts (refresh, back/forward navigation, print, view source, save page) are disabled in the workbench so they do not interfere with editing. `Ctrl+S` (`Cmd+S` on macOS) saves the active editor draft, and standard text selection/copy (`Ctrl+C` / `Cmd+C`) and input context menus work as expected.
 
 ## Architecture

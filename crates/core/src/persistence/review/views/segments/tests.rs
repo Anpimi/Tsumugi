@@ -1,5 +1,5 @@
 use super::*;
-use crate::persistence::review::tests::{adopt_source, fixture, translate};
+use crate::persistence::review::tests::{adopt_source, approve, check, fixture, translate};
 use rusqlite::trace::{TraceEvent, TraceEventCodes};
 use std::cell::RefCell;
 
@@ -7,7 +7,108 @@ fn query(text: &str, selection: SegmentSelectionFilter) -> SegmentQuery {
     SegmentQuery {
         text: text.into(),
         selection,
+        status: SegmentStatusFilter::All,
     }
+}
+
+fn status_query(status: SegmentStatusFilter) -> SegmentQuery {
+    SegmentQuery { status, ..query("same", SegmentSelectionFilter::All) }
+}
+
+#[test]
+fn segment_status_presets_capture_complete_batched_membership_and_keep_independent_facts() {
+    let (_directory, mut store, project, _) = fixture();
+    let source = (0..205).map(|index| (format!("entry-{index:03}"), "same"))
+        .collect::<BTreeMap<_, _>>();
+    adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
+    let all = store.read_segment_page(project, "zh-CN", &status_query(SegmentStatusFilter::All), None, None, 1).unwrap();
+    let captured = store.capture_segment_scope(project, "zh-CN", all.scope_id,
+        &all.query_fingerprint, &all.read_version, &[]).unwrap();
+    let units = captured.capture.units.iter().map(|unit| unit.unit_id).collect::<Vec<_>>();
+    translate(&mut store, project, units[0], "zh-CN", "");
+    translate(&mut store, project, units[204], "zh-CN", "same");
+    approve(&mut store, project, units[0], "zh-CN");
+    check(&mut store, project, units[204], "zh-CN");
+
+    let status = status_query(SegmentStatusFilter::Untranslated);
+    STATEMENTS.with(|statements| statements.borrow_mut().clear());
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(traced));
+    let first = store.read_segment_page(project, "zh-CN", &status, None, None, 1).unwrap();
+    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
+    let narrow = STATEMENTS.with(|statements| std::mem::take(&mut *statements.borrow_mut()));
+    STATEMENTS.with(|statements| statements.borrow_mut().clear());
+    store.connection().unwrap().trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(traced));
+    store.read_segment_page(project, "zh-CN", &status, None, None, 100).unwrap();
+    store.connection().unwrap().trace_v2(TraceEventCodes::empty(), None);
+    let wide = STATEMENTS.with(|statements| std::mem::take(&mut *statements.borrow_mut()));
+    assert_eq!(narrow.len(), wide.len(), "visible row count cannot add SQL statements");
+    assert!(wide.len() <= 140, "three filter batches plus one row batch must remain bounded: {}", wide.len());
+    assert_eq!(first.total, 203, "a selected empty string is translated");
+    assert_eq!(first.query.status, SegmentStatusFilter::Untranslated);
+    let frozen = store.capture_segment_scope(project, "zh-CN", first.scope_id,
+        &first.query_fingerprint, &first.read_version, &[units[100]]).unwrap();
+    assert_eq!(frozen.capture.units.len(), 202);
+    assert_eq!(frozen.capture.units.last().unwrap().unit_id, units[203]);
+    let mut observed = vec![first.rows[0].content.unit_id];
+    let mut cursor = first.next_cursor;
+    while let Some(next) = cursor {
+        let page = store.read_segment_page(project, "zh-CN", &status, Some(first.scope_id), Some(next), 100).unwrap();
+        observed.extend(page.rows.iter().map(|row| row.content.unit_id));
+        cursor = page.next_cursor;
+    }
+    assert_eq!(observed, units[1..204]);
+    let changed = status_query(SegmentStatusFilter::All);
+    assert!(store.read_segment_page(project, "zh-CN", &changed, Some(first.scope_id), None, 1).is_err());
+    let fresh_all = store.read_segment_page(project, "zh-CN", &changed, None, None, 1).unwrap();
+    assert_ne!(first.query_fingerprint, fresh_all.query_fingerprint);
+    assert!(store.capture_segment_scope(project, "zh-CN", first.scope_id,
+        &fresh_all.query_fingerprint, &first.read_version, &[]).is_err());
+    for (filter, expected) in [
+        (SegmentStatusFilter::NeedsReview, vec![units[204]]),
+        (SegmentStatusFilter::Issues, vec![]),
+        (SegmentStatusFilter::Affected, vec![]),
+        (SegmentStatusFilter::AiPending, vec![]),
+    ] {
+        let page = store.read_segment_page(project, "zh-CN", &status_query(filter), None, None, 100).unwrap();
+        assert_eq!(page.rows.iter().map(|row| row.content.unit_id).collect::<Vec<_>>(), expected, "{filter:?}");
+    }
+    // Approval without QA remains blocked; QA without approval remains blocked.
+    assert_eq!(store.read_segment_page(project, "zh-CN", &status_query(SegmentStatusFilter::Blocking), None, None, 1).unwrap().total, 205);
+    approve(&mut store, project, units[204], "zh-CN");
+    assert_eq!(store.read_segment_page(project, "zh-CN", &status_query(SegmentStatusFilter::Blocking), None, None, 1).unwrap().total, 204);
+    let target = store.review_target(project, units[204], "zh-CN").unwrap();
+    store.write_review(&ReviewWrite { project_id: project, action_id: ExecutionId::new(),
+        unit_id: units[204], locale: "zh-CN".into(), expected_basis: target.basis,
+        expected_decision_id: target.current_decision.map(|decision| decision.decision_id),
+        actor: "Synthetic reviewer".into(), kind: ReviewDecisionKind::RequestChanges,
+        reason: "Wording needs another review".into(), }).unwrap();
+    for filter in [SegmentStatusFilter::NeedsReview, SegmentStatusFilter::Issues] {
+        let page = store.read_segment_page(project, "zh-CN", &status_query(filter), None, None, 1).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.rows[0].content.unit_id, units[204]);
+    }
+    let empty_check = check(&mut store, project, units[0], "zh-CN");
+    assert!(empty_check.rules.iter().any(|rule| !rule.findings.is_empty()));
+    let issues = store.read_segment_page(project, "zh-CN", &status_query(SegmentStatusFilter::Issues), None, None, 100).unwrap();
+    assert_eq!(issues.rows.iter().map(|row| row.content.unit_id).collect::<Vec<_>>(), vec![units[0], units[204]],
+        "an approval does not hide a current QA finding");
+}
+
+#[test]
+fn segment_status_queue_keeps_original_membership_after_the_status_stops_matching() {
+    let (_directory, mut store, project, units) = fixture();
+    let query = SegmentQuery { text: String::new(), status: SegmentStatusFilter::Untranslated,
+        selection: SegmentSelectionFilter::All };
+    let page = store.read_segment_page(project, "zh-CN", &query, None, None, 1).unwrap();
+    translate(&mut store, project, units[0], "zh-CN", "");
+    let queue = store.read_segment_queue_window(project, "zh-CN", page.scope_id, None, 100).unwrap();
+    assert_eq!(queue.query.status, SegmentStatusFilter::Untranslated);
+    assert_eq!(queue.total, 2);
+    assert_eq!(queue.rows[0].content.unit_id, units[0]);
+    assert!(queue.rows[0].content.selection_id.is_some());
+    assert!(store.read_segment_page(project, "zh-CN", &query, Some(page.scope_id), None, 1).is_err());
+    assert!(store.capture_segment_scope(project, "zh-CN", page.scope_id,
+        &page.query_fingerprint, &page.read_version, &[]).is_err());
 }
 
 thread_local! {

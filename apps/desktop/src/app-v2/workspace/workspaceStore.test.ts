@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createWorkspaceStore } from "./workspaceStore";
 import { workspaceViewHref } from "./workspaceRouter";
+const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
   it("keeps the entry presentation mode local to each tab and out of the URL", () => {
@@ -15,22 +16,22 @@ describe("workspace view state", () => {
   it("keeps submitted search, unfinished input and position separate for each tab and session", () => {
     const first = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
     first.getState().patch("one", { query: "harvest" });
-    first.getState().patch("one", { query: "harvest", searchInput: "harvest festival", selection: ["unit-a"], afterOrdinal: 80, scroll: { top: 640, left: 12 }, dock: "details", focus: "unit-a" });
+    first.getState().patch("one", { query: "harvest", searchInput: "harvest festival", selection: selected("unit-a"), afterOrdinal: 80, scroll: { top: 640, left: 12 }, dock: "details", focus: "unit-a" });
     first.getState().open({ id: "two", kind: "entries", locale: "ja" });
-    first.getState().patch("two", { query: "letter", searchInput: "letter to a friend", selection: ["unit-b"] });
+    first.getState().patch("two", { query: "letter", searchInput: "letter to a friend", selection: selected("unit-b", "ja") });
     first.getState().activate("one");
-    expect(first.getState().views.one).toMatchObject({ locale: "zh-CN", query: "harvest", searchInput: "harvest festival", selection: ["unit-a"], afterOrdinal: 80, scroll: { top: 640, left: 12 }, dock: "details", focus: "unit-a" });
-    expect(first.getState().views.two).toMatchObject({ locale: "ja", query: "letter", searchInput: "letter to a friend", selection: ["unit-b"], afterOrdinal: 0 });
+    expect(first.getState().views.one).toMatchObject({ locale: "zh-CN", query: "harvest", searchInput: "harvest festival", selection: selected("unit-a"), afterOrdinal: 80, scroll: { top: 640, left: 12 }, dock: "details", focus: "unit-a" });
+    expect(first.getState().views.two).toMatchObject({ locale: "ja", query: "letter", searchInput: "letter to a friend", selection: selected("unit-b", "ja"), afterOrdinal: 0 });
     const second = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
-    expect(second.getState().views.one).toMatchObject({ query: "", searchInput: "", selection: [], dock: "agent" });
+    expect(second.getState().views.one).toMatchObject({ query: "", searchInput: "", selection: null, dock: "agent" });
   });
 
   it("selects a neighbour after closing, keeps pinned tabs and copies caller arrays", () => {
-    const selection = ["unit-a"];
+    const selection = selected("unit-a");
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: ["one", "two", "three"].map(id => ({ id, kind: "entries" as const, locale: "zh-CN" })) });
     store.getState().patch("two", { selection });
-    selection.push("unit-b");
-    expect(store.getState().views.two.selection).toEqual(["unit-a"]);
+    selection.unitIds.push("unit-b");
+    expect(store.getState().views.two.selection).toEqual(selected("unit-a"));
     store.getState().activate("two");
     expect(store.getState().close("two")).toBe(true);
     expect(store.getState().activeViewId).toBe("three");

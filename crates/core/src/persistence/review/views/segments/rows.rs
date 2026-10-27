@@ -17,6 +17,8 @@ pub struct SegmentRow {
     pub source_truncated: bool,
     pub translation_truncated: bool,
     pub candidate_count: u32,
+    /// Saved, unselected AI revisions whose latest disposition is not rejected.
+    pub ai_candidate_count: u32,
     pub protection: WorkProtection,
     pub qa: SegmentQaSummary,
     pub terms: SegmentTermSummary,
@@ -198,6 +200,9 @@ pub(super) fn project(
             };
             let source_basis_current =
                 selected_source_revision_id.map(|revision| revision == target.source_revision_id);
+            let candidate_summary = candidates
+                .remove(&unit)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "segment-candidates"))?;
             let applicability = SegmentApplicability {
                 selected_source_revision_id,
                 source_basis_current,
@@ -223,9 +228,8 @@ pub(super) fn project(
                 }),
             };
             Ok(SegmentRow {
-                candidate_count: candidates
-                    .remove(&unit)
-                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "segment-candidates"))?,
+                candidate_count: candidate_summary.count,
+                ai_candidate_count: candidate_summary.ai_count,
                 protection: protections
                     .remove(&unit)
                     .ok_or_else(|| failure(ErrorCode::CorruptLedger, "segment-protection"))?,

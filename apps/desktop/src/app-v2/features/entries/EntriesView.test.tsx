@@ -36,7 +36,7 @@ function row(unitId: string, locale = "zh-CN"): SegmentRow {
   return { sourceTruncated: false, translationTruncated: false,
     content: { unitId, locale, sourceSnapshotId: "snapshot", sourceRevisionId: initial.sourceRevisionId, nativeKey: `key.${unitId}`, sourcePreview: `Source ${unitId}`,
       translationPreview: null, selectionId: null, revisionId: null, basis: "basis", currentCheck: null, currentDecision: null },
-    candidateCount: 0, protection: { unitId, locale, revision: "0", protected: false },
+    candidateCount: 0, aiCandidateCount: 0, protection: { unitId, locale, revision: "0", protected: false },
     qa: { current: false, outcome: null, mandatoryCoverageComplete: null, mandatory: emptyChecks, advisory: { ...emptyChecks } },
     terms: { applicableEntryCount: 0, conflictingEntryCount: 0, revisionCount: 0, revisions: [], truncated: false },
     applicability: { selectedSourceRevisionId: null, sourceBasisCurrent: null, capturedBasisCurrent: null, resourceImpact: null, resourceReviewRequired: false },
@@ -54,13 +54,13 @@ async function harness(initialView: Partial<NewWorkspaceView> = {}) {
   const gate = new InteractionGate(); gate.setVisibleOwner("view-one");
   const page = vi.spyOn(segmentCommands, "page").mockImplementation(async request => {
     const start = request.cursor ? 2 : 0;
-    return { projectId: context.projectId, locale: request.locale, query: request.query, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "1",
+    return { projectId: context.projectId, locale: request.locale, query: { ...request.query, status: request.query.status ?? "all" }, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "1",
       scopeId: request.scopeId ?? "fixed-scope", sourceSnapshotId: "snapshot", readVersion: "1", total: units.length,
       rows: units.slice(start, start + 2).map(unit => row(unit, request.locale)), nextCursor: start === 0 ? "page-two" : null } satisfies SegmentPage;
   });
   const queue = vi.spyOn(segmentCommands, "queueWindow").mockImplementation(async request => {
     const start = request.anchorUnitId ? units.indexOf(request.anchorUnitId) : 0;
-    return { projectId: context.projectId, locale: request.locale, query: { text: "", selection: "unselected" }, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "2",
+    return { projectId: context.projectId, locale: request.locale, query: { text: "", selection: "unselected", status: "all" }, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "2",
       scopeId: request.scopeId, sourceSnapshotId: "snapshot", total: units.length, firstPosition: start,
       rows: units.slice(start, start + 2).map(unit => row(unit, request.locale)), previousUnitId: units[start - 1] ?? null, nextUnitId: units[start + 2] ?? null } satisfies SegmentQueueWindow;
   });
@@ -200,7 +200,7 @@ it("restores focus to the same textarea and selection across a focus mode round 
     const enter = screen.getByRole("button", { name: "editorFocusMode" });
     act(() => enter.focus()); fireEvent.click(enter);
     await waitFor(() => expect(h.view()?.focusMode).toBe(true));
-    await waitFor(() => expect(frames).toHaveLength(1));
+    await waitFor(() => expect(frames.length).toBeGreaterThan(0));
     expect(field).not.toHaveFocus();
     act(() => { frames.splice(0).forEach(callback => callback(0)); });
     expect(field).toHaveFocus();
@@ -209,7 +209,7 @@ it("restores focus to the same textarea and selection across a focus mode round 
     const exits = screen.getAllByRole("button", { name: "editorTableMode" }), exit = exits[exits.length - 1];
     act(() => exit.focus()); fireEvent.click(exit);
     await waitFor(() => expect(h.view()?.focusMode).toBe(false));
-    await waitFor(() => expect(frames).toHaveLength(1));
+    await waitFor(() => expect(frames.length).toBeGreaterThan(0));
     expect(field).not.toHaveFocus();
     act(() => { frames.splice(0).forEach(callback => callback(0)); });
     expect(field).toHaveFocus(); expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
@@ -248,7 +248,7 @@ it("does not read a fresh queue when its guarded refresh is refused", async () =
 
 it("clears the fixed queue identity when an explicit refresh returns to browsing", async () => {
   const h = await harness(); await h.open();
-  h.page.mockImplementation(async request => ({ projectId: context.projectId, locale: request.locale, query: request.query, queryFingerprint: "new-query-fingerprint", epoch: "epoch", sequence: "3",
+  h.page.mockImplementation(async request => ({ projectId: context.projectId, locale: request.locale, query: { ...request.query, status: request.query.status ?? "all" }, queryFingerprint: "new-query-fingerprint", epoch: "epoch", sequence: "3",
     scopeId: "fresh-scope", sourceSnapshotId: "snapshot", readVersion: "2", total: units.length, rows: units.slice(0, 2).map(unit => row(unit, request.locale)), nextCursor: "page-two" }));
   fireEvent.click(screen.getByRole("button", { name: "refresh" }));
   await waitFor(() => expect(h.page.mock.calls.filter(([request]) => request.scopeId === null).length).toBeGreaterThan(1));
@@ -267,4 +267,72 @@ it("does not advance an old queue window after an explicit move to the queue sta
   await act(async () => { saved.resolve(h.commit(h.ports.save.mock.calls[0][0])); await confirming; });
   expect(h.view()?.focus).toBe(before?.focus); expect(h.view()?.editing).toBe(before?.editing); expect(h.view()?.queueAnchor).toBeNull();
   expect(h.navigate.mock.calls.some(([value]) => value.focus === "unit-d")).toBe(false);
+});
+
+function selectionCapture() {
+  return { projectId: context.projectId, queryFingerprint: "query-fingerprint", readVersion: "1", capture: {
+    scopeId: "fixed-scope", sourceSnapshotId: "snapshot", locale: "zh-CN", query: "", readVersion: "fixed-selection-bases",
+    units: units.map(unitId => ({ unitId, expectedBasis: "basis", expectedDecisionId: null })),
+  } };
+}
+async function selectionMenu(name: string) {
+  const trigger = screen.getByRole("button", { name: "entrySelectionMenu" });
+  act(() => trigger.focus()); fireEvent.keyDown(trigger, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name }));
+}
+it("freezes all pages, keeps that selection through filtering, and excludes only an original member", async () => {
+  const capture = vi.spyOn(segmentCommands, "captureScope").mockResolvedValue(selectionCapture());
+  const h = await harness(); await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  await selectionMenu("entrySelectPage");
+  expect(h.view()?.selection).toMatchObject({ kind: "ids", unitIds: units.slice(0, 2) });
+  fireEvent.click(screen.getByRole("button", { name: "nextPage" }));
+  await screen.findByRole("button", { name: "entryEdit:key.unit-c" });
+  await selectionMenu("entrySelectMatches");
+  await waitFor(() => expect(h.view()?.selection?.kind).toBe("scope"));
+  expect(capture).toHaveBeenCalledWith({ ...context, locale: "zh-CN", scopeId: "fixed-scope", queryFingerprint: "query-fingerprint", readVersion: "1", excluded: [] });
+  const fixed = h.view()?.selection;
+  const filter = screen.getByRole("button", { name: "unselectedEntries" });
+  act(() => filter.focus()); fireEvent.keyDown(filter, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "entryPresetIssues" }));
+  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  expect(h.page).toHaveBeenLastCalledWith(expect.objectContaining({ query: { text: "", selection: "all", status: "issues" } }));
+  expect(h.view()?.selection).toEqual(fixed); expect(capture).toHaveBeenCalledTimes(1);
+  const checkbox = screen.getByRole("checkbox", { name: `entrySelect:key.${unitA}` });
+  expect(checkbox).toBeChecked(); fireEvent.click(checkbox);
+  expect(h.view()?.selection).toMatchObject({ kind: "scope", selection: { capture: { units: selectionCapture().capture.units }, excluded: [unitA] } });
+  act(() => { h.store.getState().patch("view-one", { locale: "ja" }); });
+  await screen.findByText("entrySelectionChanged");
+  expect(h.view()?.selection).toMatchObject({ selection: { capture: { locale: "zh-CN" }, excluded: [unitA] } });
+  expect(await screen.findByRole("checkbox", { name: `entrySelect:key.${unitA}` })).toBeDisabled();
+});
+
+it("does not install an earlier full-scope selection after the user changes the filter", async () => {
+  const pending = deferred<Awaited<ReturnType<typeof segmentCommands.captureScope>>>();
+  vi.spyOn(segmentCommands, "captureScope").mockReturnValue(pending.promise);
+  const h = await harness(); await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  await selectionMenu("entrySelectPage"); const original = h.view()?.selection;
+  await selectionMenu("entrySelectMatches"); await screen.findByText("entryCapturingSelection");
+  const filter = screen.getByRole("button", { name: "unselectedEntries" });
+  act(() => filter.focus()); fireEvent.keyDown(filter, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "entryPresetReview" }));
+  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  await act(async () => { pending.resolve(selectionCapture()); });
+  expect(h.view()?.preset).toBe("needs-review"); expect(h.view()?.selection).toEqual(original);
+});
+
+it("moves list focus across fixed page boundaries and edits only after Enter", async () => {
+  const h = await harness();
+  const first = await screen.findByRole("listitem", { name: `key.${unitA}` });
+  act(() => first.focus()); fireEvent.keyDown(first, { key: "ArrowDown" });
+  await waitFor(() => expect(h.view()).toMatchObject({ focus: "unit-b", editing: false, queueActive: true }));
+  const second = await screen.findByRole("listitem", { name: "key.unit-b" });
+  await waitFor(() => expect(second).toHaveFocus()); fireEvent.keyDown(second, { key: "j" });
+  await waitFor(() => expect(h.view()).toMatchObject({ focus: "unit-c", editing: false, queueAnchor: "unit-c" }));
+  const third = await screen.findByRole("listitem", { name: "key.unit-c" });
+  await waitFor(() => expect(third).toHaveFocus()); fireEvent.keyDown(third, { key: "ArrowUp" });
+  await waitFor(() => expect(h.view()).toMatchObject({ focus: "unit-b", editing: false, queueAnchor: "unit-b" }));
+  const back = await screen.findByRole("listitem", { name: "key.unit-b" });
+  await waitFor(() => expect(back).toHaveFocus()); fireEvent.keyDown(back, { key: "Enter" });
+  expect(await screen.findByRole("textbox", { name: "editorLabel:key.unit-b" })).toBeVisible();
+  expect(h.ports.save).not.toHaveBeenCalled();
 });

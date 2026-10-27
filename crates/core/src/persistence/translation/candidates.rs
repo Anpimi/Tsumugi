@@ -134,12 +134,18 @@ fn is_rejected(value: &CandidateDecision) -> bool {
 /// Unselected, non-rejected revisions remain candidates even after a source
 /// change or an earlier selection. Applicability is a separate observation.
 /// Callers keep these reads in the same snapshot as their current row facts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(in crate::persistence) struct CandidateSummary {
+    pub count: u32,
+    pub ai_count: u32,
+}
+
 pub(in crate::persistence) fn summaries(
     c: &Connection,
     project: ExecutionId,
     units: &[ExecutionId],
     locale: &str,
-) -> Result<std::collections::BTreeMap<ExecutionId, u32>, ExecutionError> {
+) -> Result<std::collections::BTreeMap<ExecutionId, CandidateSummary>, ExecutionError> {
     check_target(c, project, locale)?;
     if units.iter().collect::<BTreeSet<_>>().len() != units.len() {
         return Err(error(ErrorCode::InvalidInput, "candidate-summary-units"));
@@ -149,7 +155,8 @@ pub(in crate::persistence) fn summaries(
     let project_key = project.to_string();
     let mut statement = c.prepare(
         "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2))
-         SELECT wanted.unit_id,u.unit_id,COUNT(r.revision_id)
+         SELECT wanted.unit_id,u.unit_id,COUNT(r.revision_id),
+                COALESCE(SUM(CASE WHEN r.origin_kind='ai' THEN 1 ELSE 0 END),0)
          FROM wanted
          LEFT JOIN source_units u ON u.unit_id=wanted.unit_id AND u.project_id=?1
          LEFT JOIN translation_selections s ON s.unit_id=u.unit_id AND s.locale=?3
@@ -160,16 +167,19 @@ pub(in crate::persistence) fn summaries(
          GROUP BY wanted.unit_id,u.unit_id",
     ).map_err(super::super::ledger::sql_error)?;
     let rows = statement.query_map(params![project_key, wanted, locale], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?))
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?))
     }).map_err(super::super::ledger::sql_error)?;
     let mut counts = std::collections::BTreeMap::new();
     for row in rows {
-        let (unit, owner, count) = row.map_err(super::super::ledger::sql_error)?;
+        let (unit, owner, count, ai_count) = row.map_err(super::super::ledger::sql_error)?;
         if owner.as_ref() != Some(&unit) {
             return Err(error(ErrorCode::Unauthorized, "candidate-summary-scope"));
         }
-        counts.insert(id(unit)?, u32::try_from(count)
-            .map_err(|_| error(ErrorCode::LimitExceeded, "candidate-summary-count"))?);
+        let checked_count = |count| u32::try_from(count)
+            .map_err(|_| error(ErrorCode::LimitExceeded, "candidate-summary-count"));
+        counts.insert(id(unit)?, CandidateSummary {
+            count: checked_count(count)?, ai_count: checked_count(ai_count)?,
+        });
     }
 
     // Only the latest original decision receipts are needed. Do not fetch
@@ -205,7 +215,9 @@ pub(in crate::persistence) fn summaries(
         if is_rejected(&value) {
             let count = counts.get_mut(&unit)
                 .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-summary-scope"))?;
-            *count = count.checked_sub(1)
+            count.count = count.count.checked_sub(1)
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-summary-count"))?;
+            count.ai_count = count.ai_count.checked_sub(1)
                 .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-summary-count"))?;
         }
     }

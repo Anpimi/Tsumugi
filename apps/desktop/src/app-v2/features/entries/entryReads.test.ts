@@ -4,9 +4,9 @@ import { SessionReads } from "../../../sessionReads";
 import { captureEntries, entryPageKey, readEntryPage, readEntryQueueWindow, retainedEntryCapture } from "./entryReads";
 
 const context = { projectId: "project", sessionToken: "session" };
-const query: SegmentQuery = { text: "hello", selection: "all" };
-const page: SegmentPage = { projectId: "project", locale: "zh-CN", query, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "1", scopeId: "capture", sourceSnapshotId: "snapshot", readVersion: "1", rows: [], nextCursor: null, total: 0 };
-const window: SegmentQueueWindow = { projectId: "project", locale: "zh-CN", query, queryFingerprint: page.queryFingerprint,
+const query = { text: "hello", selection: "all", status: "all" } as const satisfies SegmentQuery;
+const page: SegmentPage = { projectId: "project", locale: "zh-CN", query: { ...query, status: "all" }, queryFingerprint: "query-fingerprint", epoch: "epoch", sequence: "1", scopeId: "capture", sourceSnapshotId: "snapshot", readVersion: "1", rows: [], nextCursor: null, total: 0 };
+const window: SegmentQueueWindow = { projectId: "project", locale: "zh-CN", query: { ...query, status: "all" }, queryFingerprint: page.queryFingerprint,
   epoch: "epoch", sequence: "2", scopeId: "capture", sourceSnapshotId: "snapshot", rows: [], total: 0,
   firstPosition: 0, previousUnitId: null, nextUnitId: null };
 
@@ -73,6 +73,7 @@ describe("workbench entry reads", () => {
   it.each([
     { sourceSnapshotId: "different-source" }, { queryFingerprint: "different-query" },
     { query: { ...query, text: "different search" } }, { query: { ...query, selection: "selected" as const } },
+    { query: { ...query, status: "issues" as const } },
   ])("rejects a queue window whose captured scope changed: %j", async changed => {
     const reads = new SessionReads(context);
     vi.spyOn(segmentCommands, "page").mockResolvedValue(page);

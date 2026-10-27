@@ -1,6 +1,7 @@
 import type { SessionReads } from "../../../sessionReads";
 import { reviewCommands } from "../../../reviewCommands";
-import { segmentCommands, type SegmentPage, type SegmentQuery, type SegmentSelectionFilter } from "../../../segmentCommands";
+import { segmentCommands, type SegmentPage, type SegmentQuery } from "../../../segmentCommands";
+import { fixedContentSelection } from "../../../contentSelection";
 
 export type EntryCapture = { scopeId: string; snapshotId: string; queryFingerprint: string; readVersion: string };
 export type RetainedEntryCapture = { locale: string; query: SegmentQuery; scope: EntryCapture };
@@ -9,8 +10,14 @@ const captureRecordKey = (scopeId: string) => ["workbench-entry-scope", scopeId]
 export function retainedEntryCapture(reads: SessionReads, scopeId: string): RetainedEntryCapture | undefined {
   return reads.client.getQueryData<RetainedEntryCapture>(reads.key(captureRecordKey(scopeId)));
 }
-export function entrySelectionFilter(preset: string): SegmentSelectionFilter | null {
-  return preset === "all" || preset === "selected" || preset === "unselected" ? preset : null;
+export const entryPresets = ["all", "untranslated", "needs-review", "issues", "affected", "blocking", "ai-pending", "selected", "unselected"] as const;
+export function entryQuery(preset: string, text: string): SegmentQuery | null {
+  if (preset === "selected" || preset === "unselected") return { text, selection: preset, status: "all" };
+  const status = entryPresets.find(value => value === preset);
+  return status && status !== "selected" && status !== "unselected" ? { text, selection: "all", status } : null;
+}
+export function sameEntryQuery(left: SegmentQuery, right: SegmentQuery): boolean {
+  return left.text === right.text && left.selection === right.selection && (left.status ?? "all") === (right.status ?? "all");
 }
 export const entryPageKey = (locale: string, query: SegmentQuery, capture: EntryCapture, cursor: string | null) =>
   ["workbench-entries", locale, query, capture.scopeId, capture.readVersion, cursor] as const;
@@ -45,7 +52,7 @@ export async function captureEntries(reads: SessionReads, locale: string, query:
 export async function readEntryQueueWindow(reads: SessionReads, locale: string, query: SegmentQuery, capture: EntryCapture, anchorUnitId: string | null) {
   const window = await segmentCommands.queueWindow({ ...reads.context, locale, scopeId: capture.scopeId, anchorUnitId, limit: 50 });
   if (reads.retired || window.sourceSnapshotId !== capture.snapshotId || window.queryFingerprint !== capture.queryFingerprint
-    || window.query.text !== query.text || window.query.selection !== query.selection) throw new Error("Entry window does not match the fixed queue");
+    || !sameEntryQuery(window.query, query)) throw new Error("Entry window does not match the fixed queue");
   return window;
 }
 
@@ -53,6 +60,14 @@ export async function readEntryPage(reads: SessionReads, locale: string, query: 
   const page = await segmentCommands.page({ ...reads.context, locale, query, scopeId: capture.scopeId, cursor, limit: 50 });
   if (reads.retired || page.sourceSnapshotId !== capture.snapshotId || page.queryFingerprint !== capture.queryFingerprint || page.readVersion !== capture.readVersion) throw new Error("Entry page does not match the captured read basis");
   return page;
+}
+
+/** An explicit user selection freezes the whole scope, including unloaded pages. */
+export async function captureEntrySelection(reads: SessionReads, locale: string, query: SegmentQuery, capture: EntryCapture) {
+  const result = await segmentCommands.captureScope({ ...reads.context, locale, scopeId: capture.scopeId,
+    queryFingerprint: capture.queryFingerprint, readVersion: capture.readVersion, excluded: [] });
+  if (reads.retired || result.capture.sourceSnapshotId !== capture.snapshotId || result.capture.locale !== locale) throw new Error("Entry selection does not match its captured source");
+  return { kind: "scope" as const, query, selection: fixedContentSelection({ ...reads.context, capture: result.capture, excluded: [] }) };
 }
 
 export async function readEntryDetails(reads: SessionReads, unitId: string, locale: string) {

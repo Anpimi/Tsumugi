@@ -39,12 +39,12 @@ vi.mock("./features/import/TranslationImportPanel", () => ({ default: function I
 const project: ProjectView = { locator: "/synthetic/project", sessionToken: "session", reconciliationState: "settled", metadata: { projectId: "project", metadataRevision: "1", displayName: "Synthetic project", sourceLocale: "en", targetLocales: ["zh-CN"] } };
 const emptyChecks = { passed: 0, findings: 0, missing: 0, unavailable: 0, failed: 0, cancelled: 0, unknown: 0, notApplicable: 0, findingCount: 0 };
 const page: SegmentPage = {
-  projectId: "project", locale: "zh-CN", query: { text: "", selection: "all" }, queryFingerprint: "fingerprint", epoch: "epoch", sequence: "1",
+  projectId: "project", locale: "zh-CN", query: { text: "", selection: "all", status: "all" }, queryFingerprint: "fingerprint", epoch: "epoch", sequence: "1",
   scopeId: "scope", sourceSnapshotId: "snapshot", readVersion: "1", total: 1, nextCursor: null,
   rows: [{
     sourceTruncated: false, translationTruncated: false,
     content: { unitId: "unit", locale: "zh-CN", sourceSnapshotId: "snapshot", sourceRevisionId: "source", nativeKey: "dialogue.hello", sourcePreview: "Actual source from the read port", translationPreview: "从读取接口返回的译文", selectionId: "selection", revisionId: "revision", basis: "basis", currentCheck: null, currentDecision: null },
-    candidateCount: 0, protection: { unitId: "unit", locale: "zh-CN", revision: "0", protected: false },
+    candidateCount: 0, aiCandidateCount: 0, protection: { unitId: "unit", locale: "zh-CN", revision: "0", protected: false },
     qa: { current: false, outcome: null, mandatoryCoverageComplete: null, mandatory: emptyChecks, advisory: { ...emptyChecks } },
     terms: { applicableEntryCount: 0, conflictingEntryCount: 0, revisionCount: 0, revisions: [], truncated: false },
     applicability: { selectedSourceRevisionId: "source", sourceBasisCurrent: true, capturedBasisCurrent: true, resourceImpact: null, resourceReviewRequired: false },
@@ -134,10 +134,10 @@ describe("import workspace assembly", () => {
     const opened = { ...project, metadata: { ...project.metadata, projectId: translationFixture.save.projectId } };
     const row = { ...page.rows[0], protection: { ...page.rows[0].protection, unitId },
       content: { ...page.rows[0].content, unitId, sourceRevisionId, nativeKey: "imported.target", selectionId: null, revisionId: null, translationPreview: null } };
-    vi.mocked(segmentCommands.page).mockImplementation(async request => ({ ...page, projectId: opened.metadata.projectId, query: request.query,
+    vi.mocked(segmentCommands.page).mockImplementation(async request => ({ ...page, projectId: opened.metadata.projectId, query: { ...request.query, status: request.query.status ?? "all" },
       scopeId: request.query.text ? "old-search-scope" : "all-entry-scope", rows: [row] }));
     const queue = vi.spyOn(segmentCommands, "queueWindow").mockImplementation(async request => ({ projectId: opened.metadata.projectId, locale: request.locale,
-      scopeId: "all-entry-scope", sourceSnapshotId: "snapshot", query: { text: "", selection: "all" }, queryFingerprint: page.queryFingerprint,
+      scopeId: "all-entry-scope", sourceSnapshotId: "snapshot", query: { text: "", selection: "all", status: "all" }, queryFingerprint: page.queryFingerprint,
       epoch: page.epoch, sequence: "1", total: 1, firstPosition: 0, previousUnitId: null, nextUnitId: null, rows: [row] }));
     vi.spyOn(draftCommands, "read").mockImplementation(async ({ key }) => ({ head: { key, revision: "0", writerId: null, value: null },
       current: { kind: "current", basis: { sourceRevisionId, selectionId: null, revisionId: null, text: null }, nativeKey: "imported.target", sourceText: "Imported source" } }));
@@ -231,7 +231,7 @@ describe("real-port workspace assembly", () => {
 
   it("uses the original page cursor and starts a fresh scope when the selection filter changes", async () => {
     const read = vi.mocked(segmentCommands.page).mockImplementation(async request => {
-      if (request.query.selection === "unselected") return { ...page, query: request.query, scopeId: "unselected-scope", total: 0, rows: [] };
+      if (request.query.selection === "unselected") return { ...page, query: { ...request.query, status: request.query.status ?? "all" }, scopeId: "unselected-scope", total: 0, rows: [] };
       return request.cursor ? { ...page, total: 2, rows: [{ ...page.rows[0], protection: { ...page.rows[0].protection, unitId: "unit-two" }, content: { ...page.rows[0].content, unitId: "unit-two", sourcePreview: "Second page source" } }] }
         : { ...page, total: 2, nextCursor: "opaque-next" };
     });
@@ -247,7 +247,7 @@ describe("real-port workspace assembly", () => {
     filter.focus(); fireEvent.keyDown(filter, { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "尚未选用译文" }));
     expect(await screen.findByText("没有匹配的条目")).toBeVisible();
-    expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ query: { text: "", selection: "unselected" }, scopeId: null, cursor: null }));
+    expect(read).toHaveBeenLastCalledWith(expect.objectContaining({ query: { text: "", selection: "unselected", status: "all" }, scopeId: null, cursor: null }));
     expect(read.mock.calls.filter(([request]) => request.query.selection === "unselected").every(([request]) => request.scopeId !== "scope")).toBe(true);
     expect(screen.queryByRole("button", { name: "回到首页" })).not.toBeInTheDocument();
   });

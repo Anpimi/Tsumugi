@@ -1,6 +1,7 @@
 //! Strict pages share the existing review scope and committed change clock.
 use super::*;
 use crate::execution::Revision;
+mod filters;
 mod queue;
 mod rows;
 #[cfg(test)]
@@ -17,12 +18,34 @@ pub enum SegmentSelectionFilter {
     Unselected,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum SegmentStatusFilter {
+    #[default]
+    All,
+    /// No current selection; a selected empty string does not match.
+    Untranslated,
+    /// Selected text without a current approval, including requested changes.
+    NeedsReview,
+    /// Current review changes, term conflicts, QA findings or incomplete QA.
+    Issues,
+    /// An older selected source basis or recorded resource impact history.
+    Affected,
+    /// At least one blocker from the current delivery eligibility policy.
+    Blocking,
+    /// A saved, unselected AI candidate whose latest disposition is not rejected.
+    AiPending,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SegmentQuery {
     pub text: String,
     pub selection: SegmentSelectionFilter,
+    #[serde(default)]
+    pub status: SegmentStatusFilter,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -148,6 +171,7 @@ impl ProjectStore {
                             == (query.selection == SegmentSelectionFilter::Selected)
                     });
                 }
+                filters::retain(self, connection, project_id, locale, query.status, &mut scope.units)?;
                 let (epoch, sequence, data_version) = stamp(self, connection)?;
                 let read_version = digest(&(
                     &fingerprint,

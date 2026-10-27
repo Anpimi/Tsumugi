@@ -1,4 +1,5 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
+import { copyWorkspaceSelection, type WorkspaceSelection } from "./workspaceSelection";
 
 export const viewKinds = ["entries", "knowledge", "runs", "delivery", "decisions", "extensions", "settings"] as const;
 export type ViewKind = typeof viewKinds[number];
@@ -8,12 +9,13 @@ export interface WorkspaceView {
   id: string;
   kind: ViewKind;
   entryMode: "table" | "import";
+  entryPageMode: boolean;
   locale: string;
   preset: string;
   query: string;
   searchInput: string;
   scroll: { top: number; left: number };
-  selection: string[];
+  selection: WorkspaceSelection | null;
   focus: string | null;
   editing: boolean;
   queueActive: boolean;
@@ -62,12 +64,13 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     id,
     kind: input.kind,
     entryMode: input.entryMode ?? "table",
+    entryPageMode: input.entryPageMode ?? false,
     locale: input.locale,
     preset: input.preset ?? "all",
     query: input.query ?? "",
     searchInput: input.searchInput ?? input.query ?? "",
     scroll: { top: input.scroll?.top ?? 0, left: input.scroll?.left ?? 0 },
-    selection: [...(input.selection ?? [])],
+    selection: copyWorkspaceSelection(input.selection ?? null),
     focus: input.focus ?? null,
     editing: input.editing ?? input.focus != null,
     queueActive: input.queueActive ?? input.focus != null,
@@ -139,7 +142,7 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const changedScope = patch.query !== undefined && patch.query !== view.query || patch.locale !== undefined && patch.locale !== view.locale
         || patch.preset !== undefined && patch.preset !== view.preset;
       const target = patch.focus !== undefined ? patch.focus : view.focus;
-      const next = { ...view, ...patch, ...(patch.selection ? { selection: [...patch.selection] } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
+      const next = { ...view, ...patch, ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
         ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
           queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,
           focusMode: (patch.editing ?? patch.focus != null) ? patch.focusMode ?? view.focusMode : false } : {}) };

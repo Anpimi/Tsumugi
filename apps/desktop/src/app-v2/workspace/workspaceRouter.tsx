@@ -108,7 +108,7 @@ export function createWorkspaceRouter({ store, gate, guard, onError, history: su
         locale: to.locale, preset: to.preset, query: to.query, focus: to.focus,
         editing: to.editing, queueActive: to.queueActive, queueAnchor: to.queueAnchor, queueScopeId: to.queueScopeId, focusMode: to.focusMode,
         ...(changedQuery ? { searchInput: to.query } : {}),
-        ...(changedScope ? { afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 }, selection: [] } : {}),
+        ...(changedScope ? { afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 } } : {}),
       });
       store.getState().activate(to.id);
     } else store.getState().open(to);

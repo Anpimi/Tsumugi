@@ -125,6 +125,8 @@ export type ReviewCheckerView =
     };
 export type UnsignedDecimal = string;
 export type SegmentSelectionFilter = "all" | "selected" | "unselected";
+export type SegmentStatusFilter =
+  "all" | "untranslated" | "needs-review" | "issues" | "affected" | "blocking" | "ai-pending";
 export type ResourceImpactConfidence = "explicit-unit" | "literal-possible";
 export type ResourceImpactKind = "term" | "context" | "context-fact";
 export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
@@ -992,9 +994,14 @@ export interface SegmentQueueWindow {
 }
 export interface SegmentQuery {
   selection: SegmentSelectionFilter;
+  status: SegmentStatusFilter & string;
   text: string;
 }
 export interface SegmentRow {
+  /**
+   * Saved, unselected AI revisions whose latest disposition is not rejected.
+   */
+  aiCandidateCount: number;
   applicability: SegmentApplicability;
   candidateCount: number;
   content: ReviewSummary;

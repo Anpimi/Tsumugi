@@ -3,7 +3,7 @@ import type { SegmentPageRequest, SegmentScopeRequest, SegmentQueueWindowRequest
 import type { SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
 import * as validators from "./generated/review.validators";
 
-export type { SegmentPageRequest, SegmentScopeRequest, SegmentQuery, SegmentSelectionFilter } from "./generated/review.requests";
+export type { SegmentPageRequest, SegmentScopeRequest, SegmentQuery, SegmentSelectionFilter, SegmentStatusFilter } from "./generated/review.requests";
 export type { SegmentPage, SegmentRow, SegmentScopeCapture, SegmentQueueWindow } from "./generated/review.responses";
 
 function boundedReferences(total: number, length: number, truncated: boolean) {
@@ -14,7 +14,8 @@ function relatedSummary(row: SegmentRow) {
   const { content, protection, qa, terms, applicability, qualification } = row;
   const check = content.currentCheck, impact = applicability.resourceImpact;
   const selected = content.selectionId !== null;
-  return protection.unitId === content.unitId && protection.locale === content.locale
+  return row.aiCandidateCount <= row.candidateCount
+    && protection.unitId === content.unitId && protection.locale === content.locale
     && qa.current === (check !== null)
     && (check === null
       ? qa.outcome === null && qa.mandatoryCoverageComplete === null
@@ -58,6 +59,7 @@ export const segmentCommands = {
     (page): page is SegmentPage => validators.validateResponseSegmentPage(page)
       && page.projectId === request.projectId && page.locale === request.locale
       && page.query.text === request.query.text && page.query.selection === request.query.selection
+      && (page.query.status ?? "all") === (request.query.status ?? "all")
       && (request.scopeId == null || page.scopeId === request.scopeId)
       && page.queryFingerprint.length > 0 && page.readVersion.length > 0 && page.epoch.length > 0
       && page.rows.length <= request.limit && page.total >= page.rows.length

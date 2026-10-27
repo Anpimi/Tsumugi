@@ -1,6 +1,6 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Ref, type KeyboardEvent } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Layers, MoreHorizontal, RefreshCw, Search } from "lucide-react";
+import { CheckSquare, ChevronDown, Layers, RefreshCw, Search, X } from "lucide-react";
 import type { ProjectView } from "../../../projectCommands";
 import { isCommandError } from "../../../projectCommands";
 import type { DraftKey } from "../../../draftCommands";
@@ -10,14 +10,16 @@ import { Button, IconButton } from "../../../design-system/Button";
 import { TextInput } from "../../../design-system/Field";
 import { Menu } from "../../../design-system/Menu";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-system/Feedback";
-import { TokenizedText } from "../../../design-system/TokenizedText";
-import type { SegmentQuery, SegmentRow } from "../../../segmentCommands";
+import type { SegmentQuery } from "../../../segmentCommands";
 import type { WorkspaceView } from "../../workspace/workspaceStore";
 import type { InteractionGate } from "../../workspace/interactionGate";
-import SegmentEditor, { type SegmentEditorProps, type SegmentEditorHandle } from "../editor/SegmentEditor";
+import { type SegmentEditorProps } from "../editor/SegmentEditor";
 import type { TranslationDrafts } from "../editor/translationDrafts";
-import { captureEntries, entryPageKey, entrySelectionFilter, readEntryPage, readEntryQueueWindow, retainedEntryCapture, type RetainedEntryCapture } from "./entryReads";
+import { captureEntries, captureEntrySelection, entryPageKey, entryPresets, entryQuery, readEntryPage, readEntryQueueWindow, retainedEntryCapture, sameEntryQuery, type RetainedEntryCapture } from "./entryReads";
+import { toggleWorkspaceSelection, workspaceSelectionIds, workspaceSelectionMatches } from "../../workspace/workspaceSelection";
+import EntriesTable, { type EntriesTableHandle } from "./EntriesTable";
 import styles from "../../WorkbenchLayout.module.css";
+import local from "./EntriesView.module.css";
 
 type Props = {
   project: ProjectView; view: WorkspaceView; disabled: boolean;
@@ -37,26 +39,15 @@ export interface EntriesHandle {
 const noSubscription = () => () => {};
 const noDraftSnapshot = () => null;
 
-function EntryFacts({ row }: { row: SegmentRow }) {
-  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
-  if (!row.candidateCount && !row.protection.protected && !row.terms.applicableEntryCount && row.applicability.capturedBasisCurrent !== false) return null;
-  return <div className={styles.entryMeta}>
-    {row.candidateCount ? <span title={t("candidateHelp")}>{t("candidateCount", { count: row.candidateCount })}</span> : null}
-    {row.protection.protected ? <span title={t("protectionHelp")}>{t("protectedEntry")}</span> : null}
-    {row.terms.applicableEntryCount ? <span title={t("applicableTermsHelp")}>{t("applicableTerms", { count: row.terms.applicableEntryCount })}</span> : null}
-    {row.terms.conflictingEntryCount ? <span>{t("conflictingTerms", { count: row.terms.conflictingEntryCount })}</span> : null}
-    {row.applicability.resourceReviewRequired ? <span>{t("resourceReviewRequired")}</span> : row.applicability.capturedBasisCurrent === false ? <span title={t("basisChangedHelp")}>{t("basisChanged")}</span> : null}
-  </div>;
-}
-
 export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
   const [captured, setCaptured] = useState<RetainedEntryCapture | null>(null);
   const [captureError, setCaptureError] = useState(false), [capturing, setCapturing] = useState(false), [queueEnd, setQueueEnd] = useState(false);
-  const request = useRef(0), scroll = useRef<HTMLDivElement>(null), restored = useRef(false);
-  const activeEditor = useRef<SegmentEditorHandle>(null);
+  const request = useRef(0), selectionRequest = useRef(0);
+  const [selecting, setSelecting] = useState(false), [selectionFailed, setSelectionFailed] = useState(false), [rowFocus, setRowFocus] = useState<string | null>(null);
+  const table = useRef<EntriesTableHandle>(null);
   const searchInput = useRef<HTMLInputElement>(null), live = useRef(view), mounted = useRef(false), advanceRevision = useRef(0);
   const presentation = JSON.stringify([view.id, view.locale, view.query, view.preset, view.focus, view.editing, view.queueActive, view.queueScopeId, view.queueAnchor, view.focusMode]);
   const lastPresentation = useRef(presentation);
@@ -64,44 +55,45 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   live.current = view;
   useLayoutEffect(() => { mounted.current = true; const release = gate.subscribe(() => { advanceRevision.current++; });
     return () => { mounted.current = false; release(); }; }, [gate]);
-  const searchOwner = `entry-search-${view.id}`, listOwner = `entry-list-${view.id}`;
+  const searchOwner = `entry-search-${view.id}`;
   const availableLocale = project.metadata.targetLocales.includes(view.locale);
-  const selection = entrySelectionFilter(view.preset);
-  const query: SegmentQuery = { text: view.query, selection: selection ?? "all" };
+  const configuredQuery = entryQuery(view.preset, view.query);
+  const query: SegmentQuery = configuredQuery ?? { text: view.query, selection: "all", status: "all" };
+  const queryIdentity = JSON.stringify(query);
   const scope = useSessionQuery({ key: ["workbench-source-scope"], scopes: ["source"], enabled: !disabled,
     refetchOnMount: false, read: () => sourceCommands.scope(reads.context) });
   // A fixed queue survives our own confirmations. A changed source is rejected
   // by its owner instead of silently recapturing a different set of entries.
-  const capture = captured?.locale === view.locale && captured.query.text === view.query && captured.query.selection === selection
+  const capture = captured?.locale === view.locale && sameEntryQuery(captured.query, query)
     && (view.queueActive || captured.scope.snapshotId === scope.data?.currentSnapshot) ? captured.scope : null;
 
   async function captureCurrent(refresh = false) {
-    if (!selection) return;
+    if (!configuredQuery) return;
     const ticket = ++request.current;
     setCapturing(true); setCaptureError(false);
     try {
       const retained = !refresh && view.queueActive && view.queueScopeId ? retainedEntryCapture(reads, view.queueScopeId) : null;
       if (!refresh && view.queueActive && view.queueScopeId && (!retained || retained.locale !== view.locale
-        || retained.query.text !== query.text || retained.query.selection !== query.selection)) throw new Error("Fixed queue is no longer available");
+        || !sameEntryQuery(retained.query, query))) throw new Error("Fixed queue is no longer available");
       const next = retained?.scope ?? await captureEntries(reads, view.locale, query, refresh);
       if (ticket !== request.current || reads.retired || live.current.id !== view.id || live.current.locale !== view.locale
         || live.current.query !== view.query || live.current.preset !== view.preset) return;
       setCaptured({ locale: view.locale, query, scope: next });
       if (live.current.queueActive && live.current.queueScopeId !== next.scopeId) patch({ queueScopeId: next.scopeId });
       if (refresh) patch({ afterOrdinal: 0, cursor: null });
-      restored.current = false;
     } catch { if (ticket === request.current && !reads.retired) setCaptureError(true); }
     finally { if (ticket === request.current) setCapturing(false); }
   }
   useEffect(() => {
     setCaptured(null); setQueueEnd(false);
-    if (availableLocale && selection && !disabled && (scope.data?.currentSnapshot || view.queueActive && view.queueScopeId)) void captureCurrent();
+    if (availableLocale && configuredQuery && !disabled && (scope.data?.currentSnapshot || view.queueActive && view.queueScopeId)) void captureCurrent();
     return () => { request.current++; };
-  }, [view.locale, view.query, selection, view.queueActive, view.queueScopeId, scope.data?.currentSnapshot, availableLocale, disabled]);
-  useEffect(() => () => { gate.releaseOwner(searchOwner); gate.releaseOwner(listOwner); }, [gate, searchOwner, listOwner]);
+  }, [view.locale, queryIdentity, view.queueActive, view.queueScopeId, scope.data?.currentSnapshot, availableLocale, disabled]);
+  useEffect(() => () => { gate.releaseOwner(searchOwner); }, [gate, searchOwner]);
+  useEffect(() => { selectionRequest.current++; setSelecting(false); setSelectionFailed(false); }, [view.id, view.locale, view.preset, view.query]);
 
   const emptyCapture = { scopeId: "", snapshotId: "", queryFingerprint: "", readVersion: "" };
-  const enabled = !disabled && availableLocale && !!selection && !!capture;
+  const enabled = !disabled && availableLocale && !!configuredQuery && !!capture;
   const page = useSessionQuery({ key: entryPageKey(view.locale, query, capture ?? emptyCapture, view.cursor),
     scopes: ["source", "translation", "review", "resources"], enabled: enabled && !view.queueActive,
     refetchOnMount: query => query.state.isInvalidated,
@@ -139,7 +131,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     if (!rows || index < 0 || queue.data?.scopeId !== scopeId) return;
     const next = rows[index + 1]?.content.unitId ?? queue.data.nextUnitId;
     if (!next) { setQueueEnd(true); return; }
-    await navigate({ focus: next, selection: [next], editing: true, queueAnchor: rows[index + 1] ? now.queueAnchor : next });
+    await navigate({ focus: next, editing: true, queueAnchor: rows[index + 1] ? now.queueAnchor : next });
   }
   async function exitEditor() {
     if (drafts && key && !await drafts.flush(key)) return;
@@ -147,15 +139,15 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   }
   async function toggleFocus() {
     if (isEditing() && await navigate({ focusMode: !view.focusMode })) requestAnimationFrame(() => {
-      if (mounted.current && live.current.id === view.id && live.current.focus === view.focus && live.current.editing) activeEditor.current?.focus();
+      if (mounted.current && live.current.id === view.id && live.current.focus === view.focus && live.current.editing) table.current?.focusEditor();
     });
   }
   useImperativeHandle(ref, () => ({ refresh: () => { void refresh(); }, focusSearch: () => { if (view.focusMode) void navigate({ focusMode: false }).then(ok => { if (ok) searchInput.current?.focus(); }); else searchInput.current?.focus(); }, confirm, exitEditor, toggleFocus, isEditing, canConfirm }));
   useLayoutEffect(() => {
-    if (current && !restored.current && scroll.current) {
-      scroll.current.scrollTop = view.scroll.top; scroll.current.scrollLeft = view.scroll.left; restored.current = true;
+    if (rowFocus && current?.rows.some(row => row.content.unitId === rowFocus) && !view.editing && view.focus === rowFocus) {
+      table.current?.focusRow(rowFocus); setRowFocus(null);
     }
-  }, [current, view.scroll]);
+  }, [rowFocus, current, view.editing, view.focus]);
   const empty = scope.isSuccess && !scope.data.currentSnapshot && !view.queueActive;
   const failed = scope.isError || captureError || result.isError;
   const stalePage = isCommandError(result.error) && result.error.code === "dependency-conflict";
@@ -163,26 +155,77 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
   const searchTooLong = new TextEncoder().encode(view.searchInput).length > 256;
   function openEditor(unitId: string) {
     setQueueEnd(false);
-    void navigate({ focus: unitId, selection: [unitId], editing: true, queueActive: true,
+    void navigate({ focus: unitId, editing: true, queueActive: true,
       queueScopeId: capture?.scopeId ?? null, queueAnchor: view.queueActive ? view.queueAnchor : unitId });
   }
-  function moveRow(event: KeyboardEvent) {
-    const interaction = gate.getSnapshot();
-    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
-      || interaction.inputOwner?.ownerId !== listOwner || !gate.canDispatch({ viewId: view.id, source: "keyboard", inputOwner: listOwner })) return;
-    const direction = event.key === "ArrowDown" || event.key === "j" ? 1 : event.key === "ArrowUp" || event.key === "k" ? -1 : 0;
-    if (!direction || !current) return;
-    const index = current.rows.findIndex(row => row.content.unitId === view.focus);
-    const next = current.rows[index < 0 ? 0 : index + direction];
-    if (next) { event.preventDefault(); openEditor(next.content.unitId); }
+  async function moveRow(direction: 1 | -1, fromUnitId: string) {
+    if (disabled || !current || !capture) return;
+    const from = live.current, generation = advanceRevision.current;
+    const index = current.rows.findIndex(row => row.content.unitId === fromUnitId);
+    if (index < 0) return;
+    let next: string | undefined = current.rows[index + direction]?.content.unitId;
+    let anchor = view.queueActive ? view.queueAnchor : current.rows[0]?.content.unitId ?? null;
+    if (!next) {
+      if (view.queueActive) next = (direction > 0 ? queue.data?.nextUnitId : queue.data?.previousUnitId) ?? undefined;
+      else {
+        try {
+          const window = await reads.client.fetchQuery({ queryKey: reads.key(["workbench-entry-queue", view.locale, capture.scopeId, fromUnitId]),
+            staleTime: 0, retry: false, meta: { scopes: ["source", "translation", "review", "resources"] },
+            queryFn: () => readEntryQueueWindow(reads, view.locale, query, capture, fromUnitId) });
+          next = direction > 0 ? window.rows[1]?.content.unitId ?? window.nextUnitId ?? undefined : window.previousUnitId ?? undefined;
+        } catch { setCaptureError(true); return; }
+      }
+      anchor = next ?? anchor;
+    }
+    if (!next || reads.retired || live.current !== from || advanceRevision.current !== generation) return;
+    if (await navigate({ focus: next, editing: false, focusMode: false, queueActive: true, queueScopeId: capture.scopeId, queueAnchor: anchor })) setRowFocus(next);
   }
+  const selectedIds = workspaceSelectionIds(view.selection);
+  const selectionMatches = workspaceSelectionMatches(view.selection, view.locale, scope.data?.currentSnapshot);
+  const scopeMembers = view.selection?.kind === "scope" ? new Set(view.selection.selection.capture.units.map(unit => unit.unitId)) : null;
+  const canSelect = (unitId: string) => !disabled && !selecting && !!current && selectionMatches && (!scopeMembers || scopeMembers.has(unitId));
+  function chooseRows(unitIds: readonly string[], selected: boolean) {
+    const snapshotId = scope.data?.currentSnapshot;
+    if (!snapshotId || !selectionMatches || disabled || selecting) return;
+    patch({ selection: toggleWorkspaceSelection(view.selection, view.locale, snapshotId, unitIds.filter(canSelect), selected) });
+  }
+  function choosePage() {
+    const ids = current?.rows.map(row => row.content.unitId).filter(canSelect) ?? [];
+    const selected = new Set(selectedIds);
+    chooseRows(ids, !ids.every(id => selected.has(id)));
+  }
+  async function chooseMatches() {
+    if (!capture || !current || disabled || selecting || !configuredQuery) return;
+    const ticket = ++selectionRequest.current, from = live.current;
+    setSelecting(true); setSelectionFailed(false);
+    try {
+      const selected = await captureEntrySelection(reads, view.locale, query, capture);
+      const now = live.current;
+      if (ticket === selectionRequest.current && mounted.current && !reads.retired && now.id === from.id && now.locale === from.locale
+        && now.preset === from.preset && now.query === from.query && now.selection === from.selection) patch({ selection: selected });
+    } catch { if (ticket === selectionRequest.current && mounted.current && !reads.retired) setSelectionFailed(true); }
+    finally { if (ticket === selectionRequest.current && mounted.current) setSelecting(false); }
+  }
+  const presetNames = { all: "allEntries", selected: "selectedEntries", unselected: "unselectedEntries", untranslated: "entryPresetUntranslated",
+    "needs-review": "entryPresetReview", issues: "entryPresetIssues", affected: "entryPresetAffected", blocking: "entryPresetBlocking", "ai-pending": "entryPresetAi" } as const;
+  const selectedPreset = entryPresets.find(value => value === view.preset);
+  const footer = <div className={styles.actions}>
+    {view.queueActive ? <>
+      {queue.data?.previousUnitId ? <Button disabled={disabled} onClick={() => { void navigate({ queueAnchor: null, focus: null, editing: false, focusMode: false, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
+      {queue.data?.nextUnitId ? <Button disabled={disabled} onClick={() => { const next = queue.data?.nextUnitId; if (next) void navigate({ queueAnchor: next, focus: next, editing: false, scroll: { top: 0, left: 0 } }).then(ok => { if (ok) setRowFocus(next); }); }}>{t("nextPage")}</Button> : null}
+    </> : <>
+      {view.cursor !== null ? <Button disabled={disabled} onClick={() => { void navigate({ afterOrdinal: 0, cursor: null, focus: null, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
+      {page.data?.nextCursor != null ? <Button disabled={disabled} onClick={() => { void navigate({ afterOrdinal: view.afterOrdinal + (current?.rows.length ?? 0), cursor: page.data?.nextCursor ?? null, focus: null, scroll: { top: 0, left: 0 } }); }}>{t("nextPage")}</Button> : null}
+    </>}
+  </div>;
 
   return <div className={styles.entryView}>
-    <form className={styles.toolbar} aria-label={t("searchEntries")} onSubmit={event => {
+    <form className={`${styles.toolbar} ${local.toolbar}`} aria-label={t("searchEntries")} onSubmit={event => {
       event.preventDefault();
       if (!disabled && !searchTooLong) void navigate({ query: view.searchInput, focus: null, editing: false, focusMode: false });
     }}>
-      <Menu label={t("entryFilter")} trigger={<Button size="sm" disabled={disabled}>{t(selection === "selected" ? "selectedEntries" : selection === "unselected" ? "unselectedEntries" : selection === "all" ? "allEntries" : "filterMissing")}<ChevronDown /></Button>} items={(["all", "selected", "unselected"] as const).map(id => ({ id, label: t(id === "all" ? "allEntries" : id === "selected" ? "selectedEntries" : "unselectedEntries"), onSelect: () => void navigate({ preset: id, focus: null, editing: false, focusMode: false }) }))} />
+      <Menu label={t("entryFilter")} trigger={<Button size="sm" disabled={disabled}>{t(selectedPreset ? presetNames[selectedPreset] : "filterMissing")}<ChevronDown /></Button>}
+        items={entryPresets.map(id => ({ id, label: t(presetNames[id]), onSelect: () => void navigate({ preset: id, focus: null, editing: false, focusMode: false }) }))} />
       <div className={styles.toolbarSearch}><Search /><TextInput ref={searchInput} aria-label={t("searchEntries")} aria-invalid={searchTooLong || undefined} aria-describedby={searchTooLong ? `entry-search-error-${view.id}` : undefined} placeholder={t("searchPlaceholder")} value={view.searchInput}
         onChange={event => patch({ searchInput: event.target.value })} disabled={disabled}
         onFocus={() => gate.setInputOwner(view.id, searchOwner)} onBlur={() => gate.releaseOwner(searchOwner)}
@@ -190,38 +233,30 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
         onKeyDown={event => { if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) { if (event.key === "Enter") event.preventDefault(); event.stopPropagation(); } }} /></div>
       <Button type="submit" size="sm" disabled={disabled || searchTooLong}>{t("search")}</Button>
       <IconButton label={t("refresh")} disabled={disabled || capturing} onClick={() => { void refresh(); }}><RefreshCw /></IconButton>
+      <Menu label={t("entrySelectionMenu")} trigger={<IconButton size="sm" label={t("entrySelectionMenu")} disabled={disabled || !current || selecting}><CheckSquare /></IconButton>} items={[
+        { id: "page", label: t("entrySelectPage"), onSelect: choosePage, disabled: !selectionMatches || selecting },
+        { id: "matches", label: t("entrySelectMatches"), onSelect: () => { void chooseMatches(); }, disabled: !current?.total || selecting },
+        { id: "clear", label: t("entryClearSelection"), onSelect: () => patch({ selection: null }), disabled: !view.selection },
+      ]} />
+      <Button size="sm" disabled={disabled} aria-pressed={view.entryPageMode} onClick={() => patch({ entryPageMode: !view.entryPageMode })}>{t(view.entryPageMode ? "entryWindowDisplay" : "entryFullPage")}</Button>
       {onImport ? <Button size="sm" disabled={disabled || !drafts || drafts.getSnapshot().hydration !== "ready" || drafts.getSnapshot().retired} onClick={onImport}>{t("importTitle")}</Button> : null}
       {current ? <span className={styles.count} title={view.queueActive ? t("fixedQueueHelp") : undefined}>{t(view.queueActive ? "fixedQueue" : "entryCount", { count: current.total })}</span> : null}
       {isEditing() ? <Button size="sm" onClick={() => { void toggleFocus(); }}>{t(view.focusMode ? "editorTableMode" : "editorFocusMode")}</Button> : null}
     </form>
+    {!view.focusMode && (view.query || view.selection) ? <div className={local.scopeBar}>
+      {view.query ? <Button size="sm" disabled={disabled} onClick={() => { void navigate({ query: "", searchInput: "", focus: null, editing: false, focusMode: false }); }} aria-label={t("entryClearQuery")}><span>{t("entryQueryChip", { query: view.query })}</span><X /></Button> : null}
+      {view.selection ? <><span>{t("entrySelectedCount", { count: selectedIds.length })}</span>{view.selection.kind === "scope" ? <span>{t("entryFixedSelection", { total: String(view.selection.selection.capture.units.length), excluded: String(view.selection.selection.excluded.length) })}</span> : null}<Button size="sm" onClick={() => patch({ selection: null })}>{t("entryClearSelection")}</Button></> : null}
+    </div> : null}
+    {!selectionMatches ? <Banner tone="warning">{t("entrySelectionChanged")}</Banner> : null}
+    {selecting ? <Banner>{t("entryCapturingSelection")}</Banner> : null}
+    {selectionFailed ? <Banner tone="error" action={<Button disabled={!current || selecting || disabled} onClick={() => { void chooseMatches(); }}>{t("entrySelectMatches")}</Button>}>{t("entrySelectionFailed")}</Banner> : null}
     {view.focusMode ? <div className={styles.actions}><Button size="sm" onClick={() => { void toggleFocus(); }}>{t("editorTableMode")}</Button></div> : null}
     {searchTooLong ? <Banner id={`entry-search-error-${view.id}`} tone="error">{t("searchTooLong")}</Banner> : null}
     {queueEnd ? <Banner>{t("queueEnd")}</Banner> : null}
-    <div className={styles.scroll} ref={scroll} onScroll={event => patch({ scroll: { top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft } })}>
-      {!selection ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <div className={styles.table} onKeyDown={moveRow}>
-        <div className={styles.tableHeader}><span>{t("row")}</span><span>{t("detail")}</span><span>{t("source", { locale: project.metadata.sourceLocale })}</span><span>{t("translation", { locale: view.locale })}</span></div>
-        {current.rows.map((summary, index) => { const { content: row, sourceTruncated, translationTruncated } = summary;
-          const active = view.editing && view.focus === row.unitId;
-          const draftKey = { projectId: reads.context.projectId, unitId: row.unitId, locale: view.locale };
-          const entry = drafts?.getEntry(draftKey);
-          return <article key={row.unitId} hidden={view.focusMode && view.focus !== row.unitId} className={styles.entry} data-selected={view.focus === row.unitId || undefined}>
-          <div className={styles.entryNumber}><Button size="xs" aria-label={t("entryEdit", { key: row.nativeKey })} disabled={disabled || !drafts}
-            onFocus={() => gate.setInputOwner(view.id, listOwner)} onBlur={() => gate.releaseOwner(listOwner)} onClick={() => openEditor(row.unitId)}>{(view.queueActive ? queue.data?.firstPosition ?? 0 : view.afterOrdinal) + index + 1}</Button></div>
-          <div className={styles.entryStatus}><IconButton label={t("showEntryDetails", { key: row.nativeKey })} onClick={() => { void navigate({ focus: row.unitId, dock: "details", selection: [row.unitId], ...(view.editing ? { queueAnchor: row.unitId } : {}) }); }}><MoreHorizontal /></IconButton></div>
-          <div className={styles.source}><TokenizedText text={active && entry?.current.kind === "current" ? entry.current.sourceText : row.sourcePreview} />{sourceTruncated && !(active && entry?.current.kind === "current") ? <span title={t("textShortened")}>…</span> : null}{view.focus === row.unitId ? <div className={styles.entryMeta}><span className={styles.key}>{row.nativeKey}</span></div> : null}</div>
-          <div className={styles.target}>{active && drafts ? <SegmentEditor ref={activeEditor} drafts={drafts} draftKey={draftKey} viewId={view.id} gate={gate} disabled={disabled} nativeKey={row.nativeKey} dispatch={dispatch} />
-            : row.translationPreview === null ? <span className={styles.meta}>{t("noTranslation")}</span> : <><TokenizedText text={row.translationPreview} />{translationTruncated ? <span title={t("textShortened")}>…</span> : null}</>}<EntryFacts row={summary} /></div>
-        </article>; })}
-        <div className={styles.actions}>
-          {view.queueActive ? <>
-            {queue.data?.previousUnitId ? <Button onClick={() => { void navigate({ queueAnchor: null, focus: null, editing: false, focusMode: false, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
-            {queue.data?.nextUnitId ? <Button onClick={() => { void navigate({ queueAnchor: queue.data?.nextUnitId ?? null, focus: queue.data?.nextUnitId ?? null, editing: true, scroll: { top: 0, left: 0 } }); }}>{t("nextPage")}</Button> : null}
-          </> : <>
-            {view.cursor !== null ? <Button onClick={() => { void navigate({ afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
-            {page.data?.nextCursor != null ? <Button onClick={() => { void navigate({ afterOrdinal: view.afterOrdinal + current.rows.length, cursor: page.data?.nextCursor ?? null, scroll: { top: 0, left: 0 } }); }}>{t("nextPage")}</Button> : null}
-          </>}
-        </div>
-      </div>}
-    </div>
+    {!configuredQuery ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} action={key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : undefined} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<div className={styles.actions}><Button onClick={() => { void refresh(); }}>{t("refresh")}</Button>{key ? <Button onClick={() => onRevealDraft(key)}>{t("draftRecoveryOpen")}</Button> : null}</div>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} /> : loading || !current ? <LoadingState label={t("loadingEntries")} /> : current.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <EntriesTable ref={table} rows={current.rows} firstPosition={view.queueActive ? queue.data?.firstPosition ?? 0 : view.afterOrdinal} total={current.total}
+      projectId={reads.context.projectId} sourceLocale={project.metadata.sourceLocale} view={view} drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} scroll={view.scroll}
+      selectedIds={selectionMatches ? selectedIds : []} canSelect={canSelect} onScroll={position => patch({ scroll: position })} onEdit={openEditor}
+      onDetails={unitId => { void navigate({ focus: unitId, dock: "details", ...(view.editing ? { queueAnchor: unitId } : {}) }); }}
+      onMove={(direction, unitId) => { void moveRow(direction, unitId); }} onSelection={(unitId, selected) => chooseRows([unitId], selected)} footer={footer} />}
   </div>;
 }

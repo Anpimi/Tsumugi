@@ -36,9 +36,28 @@ it("validates the shared Rust wire fixtures and dispatches both read-only comman
   expect(invoke).toHaveBeenCalledTimes(2);
 });
 
+it("accepts each Core status preset and normalizes omitted legacy status to all", async () => {
+  for (const status of ["all", "untranslated", "needs-review", "issues", "affected", "blocking", "ai-pending"] as const) {
+    const request = pageRequest(), response = pageResponse();
+    request.query.status = response.query.status = status;
+    response.rows = [];
+    response.total = 0;
+    response.nextCursor = null;
+    expect(validators.validateRequestSegmentPage(request)).toBe(true);
+    invoke.mockResolvedValueOnce(response);
+    expect(await segmentCommands.page(request)).toEqual(response);
+  }
+  const legacy = pageRequest();
+  delete legacy.query.status;
+  expect(validators.validateRequestSegmentPage(legacy)).toBe(true);
+  invoke.mockResolvedValueOnce(pageResponse());
+  expect((await segmentCommands.page(legacy)).query.status).toBe("all");
+});
+
 it("rejects unknown selection filters, caller authority, malformed cursors and rounded revisions", () => {
   const request = pageRequest(), page = fixture.responses.segmentPage;
   expect(validators.validateRequestSegmentPage({ ...request, query: { ...request.query, selection: "approved" } })).toBe(false);
+  expect(validators.validateRequestSegmentPage({ ...request, query: { ...request.query, status: "approved" } })).toBe(false);
   expect(validators.validateRequestSegmentPage({ ...request, approved: true })).toBe(false);
   expect(validators.validateResponseSegmentPage({ ...page, nextCursor: "row-offset-50" })).toBe(false);
   expect(validators.validateRequestSegmentPage({ ...request, limit: 4294967296 })).toBe(false);
@@ -47,7 +66,7 @@ it("rejects unknown selection filters, caller authority, malformed cursors and r
   expect(validators.validateResponseSegmentPage({ ...page, rows: [{ ...page.rows[0], applicable: true }] })).toBe(false);
 });
 
-it.each(["project", "locale", "query-text", "query-selection", "scope", "row-locale", "snapshot", "duplicate", "limit", "cursor"])(
+it.each(["project", "locale", "query-text", "query-selection", "query-status", "scope", "row-locale", "snapshot", "duplicate", "limit", "cursor"])(
   "rejects a shape-valid but unrelated or inconsistent segment page: %s", async kind => {
     const request = pageRequest(), response = pageResponse();
     request.scopeId = response.scopeId;
@@ -55,6 +74,7 @@ it.each(["project", "locale", "query-text", "query-selection", "scope", "row-loc
     if (kind === "locale") response.locale = "fr";
     if (kind === "query-text") response.query.text = "different";
     if (kind === "query-selection") response.query.selection = "selected";
+    if (kind === "query-status") response.query.status = "needs-review";
     if (kind === "scope") response.scopeId = response.rows[0].content.unitId;
     if (kind === "row-locale") response.rows[0].content.locale = "fr";
     if (kind === "snapshot") response.rows[0].content.sourceSnapshotId = response.rows[0].content.unitId;
@@ -88,7 +108,7 @@ it("rejects rows that contradict the captured selection filter", async () => {
   await expect(segmentCommands.page(request)).rejects.toThrow("Invalid IPC response: read_segment_page");
 });
 
-it.each(["candidateCount", "protection", "qa", "terms", "applicability", "qualification"])(
+it.each(["candidateCount", "aiCandidateCount", "protection", "qa", "terms", "applicability", "qualification"])(
   "requires the generated bounded row summary field: %s", field => {
     const page = pageResponse(), row = { ...page.rows[0] } as Record<string, unknown>;
     delete row[field];
@@ -100,6 +120,7 @@ it("rejects invalid nested summary types and enum values through the generated c
   const page = pageResponse(), row = page.rows[0];
   for (const changed of [
     { ...row, candidateCount: 4294967296 },
+    { ...row, aiCandidateCount: 4294967296 },
     { ...row, protection: { ...row.protection, revision: 9007199254740992 } },
     { ...row, qa: { ...row.qa, mandatory: { ...row.qa.mandatory, findings: -1 } } },
     { ...row, qa: { ...row.qa, outcome: "passed" } },
@@ -109,9 +130,10 @@ it("rejects invalid nested summary types and enum values through the generated c
   ]) expect(validators.validateResponseSegmentPage({ ...page, rows: [changed] })).toBe(false);
 });
 
-it.each(["protection-unit", "protection-locale", "qa-current", "qa-outcome", "qa-coverage", "qa-basis", "qa-absent-outcome", "qa-absent-coverage", "term-conflicts", "term-count", "term-truncated", "term-duplicate", "impact-count", "impact-duplicate", "impact-truncated", "blocker-count", "exception-count", "qualification-truncated", "selected-basis", "unselected-basis", "source-current", "captured-current"])(
+it.each(["ai-count", "protection-unit", "protection-locale", "qa-current", "qa-outcome", "qa-coverage", "qa-basis", "qa-absent-outcome", "qa-absent-coverage", "term-conflicts", "term-count", "term-truncated", "term-duplicate", "impact-count", "impact-duplicate", "impact-truncated", "blocker-count", "exception-count", "qualification-truncated", "selected-basis", "unselected-basis", "source-current", "captured-current"])(
   "rejects a shape-valid row summary that contradicts its own basis or counts: %s", async kind => {
     const page = pageResponse(), row = page.rows[0], request = pageRequest();
+    if (kind === "ai-count") row.aiCandidateCount = row.candidateCount + 1;
     if (kind === "protection-unit") row.protection.unitId = page.sourceSnapshotId;
     if (kind === "protection-locale") row.protection.locale = "fr";
     if (kind === "qa-current") row.qa.current = false;

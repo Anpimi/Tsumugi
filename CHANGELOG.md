@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- The opt-in desktop workspace adds entry status filters, a clear choice between selecting this page and all matching entries, and keyboard navigation through the editing queue. A captured selection stays fixed as filters change, and the entry table supports a full-page display when needed.
+
 - The opt-in desktop workspace now offers translation import from the entries view. Choose the file, language, plug-in, and runtime, review the matches, and confirm individual entries or a fixed batch. Partial results and actions needing a receipt check remain visible for recovery.
 
 - In the opt-in desktop workspace, edit translations in the active row, confirm and move to the next entry, or use focus mode. A bounded local journal stores unconfirmed input, with a shared recovery panel for drafts and uncertain confirmations. A draft is retained on disk only after its write is acknowledged. Recovery after closing and reopening a project has been observed in a native macOS build; recovery after restarting the app still needs verification. See [Local draft journal](docs/local-drafts.md) for storage and recovery limits.

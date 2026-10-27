@@ -69,6 +69,18 @@ mod contracts {
         segment_round_trip::<SegmentQueueWindowRequest>(&segment_fixture["requests"]["queueWindow"]);
         segment_round_trip::<tsumugi_core::SegmentQueueWindow>(&segment_fixture["responses"]["queueWindow"]);
         segment_round_trip::<SegmentScopeCapture>(&segment_fixture["responses"]["segmentScope"]);
+        let mut legacy_query = segment_fixture["requests"]["segmentPage"].clone();
+        legacy_query["query"].as_object_mut().unwrap().remove("status");
+        let legacy_request: SegmentPageRequest = serde_json::from_value(legacy_query).unwrap();
+        assert_eq!(legacy_request.query.status, tsumugi_core::SegmentStatusFilter::All);
+        for status in ["all", "untranslated", "needs-review", "issues", "affected", "blocking", "ai-pending"] {
+            let mut query = segment_fixture["requests"]["segmentPage"].clone();
+            query["query"]["status"] = serde_json::json!(status);
+            segment_round_trip::<SegmentPageRequest>(&query);
+        }
+        let mut unknown_status = segment_fixture["requests"]["segmentPage"].clone();
+        unknown_status["query"]["status"] = serde_json::json!("approved");
+        assert!(serde_json::from_value::<SegmentPageRequest>(unknown_status).is_err());
         let mut unknown_filter = segment_fixture["requests"]["segmentPage"].clone();
         unknown_filter["query"]["selection"] = serde_json::json!("approved");
         assert!(serde_json::from_value::<SegmentPageRequest>(unknown_filter).is_err());

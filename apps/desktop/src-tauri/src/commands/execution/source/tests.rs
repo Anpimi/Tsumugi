@@ -752,6 +752,15 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     request["scopeId"] = Value::Null;
     request["cursor"] = Value::Null;
     request["limit"] = json!(1);
+    for (status, total) in [("all", 3), ("untranslated", 3), ("needs-review", 0),
+        ("issues", 0), ("affected", 0), ("blocking", 3), ("ai-pending", 0)] {
+        let mut filtered = request.clone();
+        filtered["query"]["status"] = json!(status);
+        let page = call(&view, "read_segment_page", filtered).unwrap();
+        assert_eq!(page["query"]["status"], status);
+        assert_eq!(page["total"], total, "{status}");
+        assert!(page["rows"].as_array().unwrap().iter().all(|row| row["aiCandidateCount"] == 0));
+    }
     let read_started = Instant::now();
     let first = call(&view, "read_segment_page", request.clone()).unwrap();
     println!("segment ipc-fixture data=3 page=1 bytes={} round_trip_us={}", serde_json::to_vec(&first).unwrap().len(), read_started.elapsed().as_micros());
@@ -759,6 +768,8 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     assert_eq!(typed.total, 3);
     assert_eq!(typed.rows.len(), 1);
     assert_eq!(first["projectId"], context["projectId"]);
+    assert_eq!(first["query"]["status"], "all", "old requests normalize the default status");
+    request["query"]["status"] = json!("all");
     assert_eq!(first["query"], request["query"]);
     assert!(!first["nextCursor"].is_null());
     let mut continuation = request.clone();

@@ -138,7 +138,55 @@ fn decision(
 fn count(store: &ProjectStore, project: ExecutionId, units: &[ExecutionId]) -> Vec<u32> {
     let counts = summaries(store.connection().unwrap(), project, units, "zh-CN").unwrap();
     assert_eq!(counts.len(), units.len());
-    units.iter().map(|unit| counts[unit]).collect()
+    units.iter().map(|unit| counts[unit].count).collect()
+}
+
+#[test]
+fn ai_pending_counts_only_unselected_non_rejected_ai_and_preserves_human_protection() {
+    use crate::{SegmentQuery, SegmentSelectionFilter, SegmentStatusFilter, SelectTranslationRevision};
+    let (directory, mut store, project, units) = fixture();
+    let query = SegmentQuery { text: String::new(), selection: SegmentSelectionFilter::All,
+        status: SegmentStatusFilter::AiPending };
+    let pending = |store: &ProjectStore| store.read_segment_page(project, "zh-CN", &query, None, None, 100).unwrap();
+    translate(&mut store, project, units[0], "zh-CN", "Manual first");
+    translate(&mut store, project, units[0], "zh-CN", "Manual current");
+    assert_eq!(count(&store, project, &units), vec![1, 0]);
+    assert_eq!(pending(&store).total, 0, "manual history is not an AI proposal");
+    let revision = save_candidate(&mut store, units[0], "");
+    let page = pending(&store);
+    assert_eq!(page.total, 1, "empty AI text remains a saved candidate");
+    assert_eq!(page.rows[0].content.unit_id, units[0]);
+    assert_eq!(page.rows[0].candidate_count, 2);
+    assert_eq!(page.rows[0].ai_candidate_count, 1);
+    assert!(page.rows[0].protection.protected, "querying never removes human protection");
+    let reject = decision(&store, project, units[0], revision);
+    store.decide_translation_candidate(&reject).unwrap();
+    assert_eq!(pending(&store).total, 0);
+    store.decide_translation_candidate(&CandidateDecisionWrite {
+        action_id: ExecutionId::new(), expected_decision_id: Some(reject.action_id),
+        disposition: CandidateDisposition::Restored, ..reject
+    }).unwrap();
+    assert_eq!(pending(&store).total, 1);
+    let target = store.review_target(project, units[0], "zh-CN").unwrap();
+    store.select_translation_revision(&SelectTranslationRevision {
+        project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
+        revision_id: revision, source_revision_id: target.source_revision_id,
+        expected_selection_id: target.selection_id,
+    }).unwrap();
+    assert_eq!(pending(&store).total, 0, "the current selection is not pending");
+    translate(&mut store, project, units[0], "zh-CN", "New manual choice");
+    assert_eq!(pending(&store).rows[0].ai_candidate_count, 1,
+        "the candidate owner keeps earlier selected alternatives available");
+    update_source_with_continued_identity(&mut store, &units);
+    assert_eq!(pending(&store).total, 1, "source applicability does not erase a proposal");
+    let affected = store.read_segment_page(project, "zh-CN", &SegmentQuery {
+        status: SegmentStatusFilter::Affected, ..query.clone()
+    }, None, None, 100).unwrap();
+    assert_eq!(affected.total, 1);
+    assert_eq!(affected.rows[0].applicability.source_basis_current, Some(false));
+    store.close().unwrap();
+    let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_eq!(pending(&reopened).rows[0].ai_candidate_count, 1);
 }
 
 #[test]
@@ -184,8 +232,8 @@ fn summaries_keep_history_separate_from_current_selection_and_latest_rejection()
     translate(&mut store, project, units[0], "fr-FR", "Second");
     assert_eq!(count(&store, project, &units), vec![2, 0]);
     let french = summaries(store.connection().unwrap(), project, &units, "fr-FR").unwrap();
-    assert_eq!(french[&units[0]], 1);
-    assert_eq!(french[&units[1]], 0);
+    assert_eq!(french[&units[0]].count, 1);
+    assert_eq!(french[&units[1]].count, 0);
 
     let old_source = store.review_target(project, units[0], "zh-CN").unwrap().source_revision_id;
     update_source_with_continued_identity(&mut store, &units);
