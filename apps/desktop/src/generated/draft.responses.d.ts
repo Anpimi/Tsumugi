@@ -152,6 +152,7 @@ export interface Responses {
   error: CommandError;
   page: DraftPage;
   read: DraftReadView;
+  readMany: DraftReadMany;
   written: DraftHead;
 }
 /**
@@ -254,4 +255,11 @@ export interface DraftSummary {
 export interface DraftReadView {
   current: DraftCurrent;
   head: DraftHead;
+}
+export interface DraftReadMany {
+  items: DraftReadView[];
+  /**
+   * Consumed requested members; continue with the remaining identities.
+   */
+  nextAfter: number | null;
 }

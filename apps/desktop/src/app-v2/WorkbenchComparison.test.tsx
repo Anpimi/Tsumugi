@@ -52,7 +52,8 @@ const page: SegmentPage = { projectId: project.metadata.projectId, locale: targe
     applicability: { selectedSourceRevisionId: target.sourceRevisionId, sourceBasisCurrent: true, capturedBasisCurrent: true, resourceImpact: null, resourceReviewRequired: false },
     qualification: { blockerCount: 0, exceptionCount: 0, blockers: [], exceptions: [], truncated: false } }] };
 type Label = "projectFolder" | "openProject" | "agent" | "entryDetailsTabs" | "candidates" | "comparisonOpen" | "comparisonTitle"
-  | "comparisonCreate" | "comparisonBlind" | "comparisonReveal" | "comparisonStageMerge" | "candidateAdopt" | "editorConfirm" | "editorMergeDraft";
+  | "comparisonCreate" | "comparisonBlind" | "comparisonReveal" | "comparisonStageMerge" | "candidateAdopt" | "editorConfirm" | "editorMergeDraft"
+  | "candidateBatchMenu" | "candidateBatchStage" | "candidateBatchTitle" | "candidateBatchConfirm" | "candidateBatchEdit" | "candidateBatchOpen" | "close";
 const w = (name: Label) => i18n.t(`workbenchV2.${name}`);
 const editorLabel = () => i18n.t("workbenchV2.editorLabel", { key: target.nativeKey });
 const copy = <T,>(value: T): T => structuredClone(value);
@@ -220,4 +221,54 @@ it("keeps blind display order and basis in the journal when merging into the foc
   expect(screen.getByText(w("editorMergeDraft"))).toBeVisible();
   expect(comparisons.get(merge.comparisonId)).toMatchObject({ blind: true, revealed: false });
   expectNoFormalWrite();
+});
+
+it("previews a fixed selection before staging and releases the batch Dialog before focusing the shared row editor", async () => {
+  const candidate: TranslationRevision = { ...copy(revisions[0]), revisionId: fixtureIdentity(995), actionId: fixtureIdentity(996), ordinal: "3",
+    text: "Fixed batch candidate é 👩🏽‍💻 {name}" };
+  vi.spyOn(translationCommands, "candidateSlice").mockImplementation(async request => {
+    expect(request.unitIds).toEqual([target.unitId]);
+    return { projectId: project.metadata.projectId, locale: target.locale, sourceSnapshotId: target.sourceSnapshotId, scopeId: request.scopeId ?? null,
+      readVersion: "fixed-candidate-read", rows: [{ target: copy(target), selectedOriginKind: "ai", protection: copy(page.rows[0].protection),
+        candidateCount: 1, revisions: [copy(candidate)] }], next: null };
+  });
+  vi.spyOn(draftCommands, "readMany").mockImplementation(async request => {
+    expect(request.unitIds).toEqual([target.unitId]);
+    return { items: [{ head: copy(disk), current: { kind: "current", basis: copy(basis), nativeKey: target.nativeKey, sourceText: target.sourceText } }], nextAfter: null };
+  });
+  controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }),
+    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
+  const member = await screen.findByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: target.nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(member).toBeEnabled()); fireEvent.click(member);
+  const menu = await screen.findByRole("button", { name: w("candidateBatchMenu") }, { timeout: 5000 });
+  act(() => menu.focus()); fireEvent.keyDown(menu, { key: "Enter" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: w("candidateBatchStage") }));
+  let dialog = await screen.findByRole("dialog", { name: w("candidateBatchTitle") }, { timeout: 5000 });
+  let confirm = await within(dialog).findByRole("button", { name: w("candidateBatchConfirm") });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  expect(dialog).toHaveTextContent(candidate.text); expect(draftCommands.write).not.toHaveBeenCalled();
+  fireEvent.click(within(dialog).getAllByRole("button", { name: w("close") }).at(-1)!);
+  const retained = await screen.findByRole("button", { name: w("candidateBatchOpen") });
+  await waitFor(() => expect(retained).toHaveFocus());
+  expect(menu).toBeDisabled(); fireEvent.click(retained);
+  dialog = await screen.findByRole("dialog", { name: w("candidateBatchTitle") });
+  confirm = await within(dialog).findByRole("button", { name: w("candidateBatchConfirm") });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  journalWait = new Promise(resolve => { releaseJournal = () => { journalWait = null; resolve(); }; });
+  fireEvent.click(confirm);
+  await waitFor(() => expect(draftCommands.write).toHaveBeenCalledOnce());
+  expect(dialog).toBeVisible(); expect(within(dialog).queryByRole("button", { name: w("candidateBatchEdit") })).not.toBeInTheDocument();
+  await act(async () => { releaseJournal!(); releaseJournal = null; });
+  const edit = await within(dialog).findByRole("button", { name: w("candidateBatchEdit") });
+  await waitFor(() => expect(edit).toBeEnabled()); fireEvent.click(edit);
+  const editor = await screen.findByRole("textbox", { name: editorLabel() }, { timeout: 5000 });
+  await waitFor(() => { expect(editor).toHaveValue(candidate.text); expect(editor).toHaveFocus(); });
+  expect(screen.queryByRole("dialog", { name: w("candidateBatchTitle") })).not.toBeInTheDocument();
+  expect(disk.value).toMatchObject({ text: candidate.text, basis, pending: null });
+  expect(disk.value?.merge ?? null).toBeNull();
+  expect(executionCommands.identity).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled();
+  expect(translationCommands.select).not.toHaveBeenCalled(); expect(arenaCommands.merge).not.toHaveBeenCalled(); expect(arenaCommands.start).not.toHaveBeenCalled();
 });

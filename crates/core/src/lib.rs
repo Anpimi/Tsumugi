@@ -57,6 +57,7 @@ pub use persistence::{
     TermRevision, TermSaveActionRead, TmMatchKind, TmSuggestion, TranslationAdoptionConfirmation,
     TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
     TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
+    TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext, TranslationCandidateState,
     ArenaMergeActionRead, TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision,
     TranslationSourceContext, TranslationActionOutcome, TranslationActionReplay,
     TranslationSaveRecovery, TranslationMergeRecovery, TranslationSelectionRecovery, Waiver, WaiverWrite, WorkItem, WorkPage,

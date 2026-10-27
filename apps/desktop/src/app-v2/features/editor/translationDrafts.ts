@@ -1,11 +1,12 @@
-import { draftCommands, sameDraftBasis, sameDraftMerge, sameDraftValue, type DraftBasis, type DraftHead, type DraftKey, type DraftMergeOrigin, type DraftPending, type DraftReadView, type DraftSummary, type DraftValue } from "../../../draftCommands";
+import { draftCommands, sameDraftKey, sameDraftBasis, sameDraftMerge, sameDraftValue, type DraftBasis, type DraftHead, type DraftKey, type DraftMergeOrigin, type DraftPending, type DraftReadView, type DraftSummary, type DraftValue } from "../../../draftCommands";
 import { arenaCommands, type ComparisonView } from "../../../arenaCommands";
 import { comparisonBasis, confirmComparisonRead } from "../../../arenaComparison";
 import { executionCommands, type SessionRequest } from "../../../executionCommands";
 import { hasUnknownOutcome } from "../../../projectCommands";
 import { resourceCommands, type TmSuggestion } from "../../../resourceCommands";
 import type { SessionReads } from "../../../sessionReads";
-import { translationCommands, type TranslationRevision, type TranslationSaveReceipt, type TranslationSelection } from "../../../translationCommands";
+import { translationCommands, type TranslationCandidateSliceRow, type TranslationRevision, type TranslationSaveReceipt, type TranslationSelection } from "../../../translationCommands";
+import { readCandidateSliceRows } from "../candidates/candidateBatchReads";
 import type { LeaveIntent, LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
 
@@ -39,6 +40,7 @@ export interface TranslationDraftSnapshot {
 }
 export interface TranslationDraftPorts {
   read: typeof draftCommands.read;
+  readMany: typeof draftCommands.readMany;
   write: typeof draftCommands.write;
   clear: typeof draftCommands.clear;
   list: typeof draftCommands.list;
@@ -48,6 +50,7 @@ export interface TranslationDraftPorts {
   recoverSave: typeof translationCommands.recoverSave;
   recoverSelection: typeof translationCommands.recoverSelection;
   history: typeof translationCommands.history;
+  candidateSlice: typeof translationCommands.candidateSlice;
   suggestions: typeof resourceCommands.suggestions;
   comparison: typeof arenaCommands.comparison;
   merge: typeof arenaCommands.merge;
@@ -63,6 +66,8 @@ export interface TranslationDraftOptions {
 export interface ConfirmationResult { confirmed: boolean; savedCurrent: boolean }
 export interface RevisionStageCapture { editSeq: string; basis: DraftBasis }
 export interface RevisionStageResult { staged: boolean; durable: boolean }
+export interface CandidateBatchStage { row: TranslationCandidateSliceRow; capture: RevisionStageCapture }
+export interface CandidateBatchStageResult extends RevisionStageResult { key: DraftKey }
 interface RecordState {
   entry: DraftEntry;
   needsWrite: boolean;
@@ -91,6 +96,19 @@ function mergeMatches(view: ComparisonView, origin: DraftMergeOrigin, key: Draft
     && view.rows.every((row, index) => row.revisionId === origin.contributors[index]
       && row.basisCurrent && row.sourceRevisionId === basis.sourceRevisionId && row.candidateDisposition !== "rejected");
 }
+function sameBatchCandidate(left: TranslationCandidateSliceRow, right: TranslationCandidateSliceRow) {
+  const a = left.revisions[0], b = right.revisions[0];
+  return left.candidateCount === 1 && right.candidateCount === 1 && left.revisions.length === 1 && right.revisions.length === 1
+    && left.target.unitId === right.target.unitId && left.target.locale === right.target.locale && left.target.basis === right.target.basis
+    && left.target.sourceSnapshotId === right.target.sourceSnapshotId && left.target.sourceRevisionId === right.target.sourceRevisionId
+    && left.target.sourceText === right.target.sourceText && left.target.selectionId === right.target.selectionId
+    && left.target.revisionId === right.target.revisionId && left.target.translationText === right.target.translationText
+    && left.selectedOriginKind === right.selectedOriginKind && left.protection.unitId === right.protection.unitId
+    && left.protection.locale === right.protection.locale && left.protection.revision === right.protection.revision
+    && left.protection.protected === right.protection.protected && a.revisionId === b.revisionId && a.text === b.text
+    && a.ordinal === b.ordinal && a.actionId === b.actionId && a.sourceRevisionId === b.sourceRevisionId
+    && (a.candidateDecision?.request.actionId ?? null) === (b.candidateDecision?.request.actionId ?? null);
+}
 function immutableEntry(entry: DraftEntry): DraftEntry {
   freezeValue(entry.value); freezeValue(entry.head.value);
   Object.freeze(entry.key); Object.freeze(entry.head.key); Object.freeze(entry.head);
@@ -118,7 +136,7 @@ export class TranslationDrafts {
     this.context = Object.freeze({ ...options.context });
     this.ports = { ...draftCommands, identity: executionCommands.identity, save: translationCommands.save,
       select: translationCommands.select, recoverSave: translationCommands.recoverSave,
-      recoverSelection: translationCommands.recoverSelection, history: translationCommands.history,
+      recoverSelection: translationCommands.recoverSelection, history: translationCommands.history, candidateSlice: translationCommands.candidateSlice,
       suggestions: resourceCommands.suggestions,
       comparison: arenaCommands.comparison, merge: arenaCommands.merge, recoverMerge: arenaCommands.recoverMerge,
       writerId: () => crypto.randomUUID(), ...options.ports };
@@ -175,6 +193,20 @@ export class TranslationDrafts {
         : record.entry.failure?.kind === "read" ? { failure: null } : {}) });
   }
 
+  private acceptRead(view: DraftReadView): DraftEntry {
+    const key = view.head.key, id = identity(key), record = this.records.get(id);
+    if (record) { this.observe(record, view); return record.entry; }
+    const value = view.head.value ?? (view.current.kind === "current"
+      ? { basis: view.current.basis, text: view.current.basis.text ?? "", editSeq: "0", pending: null } : null);
+    const created: RecordState = { needsWrite: false, writing: false, scheduled: false, flush: null, reading: null, writeAttempt: null, clearAttempt: null,
+      entry: { key: { ...key }, head: view.head, value, current: view.current,
+        durableSeq: view.head.value?.editSeq ?? null, journalPending: false, busy: false, checking: false,
+        recovery: value?.pending ? "unchecked" : null, replayAllowed: false, failure: null, currentFailure: null,
+        basisCurrent: !!value && view.current.kind === "current" && sameDraftBasis(value.basis, view.current.basis), newerInputAfterConfirmation: false } };
+    created.entry = immutableEntry(created.entry);
+    this.records.set(id, created); this.notify(); return created.entry;
+  }
+
   initialize(): Promise<boolean> {
     if (!this.kernel.live) return Promise.resolve(false);
     if (this.hydration) return this.hydration;
@@ -212,21 +244,7 @@ export class TranslationDrafts {
       try {
         const view = await this.ports.read({ sessionToken: this.context.sessionToken, key });
         if (!this.kernel.live) return undefined;
-        const record = this.records.get(id);
-        if (record) {
-          // An external writer is never silently adopted over local input.
-          this.observe(record, view);
-          return record.entry;
-        }
-        const value = view.head.value ?? (view.current.kind === "current"
-          ? { basis: view.current.basis, text: view.current.basis.text ?? "", editSeq: "0", pending: null } : null);
-        const created: RecordState = { needsWrite: false, writing: false, scheduled: false, flush: null, reading: null, writeAttempt: null, clearAttempt: null,
-          entry: { key: { ...key }, head: view.head, value, current: view.current,
-            durableSeq: view.head.value?.editSeq ?? null, journalPending: false, busy: false, checking: false,
-            recovery: value?.pending ? "unchecked" : null, replayAllowed: false, failure: null, currentFailure: null,
-            basisCurrent: !!value && view.current.kind === "current" && sameDraftBasis(value.basis, view.current.basis), newerInputAfterConfirmation: false } };
-        created.entry = immutableEntry(created.entry);
-        this.records.set(id, created); this.notify(); return created.entry;
+        return this.acceptRead(view);
       } catch (cause) {
         const record = this.records.get(id);
         if (record) this.update(record, { currentFailure: cause });
@@ -241,6 +259,40 @@ export class TranslationDrafts {
       if (existing?.reading === reading) existing.reading = null;
     });
     return reading;
+  }
+
+  /** A batch borrows the same heads as row editors. Later row reads or input
+   * win over this observation; no batch response replaces an input value. */
+  async openMany(keys: readonly DraftKey[]): Promise<(DraftEntry | undefined)[]> {
+    if (!keys.length || keys.length > 50 || keys.some(key => !this.validKey(key) || key.locale !== keys[0].locale)
+      || new Set(keys.map(identity)).size !== keys.length) throw new Error("Invalid batch draft members");
+    if (!this.kernel.live) return keys.map(() => undefined);
+    const captured = keys.map(key => this.records.get(identity(key))?.entry), views: DraftReadView[] = [];
+    try {
+      while (views.length < keys.length) {
+        const remaining = keys.slice(views.length);
+        const page = await this.ports.readMany({ ...this.context, locale: keys[0].locale, unitIds: remaining.map(key => key.unitId) });
+        if (!this.kernel.live) return keys.map(() => undefined);
+        if (!page.items.length || page.items.length > remaining.length || page.items.some((view, index) => !sameDraftKey(view.head.key, remaining[index]))
+          || (page.nextAfter === null ? page.items.length !== remaining.length : page.nextAfter !== page.items.length || page.items.length >= remaining.length)) {
+          throw new Error("Draft batch page does not match its members");
+        }
+        views.push(...page.items);
+      }
+      return await Promise.all(keys.map((key, index) => this.kernel.enqueue(identity(key), async () => {
+        const current = this.records.get(identity(key))?.entry;
+        return current !== captured[index] ? current : this.acceptRead(views[index]);
+      })));
+    } catch (cause) {
+      if (this.kernel.live) {
+        for (const [index, key] of keys.entries()) {
+          const record = this.records.get(identity(key));
+          if (record && record.entry === captured[index]) this.update(record, { currentFailure: cause });
+        }
+        this.notify({ failure: { kind: "read", cause } });
+      }
+      return keys.map(() => undefined);
+    }
   }
 
   edit(key: DraftKey, text: string): boolean {
@@ -334,6 +386,41 @@ export class TranslationDrafts {
         || (history.current?.revisionId ?? null) !== capture.basis.revisionId || history.currentText !== capture.basis.text) return null;
       return candidate.text;
     });
+  }
+  /** Bulk adoption stays inside this input owner. Its reads are bounded batches;
+   * each journal write retains the ordinary per-head CAS and writer identity. */
+  async stageCandidateBatch(items: readonly CandidateBatchStage[], proof: () => boolean): Promise<readonly CandidateBatchStageResult[]> {
+    if (!items.length || items.length > 50 || new Set(items.map(item => item.row.target.unitId)).size !== items.length
+      || items.some(item => item.row.target.locale !== items[0].row.target.locale
+        || item.row.target.sourceSnapshotId !== items[0].row.target.sourceSnapshotId)) throw new Error("Invalid candidate stage batch");
+    const captured = structuredClone(items);
+    const keys = captured.map(({ row }) => ({ projectId: this.context.projectId, unitId: row.target.unitId, locale: row.target.locale }));
+    const results = keys.map(key => ({ key, staged: false, durable: false }));
+    const token = proof() ? this.reserveMutation() : null;
+    if (!token) return results;
+    const current = () => this.kernel.owns(token) && proof();
+    try {
+      const fresh = await readCandidateSliceRows({ ...this.context, locale: keys[0].locale,
+        sourceSnapshotId: captured[0].row.target.sourceSnapshotId, unitIds: keys.map(key => key.unitId), state: "available" }, this.ports.candidateSlice, current);
+      if (!current()) return results;
+      const opened = await this.openMany(keys);
+      if (!current()) return results;
+      for (const [index, item] of captured.entries()) {
+        if (!current()) break;
+        const key = keys[index], record = this.records.get(identity(key)), row = fresh.rows[index], value = record?.entry.value;
+        if (!opened[index] || !record || !value || !row || !this.fresh(record) || record.entry.failure !== null || record.entry.journalPending || record.entry.head.value !== null
+          || value.pending || value.merge || value.editSeq !== item.capture.editSeq || !sameDraftBasis(value.basis, item.capture.basis)
+          || value.text !== (value.basis.text ?? "") || record.entry.current.kind !== "current"
+          || record.entry.current.sourceText !== row.target.sourceText || !sameBatchCandidate(item.row, row)
+          || row.protection.protected || row.selectedOriginKind !== null && row.selectedOriginKind !== "ai"
+          || !sameDraftBasis(value.basis, { sourceRevisionId: row.target.sourceRevisionId, selectionId: row.target.selectionId,
+            revisionId: row.target.revisionId, text: row.target.translationText })) continue;
+        if (!this.edit(key, row.revisions[0].text)) continue;
+        results[index] = { key, staged: true, durable: await this.flush(key) };
+        if (!results[index].durable) break;
+      }
+      return results;
+    } finally { this.releaseMutation(token); }
   }
   async stageSuggestion(key: DraftKey, suggestion: TmSuggestion, expected: RevisionStageCapture, proof: () => boolean): Promise<RevisionStageResult> {
     const target = { ...key }, selected = { ...suggestion };

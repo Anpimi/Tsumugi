@@ -31,6 +31,9 @@ import type { EditorCommand, SegmentEditorHandle } from "./features/editor/Segme
 import type { LifecycleParticipant } from "./platform/projectLifecycle";
 import type { ImportOwners } from "./features/import/importTypes";
 import type { CandidateOwners } from "./features/candidates/candidateTypes";
+import type { CandidateBatchSnapshot } from "./features/candidates/CandidateBatchSession";
+import type { TranslationCandidateBatchPreviewCommandPayload } from "../workbenchCommands";
+import type { WorkspaceSelection } from "./workspace/workspaceSelection";
 import type { ComparisonSession } from "./features/comparison/ComparisonSession";
 import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
@@ -47,6 +50,8 @@ const ImportOwnerHost = lazy(() => import("./features/import/ImportOwnerHost"));
 const TranslationImportPanel = lazy(() => import("./features/import/TranslationImportPanel"));
 const CandidateOwnerHost = lazy(() => import("./features/candidates/CandidateOwnerHost"));
 const CandidateRecovery = lazy(() => import("./features/candidates/CandidateRecovery"));
+const CandidateBatchPanel = lazy(() => import("./features/candidates/CandidateBatchPanel"));
+const CandidateBatchRecovery = lazy(() => import("./features/candidates/CandidateBatchRecovery"));
 const FocusedCandidate = lazy(() => import("./features/entries/FocusedCandidate"));
 const ComparisonOwnerHost = lazy(() => import("./features/comparison/ComparisonOwnerHost"));
 const ComparisonRecovery = lazy(() => import("./features/comparison/ComparisonRecovery"));
@@ -58,6 +63,7 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
   importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void;
   candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void;
+  candidateBatchOpen: boolean; setCandidateBatchOpen: (open: boolean) => void;
   comparisonOwner: ComparisonSession | null; requestComparisons: () => void };
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
@@ -65,6 +71,7 @@ function subscribeWidth(listener: () => void) { window.addEventListener("resize"
 const noDraftState: TranslationDraftSnapshot = { hydration: "idle", revision: 0, failure: null, retired: false, mutationReserved: false, summaries: [] };
 const noDraftSubscription = () => () => undefined;
 const getNoDraftState = () => noDraftState;
+const getNoCandidateBatchState = () => null;
 
 function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void }) {
   const [store] = useState(() => createWorkspaceStore({ initialLocale: session.project.metadata.targetLocales[0] ?? "" }));
@@ -83,6 +90,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const requestCandidates = useCallback(() => { candidateStatus.current.requested = true; setCandidatesRequested(true); }, []);
   const revealCandidates = requestCandidates;
   const publishCandidateOwners = useCallback((value: CandidateOwners | null) => { candidateStatus.current.owners = value; setCandidateOwners(value); }, []);
+  const [candidateBatchOpen, setCandidateBatchOpen] = useState(false);
+  const revealCandidateBatch = useCallback(() => { requestCandidates(); setCandidateBatchOpen(true); }, [requestCandidates]);
   const [comparisonsRequested, setComparisonsRequested] = useState(false), [comparisonOwner, setComparisonOwner] = useState<ComparisonSession | null>(null);
   const comparisonStatus = useRef({ requested: false, owner: null as ComparisonSession | null });
   const requestComparisons = useCallback(() => { comparisonStatus.current.requested = true; setComparisonsRequested(true); }, []);
@@ -150,12 +159,12 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
-    candidateOwners, requestCandidates, revealCandidates, comparisonOwner, requestComparisons }}>
+    candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons }}>
     {importRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
       <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
     </Suspense></FeatureBoundary> : null}
     {candidatesRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("candidateUnavailable")} description={t("candidateUnavailableHelp")} />}><Suspense fallback={null}>
-      <CandidateOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishCandidateOwners} onReveal={revealCandidates}/>
+      <CandidateOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishCandidateOwners} onReveal={revealCandidates} onRevealBatch={revealCandidateBatch}/>
     </Suspense></FeatureBoundary> : null}
     {comparisonsRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("comparisonUnavailable")} description={t("comparisonUnavailableHelp")} />}><Suspense fallback={null}>
       <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
@@ -168,13 +177,15 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
 function WorkspaceShell() {
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
-    candidateOwners, requestCandidates, revealCandidates, comparisonOwner, requestComparisons } = useWorkspaceContext();
+    candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
   const lifecycleState = useProjectLifecycle(lifecycle);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
+  const candidateBatchState = useSyncExternalStore<CandidateBatchSnapshot | null>(candidateOwners?.batch.subscribe ?? noDraftSubscription,
+    candidateOwners?.batch.getSnapshot ?? getNoCandidateBatchState, candidateOwners?.batch.getSnapshot ?? getNoCandidateBatchState);
   const narrow = useSyncExternalStore(subscribeWidth, () => innerWidth <= 1100, () => false);
   const wide = useSyncExternalStore(subscribeWidth, () => innerWidth >= 1440, () => false);
   const [registries, setRegistries] = useState<Map<string | null, WorkbenchCommands>>(new Map());
@@ -189,6 +200,12 @@ function WorkspaceShell() {
   }), []);
   const [pendingImport, setPendingImport] = useState<{ viewId: string | null; locale: string | null } | null>(null);
   const entries = useRef<EntriesHandle>(null), dock = useRef<HTMLDivElement>(null);
+  const candidateBatchTrigger = useRef<HTMLButtonElement>(null);
+  const candidateBatchRecoveryTrigger = useRef<HTMLButtonElement>(null);
+  const candidateBatchReturnFocus = useMemo(() => ({ get current() {
+    const trigger = candidateBatchTrigger.current;
+    return trigger?.isConnected && !trigger.disabled ? trigger : candidateBatchRecoveryTrigger.current;
+  } }), []);
   const recoveryEditor = useRef<SegmentEditorHandle>(null);
   const split = useRef<HTMLDivElement>(null), splitHandle = useRef<HTMLDivElement>(null);
   const currentId = state.activeViewId;
@@ -197,7 +214,7 @@ function WorkspaceShell() {
   const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
   const pendingDrafts = draftState.summaries.filter(summary => summary.hasPending);
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
-  useEffect(() => { if (view?.kind === "entries" && view.focus && !importVisible) requestCandidates(); }, [view?.kind, view?.focus, importVisible, requestCandidates]);
+  useEffect(() => { if (view?.kind === "entries" && (view.focus || view.selection) && !importVisible) requestCandidates(); }, [view?.kind, view?.focus, view?.selection !== null, importVisible, requestCandidates]);
   useEffect(() => {
     const failure = lifecycleState.failure;
     if (failure?.code === "leave-blocked" && failure.ownerId === "translation-drafts" && candidateOwners
@@ -242,6 +259,24 @@ function WorkspaceShell() {
   const commands = registries.get(currentId);
   const commandsReady = !!commands && registeredCommands === commands;
   const scope = useMemo(() => ({ ...executionContext(session.project), area: "translation" as const }), [session.project.sessionToken, session.project.metadata.projectId]);
+  useLayoutEffect(() => {
+    if (!commands || !candidateOwners) return;
+    return commands.register({ id: "translation.preview-candidate-batch", nameKey: "workbenchV2.candidateBatchMenu", category: "translation", scope,
+      binding: null, risk: "reads-review", confirmation: "none", payloadKind: "translation-candidate-batch-preview",
+      availability: input => {
+        const current = store.getState(), active = current.activeViewId ? current.views[current.activeViewId] : null, batch = candidateOwners.batch.current();
+        return !disabled && !candidateBatchOpen && current.activeViewId === currentId && active?.kind === "entries" && !!active.selection
+          && JSON.stringify(input?.selection) === JSON.stringify(active.selection) && !!currentScope()
+          && (batch.phase === "idle" || batch.phase === "complete" || batch.ended) && gate.canDispatch({ viewId: currentId, source: "button" }) ? { enabled: true } : { enabled: false, reason: "unavailable" };
+      }, handler: input => {
+        setCandidateBatchOpen(true);
+        void candidateOwners.batch.capture(input.selection, input.mode, () => !!currentScope() && store.getState().activeViewId === currentId).catch(() => setCommandFailed(true));
+      } });
+  }, [commands, candidateOwners, scope, disabled, currentId, gate, store, candidateBatchOpen]);
+  function previewCandidateBatch(mode: "stage" | "reject" | "restore", selection: WorkspaceSelection) {
+    const payload: TranslationCandidateBatchPreviewCommandPayload = { kind: "translation-candidate-batch-preview", mode, selection };
+    if (commandsReady && commands) commands.dispatch("translation.preview-candidate-batch", scope, payload);
+  }
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void lifecycle.refresh(); entries.current?.refresh(); },
     openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
@@ -320,6 +355,8 @@ function WorkspaceShell() {
   const candidatePanelVisible = currentId !== null && presented.candidates === currentId;
   const protectionPanelVisible = currentId !== null && presented.protection === currentId;
   const comparisonPanelVisible = currentId !== null && presented.comparison === currentId;
+  const candidateBatchOwnsPending = !!candidateOwners?.decisions.state.pending && !!candidateBatchState?.items.some(item => item.request === candidateOwners.decisions.state.pending);
+  const candidateBatchBlocked = !!candidateBatchState && !candidateBatchState.ended && !["idle", "complete"].includes(candidateBatchState.phase);
   async function openCandidateEditor(unitId: string, locale: string, parentDialogId?: string): Promise<boolean> {
     if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
     if (parentDialogId === "workspace-dock" && narrow && drawer) closeDrawer();
@@ -409,9 +446,16 @@ function WorkspaceShell() {
     {pendingDrafts.length ? <Banner tone="warning" action={<Button onClick={() => revealDraft(pendingDrafts[0].key)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: pendingDrafts.length })}</Banner> : null}
     {importNeedsAttention && !importVisible ? <Banner tone="warning" action={<Button onClick={revealImport}>{message("importOpen")}</Button>}>{message("importPendingNotice")}</Banner> : null}
     {candidateOwners && commandsReady && commands ? <Suspense fallback={null}><CandidateRecovery project={session.project} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
-      disabled={disabled} visible showDecisions={!candidatePanelVisible} showProtection={!protectionPanelVisible} onOpen={(unitId, locale) => { void inspectCandidate(unitId, locale, null).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
+      disabled={disabled} visible showDecisions={!candidatePanelVisible && !candidateBatchOwnsPending} showProtection={!protectionPanelVisible} onOpen={(unitId, locale) => { void inspectCandidate(unitId, locale, null).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
     {comparisonOwner && commandsReady && commands ? <Suspense fallback={null}><ComparisonRecovery project={session.project} owner={comparisonOwner} commands={commands} gate={gate} viewId={currentId}
       disabled={disabled} visible={!comparisonPanelVisible} onOpenComparison={comparison => openSavedComparison(comparison)}/></Suspense> : null}
+    {candidateOwners && commandsReady && commands ? <Suspense fallback={null}>
+      <CandidateBatchPanel project={session.project} owner={candidateOwners.batch} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
+        disabled={disabled} open={candidateBatchOpen} onOpenChange={setCandidateBatchOpen} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        onEdit={openCandidateEditor} returnFocusRef={candidateBatchReturnFocus}/>
+      <CandidateBatchRecovery project={session.project} owner={candidateOwners.batch} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
+        disabled={disabled} visible={!candidateBatchOpen} onOpen={() => setCandidateBatchOpen(true)} triggerRef={candidateBatchRecoveryTrigger}/>
+    </Suspense> : null}
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
         {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined}><IconButton label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} disabled={id !== "entries" || disabled} title={id !== "entries" ? message("comingLater") : undefined} onClick={event => {
@@ -439,7 +483,7 @@ function WorkspaceShell() {
           })}<IconButton size="xs" label={message("newView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}><Plus /></IconButton>
             {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
           </div>
-          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
+          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} onCandidateBatch={candidateOwners && commandsReady ? previewCandidateBatch : undefined} candidateBatchTriggerRef={candidateBatchTrigger} candidateBatchBlocked={candidateBatchBlocked} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
             const accepted = await runtime.navigation.update(view.id, patch);
             if (accepted && patch.dock === "details" && narrow) showDock();
             return accepted;

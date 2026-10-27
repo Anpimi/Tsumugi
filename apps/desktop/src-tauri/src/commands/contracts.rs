@@ -32,6 +32,7 @@ struct Responses {
 #[allow(dead_code)]
 struct DraftRequests {
     read: drafts::DraftReadRequest,
+    read_many: drafts::DraftReadManyRequest,
     write: drafts::DraftWriteRequest,
     clear: drafts::DraftClearRequest,
     list: drafts::DraftListRequest,
@@ -41,6 +42,7 @@ struct DraftRequests {
 #[allow(dead_code)]
 struct DraftResponses {
     read: drafts::DraftReadView,
+    read_many: drafts::DraftReadMany,
     written: drafts::DraftHead,
     cleared: drafts::DraftHead,
     page: drafts::DraftPage,
@@ -300,6 +302,7 @@ struct TranslationRequests {
     adoption_action: execution::source::translation::TranslationAdoptionActionRequest,
     history: execution::source::translation::TranslationHistoryRequest,
     revision: execution::source::translation::TranslationRevisionRequest,
+    candidate_slice: execution::source::translation::TranslationCandidateSliceRequest,
     save: execution::source::translation::TranslationSaveRequest,
     action: execution::source::translation::TranslationActionRequest,
     select: execution::source::translation::TranslationSelectRequest,
@@ -329,6 +332,7 @@ struct TranslationResponses {
     adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     history: tsumugi_core::TranslationHistory,
     revision: tsumugi_core::TranslationRevision,
+    candidate_slice: tsumugi_core::TranslationCandidateSlice,
     action: Option<tsumugi_core::TranslationSelection>,
     saved: tsumugi_core::TranslationSaveReceipt,
     selected: tsumugi_core::TranslationSelection,

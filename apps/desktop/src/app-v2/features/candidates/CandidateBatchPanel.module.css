@@ -1,0 +1,27 @@
+.dialog { inline-size: min(880px, calc(100vw - var(--space-9))); }
+.content { display: grid; gap: var(--space-6); min-inline-size: 0; }
+.meta { color: var(--color-text-secondary); margin: 0; font-size: var(--text-sm); line-height: var(--line-sm); overflow-wrap: anywhere; }
+.audit { display: grid; gap: var(--space-5); max-inline-size: var(--size-form); }
+.table { inline-size: 100%; border-collapse: collapse; table-layout: fixed; }
+.table th, .table td { padding: var(--space-4); border-block-end: var(--border-width) solid var(--color-border-subtle); text-align: start; vertical-align: top; overflow-wrap: anywhere; }
+.table th { color: var(--color-text-secondary); font-weight: var(--weight-medium); font-size: var(--text-sm); }
+.entryColumn { inline-size: 24%; }
+.resultColumn { inline-size: 30%; }
+.key { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai { border-inline-start: 2px solid var(--color-ai-solid); padding-inline-start: var(--space-4); }
+.status { margin: 0 0 var(--space-3); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-4); inline-size: 100%; }
+.pages { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.pageRegion { outline: none; min-inline-size: 0; }
+.pageRegion:focus-visible { outline: var(--border-width) solid var(--color-accent-solid); outline-offset: var(--space-2); }
+.recovery { display: grid; gap: var(--space-3); }
+@media (max-width: 640px) {
+  .table { table-layout: auto; }
+  .table thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .table tr, .table td { display: block; }
+  .table tr { padding-block: var(--space-3); border-block-end: var(--border-width) solid var(--color-border-default); }
+  .table td { border: 0; padding-block: var(--space-3); }
+  .table th { inline-size: auto; }
+}

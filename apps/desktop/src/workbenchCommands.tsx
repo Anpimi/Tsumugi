@@ -7,6 +7,9 @@ import type { PluginToolRequest, PluginToolView } from "./pluginCommands";
 import type { TranslationPluginPending } from "./TranslationImportSession";
 import * as translationValidation from "./generated/translation.validators";
 import type { CandidateDecisionRequest, CandidateDisposition } from "./translationCommands";
+import type { CandidateAuditCapture } from "./CandidateDecisionSession";
+import type { WorkspaceSelection } from "./app-v2/workspace/workspaceSelection";
+import { validContentSelection } from "./contentSelection";
 import { createContext, useContext, type ReactNode } from "react";
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
@@ -28,7 +31,7 @@ import { validateRequestPluginStart as validateTranslationPluginStart, validateR
 import type { ProjectView } from "./projectCommands";
 import { validateResponseProjectView } from "./generated/validators";
 
-type PlainWorkbenchCommandId = "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
+type PlainWorkbenchCommandId = "translation.hide-candidate-batch" | "translation.open-retained-candidate-batch" | "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
   | "workspace.agent" | "workspace.details" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
@@ -214,6 +217,21 @@ export interface TranslationStageCommandPayload {
 export interface TranslationMergeStageCommandPayload extends Omit<TranslationStageCommandPayload, "kind" | "evidence"> {
   kind: "translation-merge-stage"; comparisonId: string; contributors: string[]; expectedBasis: string; initialRevisionId: string;
 }
+export interface TranslationCandidateBatchPreviewCommandPayload {
+  kind: "translation-candidate-batch-preview"; mode: "stage" | "reject" | "restore"; selection: WorkspaceSelection;
+}
+export interface TranslationCandidateBatchCommandPayload {
+  kind: "translation-candidate-batch"; captureId: number; revision: number; audit: CandidateAuditCapture | null;
+}
+export interface TranslationCandidateBatchPendingCommandPayload {
+  kind: "translation-candidate-batch-pending"; captureId: number; revision: number; itemId: string; request: CandidateDecisionRequest | null;
+}
+export interface TranslationCandidateBatchItemCommandPayload {
+  kind: "translation-candidate-batch-item"; captureId: number; revision: number; itemId: string; unitId: string; locale: string;
+}
+export interface TranslationCandidateBatchPageCommandPayload {
+  kind: "translation-candidate-batch-page"; captureId: number; revision: number; offset: number;
+}
 export interface TranslationDraftCandidateCommandPayload extends Omit<TranslationStageCommandPayload, "kind"> {
   kind: "translation-draft-candidate"; disposition: CandidateDisposition; expectedDecisionId: string | null;
   actor: string; reason: string; decisionEditSeq: number;
@@ -278,6 +296,14 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "translation.preview-candidate-batch": TranslationCandidateBatchPreviewCommandPayload;
+  "translation.confirm-candidate-batch": TranslationCandidateBatchCommandPayload;
+  "translation.continue-candidate-batch": TranslationCandidateBatchCommandPayload;
+  "translation.end-candidate-batch": TranslationCandidateBatchCommandPayload;
+  "translation.check-candidate-batch": TranslationCandidateBatchPendingCommandPayload;
+  "translation.retry-candidate-batch": TranslationCandidateBatchPendingCommandPayload;
+  "translation.edit-candidate-batch-item": TranslationCandidateBatchItemCommandPayload;
+  "translation.candidate-batch-page": TranslationCandidateBatchPageCommandPayload;
   "arena.compare-saved": ArenaCompareCommandPayload;
   "arena.open-saved": ArenaOpenComparisonCommandPayload;
   "arena.reveal-saved": ArenaRevealCommandPayload;
@@ -597,6 +623,11 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"release-workflow", "release.run-check-workflow" | "release.stop-check-workflow" | "release.check-check-workflow" | "release.close-check-workflow">
   | ResourceCommand<"project-metadata-reconcile", "project.metadata.reconcile">
   | ResourceCommand<"translation-protection", "translation.protect-work" | "translation.release-work">
+  | ResourceCommand<"translation-candidate-batch-preview", "translation.preview-candidate-batch">
+  | ResourceCommand<"translation-candidate-batch", "translation.confirm-candidate-batch" | "translation.continue-candidate-batch" | "translation.end-candidate-batch">
+  | ResourceCommand<"translation-candidate-batch-pending", "translation.check-candidate-batch" | "translation.retry-candidate-batch">
+  | ResourceCommand<"translation-candidate-batch-item", "translation.edit-candidate-batch-item">
+  | ResourceCommand<"translation-candidate-batch-page", "translation.candidate-batch-page">
   | ResourceCommand<"translation-protection-pending", "translation.retry-protection" | "translation.recover-protection">
   | ResourceCommand<"translation-plugin", "translation.prepare-import-check" | "translation.start-import-check" | "translation.finish-import-check" | "translation.prepare-import-projection" | "translation.start-import-projection">
   | ResourceCommand<"translation-plugin-pending", "translation.check-import-plugin-start" | "translation.check-import-projection-start" | "translation.retry-import-plugin">
@@ -703,6 +734,11 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   if (command.payloadKind?.startsWith("translation-")) {
     if (!validTranslationPayload(payload)) return unavailable;
     switch (command.payloadKind) {
+      case "translation-candidate-batch-preview": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-candidate-batch": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-candidate-batch-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-candidate-batch-item": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-candidate-batch-page": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-protection": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-protection-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-plugin": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -890,9 +926,25 @@ function validStageTarget(payload: Omit<TranslationStageCommandPayload, "kind" |
     && basis.selectionId === payload.expectedSelectionId && basis.revisionId === payload.expectedRevisionId
     && (basis.selectionId === null ? basis.revisionId === null && basis.text === null : basis.revisionId !== null && basis.text !== null);
 }
+function validCandidateBatchSelection(selection: WorkspaceSelection) {
+  if (!selection || typeof selection !== "object") return false;
+  if (selection.kind === "scope") return validContentSelection(selection.selection) && !!selection.query
+    && typeof selection.query.text === "string" && ["all", "selected", "unselected"].includes(selection.query.selection);
+  return selection.kind === "ids" && validIdentity(selection.locale) && validIdentity(selection.sourceSnapshotId)
+    && Array.isArray(selection.unitIds) && selection.unitIds.length > 0 && selection.unitIds.length <= 10_000
+    && selection.unitIds.every(validIdentity) && new Set(selection.unitIds).size === selection.unitIds.length;
+}
 function validTranslationPayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`translation-${string}`}> {
   if (!payload || typeof payload !== "object") return false;
   switch (payload.kind) {
+    case "translation-candidate-batch-preview": return ["stage", "reject", "restore"].includes(payload.mode) && validCandidateBatchSelection(payload.selection);
+    case "translation-candidate-batch": return editSequence(payload.captureId) && editSequence(payload.revision)
+      && (payload.audit === null || !!payload.audit && typeof payload.audit.actor === "string" && typeof payload.audit.reason === "string" && editSequence(payload.audit.editSeq));
+    case "translation-candidate-batch-pending": return editSequence(payload.captureId) && editSequence(payload.revision) && validIdentity(payload.itemId)
+      && (payload.request === null || translationValidation.validateRequestCandidateDecision(payload.request));
+    case "translation-candidate-batch-item": return editSequence(payload.captureId) && editSequence(payload.revision)
+      && [payload.itemId, payload.unitId, payload.locale].every(validIdentity);
+    case "translation-candidate-batch-page": return editSequence(payload.captureId) && editSequence(payload.revision) && editSequence(payload.offset);
     case "translation-protection": {
       const basis = payload.basis, request = basis?.request;
       return !!basis && !!request && typeof payload.protected === "boolean" && typeof basis.key === "string"
@@ -1250,6 +1302,11 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "release-workflow-consent" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-workflow" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-protection" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-candidate-batch-preview" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-candidate-batch" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-candidate-batch-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-candidate-batch-item" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-candidate-batch-page" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-protection-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-correction" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-context" && payload?.kind === command.payloadKind) command.handler(payload);

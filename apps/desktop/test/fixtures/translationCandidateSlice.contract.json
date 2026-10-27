@@ -1,0 +1,139 @@
+{
+  "request": {
+    "sessionToken": "synthetic-candidate-session",
+    "projectId": "80000000-0000-4000-8000-000000000001",
+    "locale": "zh-CN",
+    "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+    "scopeId": null,
+    "unitIds": [
+      "80000000-0000-4000-8000-000000000002",
+      "80000000-0000-4000-8000-000000000003"
+    ],
+    "state": "available",
+    "afterOrdinal": "0",
+    "readVersion": null
+  },
+  "response": {
+    "projectId": "80000000-0000-4000-8000-000000000001",
+    "locale": "zh-CN",
+    "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+    "scopeId": null,
+    "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "rows": [
+      {
+        "target": {
+          "unitId": "80000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "nativeKey": "synthetic.dialogue",
+          "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+          "sourceRevisionId": "80000000-0000-4000-8000-000000000005",
+          "sourceText": "Hello {{name}}\né 👩🏽‍💻 日本語 العربية",
+          "selectionId": "80000000-0000-4000-8000-000000000008",
+          "revisionId": "80000000-0000-4000-8000-000000000007",
+          "translationText": "",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "termConflict": false,
+          "currentDecision": null,
+          "currentCheck": null,
+          "currentFallback": null,
+          "currentWaivers": [],
+          "basisEvidence": {
+            "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+            "sourceRevisionId": "80000000-0000-4000-8000-000000000005",
+            "selectionId": "80000000-0000-4000-8000-000000000008",
+            "revisionId": "80000000-0000-4000-8000-000000000007",
+            "contextRevisionId": null,
+            "termRevisionIds": []
+          }
+        },
+        "selectedOriginKind": "ai",
+        "protection": {
+          "unitId": "80000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "revision": "0",
+          "protected": false
+        },
+        "candidateCount": 2,
+        "revisions": [
+          {
+            "actionId": "80000000-0000-4000-8000-000000000110",
+            "artifactId": null,
+            "attemptId": "80000000-0000-4000-8000-000000000020",
+            "contributors": [],
+            "declaredLocale": null,
+            "fileDigest": null,
+            "itemId": "80000000-0000-4000-8000-000000000021",
+            "locale": "zh-CN",
+            "logicalPath": null,
+            "nativeKey": null,
+            "ordinal": "2",
+            "originKind": "ai",
+            "resultId": "80000000-0000-4000-8000-000000000022",
+            "revisionId": "80000000-0000-4000-8000-000000000010",
+            "sourceRevisionId": "80000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+            "text": "候选 é 👩🏽‍💻\n{{name}} 日本語 العربية",
+            "unitId": "80000000-0000-4000-8000-000000000002"
+          },
+          {
+            "actionId": "80000000-0000-4000-8000-000000000111",
+            "artifactId": null,
+            "attemptId": "80000000-0000-4000-8000-000000000020",
+            "contributors": [],
+            "declaredLocale": null,
+            "fileDigest": null,
+            "itemId": "80000000-0000-4000-8000-000000000021",
+            "locale": "zh-CN",
+            "logicalPath": null,
+            "nativeKey": null,
+            "ordinal": "3",
+            "originKind": "ai",
+            "resultId": "80000000-0000-4000-8000-000000000022",
+            "revisionId": "80000000-0000-4000-8000-000000000011",
+            "sourceRevisionId": "80000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+            "text": "",
+            "unitId": "80000000-0000-4000-8000-000000000002"
+          }
+        ]
+      },
+      {
+        "target": {
+          "unitId": "80000000-0000-4000-8000-000000000003",
+          "locale": "zh-CN",
+          "nativeKey": "synthetic.empty",
+          "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+          "sourceRevisionId": "80000000-0000-4000-8000-000000000006",
+          "sourceText": "",
+          "selectionId": null,
+          "revisionId": null,
+          "translationText": null,
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "termConflict": false,
+          "currentDecision": null,
+          "currentCheck": null,
+          "currentFallback": null,
+          "currentWaivers": [],
+          "basisEvidence": {
+            "sourceSnapshotId": "80000000-0000-4000-8000-000000000004",
+            "sourceRevisionId": "80000000-0000-4000-8000-000000000006",
+            "selectionId": null,
+            "revisionId": null,
+            "contextRevisionId": null,
+            "termRevisionIds": []
+          }
+        },
+        "selectedOriginKind": null,
+        "protection": {
+          "unitId": "80000000-0000-4000-8000-000000000003",
+          "locale": "zh-CN",
+          "revision": "0",
+          "protected": false
+        },
+        "candidateCount": 0,
+        "revisions": []
+      }
+    ],
+    "next": null
+  }
+}

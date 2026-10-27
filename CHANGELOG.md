@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- The opt-in desktop workspace can keep AI candidates as drafts, reject them, or restore rejected candidates across a fixed entry selection. Preview shows which entries will be skipped, including protected entries, non-AI selections, and existing drafts. Results remain visible per version, and the batch pauses when an action needs checking or a draft write is unconfirmed.
+
 - In the opt-in desktop workspace, compare two to four saved translations, hide or reveal their sources, and reopen the same comparison. A human merge starts as a local draft with its contributing versions retained; confirmation uses the original merge checks and recovery. Entry details also offer explicit protection and release controls.
 
 - The opt-in desktop workspace adds AI, translation-memory, and revision panels. Compare texts, keep a candidate as a local draft, and confirm it in the row editor. Rejected candidates retain the recorded name and reason, and uncertain decisions keep their original recovery actions. Source columns can compare with the previous adopted source version; the entry glyph includes local drafts, review issues, and manual protection.

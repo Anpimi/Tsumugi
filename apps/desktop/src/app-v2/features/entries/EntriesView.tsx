@@ -16,7 +16,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import { type SegmentEditorProps } from "../editor/SegmentEditor";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import { captureEntries, captureEntrySelection, entryPageKey, entryPresets, entryQuery, entrySourceComparisonKey, readEntrySourceComparison, readEntryPage, readEntryQueueWindow, retainedEntryCapture, sameEntryQuery, type RetainedEntryCapture } from "./entryReads";
-import { toggleWorkspaceSelection, workspaceSelectionIds, workspaceSelectionMatches } from "../../workspace/workspaceSelection";
+import { copyWorkspaceSelection, toggleWorkspaceSelection, workspaceSelectionIds, workspaceSelectionMatches, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import EntriesTable, { type EntriesTableHandle } from "./EntriesTable";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./EntriesView.module.css";
@@ -29,6 +29,9 @@ type Props = {
   dispatch: SegmentEditorProps["dispatch"];
   onRevealDraft: (key: DraftKey) => void;
   onImport?: () => void;
+  onCandidateBatch?: (mode: "stage" | "reject" | "restore", selection: WorkspaceSelection) => void;
+  candidateBatchTriggerRef?: Ref<HTMLButtonElement>;
+  candidateBatchBlocked?: boolean;
   renderCandidate?: (row: SegmentRow) => ReactNode;
   ref?: Ref<EntriesHandle>;
 };
@@ -40,7 +43,7 @@ export interface EntriesHandle {
 const noSubscription = () => () => {};
 const noDraftSnapshot = () => null;
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, renderCandidate, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, renderCandidate, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
@@ -256,7 +259,11 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     </form>
     {!view.focusMode && (view.query || view.selection) ? <div className={local.scopeBar}>
       {view.query ? <Button size="sm" disabled={disabled} onClick={() => { void navigate({ query: "", searchInput: "", focus: null, editing: false, focusMode: false }); }} aria-label={t("entryClearQuery")}><span>{t("entryQueryChip", { query: view.query })}</span><X /></Button> : null}
-      {view.selection ? <><span>{t("entrySelectedCount", { count: selectedIds.length })}</span>{view.selection.kind === "scope" ? <span>{t("entryFixedSelection", { total: String(view.selection.selection.capture.units.length), excluded: String(view.selection.selection.excluded.length) })}</span> : null}<Button size="sm" onClick={() => patch({ selection: null })}>{t("entryClearSelection")}</Button></> : null}
+      {view.selection ? <><span>{t("entrySelectedCount", { count: selectedIds.length })}</span>{view.selection.kind === "scope" ? <span>{t("entryFixedSelection", { total: String(view.selection.selection.capture.units.length), excluded: String(view.selection.selection.excluded.length) })}</span> : null}
+        {onCandidateBatch ? <Menu label={t("candidateBatchMenu")} trigger={<Button ref={candidateBatchTriggerRef} size="sm" disabled={disabled || candidateBatchBlocked || !selectionMatches || !selectedIds.length} title={candidateBatchBlocked ? t("candidateBatchRetained") : undefined}>{t("candidateBatchMenu")}<ChevronDown /></Button>}
+          items={(["stage", "reject", "restore"] as const).map(mode => ({ id: mode, label: t(mode === "stage" ? "candidateBatchStage" : mode === "reject" ? "candidateBatchReject" : "candidateBatchRestore"),
+            onSelect: () => { const selection = copyWorkspaceSelection(view.selection); if (selection) onCandidateBatch(mode, selection); }, disabled: disabled || candidateBatchBlocked || !selectionMatches || !selectedIds.length }))}/> : null}
+        <Button size="sm" onClick={() => patch({ selection: null })}>{t("entryClearSelection")}</Button></> : null}
     </div> : null}
     {!selectionMatches ? <Banner tone="warning">{t("entrySelectionChanged")}</Banner> : null}
     {selecting ? <Banner>{t("entryCapturingSelection")}</Banner> : null}

@@ -5,6 +5,7 @@ export declare function validateRequestAction(value: unknown): value is Requests
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
 export declare function validateRequestAdoptionAction(value: unknown): value is Requests["adoptionAction"];
 export declare function validateRequestCandidateDecision(value: unknown): value is Requests["candidateDecision"];
+export declare function validateRequestCandidateSlice(value: unknown): value is Requests["candidateSlice"];
 export declare function validateRequestCapture(value: unknown): value is Requests["capture"];
 export declare function validateRequestCheckFinish(value: unknown): value is Requests["checkFinish"];
 export declare function validateRequestCheckPrepare(value: unknown): value is Requests["checkPrepare"];
@@ -32,6 +33,7 @@ export declare function validateResponseAdoptionAction(value: unknown): value is
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseCandidateAction(value: unknown): value is Responses["candidateAction"];
 export declare function validateResponseCandidateDecision(value: unknown): value is Responses["candidateDecision"];
+export declare function validateResponseCandidateSlice(value: unknown): value is Responses["candidateSlice"];
 export declare function validateResponseCheckReview(value: unknown): value is Responses["checkReview"];
 export declare function validateResponseChecked(value: unknown): value is Responses["checked"];
 export declare function validateResponseFiles(value: unknown): value is Responses["files"];

@@ -48,6 +48,30 @@ fn pending(request: &DraftWrite) -> DraftPending {
         submitted_seq: request.value.edit_seq,
     }
 }
+
+#[test]
+fn draft_read_many_keeps_v1_pending_tombstones_and_absent_heads_without_migration() {
+    let (_directory,store,mut request) = setup();
+    let missing = ExecutionId::new();
+    let empty = store.read_many(request.key.project_id,&request.key.locale,&[request.key.unit_id,missing]).unwrap();
+    assert!(empty.iter().all(|head| head.value.is_none() && head.revision == revision(0)));
+    assert!(!store.directory.exists());
+    request.value.pending = Some(pending(&request));
+    let original = store.write(&request).unwrap();
+    let mut tombstone = request.key.clone(); tombstone.unit_id = ExecutionId::new();
+    let cleared = store.clear(&DraftClear { key:tombstone.clone(),expected_revision:revision(0) }).unwrap();
+    let connection = Connection::open(store.directory.join(DATABASE)).unwrap();
+    connection.pragma_update(None,"user_version",LEGACY_FORMAT).unwrap(); drop(connection);
+    let heads = store.read_many(request.key.project_id,&request.key.locale,&[tombstone.unit_id,request.key.unit_id,missing]).unwrap();
+    assert_eq!(heads[0],cleared); assert_eq!(heads[1],original); assert_eq!(heads[2],empty[1]);
+    assert_eq!(disk_format(&store),LEGACY_FORMAT);
+    assert!(store.read_many(request.key.project_id,&request.key.locale,&[missing,missing]).is_err());
+    assert!(store.read_many(request.key.project_id,"ZH-hans",&[missing]).is_err());
+    assert!(store.read_many(request.key.project_id,&request.key.locale,&[]).is_err());
+    let mut stale = request.clone(); stale.expected_revision = revision(0);
+    stale.value.text = "Changed input with a stale CAS".into(); stale.value.edit_seq = revision(2);
+    assert!(store.write(&stale).is_err()); assert_eq!(disk_format(&store),LEGACY_FORMAT);
+}
 fn replace(request: &DraftWrite, head: &DraftHead, text: &str) -> DraftWrite {
     let mut next = request.clone();
     next.expected_revision = head.revision;

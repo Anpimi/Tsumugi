@@ -28,6 +28,7 @@ export interface Requests {
   clear: DraftClearRequest;
   list: DraftListRequest;
   read: DraftReadRequest;
+  readMany: DraftReadManyRequest;
   write: DraftWriteRequest;
 }
 export interface DraftClearRequest {
@@ -52,6 +53,16 @@ export interface DraftListRequest {
 export interface DraftReadRequest {
   key: DraftKey;
   sessionToken: string;
+}
+export interface DraftReadManyRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
 }
 export interface DraftWriteRequest {
   sessionToken: string;

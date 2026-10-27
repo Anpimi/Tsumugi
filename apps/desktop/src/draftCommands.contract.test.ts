@@ -7,6 +7,36 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
+it("reads a fixed prefix of journal heads and current bases without per-row IPC", async () => {
+  const raw: unknown = rawFixture.requests.readMany;
+  if (!validators.validateRequestReadMany(raw)) throw new Error("Invalid readMany request fixture");
+  const request = { ...raw, unitIds: [...raw.unitIds] };
+  invoke.mockResolvedValueOnce(rawFixture.responses.readMany);
+  expect(await draftCommands.readMany(request)).toEqual(rawFixture.responses.readMany);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("read_local_drafts", { request });
+  const prefix = { items: rawFixture.responses.readMany.items.slice(0,1), nextAfter: 1 };
+  invoke.mockResolvedValueOnce(prefix);
+  expect(await draftCommands.readMany(request)).toEqual(prefix);
+});
+
+it.each(["order", "duplicate", "early-end", "cursor", "unavailable", "basis", "oversize"])("refuses an unrelated journal batch: %s", async kind => {
+  const raw: unknown = rawFixture.requests.readMany;
+  if (!validators.validateRequestReadMany(raw)) throw new Error("Invalid readMany request fixture");
+  const page: unknown = structuredClone(rawFixture.responses.readMany);
+  if (!validators.validateResponseReadMany(page)) throw new Error("Invalid readMany response fixture");
+  if (kind === "order") page.items.reverse();
+  if (kind === "duplicate") page.items[1] = page.items[0];
+  if (kind === "early-end") page.items.pop();
+  if (kind === "cursor") page.nextAfter = 1;
+  if (kind === "unavailable") page.items[0].current = { kind: "unavailable", reason: "source-missing" };
+  if (page.items[0].current.kind === "current") {
+    if (kind === "basis") page.items[0].current.basis = { ...page.items[0].current.basis, selectionId: null, revisionId: null, text: "" };
+    if (kind === "oversize") page.items[0].current.sourceText = "界".repeat(90_000);
+  }
+  invoke.mockResolvedValueOnce(page);
+  await expect(draftCommands.readMany({ ...raw, unitIds: [...raw.unitIds] })).rejects.toThrow("Invalid IPC response: read_local_drafts");
+});
+
 const read: unknown = rawFixture.requests.read, write: unknown = rawFixture.requests.write;
 const clear: unknown = rawFixture.requests.clear, list: unknown = rawFixture.requests.list;
 if (!validators.validateRequestRead(read) || !validators.validateRequestWrite(write)

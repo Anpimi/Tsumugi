@@ -55,7 +55,7 @@ fn valid(request: &CandidateDecisionWrite) -> bool {
         && request.reason == request.reason.trim()
         && request.reason.len() <= 4096
 }
-struct StoredDecision {
+pub(super) struct StoredDecision {
     revision: String,
     snapshot: String,
     request: Vec<u8>,
@@ -64,7 +64,7 @@ struct StoredDecision {
     receipt_digest: String,
 }
 impl StoredDecision {
-    fn from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Self> {
+    pub(super) fn from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Self> {
         Ok(Self {
             revision: row.get(offset)?,
             snapshot: row.get(offset + 1)?,
@@ -75,7 +75,7 @@ impl StoredDecision {
         })
     }
 
-    fn decode(self, action: ExecutionId) -> Result<CandidateDecision, ExecutionError> {
+    pub(super) fn decode(self, action: ExecutionId) -> Result<CandidateDecision, ExecutionError> {
         let request: CandidateDecisionWrite = codec::decode(&self.request, MAX_INPUT_BYTES)?;
         let value: CandidateDecision = codec::decode(&self.receipt, MAX_INPUT_BYTES)?;
         if !valid(&request)

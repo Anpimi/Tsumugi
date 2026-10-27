@@ -22,6 +22,17 @@ pub struct DraftReadRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct DraftReadManyRequest {
+    pub session_token: String,
+    pub project_id: ExecutionId,
+    pub locale: String,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 50)))]
+    pub unit_ids: Vec<ExecutionId>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct DraftWriteRequest {
     pub session_token: String,
     pub write: DraftWrite,
@@ -69,6 +80,15 @@ pub enum DraftCurrent {
 pub struct DraftReadView {
     pub head: DraftHead,
     pub current: DraftCurrent,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct DraftReadMany {
+    pub items: Vec<DraftReadView>,
+    /// Consumed requested members; continue with the remaining identities.
+    pub next_after: Option<u32>,
 }
 
 pub(super) fn configure(
@@ -171,6 +191,45 @@ async fn authorize(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn read_local_drafts(
+    state: State<'_, AppState>, request: DraftReadManyRequest,
+) -> Result<DraftReadMany, CommandError> {
+    if request.unit_ids.is_empty() || request.unit_ids.len() > 50
+        || request.unit_ids.iter().collect::<std::collections::BTreeSet<_>>().len() != request.unit_ids.len() {
+        return Err(map_error(ExecutionError::new(ErrorCode::InvalidInput,"drafts-read-many")));
+    }
+    authorize(&state,request.session_token.clone(),request.project_id,None).await?;
+    let drafts = store(&state)?;
+    let initial = request.clone();
+    let heads = state.io.run(CommandStage::DraftStorage, move || drafts.read_many(initial.project_id,&initial.locale,&initial.unit_ids).map_err(map_error)).await?;
+    state.sessions.run("read_local_drafts.finish",CommandStage::DraftStorage,move |sessions| {
+        let active = super::execution::authorized(sessions,&request.session_token,request.project_id,CommandStage::DraftStorage)?;
+        let targets = active.store.review_targets(request.project_id,&request.unit_ids,&request.locale).map_err(map_error)?;
+        if heads.len() != targets.len() { return Err(map_error(ExecutionError::new(ErrorCode::CorruptLedger,"drafts-read-many"))); }
+        let mut page = DraftReadMany { items: Vec::new(), next_after: None };
+        let fits = |page: &DraftReadMany| -> Result<bool,CommandError> {
+            serde_json::to_vec(page).map(|bytes| bytes.len() <= store::MAX_DRAFT_RECORD_BYTES)
+                .map_err(|_| map_error(ExecutionError::new(ErrorCode::CorruptLedger,"drafts-read-many-encoding")))
+        };
+        for (index,(head,target)) in heads.into_iter().zip(targets).enumerate() {
+            if head.key.project_id != request.project_id || head.key.locale != request.locale || head.key.unit_id != request.unit_ids[index] || target.unit_id != head.key.unit_id {
+                return Err(map_error(ExecutionError::new(ErrorCode::CorruptLedger,"drafts-read-many")));
+            }
+            page.items.push(DraftReadView { head, current: DraftCurrent::Current { native_key: target.native_key, source_text: target.source_text,
+                basis: DraftBasis { source_revision_id: target.source_revision_id, selection_id: target.selection_id, revision_id: target.revision_id, text: target.translation_text } } });
+            page.next_after = (index + 1 < request.unit_ids.len()).then_some((index+1) as u32);
+            if !fits(&page)? {
+                page.items.pop();
+                if page.items.is_empty() { return Err(map_error(ExecutionError::new(ErrorCode::LimitExceeded,"drafts-read-many-bytes"))); }
+                page.next_after = Some(index as u32); break;
+            }
+        }
+        if !fits(&page)? { return Err(map_error(ExecutionError::new(ErrorCode::LimitExceeded,"drafts-read-many-bytes"))); }
+        Ok(page)
+    }).await
 }
 
 #[tauri::command]
@@ -289,3 +348,5 @@ pub async fn list_local_drafts(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod read_many_tests;

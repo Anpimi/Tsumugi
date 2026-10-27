@@ -1,9 +1,10 @@
 import { checkedInvoke } from "./ipc";
 import type { Requests } from "./generated/draft.requests";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "./generated/draft.responses";
-import { validateResponseCleared, validateResponsePage, validateResponseRead, validateResponseWritten } from "./generated/draft.validators";
+import { validateResponseCleared, validateResponsePage, validateResponseRead, validateResponseReadMany, validateResponseWritten } from "./generated/draft.validators";
 
-export type { DraftBasis, DraftHead, DraftKey, DraftMergeOrigin, DraftPending, DraftValue, DraftPage, DraftSummary, DraftReadView } from "./generated/draft.responses";
+export type { DraftBasis, DraftHead, DraftKey, DraftMergeOrigin, DraftPending, DraftValue, DraftPage, DraftSummary, DraftReadView, DraftReadMany } from "./generated/draft.responses";
+type DraftReadManyRequest = Omit<Requests["readMany"], "unitIds"> & { unitIds: string[] };
 type DraftValueInput = Requests["write"]["write"]["value"];
 
 export function sameDraftKey(left: DraftKey, right: DraftKey) {
@@ -62,6 +63,15 @@ function compareKey(a: DraftKey, b: DraftKey) {
 
 /** These commands preserve input. They never submit a recovered business action. */
 export const draftCommands = {
+  readMany: (request: DraftReadManyRequest) => checkedInvoke("read_local_drafts", request,
+    (page): page is import("./generated/draft.responses").DraftReadMany => validateResponseReadMany(page)
+      && request.unitIds.length > 0 && request.unitIds.length <= 50 && new Set(request.unitIds).size === request.unitIds.length
+      && page.items.length > 0 && page.items.length <= request.unitIds.length
+      && (page.nextAfter === null ? page.items.length === request.unitIds.length
+        : page.nextAfter === page.items.length && page.items.length < request.unitIds.length)
+      && page.items.every((value, index) => sameDraftKey(value.head.key, { projectId: request.projectId, locale: request.locale, unitId: request.unitIds[index] })
+        && relatedHead(value.head) && value.current.kind === "current" && relatedBasis(value.current.basis))
+      && new TextEncoder().encode(JSON.stringify(page)).length <= 256 * 1024),
   read: (request: Requests["read"]) => checkedInvoke("read_local_draft", request,
     (value): value is import("./generated/draft.responses").DraftReadView => validateResponseRead(value)
       && sameDraftKey(value.head.key, request.key) && relatedHead(value.head)

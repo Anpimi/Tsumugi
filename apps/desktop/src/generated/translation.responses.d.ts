@@ -3,6 +3,7 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type CandidateDisposition = "rejected" | "restored";
+export type TranslationOrigin = "import" | "manual" | "ai";
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
  * Network/process effects still require their own host authorization.
@@ -30,6 +31,12 @@ export type PermissionRequest =
       kind: "process";
       program: string;
     };
+/**
+ * Selecting a check is not adopting its resource or requiring its findings.
+ * Blocking checks continue to use the original mandatory Review contract.
+ */
+export type TextReviewDisposition = "advisory";
+export type ComponentScope = "application" | "project" | "attempt";
 /**
  * Fixed execution choices for the two actual runtime profiles. Each variant
  * has a strict, distinct profile value and its own data/hash owner. Captured
@@ -60,8 +67,40 @@ export type NativeHostExecutableIdentity =
       value: string;
     };
 export type NativeHostProfile = "native-application-host-v1";
+export type CheckImplementation =
+  | {
+      kind: "core";
+      validator: ContractRef;
+    }
+  | {
+      kind: "plugin";
+      provider: ProviderSelectionBinding;
+    };
+export type TextReviewField = "source" | "translation";
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type ReviewInvocationOutcome = "succeeded" | "failed" | "unknown";
+export type CheckOutcome =
+  | {
+      findings: CheckFinding2[];
+      kind: "completed";
+    }
+  | {
+      basis: NotApplicableBasis;
+      kind: "not-applicable";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unavailable";
+    };
+export type FindingSeverity = "warning" | "error";
+export type ReviewCheckOutcome = "completed" | "failed" | "cancelled" | "unknown";
+export type ReviewDecisionKind = "approve" | "request-changes";
 export type UnsignedDecimal = string;
-export type TranslationOrigin = "import" | "manual" | "ai";
 export type TranslationMatch =
   "unique" | "unmatched" | "ambiguous" | "selected-conflict" | "source-changed" | "applied";
 export type TranslationActionOutcome =
@@ -99,6 +138,7 @@ export interface Responses {
   attempt: ExecutionId;
   candidateAction: CandidateDecision | null;
   candidateDecision: CandidateDecision;
+  candidateSlice: TranslationCandidateSlice;
   checkReview: TranslationCheckReview;
   checked: null;
   files: string[];
@@ -173,53 +213,119 @@ export interface CandidateDecisionWrite {
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
 }
-export interface TranslationCheckReview {
-  attemptId: ExecutionId;
-  inputDigest: string;
-  rules: ContractRef[];
-  source: TranslationSourceContext;
-  translation: PluginTranslationView;
-  translationAttemptId: ExecutionId;
-  translationResultId: ExecutionId;
-}
-/**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
-}
-/**
- * Immutable matching scopes from the current adopted source. This observation
- * allocates no identities and grants neither execution nor adoption authority.
- */
-export interface TranslationSourceContext {
-  contentRevision: Revision;
-  nativeScopes: TranslationNativeScope[];
-  profile: ContractRef;
-  sourceSetId: ExecutionId;
+export interface TranslationCandidateSlice {
+  locale: string;
+  next: TranslationCandidateSliceNext | null;
+  projectId: ExecutionId;
+  readVersion: string;
+  rows: TranslationCandidateSliceRow[];
+  scopeId: ExecutionId | null;
   sourceSnapshotId: ExecutionId;
 }
-/**
- * Captured from the current adopted source. The plugin supplies canonical
- * native values under this exact policy; Core must never normalize them again.
- */
-export interface TranslationNativeScope {
-  namespace: string;
-  policy: ContractRef;
+export interface TranslationCandidateSliceNext {
+  afterOrdinal: Revision;
+  unitOffset: number;
 }
-export interface PluginTranslationView {
+export interface TranslationCandidateSliceRow {
+  /**
+   * Full count before the first member's continuation ordinal is applied.
+   */
+  candidateCount: number;
+  protection: WorkProtection;
+  revisions: TranslationRevision[];
+  selectedOriginKind: TranslationOrigin | null;
+  target: ReviewTarget;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
+}
+export interface TranslationRevision {
+  actionId: ExecutionId;
+  artifactId: ExecutionId | null;
+  attemptId: ExecutionId | null;
+  candidateDecision?: CandidateDecision | null;
+  contributors: ExecutionId[];
+  declaredLocale: string | null;
+  fileDigest: string | null;
+  itemId: ExecutionId | null;
+  locale: string;
+  logicalPath: string | null;
+  nativeKey: string | null;
+  ordinal: Revision;
+  originKind: TranslationOrigin;
+  resultId: ExecutionId | null;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface ReviewTarget {
+  basis: string;
+  basisEvidence: ReviewBasis;
+  currentCheck: CheckRun | null;
+  currentDecision: ReviewDecision | null;
+  currentFallback: FallbackDecision | null;
+  currentWaivers: Waiver[];
+  locale: string;
+  nativeKey: string;
+  revisionId: ExecutionId | null;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  sourceText: string;
+  termConflict: boolean;
+  translationText: string | null;
+  unitId: ExecutionId;
+}
+export interface ReviewBasis {
+  contextRevisionId: ExecutionId | null;
+  revisionId: ExecutionId | null;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  termRevisionIds: ExecutionId[];
+}
+export interface CheckRun {
+  actionId: ExecutionId;
+  basis: string;
+  basisEvidence: ReviewBasis;
+  createdAt: string;
+  evidence: ReviewCheckEvidence | null;
+  locale: string;
+  outcome: ReviewCheckOutcome;
+  rules: CheckRuleResult[];
+  runId: ExecutionId;
+  unitId: ExecutionId;
+  validatorVersion: string;
+}
+export interface ReviewCheckEvidence {
+  advisoryChecks: AdvisoryReviewCheck[];
+  diagnostics: TextReviewDiagnostic[];
+  origins: ReviewCheckOriginEvidence[];
+  qaBasis: string;
+  requiredChecks: RequiredCheckSet;
+  results: CheckResult[];
+  sourceBinding: SourceReviewBinding;
+}
+/**
+ * Captured by the trusted package adapter. Selecting these rules neither
+ * adopts Resource entries nor grants permission to run the checker.
+ */
+export interface AdvisoryReviewCheck {
+  binding: TextReviewBinding;
+  declarationResourceId: string;
+  execution: PluginExecutionBinding;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+}
+export interface TextReviewBinding {
   checker: CapabilityBinding;
-  declaration: TranslationImportDeclaration;
-  environment: ExecutionEnvironmentDescriptor;
-  environmentDigest: string;
-  extractor: CapabilityBinding;
-  packageOrigin: PluginOriginView;
-  resourceId: string;
-  runtimeOrigin: PluginOriginView;
-  settingsRevision: UnsignedDecimal;
+  declaration: TextReviewDeclaration;
+  resources: TextReviewResourceBinding[];
 }
 /**
  * Captured declaration data for one selected capability. Requested permissions
@@ -239,6 +345,15 @@ export interface CapabilityDeclaration {
   outputSchema: ContractRef;
   permissions: PermissionRequest[];
   profiles: ContractRef[];
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }
 /**
  * Requested upper bounds. The host must also enforce its own current limits.
@@ -268,23 +383,52 @@ export interface PluginIdentity {
   publisher: string;
   version: string;
 }
-export interface TranslationImportDeclaration {
+/**
+ * One provider's available rules. An invocation must use an explicitly chosen
+ * nonempty subset; installation and a matching spelling do not select rules.
+ */
+export interface TextReviewDeclaration {
   checker: string;
-  displayName: string;
-  extractor: string;
-  material: TranslationMaterialDeclaration;
+  disposition: TextReviewDisposition;
   profile: ContractRef;
-  semanticRules: ContractRef[];
+  rules: TextReviewRuleDeclaration[];
+  supportingResources: string[];
+}
+export interface TextReviewRuleDeclaration {
+  description: string;
+  requiresTranslation: boolean;
+  rule: ContractRef;
+  title: string;
 }
 /**
- * Metadata describing one selected file relative to an explicitly granted
- * directory. No glob, executable discovery or filesystem authority is implied.
+ * A declared Resource contribution in the exact same package as the checker.
+ * This mirrors Resource metadata, without coupling review to tool declarations.
  */
-export interface TranslationMaterialDeclaration {
-  extension: string;
-  logicalDirectory: string;
-  maxBytes: number;
-  role: string;
+export interface TextReviewResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+export interface PluginExecutionBinding {
+  applicationScope: ApplicationScopeBasis | null;
+  capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile: ContractRef | null;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
 }
 /**
  * Exact tool and Host choices for a fixed invocation. Paths are logical within
@@ -328,6 +472,230 @@ export interface NativeHostEnvironmentDescriptor {
   protocolVersion: number;
   sdkVersion: string;
 }
+/**
+ * Exact package Resource bytes captured by the Host, never a plugin's mutable
+ * lookup or a claim that the referenced resource has been adopted by a project.
+ */
+export interface TextReviewResourcePin {
+  contributionId: string;
+  schema: ContractRef;
+  sha256: string;
+}
+/**
+ * Optional public presentation associated with one actual finding. Diagnostic
+ * prose is not authenticated or sanitized by these structural checks.
+ */
+export interface TextReviewDiagnostic {
+  code: string;
+  detail: string | null;
+  key: CheckKey;
+  location: TextReviewLocation | null;
+  resourceEntry: TextReviewResourceEntry | null;
+  suggestion: string | null;
+  target: string;
+}
+export interface CheckKey {
+  implementation: CheckImplementation;
+  rule: ContractRef;
+}
+export interface TextReviewLocation {
+  field: TextReviewField;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+export interface TextReviewResourceEntry {
+  contributionId: string;
+  entryId: string;
+}
+export interface ReviewCheckOriginEvidence {
+  attemptId: ExecutionId;
+  checker: ReviewCheckerKey;
+  inputDigest: string;
+  outcome: ReviewInvocationOutcome;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ReviewCheckerKey {
+  profile: ContractRef;
+  provider: ProviderSelectionBinding;
+}
+/**
+ * Wire projection of the host's captured union. Receiving this from a plugin
+ * does not make it a trusted policy or permit it to replace the expected set.
+ */
+export interface RequiredCheckSet {
+  policy: ContractRef;
+  requirements: CheckRequirement[];
+}
+export interface CheckRequirement {
+  inputDigest: string;
+  key: CheckKey;
+  mandatory: boolean;
+  notApplicable: NotApplicableBasis | null;
+  scopeDigest: string;
+  targets: string[];
+  waivable: boolean;
+}
+/**
+ * A trusted capture of an allowed reason and its exact scope basis, not a
+ * plugin's claim that it is safe to skip a required check.
+ */
+export interface NotApplicableBasis {
+  basisDigest: string;
+  code: string;
+}
+export interface CheckResult {
+  coveredTargets: string[];
+  inputDigest: string;
+  key: CheckKey;
+  outcome: CheckOutcome;
+  scopeDigest: string;
+}
+export interface CheckFinding2 {
+  code: string;
+  severity: FindingSeverity;
+  target: string;
+}
+export interface SourceReviewBinding {
+  checker: PluginExecutionBinding;
+  declaration: ReviewDeclaration;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
+export interface CheckRuleResult {
+  findings: CheckFinding[];
+  key: CheckKey;
+  mandatory: boolean;
+  reason: string | null;
+  rule: string;
+  status: string;
+}
+export interface CheckFinding {
+  code: string;
+  detail: string;
+  issueId: string;
+  rule: string;
+  severity: string;
+  waivable: boolean;
+}
+export interface ReviewDecision {
+  actionId: ExecutionId;
+  actor: string;
+  basis: string;
+  basisEvidence: ReviewBasis;
+  createdAt: string;
+  decisionId: ExecutionId;
+  kind: ReviewDecisionKind;
+  locale: string;
+  reason: string;
+  revisionId: ExecutionId;
+  selectionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface FallbackDecision {
+  actionId: ExecutionId;
+  actor: string;
+  allow: boolean;
+  createdAt: string;
+  fallbackId: ExecutionId;
+  locale: string;
+  policyVersion: string;
+  previousFallbackId: ExecutionId | null;
+  reason: string;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface Waiver {
+  actionId: ExecutionId;
+  actor: string;
+  basis: string;
+  createdAt: string;
+  grant: boolean;
+  issueId: string;
+  locale: string;
+  policyVersion: string;
+  previousWaiverId: ExecutionId | null;
+  reason: string;
+  unitId: ExecutionId;
+  waiverId: ExecutionId;
+}
+export interface TranslationCheckReview {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  rules: ContractRef[];
+  source: TranslationSourceContext;
+  translation: PluginTranslationView;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+/**
+ * Immutable matching scopes from the current adopted source. This observation
+ * allocates no identities and grants neither execution nor adoption authority.
+ */
+export interface TranslationSourceContext {
+  contentRevision: Revision;
+  nativeScopes: TranslationNativeScope[];
+  profile: ContractRef;
+  sourceSetId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+}
+/**
+ * Captured from the current adopted source. The plugin supplies canonical
+ * native values under this exact policy; Core must never normalize them again.
+ */
+export interface TranslationNativeScope {
+  namespace: string;
+  policy: ContractRef;
+}
+export interface PluginTranslationView {
+  checker: CapabilityBinding;
+  declaration: TranslationImportDeclaration;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+export interface TranslationImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  material: TranslationMaterialDeclaration;
+  profile: ContractRef;
+  semanticRules: ContractRef[];
+}
+/**
+ * Metadata describing one selected file relative to an explicitly granted
+ * directory. No glob, executable discovery or filesystem authority is implied.
+ */
+export interface TranslationMaterialDeclaration {
+  extension: string;
+  logicalDirectory: string;
+  maxBytes: number;
+  role: string;
+}
 export interface PluginOriginView {
   publisherId: string;
   sourceId: string;
@@ -339,27 +707,6 @@ export interface TranslationHistory {
   nextOrdinal: Revision | null;
   rows: TranslationRevision[];
   total: Revision;
-  unitId: ExecutionId;
-}
-export interface TranslationRevision {
-  actionId: ExecutionId;
-  artifactId: ExecutionId | null;
-  attemptId: ExecutionId | null;
-  candidateDecision?: CandidateDecision | null;
-  contributors: ExecutionId[];
-  declaredLocale: string | null;
-  fileDigest: string | null;
-  itemId: ExecutionId | null;
-  locale: string;
-  logicalPath: string | null;
-  nativeKey: string | null;
-  ordinal: Revision;
-  originKind: TranslationOrigin;
-  resultId: ExecutionId | null;
-  revisionId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  text: string;
   unitId: ExecutionId;
 }
 export interface PluginTranslationPreflight {

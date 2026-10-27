@@ -97,6 +97,31 @@ impl DraftStore {
         read_head(&tx, key, format)
     }
 
+    /// One existing journal snapshot; this never creates or upgrades a profile.
+    pub fn read_many(&self, project: ExecutionId, locale: &str, units: &[ExecutionId]) -> Result<Vec<DraftHead>> {
+        if units.is_empty() || units.len() > 50 || units.iter().collect::<std::collections::BTreeSet<_>>().len() != units.len() {
+            return Err(fail(ErrorCode::InvalidInput, "drafts-read-many"));
+        }
+        let keys = units.iter().map(|unit| DraftKey { project_id: project, unit_id: *unit, locale: locale.into() }).collect::<Vec<_>>();
+        for key in &keys { validate_key(key)?; }
+        let Some(mut connection) = self.existing(false)? else { return Ok(keys.iter().map(empty_head).collect()); };
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Deferred).map_err(sql)?;
+        let format = verify_schema(&tx)?;
+        let wanted = serde_json::to_string(units).map_err(|_| fail(ErrorCode::InvalidInput,"drafts-read-many"))?;
+        let mut statement = tx.prepare("SELECT w.value,h.revision,h.edit_seq,h.source_revision_id,h.has_pending,CASE WHEN length(h.payload)<=?4 THEN h.payload END
+            FROM json_each(?3) w LEFT JOIN draft_heads h ON h.project_id=?1 AND h.locale=?2 AND h.unit_id=w.value ORDER BY CAST(w.key AS INTEGER)").map_err(sql)?;
+        let rows = statement.query_map(params![project.to_string(),locale,wanted,MAX_DRAFT_RECORD_BYTES as i64], |row| {
+            Ok((row.get::<_,String>(0)?, if row.get::<_,Option<i64>>(1)?.is_some() { Some(stored_head_row(row,1)?) } else { None }))
+        }).map_err(sql)?;
+        let mut heads = Vec::new();
+        for row in rows {
+            let (unit, stored) = row.map_err(sql)?;
+            let key = DraftKey { project_id: project, unit_id: stored_id(&unit)?, locale: locale.into() };
+            heads.push(match stored { Some(stored) => decode_head(&key,stored,format)?, None => empty_head(&key) });
+        }
+        Ok(heads)
+    }
+
     pub fn list(
         &self,
         project_id: ExecutionId,

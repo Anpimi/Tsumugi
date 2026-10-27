@@ -4,6 +4,7 @@ export type ExecutionId = string;
 export type TranslationSelectionDecision = "candidate-only" | "select-if-empty" | "replace";
 export type CandidateDisposition = "rejected" | "restored";
 export type Revision = string;
+export type TranslationCandidateState = "available" | "rejected";
 export type UnsignedDecimal = string;
 
 export interface Requests {
@@ -11,6 +12,7 @@ export interface Requests {
   adopt: TranslationAdoptRequest;
   adoptionAction: TranslationAdoptionActionRequest;
   candidateDecision: CandidateDecisionRequest;
+  candidateSlice: TranslationCandidateSliceRequest;
   capture: TranslationCaptureRequest;
   checkFinish: TranslationCheckFinishRequest;
   checkPrepare: TranslationCheckPrepareRequest;
@@ -80,6 +82,21 @@ export interface CandidateDecisionWrite {
   revisionId: ExecutionId;
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface TranslationCandidateSliceRequest {
+  afterOrdinal?: Revision | null;
+  locale: string;
+  projectId: ExecutionId;
+  readVersion?: string | null;
+  scopeId?: ExecutionId | null;
+  sessionToken: string;
+  sourceSnapshotId: ExecutionId;
+  state: TranslationCandidateState;
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
 }
 export interface TranslationCaptureRequest {
   fileName: string;

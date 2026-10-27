@@ -226,6 +226,35 @@
           }
         ]
       },
+      "DraftReadManyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "DraftReadRequest": {
         "additionalProperties": false,
         "properties": {
@@ -443,12 +472,16 @@
       "read": {
         "$ref": "#/definitions/DraftReadRequest"
       },
+      "readMany": {
+        "$ref": "#/definitions/DraftReadManyRequest"
+      },
       "write": {
         "$ref": "#/definitions/DraftWriteRequest"
       }
     },
     "required": [
       "read",
+      "readMany",
       "write",
       "clear",
       "list"
@@ -1250,6 +1283,32 @@
           }
         ]
       },
+      "DraftReadMany": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/definitions/DraftReadView"
+            },
+            "type": "array"
+          },
+          "nextAfter": {
+            "description": "Consumed requested members; continue with the remaining identities.",
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
       "DraftReadView": {
         "additionalProperties": false,
         "description": "The journal and project have separate owners. Current basis is observed\nafter reading the journal; it is never an authority to skip Core admission.",
@@ -1491,12 +1550,16 @@
       "read": {
         "$ref": "#/definitions/DraftReadView"
       },
+      "readMany": {
+        "$ref": "#/definitions/DraftReadMany"
+      },
       "written": {
         "$ref": "#/definitions/DraftHead"
       }
     },
     "required": [
       "read",
+      "readMany",
       "written",
       "cleared",
       "page",

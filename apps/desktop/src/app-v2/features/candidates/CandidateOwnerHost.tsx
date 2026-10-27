@@ -3,9 +3,11 @@ import { useCandidateDecisionSession, type CandidateBasis } from "../../../Candi
 import { executionContext } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { useWorkProtectionSession } from "../../../WorkProtectionSession";
+import { useSessionReads } from "../../../SessionReadProvider";
 import type { ProjectLifecycle, LeaveIntent } from "../../platform/projectLifecycle";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { CandidateOwners } from "./candidateTypes";
+import { CandidateBatchSession } from "./CandidateBatchSession";
 
 interface Props {
   project: ProjectView;
@@ -13,19 +15,29 @@ interface Props {
   lifecycle: ProjectLifecycle;
   onOwners: (value: CandidateOwners | null) => void;
   onReveal: () => void;
+  onRevealBatch?: () => void;
 }
 const leavesProject = (intent: LeaveIntent) => intent.kind === "open-project" || intent.kind === "close-project" || intent.kind === "close-window";
 
 /** The project retains audit input and original unknown requests across all candidate views. */
-function CandidateOwnerHost({ project, drafts, lifecycle, onOwners, onReveal }: Props) {
+function CandidateOwnerHost({ project, drafts, lifecycle, onOwners, onReveal, onRevealBatch }: Props) {
   const decisions = useCandidateDecisionSession(project, { current: () => null,
     reserve: () => drafts.reserveMutation("retained-for-navigation"), release: token => drafts.releaseMutation(token) });
   const protection = useWorkProtectionSession(project, { reserve: () => drafts.reserveMutation("retained-for-navigation"), release: token => drafts.releaseMutation(token) });
-  const callbacks = useRef({ onOwners, onReveal }), owner = useRef({ decisions, protection }), published = useRef<CandidateOwners | null>(null);
+  const reads = useSessionReads(), batch = useRef<CandidateBatchSession | null>(null);
+  const callbacks = useRef({ onOwners, onReveal, onRevealBatch }), owner = useRef({ decisions, protection }), published = useRef<CandidateOwners | null>(null);
   useLayoutEffect(() => {
-    callbacks.current = { onOwners, onReveal }; owner.current = { decisions, protection };
-    if (published.current?.decisions.state === decisions.state && published.current.protection.state === protection.state) return;
-    const value: CandidateOwners = { decisions, protection, decide: async (key, revision, disposition, proof) => {
+    const session = new CandidateBatchSession({ project, reads, drafts, decisions: () => owner.current.decisions }); batch.current = session;
+    const unregister = lifecycle.register(session.lifecycleParticipant(() => (callbacks.current.onRevealBatch ?? callbacks.current.onReveal)()));
+    return () => { unregister(); batch.current = null; session.dispose(); };
+  }, [drafts, reads, lifecycle, project.metadata.projectId, project.sessionToken]);
+  useLayoutEffect(() => {
+    callbacks.current = { onOwners, onReveal, onRevealBatch }; owner.current = { decisions, protection }; batch.current?.updateProject(project);
+    if (!batch.current || published.current?.batch === batch.current && published.current.decisions.state === decisions.state && published.current.protection.state === protection.state) return;
+    const value: CandidateOwners = { decisions: { ...decisions,
+      check: async () => { const outcome = await owner.current.decisions.check(); batch.current?.acceptOutcome(outcome); return outcome; },
+      retry: async () => { const outcome = await owner.current.decisions.retry(); batch.current?.acceptOutcome(outcome); return outcome; },
+    }, protection, batch: batch.current, decide: async (key, revision, disposition, proof) => {
       if (key.projectId !== project.metadata.projectId) return;
       const current = (): CandidateBasis | null => {
         const entry = drafts.getEntry(key);

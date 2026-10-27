@@ -11,8 +11,10 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 mod candidates;
+mod candidate_slice;
 mod recovery;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
+pub use candidate_slice::{TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext, TranslationCandidateState};
 pub use recovery::{
     TranslationActionOutcome, TranslationActionReplay, TranslationSaveRecovery,
     TranslationMergeRecovery, TranslationSelectionRecovery,

@@ -10,6 +10,8 @@ The Host stores the journal as `drafts/drafts.sqlite3` under the application dat
 
 Each head has a revision used to reject stale writes and clears. A writer identifier distinguishes editing instances; retrying an identical write from the same writer returns the existing head. Clearing an absent head leaves a marker so an older write cannot bring it back. A head with an unresolved request cannot be cleared directly. Listing scans these markers as well as drafts, so an empty page can still have a continuation; enumeration ends only when `next` is null.
 
+Batch candidate adoption uses these same heads and writer checks. It preserves existing drafts, protected entries, and non-AI selected translations. The selected entries and excluded members stay fixed as filters change. If a journal write cannot be confirmed, the batch pauses with its input retained; retry that draft write before continuing the entries that have not started. Adopting candidates into drafts does not confirm project translations.
+
 ## Limits and recovery
 
 The encoded head is limited to 256 KiB. The journal limits the combined encoded heads to 32 MiB per project and 128 MiB overall, and to 16,384 heads per project and 65,536 overall. Cleared-head markers count toward the head limits. These are journal limits, not guarantees about the database file's total size. The journal does not automatically discard unconfirmed input to reclaim space. A full, unavailable, damaged, or unsupported journal returns an error; unknown formats and damaged files are retained rather than reset. The format-1 upgrade preserves draft text, unresolved requests, cleared-head markers, and their revisions. Other unsupported formats are left intact.

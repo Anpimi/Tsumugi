@@ -13,7 +13,7 @@ import { validateRequestAdopt, validateResponseCheckReview, validateResponseProj
 import { validateResponseAdoption } from "./generated/execution.validators";
 import { validateResponseProjectionStartAction, validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
 import { validateResponseRecoverSave, validateResponseRecoverSelection } from "./generated/translation.validators";
-import { validateResponseRevision } from "./generated/translation.validators";
+import { validateResponseRevision, validateResponseCandidateSlice } from "./generated/translation.validators";
 import type { TranslationRevisionRequest } from "./generated/translation.requests";
 import type { CandidateDecisionRequest } from "./generated/translation.requests";
 import type { CandidateDecision } from "./generated/translation.responses";
@@ -24,6 +24,42 @@ export type { CandidateDecision, CandidateDecisionWrite, CandidateDisposition } 
 export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
 export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
 export type { TranslationSaveRecovery, TranslationSelectionRecovery } from "./generated/translation.responses";
+export type { TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext } from "./generated/translation.responses";
+export type { TranslationCandidateState } from "./generated/translation.requests";
+type TranslationCandidateSliceRequest = Omit<Requests["candidateSlice"], "unitIds"> & { unitIds: string[] };
+
+function relatedCandidateSlice(request: TranslationCandidateSliceRequest, page: Responses["candidateSlice"]) {
+  const rows = page.rows, after = BigInt(request.afterOrdinal ?? "0"), revisions = rows.flatMap(row => row.revisions);
+  if (request.unitIds.length === 0 || request.unitIds.length > 50 || new Set(request.unitIds).size !== request.unitIds.length
+    || page.projectId !== request.projectId || page.locale !== request.locale || page.sourceSnapshotId !== request.sourceSnapshotId
+    || page.scopeId !== (request.scopeId ?? null) || request.readVersion != null && page.readVersion !== request.readVersion
+    || !/^[a-f0-9]{64}$/.test(page.readVersion) || rows.length === 0 || rows.length > request.unitIds.length
+    || rows.reduce((count,row) => count + Math.max(1,row.revisions.length),0) > 50
+    || new Set(revisions.map(row => row.revisionId)).size !== revisions.length) return false;
+  const next = page.next;
+  if (next === null ? rows.length !== request.unitIds.length : next.unitOffset === rows.length
+    ? next.unitOffset >= request.unitIds.length || next.afterOrdinal !== "0"
+    : next.unitOffset !== rows.length - 1 || rows.at(-1)!.revisions.length === 0
+      || next.afterOrdinal !== rows.at(-1)!.revisions.at(-1)!.ordinal) return false;
+  return rows.every((row,index) => {
+    const target = row.target, basis = target.basisEvidence, partial = next?.unitOffset === index;
+    return target.unitId === request.unitIds[index] && target.locale === request.locale && target.sourceSnapshotId === request.sourceSnapshotId
+      && basis.sourceSnapshotId === target.sourceSnapshotId && basis.sourceRevisionId === target.sourceRevisionId
+      && basis.selectionId === target.selectionId && basis.revisionId === target.revisionId
+      && (target.selectionId === null ? target.revisionId === null && target.translationText === null && row.selectedOriginKind === null
+        : target.revisionId !== null && target.translationText !== null && row.selectedOriginKind !== null)
+      && row.protection.unitId === target.unitId && row.protection.locale === target.locale && row.candidateCount >= row.revisions.length
+      && (index === 0 && after > 0n || partial ? row.candidateCount >= row.revisions.length : row.candidateCount === row.revisions.length)
+      && row.revisions.every((revision,position) => revision.unitId === target.unitId && revision.locale === target.locale
+        && revision.originKind === "ai" && revision.sourceRevisionId === target.sourceRevisionId && revision.revisionId !== target.revisionId
+        && BigInt(revision.ordinal) > (position ? BigInt(row.revisions[position-1].ordinal) : index === 0 ? after : 0n)
+        && new Set(revision.contributors).size === revision.contributors.length
+        && (!revision.candidateDecision || revision.candidateDecision.request.projectId === request.projectId
+          && revision.candidateDecision.request.unitId === target.unitId && revision.candidateDecision.request.locale === target.locale
+          && revision.candidateDecision.request.revisionId === revision.revisionId && revision.candidateDecision.request.sourceRevisionId === target.sourceRevisionId)
+        && (revision.candidateDecision?.request.disposition === "rejected") === (request.state === "rejected"));
+  }) && new TextEncoder().encode(JSON.stringify(page)).length <= 256 * 1024;
+}
 
 export function translationHistoryAfter(ordinal: string, pageSize: number): string {
   const after = BigInt(ordinal) - BigInt(pageSize);
@@ -33,6 +69,8 @@ export function translationHistoryAfter(ordinal: string, pageSize: number): stri
 export type { TranslationCaptureRequest, TranslationStartRequest } from "./generated/translation.requests";
 
 export const translationCommands = {
+  candidateSlice: (request: TranslationCandidateSliceRequest) => checkedInvoke("read_translation_candidate_slice", request,
+    (page): page is Responses["candidateSlice"] => validateResponseCandidateSlice(page) && relatedCandidateSlice(request,page)),
   selectFolder: (request: SessionRequest) => sourceCommands.select(request),
   files: (request: TranslationFilesRequest) => checkedInvoke("list_translation_files", request, validateResponseFiles),
   preflight: (request: TranslationCaptureRequest) => checkedInvoke("preflight_translation", request, validateResponsePreflight),

@@ -108,6 +108,7 @@ pub use review::{
     SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary, SegmentQaCounts, SegmentQaSummary,
 };
 pub use translation::{
+    TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext, TranslationCandidateState,
     ArenaMergeActionRead, CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,
     SelectTranslationRevision, TranslationAdoptionConfirmation, TranslationAdoptionHandler,
     TranslationEditBasis, TranslationHistory, TranslationMatch, TranslationOrigin,

@@ -44,6 +44,8 @@ fn draft_wire_fixture_binds_complete_input_without_session_credentials() {
         );
     }
     round_trip::<DraftReadRequest>(&fixture["requests"]["read"]);
+    round_trip::<DraftReadManyRequest>(&fixture["requests"]["readMany"]);
+    round_trip::<DraftReadMany>(&fixture["responses"]["readMany"]);
     round_trip::<DraftWriteRequest>(&fixture["requests"]["write"]);
     round_trip::<DraftClearRequest>(&fixture["requests"]["clear"]);
     round_trip::<DraftListRequest>(&fixture["requests"]["list"]);

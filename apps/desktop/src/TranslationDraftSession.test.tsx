@@ -368,7 +368,7 @@ it("holds the synchronous translation reservation through one automatic candidat
     if (command === "read_translation_candidate_action") return lookup.promise;
     return original(command, args);
   });
-  let running!: Promise<void>;
+  let running!: ReturnType<typeof drafts.candidates.decide>;
   act(() => { running = drafts.candidates.decide(aiCandidate, "rejected"); void drafts.candidates.decide(aiCandidate, "rejected"); });
   expect(drafts.mutationReserved).toBe(true); expect(drafts.reserveMutation()).toBeNull();
   await act(async () => { expect((await drafts.save()).saved).toBe(false); expect(await drafts.selectRevision(candidate)).toBe(false); });
@@ -477,7 +477,7 @@ it.each(["before lookup", "during lookup"] as const)("does not continue an old c
     if (command === "read_translation_candidate_action") return lookup.promise;
     return original(command, args);
   });
-  let running!: Promise<void>; act(() => { running = drafts.candidates.decide(aiCandidate, "rejected"); });
+  let running!: ReturnType<typeof drafts.candidates.decide>; act(() => { running = drafts.candidates.decide(aiCandidate, "rejected"); });
   await waitFor(() => expect(calls("decide_translation_candidate")).toHaveLength(1));
   if (retirement === "during lookup") {
     await act(async () => { write.reject(new Error("Lost decision acknowledgement")); });

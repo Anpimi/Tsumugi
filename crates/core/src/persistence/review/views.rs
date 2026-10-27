@@ -286,6 +286,22 @@ impl ProjectStore {
         Ok(scope)
     }
 
+    pub(in crate::persistence) fn check_review_membership(
+        &self,
+        connection: &Connection,
+        project_id: ExecutionId,
+        locale: &str,
+        scope_id: ExecutionId,
+        snapshot_id: ExecutionId,
+        units: &[ExecutionId],
+    ) -> Result<(), ExecutionError> {
+        let scope = self.retained_review_membership(connection, project_id, locale, scope_id)?;
+        if scope.snapshot_id != snapshot_id || units.iter().any(|unit| !scope.units.iter().any(|(member, _)| member == unit)) {
+            return Err(failure(ErrorCode::DependencyConflict, "review-scope-members"));
+        }
+        Ok(())
+    }
+
     fn retained_review_membership(
         &self,
         connection: &Connection,

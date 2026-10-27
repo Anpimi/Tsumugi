@@ -142,6 +142,110 @@ fn count(store: &ProjectStore, project: ExecutionId, units: &[ExecutionId]) -> V
 }
 
 #[test]
+fn candidate_slice_keeps_current_source_full_revisions_decisions_and_selected_origin() {
+    let (_directory, mut store, project, units) = fixture();
+    let empty = save_candidate(&mut store, units[0], "");
+    let text = "Candidate {{name}}\ne\u{301} 👩🏽‍💻 日本語 العربية";
+    let other = save_candidate(&mut store, units[0], text);
+    translate(&mut store, project, units[0], "zh-CN", "");
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let query = crate::SegmentQuery { text: String::new(), selection: crate::SegmentSelectionFilter::All, status: crate::SegmentStatusFilter::All };
+    let captured = store.read_segment_page(project,"zh-CN",&query,None,None,50).unwrap();
+    let before = store.changes_since(Revision::new(0).unwrap());
+    let page = store.translation_candidate_slice(project,"zh-CN",snapshot,Some(captured.scope_id),&units,TranslationCandidateState::Available,0,None).unwrap();
+    assert_eq!(page.rows[0].selected_origin_kind,Some(TranslationOrigin::Manual));
+    assert_eq!(page.rows[0].target.translation_text.as_deref(),Some(""));
+    assert!(page.rows[0].protection.protected);
+    assert_eq!(page.rows[0].candidate_count,2);
+    assert_eq!(page.rows[0].revisions[0].text,"");
+    assert_eq!(page.rows[0].revisions[1].text,text);
+    for revision in &page.rows[0].revisions {
+        assert_eq!(*revision,store.translation_revision(project,units[0],"zh-CN",revision.revision_id).unwrap());
+    }
+    assert_eq!(page.rows[1].selected_origin_kind,None);
+    assert_eq!(page.rows[1].target.translation_text,None);
+    let after = store.changes_since(Revision::new(0).unwrap());
+    assert_eq!(before.epoch,after.epoch); assert_eq!(before.sequence,after.sequence);
+    let rejected = decision(&store,project,units[0],empty);
+    let receipt = store.decide_translation_candidate(&rejected).unwrap();
+    assert!(store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,Some(&page.read_version)).is_err());
+    // The original retained membership survives our own decision writes.
+    let hidden = store.translation_candidate_slice(project,"zh-CN",snapshot,Some(captured.scope_id),&units,TranslationCandidateState::Rejected,0,None).unwrap();
+    assert_eq!(hidden.rows[0].revisions.len(),1);
+    assert_eq!(hidden.rows[0].revisions[0].candidate_decision,Some(receipt));
+    let active = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).unwrap();
+    assert_eq!(active.rows[0].candidate_count,1);
+    assert_eq!(active.rows[0].revisions[0].revision_id,other);
+    store.select_translation_revision(&SelectTranslationRevision { project_id:project,action_id:ExecutionId::new(),unit_id:units[0],locale:"zh-CN".into(),
+        source_revision_id:active.rows[0].target.source_revision_id,expected_selection_id:active.rows[0].target.selection_id,revision_id:other }).unwrap();
+    let selected = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).unwrap();
+    assert_eq!(selected.rows[0].selected_origin_kind,Some(TranslationOrigin::Ai));
+    assert_eq!(selected.rows[0].candidate_count,0);
+    update_source_with_continued_identity(&mut store,&units);
+    assert!(store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).is_err());
+    let current = store.content_scope().unwrap().current_snapshot.unwrap();
+    let changed = store.translation_candidate_slice(project,"zh-CN",current,None,&units,TranslationCandidateState::Rejected,0,None).unwrap();
+    assert_eq!(changed.rows[0].candidate_count,0,"old-source AI proposals never become current-source targets");
+}
+
+#[test]
+fn candidate_slice_continues_one_unit_without_expanding_or_losing_members() {
+    let (_directory, mut store, project, units) = fixture();
+    let ids = (0..53).map(|index| save_candidate(&mut store,units[0],&format!("Candidate {index} e\u{301} 👩🏽‍💻"))).collect::<Vec<_>>();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let first = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).unwrap();
+    assert_eq!(first.rows.len(),1); assert_eq!(first.rows[0].revisions.len(),50); assert_eq!(first.rows[0].candidate_count,53);
+    let next = first.next.unwrap(); assert_eq!(next.unit_offset,0);
+    let second = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,next.after_ordinal.get(),Some(&first.read_version)).unwrap();
+    assert!(second.next.is_none()); assert_eq!(second.rows.len(),2); assert_eq!(second.rows[0].candidate_count,53);
+    assert_eq!(second.rows[1].candidate_count,0);
+    let returned = first.rows[0].revisions.iter().chain(&second.rows[0].revisions).map(|revision| revision.revision_id).collect::<Vec<_>>();
+    assert_eq!(returned,ids);
+    let invalid = |units: &[ExecutionId]| store.translation_candidate_slice(project,"zh-CN",snapshot,None,units,TranslationCandidateState::Available,0,None);
+    assert!(invalid(&[]).is_err()); assert!(invalid(&[units[0],units[0]]).is_err()); assert!(invalid(&vec![ExecutionId::new();51]).is_err());
+    assert!(invalid(&[ExecutionId::new()]).is_err());
+    assert!(store.translation_candidate_slice(ExecutionId::new(),"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).is_err());
+    assert!(store.translation_candidate_slice(project,"ZH-cn",snapshot,None,&units,TranslationCandidateState::Available,0,None).is_err());
+}
+
+#[test]
+fn candidate_slice_byte_pages_keep_whole_unicode_and_validate_original_decisions() {
+    let (_directory, mut store, project, units) = fixture();
+    let text = "界e\u{301}👩🏽‍💻".repeat(700);
+    let ids = (0..22).map(|_| save_candidate(&mut store,units[0],&text)).collect::<Vec<_>>();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let first = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).unwrap();
+    assert!(first.rows[0].revisions.len() < ids.len());
+    assert!(serde_json::to_vec(&first).unwrap().len() <= crate::content::MAX_CONTENT_PAGE_BYTES);
+    let next = first.next.unwrap(); assert_eq!(next.unit_offset,0);
+    let second = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,next.after_ordinal.get(),Some(&first.read_version)).unwrap();
+    let revisions = first.rows[0].revisions.iter().chain(&second.rows[0].revisions).collect::<Vec<_>>();
+    assert_eq!(revisions.iter().map(|revision| revision.revision_id).collect::<Vec<_>>(),ids);
+    assert!(revisions.iter().all(|revision| revision.text == text));
+    let reject = decision(&store,project,units[0],ids[0]); store.decide_translation_candidate(&reject).unwrap();
+    store.connection().unwrap().execute("UPDATE translation_candidate_decisions SET receipt_digest=?1 WHERE action_id=?2",params!["f".repeat(64),reject.action_id.to_string()]).unwrap();
+    assert_eq!(store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).unwrap_err().code,ErrorCode::CorruptLedger);
+}
+
+#[test]
+fn candidate_slice_rejects_nonmembers_expired_scopes_and_changed_external_snapshots() {
+    let (directory,store,project,units) = fixture();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let query = crate::SegmentQuery { text:"Hello".into(),selection:crate::SegmentSelectionFilter::All,status:crate::SegmentStatusFilter::All };
+    let scope = store.read_segment_page(project,"zh-CN",&query,None,None,50).unwrap();
+    assert_eq!(scope.total,1);
+    let member = scope.rows[0].content.unit_id;
+    let nonmember = units.iter().copied().find(|unit| *unit != member).unwrap();
+    assert!(store.translation_candidate_slice(project,"zh-CN",snapshot,Some(scope.scope_id),&[nonmember],TranslationCandidateState::Available,0,None).is_err());
+    let read = store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,None).unwrap();
+    for _ in 0..8 { store.read_segment_page(project,"zh-CN",&query,None,None,50).unwrap(); }
+    assert!(store.translation_candidate_slice(project,"zh-CN",snapshot,Some(scope.scope_id),&[member],TranslationCandidateState::Available,0,None).is_err());
+    let independent = Connection::open(directory.path().join("project").join(super::super::super::DATABASE_FILENAME)).unwrap();
+    independent.execute("UPDATE project_metadata SET display_name='External synthetic edit' WHERE row_id=1",[]).unwrap();
+    assert!(store.translation_candidate_slice(project,"zh-CN",snapshot,None,&units,TranslationCandidateState::Available,0,Some(&read.read_version)).is_err());
+}
+
+#[test]
 fn ai_pending_counts_only_unselected_non_rejected_ai_and_preserves_human_protection() {
     use crate::{SegmentQuery, SegmentSelectionFilter, SegmentStatusFilter, SelectTranslationRevision};
     let (directory, mut store, project, units) = fixture();

@@ -109,6 +109,15 @@
           }
         }
       }
+    },
+    "readMany": {
+      "sessionToken": "isolated-session",
+      "projectId": "11111111-1111-4111-8111-111111111111",
+      "locale": "zh-CN",
+      "unitIds": [
+        "66666666-6666-4666-8666-666666666666",
+        "80000000-0000-4000-8000-000000000200"
+      ]
     }
   },
   "responses": {
@@ -261,6 +270,79 @@
           "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       }
+    },
+    "readMany": {
+      "items": [
+        {
+          "head": {
+            "key": {
+              "projectId": "11111111-1111-4111-8111-111111111111",
+              "unitId": "66666666-6666-4666-8666-666666666666",
+              "locale": "zh-CN"
+            },
+            "revision": "3",
+            "writerId": "99999999-9999-4999-8999-999999999999",
+            "value": {
+              "basis": {
+                "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+                "selectionId": null,
+                "revisionId": null,
+                "text": null
+              },
+              "text": "更新的草稿 B 👩🏽‍💻\né",
+              "editSeq": "9007199254740993",
+              "pending": {
+                "kind": "save",
+                "request": {
+                  "projectId": "11111111-1111-4111-8111-111111111111",
+                  "actionId": "55555555-5555-4555-8555-555555555555",
+                  "unitId": "66666666-6666-4666-8666-666666666666",
+                  "locale": "zh-CN",
+                  "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+                  "expectedSelectionId": null,
+                  "text": "译文👩‍💻é"
+                },
+                "submittedSeq": "9007199254740992"
+              }
+            }
+          },
+          "current": {
+            "kind": "current",
+            "basis": {
+              "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+              "selectionId": null,
+              "revisionId": null,
+              "text": null
+            },
+            "nativeKey": "greeting.welcome",
+            "sourceText": "Welcome 👩🏽‍💻\né"
+          }
+        },
+        {
+          "head": {
+            "key": {
+              "projectId": "11111111-1111-4111-8111-111111111111",
+              "unitId": "80000000-0000-4000-8000-000000000200",
+              "locale": "zh-CN"
+            },
+            "revision": "0",
+            "writerId": null,
+            "value": null
+          },
+          "current": {
+            "kind": "current",
+            "basis": {
+              "sourceRevisionId": "80000000-0000-4000-8000-000000000201",
+              "selectionId": null,
+              "revisionId": null,
+              "text": null
+            },
+            "nativeKey": "synthetic.no-selection",
+            "sourceText": ""
+          }
+        }
+      ],
+      "nextAfter": null
     }
   }
 }

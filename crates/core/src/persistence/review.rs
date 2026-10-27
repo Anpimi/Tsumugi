@@ -878,6 +878,21 @@ impl ProjectStore {
         })
     }
 
+    /// Bounded current targets share one project snapshot. Historical recovery
+    /// remains available through the existing single-entity readers.
+    pub fn review_targets(
+        &self,
+        project_id: ExecutionId,
+        units: &[ExecutionId],
+        locale: &str,
+    ) -> Result<Vec<ReviewTarget>, ExecutionError> {
+        if units.is_empty() || units.len() > 50 || units.iter().collect::<BTreeSet<_>>().len() != units.len() {
+            return Err(failure(ErrorCode::InvalidInput, "review-targets"));
+        }
+        let connection = self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        queries::read_snapshot(connection, |connection| queries::targets_in(connection, project_id, units, locale))
+    }
+
     pub fn review_target(
         &self,
         project_id: ExecutionId,

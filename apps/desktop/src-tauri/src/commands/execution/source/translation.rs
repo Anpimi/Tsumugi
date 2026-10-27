@@ -10,6 +10,9 @@ use tsumugi_core::TranslationPreview;
 #[cfg(test)]
 #[path = "translation_revision_tests.rs"]
 mod revision_tests;
+#[cfg(test)]
+#[path = "translation_candidate_tests.rs"]
+mod candidate_tests;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TranslationFilesRequest {
@@ -138,6 +141,16 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Tran
     unit_id: ExecutionId,
     locale: String,
     revision_id: ExecutionId,
+});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationCandidateSliceRequest {
+    locale: String,
+    source_snapshot_id: ExecutionId,
+    scope_id: Option<ExecutionId>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 50)))]
+    unit_ids: Vec<ExecutionId>,
+    state: tsumugi_core::TranslationCandidateState,
+    after_ordinal: Option<Revision>,
+    read_version: Option<String>,
 });
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationSaveRequest {
     action_id: ExecutionId,
@@ -564,6 +577,18 @@ pub async fn read_translation_revision(
     state.sessions.run("read_translation_revision", CommandStage::ExecutionRead, move |sessions| {
         authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
             .store.translation_revision(request.project_id, request.unit_id, &request.locale, request.revision_id)
+            .map_err(map_source)
+    }).await
+}
+
+#[tauri::command]
+pub async fn read_translation_candidate_slice(
+    state: State<'_, AppState>, request: TranslationCandidateSliceRequest,
+) -> Result<tsumugi_core::TranslationCandidateSlice, CommandError> {
+    state.sessions.run("read_translation_candidate_slice", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?.store
+            .translation_candidate_slice(request.project_id, &request.locale, request.source_snapshot_id, request.scope_id,
+                &request.unit_ids, request.state, request.after_ordinal.map_or(0, |value| value.get()), request.read_version.as_deref())
             .map_err(map_source)
     }).await
 }

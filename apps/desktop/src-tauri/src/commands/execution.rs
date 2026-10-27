@@ -18,7 +18,7 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
-        super::drafts::read_local_draft,super::drafts::write_local_draft,
+        super::drafts::read_local_draft,super::drafts::read_local_drafts,super::drafts::write_local_draft,
         super::drafts::clear_local_draft,super::drafts::list_local_drafts,
         source::select_source,source::select_webvtt_source,source::read_webvtt_integration,source::preflight_source,source::start_source_import,source::read_source_import_start,
         super::mcp::read_mcp_share_session,super::mcp::prepare_mcp_share,
@@ -83,7 +83,7 @@ macro_rules! handlers {
         source::plugin_translation::start_translation_check,source::plugin_translation::finish_translation_check,
         source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,source::plugin_translation::read_translation_projection_start,
         source::translation::read_translation_preview,
-        source::translation::prepare_translation_adoption,source::translation::read_translation_adoption_action,source::translation::read_translation_history,source::translation::read_translation_revision,
+        source::translation::prepare_translation_adoption,source::translation::read_translation_adoption_action,source::translation::read_translation_history,source::translation::read_translation_revision,source::translation::read_translation_candidate_slice,
         source::translation::read_translation_action,
         source::translation::read_translation_save_action,
         source::translation::read_translation_selection_action,
