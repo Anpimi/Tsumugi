@@ -1,12 +1,15 @@
 import { checkedInvoke } from "./ipc";
 import { sameConnection, sameConnectionReference, type AiConnection, type ModelConnectionReference } from "./connectionCommands";
-import type { AiConfig, AiPreviewRequest, AiStartRequest, AiReadRequest, AiEffectRetryRequest } from "./generated/ai.requests";
+import type { AiConfig, AiPreviewRequest, AiStartRequest, AiReadRequest, AiEffectRetryRequest, AiCandidateEffectRequest } from "./generated/ai.requests";
 import * as validators from "./generated/ai.validators";
 import type { EditorTarget } from "./TranslationWorkbench";
-import type { AiItemView as AiItem, AutomaticSelectionReceipt } from "./generated/ai.responses";
+import type { AiItemView as AiItem, AutomaticSelectionReceipt, EffectView } from "./generated/ai.responses";
+import type { TranslationRevision } from "./translationCommands";
 import { checkerIdentity, contractIdentity, providerIdentity, ruleIdentity } from "./reviewIdentity";
 export type { AiConfig } from "./generated/ai.requests";
 export type { AiItemView as AiItem, AiPreviewView as AiPreview, AiPrepared, AiOutputView as AiOutput, AiView } from "./generated/ai.responses";
+export type { AiCandidateEffectRequest } from "./generated/ai.requests";
+export type { AiCandidateEffectView } from "./generated/ai.responses";
 export type AiStart = AiStartRequest;
 export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false,contextStrategy:null,sourceContext:{extracted:false,inferred:false,neighbors:false,maxBytes:16384,maxItems:128}};
 export const aiTarget=(item:AiItem):EditorTarget=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:item.nativeKey,sourceText:item.sourceText});
@@ -109,6 +112,28 @@ export function mandatoryChecksClean(receipt: Pick<AutomaticSelectionReceipt, "r
   });
 }
 
+function effectMatches(effect: EffectView | null, target: {
+  projectId: string; planId: string | null; planGeneration: string | null; unitId: string; locale: string;
+  revisionId: string | null; sourceRevisionId: string;
+}): boolean {
+  if (!effect) return true;
+  if (!target.planId || !target.planGeneration || effect.retryable && (effect.phase !== "failed" || !effect.error)) return false;
+  const receipt = effect.receipt;
+  if (!receipt) return effect.phase !== "checked" && effect.phase !== "selected" && effect.phase !== "blocked";
+  const selection = receipt.selection, checkOnly = receipt.policy === "candidates-only";
+  return receipt.request.projectId === target.projectId && receipt.request.lease.planId === target.planId
+    && receipt.request.lease.generation === target.planGeneration && receipt.request.unitId === target.unitId
+    && receipt.request.locale === target.locale && receipt.request.revisionId === target.revisionId && receipt.request.actionId === effect.actionId
+    && (checkOnly ? effect.phase === "checked" && selection === null && receipt.checkRunId === null && receipt.blocked === null && receipt.candidateBasis.selectionId === null
+      : receipt.blocked === null ? effect.phase === "selected" && selection !== null && receipt.checkRunId !== null
+        : effect.phase === "blocked" && selection === null && receipt.checkRunId === null)
+    && (selection === null || selection.unitId === target.unitId && selection.locale === target.locale && selection.revisionId === target.revisionId
+      && selection.actionId === receipt.request.actionId && selection.previousEventId === receipt.capturedSelectionId)
+    && receipt.candidateBasis.revisionId === target.revisionId && receipt.candidateBasis.sourceRevisionId === target.sourceRevisionId
+    && capturedChecksMatch(receipt) && (selection === null || receipt.candidateBasis.selectionId === selection.eventId && mandatoryChecksClean(receipt))
+    && effect.error === null && !effect.retryable;
+}
+
 export const aiCommands={
   preview:(request:AiPreviewRequest)=>checkedInvoke("preview_ai_translation",request,validators.validateResponsePrepared),
   start:async(request:AiStartRequest)=>{
@@ -126,31 +151,22 @@ export const aiCommands={
     if(result.detail.attemptId!==request.attemptId||result.rows.some(row=>row.output&&(row.output.unitId!==row.item.unitId||row.output.targetLocale!==row.item.targetLocale)))throw new Error("Invalid IPC response: AI attempt");
     if ((result.planId === null) !== (result.planGeneration === null)
       || new Set(result.rows.map(row => row.itemId)).size !== result.rows.length
-      || result.rows.some(row => {
-        const effect = row.automation, receipt = effect?.receipt;
-        if (row.savedRevisionId && (!row.output || !row.resultId)) return true;
-        if (!effect) return false;
-        if (!result.planId || !result.planGeneration) return true;
-        if (effect.retryable && (effect.phase !== "failed" || !effect.error)) return true;
-        if (!receipt) return effect.phase === "checked" || effect.phase === "selected" || effect.phase === "blocked";
-        const selection = receipt.selection;
-        const checkOnly = receipt.policy === "candidates-only";
-        return receipt.request.projectId !== request.projectId
-          || receipt.request.lease.planId !== result.planId
-          || receipt.request.lease.generation !== result.planGeneration
-          || receipt.request.unitId !== row.item.unitId || receipt.request.locale !== row.item.targetLocale
-          || receipt.request.revisionId !== row.savedRevisionId || receipt.request.actionId !== effect.actionId
-          || (checkOnly
-            ? effect.phase !== "checked" || selection !== null || receipt.checkRunId !== null || receipt.blocked !== null || receipt.candidateBasis.selectionId !== null
-            : receipt.blocked === null ? effect.phase !== "selected" || !selection || !receipt.checkRunId : effect.phase !== "blocked" || selection !== null || receipt.checkRunId !== null)
-          || (selection !== null && (selection.unitId !== row.item.unitId
-            || selection.locale !== row.item.targetLocale || selection.revisionId !== row.savedRevisionId || selection.actionId !== receipt.request.actionId || selection.previousEventId !== receipt.capturedSelectionId))
-          || receipt.candidateBasis.revisionId !== row.savedRevisionId || receipt.candidateBasis.sourceRevisionId !== row.item.sourceRevisionId
-          || !capturedChecksMatch(receipt)
-          || (selection !== null && (receipt.candidateBasis.selectionId !== selection.eventId
-            || !mandatoryChecksClean(receipt)))
-          || effect.error !== null || effect.retryable;
-      })) throw new Error("Invalid IPC response: automatic selection");
+      || result.rows.some(row => row.savedRevisionId && (!row.output || !row.resultId)
+        || !effectMatches(row.automation, { projectId: request.projectId, planId: result.planId, planGeneration: result.planGeneration,
+          unitId: row.item.unitId, locale: row.item.targetLocale, revisionId: row.savedRevisionId, sourceRevisionId: row.item.sourceRevisionId }))) throw new Error("Invalid IPC response: automatic selection");
+    return result;
+  },
+  candidateEffect: async (request: AiCandidateEffectRequest, revision: TranslationRevision) => {
+    const expected = { unitId: revision.unitId, locale: revision.locale, revisionId: revision.revisionId,
+      sourceSnapshotId: revision.sourceSnapshotId, sourceRevisionId: revision.sourceRevisionId,
+      attemptId: revision.attemptId, itemId: revision.itemId, resultId: revision.resultId };
+    if (revision.originKind !== "ai" || !expected.attemptId || !expected.itemId || !expected.resultId
+      || request.unitId !== expected.unitId || request.locale !== expected.locale || request.revisionId !== expected.revisionId) throw new Error("Invalid AI candidate effect target");
+    const result = await checkedInvoke("read_ai_candidate_effect", request, validators.validateResponseCandidateEffect);
+    if (result.projectId !== request.projectId || Object.entries(expected).some(([key, value]) => result[key as keyof typeof expected] !== value)
+      || (result.planId === null) !== (result.planGeneration === null) || result.retained && (!result.currentResult || result.effect === null)
+      || result.effect !== null && !result.effect.receipt && (!result.retained || !result.currentResult)
+      || !effectMatches(result.effect, { ...result, revisionId: result.revisionId })) throw new Error("Invalid IPC response: candidate effect");
     return result;
   },
   retryEffect: async (request: AiEffectRetryRequest) => {

@@ -16,3 +16,5 @@
 .inlineText { display: flex; align-items: flex-start; gap: var(--space-3); color: var(--color-ai-solid); white-space: pre-wrap; overflow-wrap: anywhere; }
 .inlineText svg { flex: 0 0 auto; margin-block-start: var(--space-1); }
 .recovery { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.effect { display: grid; gap: var(--space-4); margin-block-start: var(--space-5); padding: var(--space-5); border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-md); min-inline-size: 0; }
+.effect h3 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }

@@ -108,7 +108,7 @@ macro_rules! handlers {
         release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
         ai::read_ai_start_action,
-        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
+        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::read_ai_candidate_effect,ai::retry_work_plan_effect,
         release::plugin::prepare_plugin_build,release::plugin::start_plugin_build,
         release::plugin::read_saved_plugin_build,
         release::plugin::prepare_artifact_check,release::plugin::start_artifact_check,

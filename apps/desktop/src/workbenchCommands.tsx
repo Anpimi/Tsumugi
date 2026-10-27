@@ -38,6 +38,7 @@ type PlainWorkbenchCommandId = "translation.hide-candidate-batch" | "translation
   | "translation.import" | "translation.refresh-import" | "translation.reset-import"
   | "translation.inspect-focused-candidates" | "translation.open-retained-candidate" | "translation.discard-retained-candidate-inputs" | "translation.stage-focused-ai" | "translation.refresh-candidates" | "translation.first-candidate-page" | "translation.next-candidate-page"
   | "translation.close-candidate-comparison" | "translation.cancel-candidate-audit" | "translation.discard-candidate-inputs"
+  | "translation.close-candidate-effect" | "translation.refresh-candidate-effect"
   | "translation.confirm" | "translation.confirm-next" | "translation.exit-editor" | "translation.focus-mode"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
@@ -214,6 +215,10 @@ export interface TranslationStageCommandPayload {
   expectedSelectionId: string | null; expectedRevisionId: string | null; draftEditSeq: string; draftBasis: DraftBasis;
   evidence: TranslationStageEvidence;
 }
+export interface TranslationCandidateEffectCommandPayload {
+  kind: "translation-candidate-effect"; unitId: string; locale: string; revisionId: string;
+  sourceRevisionId: string; sourceSnapshotId: string; attemptId: string; itemId: string; resultId: string;
+}
 export interface TranslationMergeStageCommandPayload extends Omit<TranslationStageCommandPayload, "kind" | "evidence"> {
   kind: "translation-merge-stage"; comparisonId: string; contributors: string[]; expectedBasis: string; initialRevisionId: string;
 }
@@ -320,6 +325,7 @@ interface WorkbenchCommandPayloads {
   "translation.edit-candidate": TranslationStageCommandPayload;
   "translation.compare-candidate": TranslationStageCommandPayload;
   "translation.audit-candidate": TranslationStageCommandPayload;
+  "translation.inspect-candidate-effect": TranslationCandidateEffectCommandPayload;
   "translation.stage-inline-candidate": TranslationStageCommandPayload;
   "translation.edit-inline-candidate": TranslationStageCommandPayload;
   "translation.inspect-inline-candidate": TranslationStageCommandPayload;
@@ -639,6 +645,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"translation-import-batch", "translation.apply-import-batch">
   | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
   | ResourceCommand<"translation-stage", "translation.stage-candidate" | "translation.edit-candidate" | "translation.compare-candidate" | "translation.audit-candidate" | "translation.stage-inline-candidate" | "translation.edit-inline-candidate" | "translation.inspect-inline-candidate" | "arena.stage-compared">
+  | ResourceCommand<"translation-candidate-effect", "translation.inspect-candidate-effect">
   | ResourceCommand<"translation-merge-stage", "arena.stage-merge">
   | ResourceCommand<"translation-draft-candidate", "translation.decide-draft-candidate">
   | ResourceCommand<"translation-revision", "translation.select-revision" | "translation.open-comparison">
@@ -752,6 +759,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "translation-import-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-merge-stage": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-stage": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-candidate-effect": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-draft-candidate": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-revision": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-correction": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
@@ -986,6 +994,8 @@ function validTranslationPayload(payload: CommandPayload | undefined): payload i
         && taskRevision(evidence.ordinal) && evidence.ordinal !== "0" && nullableIdentity(evidence.decisionId)
         : evidence.kind === "tm" && [evidence.donorUnitId, evidence.translationRevisionId, evidence.sourceRevisionId].every(validIdentity);
     }
+    case "translation-candidate-effect": return [payload.unitId, payload.locale, payload.revisionId, payload.sourceRevisionId,
+      payload.sourceSnapshotId, payload.attemptId, payload.itemId, payload.resultId].every(validIdentity);
     case "translation-merge-stage": return validStageTarget(payload) && validIdentity(payload.comparisonId)
       && validIdentity(payload.expectedBasis) && validIdentity(payload.initialRevisionId) && Array.isArray(payload.contributors)
       && payload.contributors.length >= 2 && payload.contributors.length <= 4 && payload.contributors.every(validIdentity)
@@ -1321,6 +1331,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "translation-import-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-merge-stage" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-stage" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-candidate-effect" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-draft-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-revision" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-candidate" && payload?.kind === command.payloadKind) command.handler(payload);

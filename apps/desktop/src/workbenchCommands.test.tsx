@@ -12,9 +12,29 @@ import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import translationFixture from "../test/fixtures/translation-commands.json";
 import { validateResponseDelivery } from "./generated/release.validators";
 import { validateRequestWorkPlanAuthorize } from "./generated/ai.validators";
-import { WorkbenchCommands, type AiStartCommandPayload, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
+import { WorkbenchCommands, type AiStartCommandPayload, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand, type TranslationCandidateEffectCommandPayload } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
+
+it("dispatches candidate effect inspection only with complete original provenance and the matching project session", () => {
+  const commands = new WorkbenchCommands(), handler = vi.fn(), targetScope = { ...scope, area: "translation" as const };
+  const input: TranslationCandidateEffectCommandPayload = { kind: "translation-candidate-effect", unitId: "unit", locale: "zh-CN",
+    revisionId: "revision", sourceRevisionId: "source", sourceSnapshotId: "snapshot", attemptId: "attempt", itemId: "item", resultId: "result" };
+  const remove = commands.register({ id: "translation.inspect-candidate-effect", scope: targetScope, nameKey: "workbenchV2.candidateEffectOpen", category: "translation",
+    binding: null, risk: "reads-review", confirmation: "none", payloadKind: "translation-candidate-effect", availability: () => ({ enabled: true }), handler });
+  const dispatch = (payload: unknown, currentScope = targetScope) => Reflect.apply(commands.dispatch, commands, ["translation.inspect-candidate-effect", currentScope, payload]);
+  for (const field of ["unitId", "locale", "revisionId", "sourceRevisionId", "sourceSnapshotId", "attemptId", "itemId", "resultId"]) {
+    expect(dispatch({ ...input, [field]: null })).toBe(false);
+    expect(dispatch({ ...input, [field]: "" })).toBe(false);
+  }
+  expect(dispatch({ ...input, kind: "ai-effect" })).toBe(false);
+  expect(dispatch(input, { ...targetScope, sessionToken: "another-session" })).toBe(false);
+  expect(dispatch(input, { ...targetScope, projectId: "another-project" })).toBe(false);
+  expect(commands.describe("translation.inspect-candidate-effect", targetScope, input)?.availability.enabled).toBe(true);
+  expect(handler).not.toHaveBeenCalled();
+  expect(dispatch(input)).toBe(true); expect(handler).toHaveBeenCalledExactlyOnceWith(input);
+  remove(); expect(dispatch(input)).toBe(false);
+});
 
 describe("Project metadata recovery commands", () => {
   it("validates a complete typed original capture and keeps describe, dispatch and disposal in the same scope", () => {

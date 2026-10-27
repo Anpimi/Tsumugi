@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- In the opt-in desktop workspace, open a saved AI candidate's original automatic-processing result, including its recorded checks and selection receipt. Reads stay tied to that revision, preserve earlier results, and do not start work or renew authorization. Current selection and QA remain separate facts.
+
 - The opt-in desktop workspace can keep AI candidates as drafts, reject them, or restore rejected candidates across a fixed entry selection. Preview shows which entries will be skipped, including protected entries, non-AI selections, and existing drafts. Results remain visible per version, and the batch pauses when an action needs checking or a draft write is unconfirmed.
 
 - In the opt-in desktop workspace, compare two to four saved translations, hide or reveal their sources, and reopen the same comparison. A human merge starts as a local draft with its contributing versions retained; confirmation uses the original merge checks and recovery. Entry details also offer explicit protection and release controls.

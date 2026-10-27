@@ -652,6 +652,20 @@ impl Automation {
             .get(&item)
             .map(|item| item.view.clone())
     }
+    pub(super) fn view_for_candidate(&self, value: &tsumugi_core::SavedAiCandidateEffect) -> Result<Option<EffectView>,ExecutionError> {
+        if !value.current_result { return Ok(None); }
+        let Some(attempt) = self.attempts.get(&value.attempt_id) else { return Ok(None); };
+        let input = attempt.input.envelope();
+        if input.project_id != value.project_id || input.attempt_id != value.attempt_id || input.task_id != value.task_id || input.automation != value.lease {
+            return Err(ExecutionError::new(ErrorCode::CorruptLedger,"ai-candidate-effect-producer"));
+        }
+        let Some(item) = attempt.items.get(&value.item_id) else { return Ok(None); };
+        if item.revision != Some(value.revision_id) { return Ok(None); }
+        let payload = tsumugi_core::ai::item_payload(&attempt.input,value.item_id)?;
+        if payload.unit_id != value.unit_id || payload.target_locale != value.locale || payload.source_revision_id != value.source_revision_id
+            || payload.source_snapshot_id != value.source_snapshot_id { return Err(ExecutionError::new(ErrorCode::CorruptLedger,"ai-candidate-effect-producer")); }
+        Ok(Some(item.view.clone()))
+    }
     pub(super) fn retry(
         &mut self,
         store: &ProjectStore,

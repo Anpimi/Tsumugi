@@ -121,6 +121,34 @@
         ],
         "type": "object"
       },
+      "AiCandidateEffectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "revisionId"
+        ],
+        "type": "object"
+      },
       "AiConfig": {
         "additionalProperties": false,
         "properties": {
@@ -3586,6 +3614,9 @@
       }
     },
     "properties": {
+      "candidateEffect": {
+        "$ref": "#/definitions/AiCandidateEffectRequest"
+      },
       "effectRetry": {
         "$ref": "#/definitions/AiEffectRetryRequest"
       },
@@ -3736,6 +3767,7 @@
       "start",
       "startAction",
       "read",
+      "candidateEffect",
       "effectRetry",
       "workPlanPrepare",
       "maintenanceAssessment",
@@ -3859,6 +3891,96 @@
           "attemptId",
           "toolHandle",
           "unitIds"
+        ],
+        "type": "object"
+      },
+      "AiCandidateEffectView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "currentResult": {
+            "type": "boolean"
+          },
+          "effect": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/EffectView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "planGeneration": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "retained": {
+            "description": "A matching producer is retained in this session, not an execution grant.",
+            "type": "boolean"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "revisionId",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "attemptId",
+          "itemId",
+          "resultId",
+          "taskId",
+          "planId",
+          "planGeneration",
+          "currentResult",
+          "retained",
+          "effect"
         ],
         "type": "object"
       },
@@ -12331,6 +12453,9 @@
       }
     },
     "properties": {
+      "candidateEffect": {
+        "$ref": "#/definitions/AiCandidateEffectView"
+      },
       "effectRetry": {
         "type": "boolean"
       },
@@ -12516,6 +12641,7 @@
       "prepared",
       "identity",
       "view",
+      "candidateEffect",
       "startAction",
       "effectRetry",
       "workPlan",

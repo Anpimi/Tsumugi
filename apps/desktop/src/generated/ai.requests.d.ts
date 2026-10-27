@@ -127,6 +127,7 @@ export type TeamArtifactReference =
     };
 
 export interface Requests {
+  candidateEffect: AiCandidateEffectRequest;
   effectRetry: AiEffectRetryRequest;
   maintenanceAssessment: MaintenanceAssessmentRequest;
   preview: AiPreviewRequest;
@@ -175,6 +176,13 @@ export interface Requests {
   workPlanTeamWorkTools: WorkPlanTeamWorkToolsRequest;
   workProtectionRead: WorkProtectionReadRequest;
   workProtectionSet: WorkProtectionSetRequest;
+}
+export interface AiCandidateEffectRequest {
+  locale: string;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+  sessionToken: string;
+  unitId: ExecutionId;
 }
 export interface AiEffectRetryRequest {
   attemptId: ExecutionId;

@@ -7,6 +7,8 @@ pub(super) use automation::PreparedTracking;
 #[cfg(test)]
 pub(super) use automation::commit_candidate;
 pub use automation::{EffectPhase, EffectView};
+#[cfg(test)]
+mod candidate_effect_tests;
 #[derive(Default)]
 pub(super) struct AiSession {
     preview: Option<(AiPreview, FixedInput)>,
@@ -96,6 +98,58 @@ request!(
         item_id: ExecutionId
     }
 );
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AiCandidateEffectRequest {
+    unit_id: ExecutionId,
+    locale: String,
+    revision_id: ExecutionId,
+});
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AiCandidateEffectView {
+    pub project_id: ExecutionId,
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub revision_id: ExecutionId,
+    pub source_snapshot_id: ExecutionId,
+    pub source_revision_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub item_id: ExecutionId,
+    pub result_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub plan_id: Option<ExecutionId>,
+    pub plan_generation: Option<Revision>,
+    pub current_result: bool,
+    /// A matching producer is retained in this session, not an execution grant.
+    pub retained: bool,
+    pub effect: Option<EffectView>,
+}
+
+fn effect_projection(receipt: Option<tsumugi_core::application::AutomaticSelectionReceipt>, live: Option<EffectView>) -> Option<EffectView> {
+    receipt.map(|receipt| EffectView { phase:automation::phase_for(&receipt),action_id:Some(receipt.request.action_id),
+        receipt:Some(receipt),error:None,retryable:false }).or(live)
+}
+
+#[tauri::command]
+pub async fn read_ai_candidate_effect(state: State<'_,AppState>, request: AiCandidateEffectRequest) -> Result<AiCandidateEffectView,CommandError> {
+    state.sessions.run("read_ai_candidate_effect",CommandStage::ExecutionRead,move |sessions| {
+        let active = authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?;
+        let value = active.store.saved_ai_candidate_effect(request.project_id,request.unit_id,&request.locale,request.revision_id).map_err(map_read)?;
+        // Observing history never constructs a runtime, retains consent or ticks a producer.
+        let live = match active.execution.as_ref() { Some(host) => host.ai.automation.view_for_candidate(&value).map_err(map_read)?, None => None };
+        let retained = live.is_some();
+        let effect = effect_projection(value.receipt,live);
+        let view = AiCandidateEffectView { project_id:value.project_id,unit_id:value.unit_id,locale:value.locale,revision_id:value.revision_id,
+            source_snapshot_id:value.source_snapshot_id,source_revision_id:value.source_revision_id,attempt_id:value.attempt_id,item_id:value.item_id,
+            result_id:value.result_id,task_id:value.task_id,plan_id:value.lease.map(|lease| lease.plan_id),plan_generation:value.lease.map(|lease| lease.generation),
+            current_result:value.current_result,retained,effect };
+        if serde_json::to_vec(&view).map_err(|_| map_read(ExecutionError::new(ErrorCode::CorruptLedger,"ai-candidate-effect-encoding")))?.len() > tsumugi_core::content::MAX_CONTENT_PAGE_BYTES {
+            return Err(map_read(ExecutionError::new(ErrorCode::LimitExceeded,"ai-candidate-effect-bytes")));
+        }
+        Ok(view)
+    }).await
+}
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -358,19 +412,7 @@ pub async fn read_ai_translation(
                             }
                             _ => None,
                         };
-                        let automation = if let Some(receipt) = receipt {
-                            Some(EffectView {
-                                phase: automation::phase_for(&receipt),
-                                action_id: Some(receipt.request.action_id),
-                                receipt: Some(receipt),
-                                error: None,
-                                retryable: false,
-                            })
-                        } else if let Some(view) = host
-                            .ai
-                            .automation
-                            .view(request.attempt_id, row.status.item_id)
-                        {
+                        let automation = if let Some(view) = effect_projection(receipt, host.ai.automation.view(request.attempt_id, row.status.item_id)) {
                             Some(view)
                         } else if let Some(lease) = input.envelope().automation {
                             let plan = store.work_plan(lease.plan_id)?;

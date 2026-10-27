@@ -6,6 +6,7 @@ import { i18n } from "../../../i18n";
 import type { workbenchEn } from "../../../i18n/workbench";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "../../../draftCommands";
 import { executionContext } from "../../../executionCommands";
+import type { AiCandidateEffectView } from "../../../generated/ai.responses";
 import type { ProjectView } from "../../../projectCommands";
 import { resourceCommands, type TmSuggestion } from "../../../resourceCommands";
 import { SessionReadProvider } from "../../../SessionReadProvider";
@@ -89,6 +90,37 @@ async function harness(options: { inline?: boolean; page?: string } = {}) {
   return { reads, gate, commands, drafts, ports, onEdit, onInspect, onPage, rendered, owners: () => { if (!owners) throw new Error("Missing candidate owner"); return owners; },
     show: (args: Parameters<typeof Content>[0]) => rendered.rerender(ui(args)) };
 }
+
+it("inspects an exact saved candidate on demand while another mutation is reserved, then returns keyboard focus without writing", async () => {
+  const revision: TranslationRevision = { ...candidate, attemptId: fixtureIdentity(830), itemId: fixtureIdentity(831), resultId: fixtureIdentity(832) };
+  vi.mocked(translationCommands.history).mockResolvedValue({ ...copy(baseHistory), rows: [revision] });
+  const view: AiCandidateEffectView = { projectId: context.projectId, unitId: revision.unitId, locale: revision.locale,
+    revisionId: revision.revisionId, sourceSnapshotId: revision.sourceSnapshotId, sourceRevisionId: revision.sourceRevisionId,
+    attemptId: revision.attemptId!, itemId: revision.itemId!, resultId: revision.resultId!, taskId: fixtureIdentity(833),
+    planId: null, planGeneration: null, currentResult: true, retained: false, effect: null };
+  invoke.mockImplementation(async command => { if (command === "read_ai_candidate_effect") return copy(view); throw new Error(String(command)); });
+  const h = await harness();
+  await waitFor(() => expect(screen.getByRole("button", { name: w("candidateEffectOpen") })).toBeEnabled());
+  expect(invoke).not.toHaveBeenCalled();
+  let reservation: symbol | null = null;
+  act(() => { reservation = h.drafts.reserveMutation("retained-for-navigation"); });
+  expect(reservation).not.toBeNull();
+  const trigger = screen.getByRole("button", { name: w("candidateEffectOpen") });
+  fireEvent.click(trigger);
+  const region = await screen.findByRole("region", { name: w("candidateEffectTitle") });
+  await waitFor(() => expect(invoke).toHaveBeenCalledExactlyOnceWith("read_ai_candidate_effect", { request: {
+    ...context, unitId: revision.unitId, locale: revision.locale, revisionId: revision.revisionId,
+  } }));
+  expect(region).toHaveFocus();
+  await waitFor(() => expect(within(region).queryByText(w("candidateEffectLoading"))).not.toBeInTheDocument());
+  expect(h.drafts.getSnapshot().mutationReserved).toBe(true);
+  fireEvent.click(within(region).getByRole("button", { name: w("candidateEffectClose") }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: w("candidateEffectTitle") })).not.toBeInTheDocument());
+  expect(trigger).toHaveFocus(); expect(trigger).toHaveAttribute("aria-expanded", "false");
+  expect(h.ports.write).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+  expect(invoke).toHaveBeenCalledTimes(1);
+  act(() => { if (reservation) h.drafts.releaseMutation(reservation); });
+});
 
 it("shares one bounded history read across focused inline and Inspector; stages durably before opening the editor without selecting or saving", async () => {
   const h = await harness({ inline: true });

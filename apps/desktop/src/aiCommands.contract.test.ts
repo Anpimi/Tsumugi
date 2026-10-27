@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/aiCommands.contract.json";
+import translationFixture from "../test/fixtures/translation-commands.json";
 import { aiCommands } from "./aiCommands";
 import * as validators from "./generated/ai.validators";
 import { hasUnknownOutcome } from "./projectCommands";
-import type { AiView, CheckKey } from "./generated/ai.responses";
+import type { AiView, AiCandidateEffectView, CheckKey } from "./generated/ai.responses";
+import type { TranslationRevision } from "./translationCommands";
 import { textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { ruleIdentity } from "./reviewIdentity";
@@ -316,4 +318,82 @@ it("requires a strict original-request receipt and correlates every start identi
     invoke.mockResolvedValueOnce(response); await expect(aiCommands.startAction(request)).rejects.toThrow();
   }
   invoke.mockResolvedValueOnce(receipt); await expect(aiCommands.startAction({...request,confirmed:false})).rejects.toThrow();
+});
+
+function candidateEffectFixture(view = automaticViewFixture()) {
+  const row = view.rows[0]; if (!row.savedRevisionId || !row.resultId) throw new Error("A real saved result is required");
+  const revision: TranslationRevision = { ...translationFixture.receipt.revision, revisionId: row.savedRevisionId, unitId: row.item.unitId,
+    locale: row.item.targetLocale, sourceSnapshotId: row.item.sourceSnapshotId, sourceRevisionId: row.item.sourceRevisionId,
+    originKind: "ai", attemptId: view.detail.attemptId, itemId: row.itemId, resultId: row.resultId, candidateDecision: null };
+  const request = { sessionToken: fixture.requests.automaticRead.sessionToken, projectId: fixture.requests.automaticRead.projectId,
+    unitId: revision.unitId, locale: revision.locale, revisionId: revision.revisionId };
+  const value: AiCandidateEffectView = { projectId: request.projectId, unitId: revision.unitId, locale: revision.locale, revisionId: revision.revisionId,
+    sourceSnapshotId: revision.sourceSnapshotId, sourceRevisionId: revision.sourceRevisionId, attemptId: view.detail.attemptId, itemId: row.itemId,
+    resultId: row.resultId, taskId: view.detail.taskId, planId: view.planId, planGeneration: view.planGeneration, currentResult: true,
+    retained: row.automation !== null, effect: structuredClone(row.automation) };
+  return { request, value, revision };
+}
+
+it("reads one exact saved revision's durable automatic receipt without reading its attempt or restoring authority", async () => {
+  const h = candidateEffectFixture(); h.value.retained = false;
+  expect(validators.validateResponseCandidateEffect(h.value)).toBe(true); invoke.mockResolvedValueOnce(h.value);
+  expect(await aiCommands.candidateEffect(h.request, h.revision)).toEqual(h.value);
+  expect(invoke.mock.calls).toEqual([["read_ai_candidate_effect", { request: h.request }]]);
+});
+
+it("reads exact check-only evidence through the same effect relationship validator as ordinary attempt reads", async () => {
+  const h = candidateEffectFixture(checkOnlyView(advisoryViewFixture("findings")));
+  invoke.mockResolvedValueOnce(h.value); const observed = await aiCommands.candidateEffect(h.request, h.revision);
+  expect(observed.effect?.phase).toBe("checked"); expect(observed.effect?.receipt?.selection).toBeNull(); expect(observed.effect?.receipt?.checkRunId).toBeNull();
+  expect(observed.effect?.receipt?.rules.some(rule => !rule.mandatory && rule.findings.length > 0)).toBe(true);
+});
+
+it.each(["projectId", "unitId", "revisionId", "sourceSnapshotId", "sourceRevisionId", "attemptId", "itemId", "resultId"] as const)("rejects a candidate-effect %s unrelated to the actual saved revision", async field => {
+  const h = candidateEffectFixture(); h.value[field] = fixtureIdentity(9801);
+  expect(validators.validateResponseCandidateEffect(h.value)).toBe(true); invoke.mockResolvedValueOnce(h.value);
+  await expect(aiCommands.candidateEffect(h.request, h.revision)).rejects.toThrow("candidate effect");
+});
+
+it("rejects a foreign locale and invalid entry targets before any result can be used", async () => {
+  const h = candidateEffectFixture(); invoke.mockResolvedValueOnce({ ...h.value, locale: "ja" });
+  await expect(aiCommands.candidateEffect(h.request, h.revision)).rejects.toThrow("candidate effect");
+  for (const revision of [{ ...h.revision, originKind: "manual" as const }, { ...h.revision, itemId: null }, { ...h.revision, resultId: null }, { ...h.revision, attemptId: null }]) {
+    await expect(aiCommands.candidateEffect(h.request, revision)).rejects.toThrow("effect target");
+  }
+  await expect(aiCommands.candidateEffect({ ...h.request, revisionId: fixtureIdentity(9802) }, h.revision)).rejects.toThrow("effect target");
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("accepts an absent processing record without inventing cancellation or requiring a retained producer", async () => {
+  const h = candidateEffectFixture(); h.value.effect = null; h.value.retained = false; h.value.planId = null; h.value.planGeneration = null;
+  invoke.mockResolvedValueOnce(h.value); expect(await aiCommands.candidateEffect(h.request, h.revision)).toEqual(h.value);
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
+
+it("requires a matching retained current producer for an unsaved effect projection", async () => {
+  const h = candidateEffectFixture();
+  h.value.effect = { phase: "failed", actionId: h.value.effect!.actionId, receipt: null, retryable: true,
+    error: { code: "outcome-unknown", stage: "execution-read", outcome: "unknown", recoveryRequired: true } };
+  invoke.mockResolvedValueOnce(h.value); expect(await aiCommands.candidateEffect(h.request, h.revision)).toEqual(h.value);
+  for (const value of [{ ...h.value, retained: false }, { ...h.value, currentResult: false }, { ...h.value, effect: null }]) {
+    expect(validators.validateResponseCandidateEffect(value)).toBe(true); invoke.mockResolvedValueOnce(value);
+    await expect(aiCommands.candidateEffect(h.request, h.revision)).rejects.toThrow("candidate effect");
+  }
+});
+
+it("rejects wrong original lease/action and incomplete mandatory evidence in exact receipt reads", async () => {
+  const changes: ((value: AiCandidateEffectView) => void)[] = [
+    value => { value.planGeneration = "2"; },
+    value => { value.planId = null; },
+    value => { value.effect!.actionId = fixtureIdentity(9803); },
+    value => { value.effect!.receipt!.request.revisionId = fixtureIdentity(9804); },
+    value => { value.effect!.receipt!.selection!.previousEventId = fixtureIdentity(9805); },
+    value => { value.effect!.receipt!.rules.pop(); },
+    value => { value.effect!.receipt!.evidence!.results = []; },
+    value => { value.effect!.phase = "checked"; },
+  ];
+  for (const change of changes) {
+    const h = candidateEffectFixture(); change(h.value); invoke.mockResolvedValueOnce(h.value);
+    await expect(aiCommands.candidateEffect(h.request, h.revision)).rejects.toThrow();
+  }
 });

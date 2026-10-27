@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSessionReads } from "../../../SessionReadProvider";
 import { executionContext } from "../../../executionCommands";
@@ -9,13 +9,15 @@ import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-sy
 import { Field, TextInput, TextArea } from "../../../design-system/Field";
 import { Tabs } from "../../../design-system/Tabs";
 import { TokenizedText } from "../../../design-system/TokenizedText";
-import type { WorkbenchCommands, TranslationStageCommandPayload, TranslationDraftCandidateCommandPayload, TranslationCandidatePendingCommandPayload, CommandAvailability } from "../../../workbenchCommands";
+import type { WorkbenchCommands, TranslationStageCommandPayload, TranslationDraftCandidateCommandPayload, TranslationCandidatePendingCommandPayload, TranslationCandidateEffectCommandPayload, CommandAvailability } from "../../../workbenchCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { CandidateOwners } from "./candidateTypes";
 import { candidateHistoryKey, candidateTmKey, candidateReadCurrent, candidateReadProof, useCandidateHistory, useCandidateTm } from "./candidateReads";
 import { candidateDraftKey, candidateEvidenceId, candidateStagePayload, canStageCandidate, sameCandidateCapture, stageCandidate, type CandidateEvidence } from "./candidateActions";
 import styles from "./Candidates.module.css";
+
+const CandidateEffectStatus = lazy(() => import("./CandidateEffectStatus"));
 
 export interface EntriesCandidatesProps {
   project: ProjectView; target: ReviewTarget; drafts: TranslationDrafts; owners: CandidateOwners; commands: WorkbenchCommands;
@@ -38,6 +40,9 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
   const comparisonRegion = useRef<HTMLElement>(null), comparisonButtons = useRef(new Map<string, HTMLButtonElement>());
   const comparisonFocus = useRef<{ identity: string; viewId: string | null; id: string; trigger: HTMLButtonElement | null; phase: "open" | "close" } | null>(null);
   const [audit, setAudit] = useState<{ identity: string; revisionId: string } | null>(null);
+  const [effect, setEffect] = useState<{ identity: string; revisionId: string } | null>(null);
+  const effectRegion = useRef<HTMLElement>(null), effectButtons = useRef(new Map<string, HTMLButtonElement>());
+  const effectFocus = useRef<{ identity: string; revisionId: string; opening: boolean } | null>(null);
   const [feedback, setFeedback] = useState<{ identity: string; key: "candidateStaged" | "candidateStageBlocked" | "candidateStageUndurable" | "candidateActionFailed" } | null>(null);
   const [busy, setBusy] = useState(false), mounted = useRef(true), live = useRef({ visible, disabled, identity, viewId, parentDialogId });
   useLayoutEffect(() => { live.current = { visible, disabled, identity, viewId, parentDialogId }; });
@@ -52,8 +57,18 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
   const evidence = [...revisions, ...memories];
   const chosen = comparison?.identity === identity ? evidence.find(item => candidateEvidenceId(item) === comparison.id) : undefined;
   const auditRevision = audit?.identity === identity ? history.data?.rows.find(row => row.revisionId === audit.revisionId) : undefined;
+  const effectRevision = effect?.identity === identity ? history.data?.rows.find(row => row.revisionId === effect.revisionId) : undefined;
   const present = () => visible && !disabled && mounted.current && gate.getSnapshot().visibleViewId === viewId && !reads.retired && !drafts.getSnapshot().retired;
   const stillPresent = () => present() && live.current.visible && !live.current.disabled && live.current.identity === identity && live.current.viewId === viewId && live.current.parentDialogId === parentDialogId;
+  useLayoutEffect(() => {
+    const pending = effectFocus.current;
+    if (!pending) return;
+    effectFocus.current = null;
+    if (pending.identity !== identity || !stillPresent() || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) return;
+    if (pending.opening) {
+      if (effectRevision?.revisionId === pending.revisionId) effectRegion.current?.focus();
+    } else effectButtons.current.get(pending.revisionId)?.focus();
+  }, [effect, effectRevision, identity, viewId, visible, disabled, parentDialogId]);
   useLayoutEffect(() => {
     const pending = comparisonFocus.current;
     if (!pending) return;
@@ -73,6 +88,17 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
     || snapshot.hydration !== "ready" || snapshot.mutationReserved || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId }) ? unavailable : { enabled: true };
   const readKey = (item: CandidateEvidence) => item.kind === "revision" ? candidateHistoryKey(target, afterOrdinal) : candidateTmKey(target);
   const readData = (item: CandidateEvidence) => item.kind === "revision" ? history.data : tm.data;
+  const effectPayload = (revision: typeof effectRevision): TranslationCandidateEffectCommandPayload | undefined => revision?.originKind === "ai" && revision.attemptId && revision.itemId && revision.resultId
+    ? { kind: "translation-candidate-effect", unitId: revision.unitId, locale: revision.locale, revisionId: revision.revisionId,
+      sourceRevisionId: revision.sourceRevisionId, sourceSnapshotId: revision.sourceSnapshotId,
+      attemptId: revision.attemptId, itemId: revision.itemId, resultId: revision.resultId } : undefined;
+  const effectReadAllowed = () => stillPresent() && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })
+    && candidateReadCurrent(reads, candidateHistoryKey(target, afterOrdinal), history.data);
+  const effectCloseAllowed = () => stillPresent() && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+  function effectAvailability(input: TranslationCandidateEffectCommandPayload | undefined): CommandAvailability {
+    const row = history.data?.rows.find(value => value.revisionId === input?.revisionId), expected = effectPayload(row);
+    return input && expected && effectReadAllowed() && Object.keys(expected).every(field => Reflect.get(input, field) === Reflect.get(expected, field)) ? { enabled: true } : unavailable;
+  }
   const currentEvidence = (input: TranslationStageCommandPayload | undefined) => evidence.find(item => sameCandidateCapture(input, candidateStagePayload(drafts.getEntry(key), target, item)));
   function availability(input: TranslationStageCommandPayload | undefined, action: "stage" | "compare" | "audit" = "stage"): CommandAvailability {
     const allowed = common(), item = currentEvidence(input);
@@ -122,6 +148,14 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
         setComparison({ identity, id });
       } }),
       commands.register({ ...meta, id: "translation.audit-candidate", nameKey: "candidateDecisions.reject", risk: "changes-view", payloadKind: "translation-stage", availability: input => availability(input, "audit"), handler: input => { if (input.evidence.kind === "revision") setAudit({ identity, revisionId: input.evidence.revisionId }); } }),
+      commands.register({ ...meta, id: "translation.inspect-candidate-effect", nameKey: "workbenchV2.candidateEffectOpen", risk: "reads-review", payloadKind: "translation-candidate-effect", availability: effectAvailability, handler: input => {
+        effectFocus.current = { identity, revisionId: input.revisionId, opening: true };
+        setEffect({ identity, revisionId: input.revisionId });
+      } }),
+      commands.register({ ...meta, id: "translation.close-candidate-effect", nameKey: "workbenchV2.candidateEffectClose", risk: "changes-view", availability: () => effectRevision && effectCloseAllowed() ? { enabled: true } : unavailable, handler: () => {
+        if (effectRevision) effectFocus.current = { identity, revisionId: effectRevision.revisionId, opening: false };
+        setEffect(null);
+      } }),
       commands.register({ ...meta, id: "translation.decide-draft-candidate", nameKey: "candidateDecisions.reject", risk: "writes-translation", payloadKind: "translation-draft-candidate", availability: decisionAvailability, handler: input => {
         if (!auditRevision) return;
         const proof = candidateReadProof(reads, candidateHistoryKey(target, afterOrdinal), history.data);
@@ -148,6 +182,7 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
     const payload = candidateStagePayload(entry, target, item), staged = availability(payload ?? undefined).enabled, canAudit = availability(payload ?? undefined, "audit").enabled;
     const sourceCurrent = revision?.sourceRevisionId === target.sourceRevisionId;
     const selected = revision?.revisionId === target.revisionId, rejected = revision?.candidateDecision?.request.disposition === "rejected";
+    const effectInput = effectPayload(revision ?? undefined), effectOpen = !!revision && effectRevision?.revisionId === revision.revisionId;
     const origin = revision?.originKind ?? memory?.originKind;
     return <li key={candidateEvidenceId(item)} className={styles.item} data-ai={origin === "ai" || undefined}>
       <header className={styles.itemHeader}><strong>{origin === "ai" ? t("candidateAi") : legacy(origin === "import" ? "resource.imported" : "resource.manual")}</strong>
@@ -163,7 +198,14 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
         <Button size="sm" disabled={!payload || !staged} onClick={() => { if (payload) commands.dispatch("translation.edit-candidate", scope, payload); }}>{t("candidateEdit")}</Button>
         <Button ref={element => { if (element) comparisonButtons.current.set(candidateEvidenceId(item), element); else comparisonButtons.current.delete(candidateEvidenceId(item)); }} size="sm" disabled={!payload || !availability(payload, "compare").enabled} onClick={() => { if (payload) commands.dispatch("translation.compare-candidate", scope, payload); }}>{t("candidateCompare")}</Button>
         {revision?.originKind === "ai" ? <Button size="sm" disabled={!payload || !canAudit} onClick={() => { if (payload) commands.dispatch("translation.audit-candidate", scope, payload); }}>{t(rejected ? "candidateRestore" : "candidateReject")}</Button> : null}
+        {effectInput ? <Button size="sm" ref={element => { if (element) effectButtons.current.set(effectInput.revisionId, element); else effectButtons.current.delete(effectInput.revisionId); }}
+          aria-expanded={effectOpen} disabled={!effectAvailability(effectInput).enabled} onClick={() => commands.dispatch("translation.inspect-candidate-effect", scope, effectInput)}>{t("candidateEffectOpen")}</Button> : null}
       </div>
+      {effectOpen && revision ? <section ref={effectRegion} tabIndex={-1} className={styles.effect} aria-label={t("candidateEffectTitle")}>
+        <header className={styles.header}><h3>{t("candidateEffectTitle")}</h3><Button size="sm" disabled={!effectCloseAllowed()} onClick={() => commands.dispatch("translation.close-candidate-effect", scope)}>{t("candidateEffectClose")}</Button></header>
+        <Suspense fallback={<LoadingState label={t("candidateEffectLoading")} />}><CandidateEffectStatus revision={revision} enabled={visible && !disabled && candidateReadCurrent(reads, candidateHistoryKey(target, afterOrdinal), history.data)} disabled={disabled}
+          commands={commands} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/></Suspense>
+      </section> : null}
     </li>;
   }
   const pending = pendingInput(), decision = auditPayload();

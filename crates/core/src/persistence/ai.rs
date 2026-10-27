@@ -1,6 +1,8 @@
 use super::ProjectStore;
 use crate::{ai::*, execution::*};
 use rusqlite::{OptionalExtension, params};
+mod candidate_effect;
+pub use candidate_effect::SavedAiCandidateEffect;
 
 impl ProjectStore {
     pub fn ai_start_action_read(
