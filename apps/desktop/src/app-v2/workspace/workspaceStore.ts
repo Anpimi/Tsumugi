@@ -12,6 +12,7 @@ export interface WorkspaceView {
   entryPageMode: boolean;
   compareSource: boolean;
   detailTab: "detail" | "context" | "candidates" | "issues" | "history";
+  reviewHistoryOffset: number;
   candidateAfterOrdinal: string;
   candidateInitialRevisionId: string | null;
   candidateCompareOpen: boolean;
@@ -75,6 +76,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     entryPageMode: input.entryPageMode ?? false,
     compareSource: input.compareSource ?? false,
     detailTab: input.detailTab ?? "detail",
+    reviewHistoryOffset: input.reviewHistoryOffset ?? 0,
     candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
     candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
     candidateCompareOpen: input.candidateCompareOpen ?? false,
@@ -160,7 +162,7 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
       const next = { ...view, ...patch, ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
-        ...(changedTarget ? { candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null, candidateCompareOpen: patch.candidateCompareOpen ?? false, candidateComparisonId: patch.candidateComparisonId ?? null, candidateCompareRefs: Object.freeze([...(patch.candidateCompareRefs ?? [])]) } : {}),
+        ...(changedTarget ? { reviewHistoryOffset: patch.reviewHistoryOffset ?? 0, candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null, candidateCompareOpen: patch.candidateCompareOpen ?? false, candidateComparisonId: patch.candidateComparisonId ?? null, candidateCompareRefs: Object.freeze([...(patch.candidateCompareRefs ?? [])]) } : {}),
         ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
           queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,
           focusMode: (patch.editing ?? patch.focus != null) ? patch.focusMode ?? view.focusMode : false } : {}) };

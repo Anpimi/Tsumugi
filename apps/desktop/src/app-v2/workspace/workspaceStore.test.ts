@@ -22,6 +22,19 @@ describe("workspace view state", () => {
     expect(store.getState().views.one.candidateAfterOrdinal).toBe("0");
     expect(workspaceViewHref(store.getState().views.one)).not.toMatch(/compare|candidate|detailTab/);
   });
+  it("keeps review history pages per view and returns to the first page for another entry or language", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
+    store.getState().patch("one", { detailTab: "history", reviewHistoryOffset: 40 });
+    store.getState().open({ id: "two", kind: "entries", locale: "zh-CN", focus: "unit-a" });
+    expect(store.getState().views.one.reviewHistoryOffset).toBe(40);
+    expect(store.getState().views.two.reviewHistoryOffset).toBe(0);
+    store.getState().patch("one", { focus: "unit-b" });
+    expect(store.getState().views.one).toMatchObject({ detailTab: "history", reviewHistoryOffset: 0 });
+    store.getState().patch("one", { reviewHistoryOffset: 20 });
+    store.getState().patch("one", { locale: "ja" });
+    expect(store.getState().views.one.reviewHistoryOffset).toBe(0);
+    expect(workspaceViewHref(store.getState().views.one)).not.toContain("reviewHistory");
+  });
   it("keeps the entry presentation mode local to each tab and out of the URL", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
     expect(store.getState().views.one.entryMode).toBe("table");

@@ -1,0 +1,13 @@
+.section { display: grid; gap: var(--space-4); min-inline-size: 0; padding: var(--space-5) var(--space-6); }
+.section h3, .section h4, .section h5 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.section h4, .section h5 { font-size: var(--text-sm); }
+.meta { color: var(--color-text-secondary); font-size: var(--text-sm); margin: 0; }
+.current, .preparation, .result { display: grid; gap: var(--space-3); min-inline-size: 0; }
+.preparation fieldset { min-inline-size: 0; margin: 0; border: var(--border-width) solid var(--color-border-subtle); padding: var(--space-4); }
+.rules { list-style: none; display: grid; gap: var(--space-4); margin: var(--space-3) 0; padding: 0; }
+.rule { border-inline-start: var(--border-width) solid var(--color-border-subtle); padding-inline-start: var(--space-3); }
+.rule p { margin-block: var(--space-2); }
+.text { min-inline-size: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.consent { display: flex; gap: var(--space-2); align-items: start; margin-block-start: var(--space-4); }
+.result:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }

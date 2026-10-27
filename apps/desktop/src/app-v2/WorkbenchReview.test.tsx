@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -7,13 +8,15 @@ import { executionCommands } from "../executionCommands";
 import { i18n } from "../i18n";
 import type { workbenchEn } from "../i18n/workbench";
 import type { ProjectView } from "../projectCommands";
+import { pluginCommands } from "../pluginCommands";
+import { formatReviewSlotFixture } from "../testSupport/textReviewFixture";
 import { resourceCommands } from "../resourceCommands";
-import { reviewCommands, type ReviewWrite, type ReviewTarget } from "../reviewCommands";
+import { reviewCommands, type ReviewWrite, type ReviewTarget, type ReviewCheckRequest } from "../reviewCommands";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { SessionReads } from "../sessionReads";
 import { sourceCommands } from "../sourceCommands";
 import { fixtureIdentity } from "../testSupport/executionFixture";
-import { reviewDecisionFixture, reviewSummaryFor, reviewTargetFixture } from "../testSupport/reviewFixture";
+import { reviewCheckFixture, reviewFindingViewFixture, reviewDecisionFixture, reviewSummaryFor, reviewTargetFixture } from "../testSupport/reviewFixture";
 import { translationCommands, type TranslationHistory } from "../translationCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle } from "./platform/projectLifecycle";
@@ -107,4 +110,51 @@ it("retains an original human review and newer input after all views close, chec
   fireEvent.click(screen.getByRole("button", { name: w("reviewRecoveryDiscard") }));
   await act(async () => { expect(await lifecycle.close()).toBe(true); }); expect(close).toHaveBeenCalledOnce();
   expect(draftCommands.write).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(reviewCommands.check).not.toHaveBeenCalled();
+});
+
+it("keeps prepared checker permissions through the retained host and recovers the original check after all views close", async () => {
+  const user = userEvent.setup(), slot = formatReviewSlotFixture();
+  let submitted: ReviewCheckRequest | null = null;
+  vi.spyOn(pluginCommands, "textReviews").mockResolvedValue({ settingsRevision: slot.plugin.plugin.settingsRevision, entries: [] });
+  vi.spyOn(reviewCommands, "findings").mockImplementation(async () => reviewFindingViewFixture(current));
+  vi.spyOn(reviewCommands, "prepareCheck").mockImplementation(async request => ({ kind: "plugin", view: {
+    actionId: request.actionId, unitId: request.unitId, locale: request.locale, basis: request.expectedBasis, checkers: [copy(slot)] } }));
+  vi.mocked(reviewCommands.check).mockImplementation(async request => {
+    submitted = copy(request.check); current = { ...current, currentCheck: reviewCheckFixture(current, request.check.actionId) };
+    throw Object.assign(new Error("Lost check acknowledgement"), { outcome: "unknown" });
+  });
+  vi.spyOn(reviewCommands, "checkAction").mockRejectedValueOnce(new Error("Original run is unavailable"))
+    .mockImplementation(async request => ({ request: { projectId: request.projectId, actionId: request.actionId, unitId: request.unitId,
+      locale: request.locale, expectedBasis: request.expectedBasis, advisoryChecks: [] }, receipt: reviewCheckFixture(target, request.actionId) }));
+  vi.spyOn(reviewCommands, "cancelCheck").mockResolvedValue(true);
+  controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
+  const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(details).toBeEnabled()); await user.click(details);
+  await user.click(await screen.findByRole("tab", { name: w("issues") }));
+  const checks = await screen.findByRole("region", { name: w("entryChecksTitle") });
+  const prepare = within(checks).getByRole("button", { name: w("entryChecksPrepare") });
+  await waitFor(() => expect(prepare).toBeEnabled());
+  expect(reviewCommands.prepareCheck).not.toHaveBeenCalled(); expect(reviewCommands.check).not.toHaveBeenCalled();
+  await user.click(prepare);
+  const permission = await within(checks).findByRole("checkbox", { name: i18n.t("review.checkConsent") });
+  await waitFor(() => expect(permission).toBeEnabled()); expect(permission).not.toBeChecked();
+  const run = within(checks).getByRole("button", { name: w("entryChecksRun") }); expect(run).toBeDisabled();
+  await user.click(permission); await waitFor(() => expect(run).toBeEnabled()); await user.click(run);
+  await waitFor(() => expect(within(checks).getByRole("button", { name: w("entryChecksCheck") })).toBeEnabled());
+  expect(reviewCommands.prepareCheck).toHaveBeenCalledTimes(1); expect(reviewCommands.check).toHaveBeenCalledTimes(1);
+  const original = vi.mocked(reviewCommands.check).mock.calls[0][0];
+  expect(original.executions).toHaveLength(1); expect(original.executions[0]).toMatchObject({ attemptId: slot.attemptId, inputDigest: slot.inputDigest, unsandboxedExecution: true });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: target.locale }) }) }));
+  await screen.findByText(w("noViews"));
+  await user.click(await screen.findByRole("button", { name: w("reviewRecoveryCancel") }));
+  await waitFor(() => expect(reviewCommands.cancelCheck).toHaveBeenCalledWith({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, actionId: original.check.actionId }));
+  expect(screen.getByRole("button", { name: w("reviewRecoveryCheck") })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: w("reviewRecoveryCheck") }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: w("reviewRecoveryCheck") })).not.toBeInTheDocument());
+  expect(reviewCommands.checkAction).toHaveBeenLastCalledWith(submitted);
+  expect(reviewCommands.prepareCheck).toHaveBeenCalledTimes(1); expect(reviewCommands.check).toHaveBeenCalledTimes(1); expect(executionCommands.identity).toHaveBeenCalledTimes(2);
+  expect(draftCommands.write).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
 });

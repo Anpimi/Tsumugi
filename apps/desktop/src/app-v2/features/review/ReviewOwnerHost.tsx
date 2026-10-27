@@ -24,7 +24,10 @@ function ReviewBridge({ project, lifecycle, onOwner, onReveal }: Omit<Props, "dr
   useLayoutEffect(() => {
     owner.current = review; callbacks.current = { onOwner, onReveal };
     if (completion.current !== review.state.completionVersion) {
-      completion.current = review.state.completionVersion; reads.invalidate(["review"]);
+      completion.current = review.state.completionVersion;
+      // Preparing plugin slots has no recorded QA result to refresh. Invalidating
+      // here would erase the preparation before the user can consent to it.
+      if (!review.state.checkReview || review.state.notice !== null) reads.invalidate(["review"]);
     }
     const previous = published.current, inFlight = review.inFlight();
     if (previous?.owner.state === review.state && previous.owner.semantic.state === review.semantic.state && previous.inFlight === inFlight) return;

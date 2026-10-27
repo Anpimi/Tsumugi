@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { pluginCommands, type PluginTextReviewListEntry, type PluginTextReviewListView, type PluginTextReviewSelection } from "./pluginCommands";
@@ -10,34 +10,64 @@ export function textReviewSelectionIdentity(choice: Pick<PluginTextReviewSelecti
 }
 
 type Discovery = { kind: "loading" } | { kind: "ready"; view: PluginTextReviewListView } | { kind: "failed"; error: CommandFailure };
-export function TextReviewSelections({ value, onChange, disabled, active, scopeKey, onOpenExtensions, onSnapshotRevision }: {
+export type TextReviewDiscoveryState = { scopeKey: string } & ({ kind: "loading" | "failed" } | { kind: "ready"; settingsRevision: string });
+export interface TextReviewSelectionsHandle {
+  scopeKey: string;
+  refresh: () => boolean;
+  remove: (choice: PluginTextReviewSelection) => boolean;
+}
+export interface TextReviewActionBridge {
+  ref: Ref<TextReviewSelectionsHandle>;
+  onRefresh: () => void;
+  onRemove: (choice: PluginTextReviewSelection) => void;
+}
+export function TextReviewSelections({ value, onChange, disabled, active, scopeKey, onOpenExtensions, onSnapshotRevision, onDiscoveryState, actionBridge, buttonClassName }: {
   value: PluginTextReviewSelection[]; onChange: (value: PluginTextReviewSelection[]) => void;
   disabled: boolean; active: boolean; scopeKey: string; onOpenExtensions?: () => void;
   onSnapshotRevision?: (revision: string) => void;
+  onDiscoveryState?: (state: TextReviewDiscoveryState) => void;
+  actionBridge?: TextReviewActionBridge;
+  buttonClassName?: string;
 }) {
   const { t } = useTranslation();
   const [discovery, setDiscovery] = useState<Discovery>({ kind: "loading" });
   const [refresh, setRefresh] = useState(0);
   const observed = useRef(onSnapshotRevision);
-  useEffect(() => { observed.current = onSnapshotRevision; }, [onSnapshotRevision]);
+  const discoveryObserver = useRef(onDiscoveryState);
+  useEffect(() => { observed.current = onSnapshotRevision; discoveryObserver.current = onDiscoveryState; }, [onSnapshotRevision, onDiscoveryState]);
   useEffect(() => {
     if (!active) return;
     let current = true;
     setDiscovery({ kind: "loading" });
-    void pluginCommands.textReviews().then(view => { if (current) { setDiscovery({ kind: "ready", view }); observed.current?.(view.settingsRevision); } })
-      .catch(error => { if (current) setDiscovery({ kind: "failed", error: commandFailure(error) }); });
-    return () => { current = false; };
+    discoveryObserver.current?.({ kind: "loading", scopeKey });
+    void pluginCommands.textReviews().then(view => { if (current) {
+      setDiscovery({ kind: "ready", view }); observed.current?.(view.settingsRevision);
+      discoveryObserver.current?.({ kind: "ready", scopeKey, settingsRevision: view.settingsRevision });
+    } }).catch(error => { if (current) {
+      setDiscovery({ kind: "failed", error: commandFailure(error) }); discoveryObserver.current?.({ kind: "failed", scopeKey });
+    } });
+    return () => { current = false; discoveryObserver.current?.({ kind: "loading", scopeKey }); };
   }, [active, scopeKey, refresh]);
   const entries = discovery.kind === "ready" ? discovery.view.entries : [];
   const selectableIdentity = (entry: PluginTextReviewListEntry) => entry.environmentDigest === null ? null
     : textReviewSelectionIdentity({ ...entry, environmentDigest: entry.environmentDigest });
   const absent = value.filter(choice => !entries.some(entry => selectableIdentity(entry) === textReviewSelectionIdentity(choice)));
   const remove = (choice: PluginTextReviewSelection) => onChange(value.filter(candidate => textReviewSelectionIdentity(candidate) !== textReviewSelectionIdentity(choice)));
+  const refreshNow = () => {
+    if (!active || disabled) return false;
+    discoveryObserver.current?.({ kind: "loading", scopeKey }); setDiscovery({ kind: "loading" }); setRefresh(previous => previous + 1); return true;
+  };
+  const removeNow = (choice: PluginTextReviewSelection) => {
+    if (!active || disabled || !value.some(candidate => JSON.stringify(candidate) === JSON.stringify(choice))) return false;
+    remove(choice); return true;
+  };
+  useImperativeHandle(actionBridge?.ref, () => ({ scopeKey, refresh: refreshNow, remove: removeNow }));
+  const requestRemove = (choice: PluginTextReviewSelection) => { if (actionBridge) actionBridge.onRemove(choice); else remove(choice); };
   return <section aria-label={t("review.advisoryChecks")}>
     <h4>{t("review.advisoryChecks")}</h4><p>{t("review.actionLocalChecks")}</p>
-    <div className="form-actions"><button type="button" className="secondary-button" disabled={disabled}
-      onClick={() => setRefresh(previous => previous + 1)}>{t("review.refreshCheckers")}</button>
-      {onOpenExtensions ? <button type="button" className="text-button" disabled={disabled} onClick={onOpenExtensions}>{t("review.openExtensions")}</button> : null}</div>
+    <div className="form-actions"><button type="button" className={["secondary-button", buttonClassName].filter(Boolean).join(" ")} disabled={disabled}
+      onClick={() => { if (actionBridge) actionBridge.onRefresh(); else refreshNow(); }}>{t("review.refreshCheckers")}</button>
+      {onOpenExtensions ? <button type="button" className={["text-button", buttonClassName].filter(Boolean).join(" ")} disabled={disabled} onClick={onOpenExtensions}>{t("review.openExtensions")}</button> : null}</div>
     {discovery.kind === "loading" ? <p role="status">{t("review.loadingCheckers")}</p> : discovery.kind === "failed" ? <div role="alert">
       <p>{t("review.checkersReadFailed")}</p><CommandFailureDetails failure={discovery.error} /></div> : entries.length === 0 ? <p>{t("review.noAdvisoryChecks")}</p> : null}
     {entries.map(entry => {
@@ -69,13 +99,13 @@ export function TextReviewSelections({ value, onChange, disabled, active, scopeK
           </div>;
         }) : <div role="status"><p>{t("review.selectedCheckerUnavailable")}</p>
           {entry.availability.kind === "unavailable" ? <CommandFailureDetails failure={commandFailure(entry.availability.error)} /> : null}
-          {selected ? <button type="button" className="text-button" disabled={disabled} onClick={() => remove(selected)}>{t("review.removeAdvisoryCheck")}</button> : null}</div>}
+          {selected ? <button type="button" className={["text-button", buttonClassName].filter(Boolean).join(" ")} disabled={disabled} onClick={() => requestRemove(selected)}>{t("review.removeAdvisoryCheck")}</button> : null}</div>}
         <details><summary>{t("execution.diagnostic")}</summary><p>{entry.resourceId}</p><code>{entry.package.packageDigest}</code>
           {entry.environmentDigest ? <p><code>{entry.environmentDigest}</code></p> : null}</details>
       </fieldset>;
     })}
     {absent.map(choice => <div key={textReviewSelectionIdentity(choice)} role="status"><p>{t("review.selectedCheckerUnavailable")}: {choice.package.plugin.publisher}/{choice.package.plugin.id} {choice.package.plugin.version}</p>
       <ul>{choice.rules.map(rule => <li key={JSON.stringify([rule.id, rule.schemaVersion, rule.behaviorVersion])}>{rule.id}</li>)}</ul>
-      <button type="button" className="text-button" disabled={disabled} onClick={() => remove(choice)}>{t("review.removeAdvisoryCheck")}</button></div>)}
+      <button type="button" className={["text-button", buttonClassName].filter(Boolean).join(" ")} disabled={disabled} onClick={() => requestRemove(choice)}>{t("review.removeAdvisoryCheck")}</button></div>)}
   </section>;
 }

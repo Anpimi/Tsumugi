@@ -1,8 +1,8 @@
 import { render, screen, waitFor, act, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { useState } from "react";
-import { TextReviewSelections } from "./TextReviewSelections";
+import { createRef, useState } from "react";
+import { TextReviewSelections, type TextReviewDiscoveryState, type TextReviewSelectionsHandle } from "./TextReviewSelections";
 import { pluginCommands, type PluginTextReviewSelection, type PluginTextReviewListView } from "./pluginCommands";
 import { textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { i18n } from "./i18n";
@@ -90,4 +90,46 @@ it("discovers the current scope even when interaction is initially locked", asyn
   render(<TextReviewSelections value={[]} onChange={vi.fn()} active disabled scopeKey="locked-action" />);
   for (const rule of await screen.findAllByRole("checkbox", { name: "Preferred form" })) expect(rule).toBeDisabled();
   expect(screen.getByRole("button", { name: "Refresh text checkers" })).toBeDisabled();
+});
+
+it("reports discovery revocation, failures and exact ready scopes without publishing late old-scope readiness", async () => {
+  let oldReady!: (value: PluginTextReviewListView) => void;
+  read.mockImplementationOnce(() => new Promise(resolve => { oldReady = resolve; }));
+  const changes: TextReviewDiscoveryState[] = [], props = { value: [], onChange: vi.fn(), active: true, disabled: false,
+    onDiscoveryState: (state: TextReviewDiscoveryState) => changes.push(state) };
+  const rendered = render(<TextReviewSelections {...props} scopeKey="old"/>);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  rendered.rerender(<TextReviewSelections {...props} scopeKey="current"/>);
+  await screen.findAllByRole("checkbox", { name: "Preferred form" });
+  await act(async () => oldReady({ settingsRevision: "99", entries: [] }));
+  expect(changes.filter(state => state.kind === "ready")).toEqual([{ kind: "ready", scopeKey: "current", settingsRevision: "1" }]);
+  read.mockRejectedValueOnce(new Error("Synthetic discovery failure"));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Refresh text checkers" }));
+  await screen.findByRole("alert");
+  expect(changes.at(-1)).toEqual({ kind: "failed", scopeKey: "current" });
+  expect(changes.some(state => state.kind === "loading" && state.scopeKey === "current")).toBe(true);
+  rendered.rerender(<TextReviewSelections {...props} scopeKey="current" active={false}/>);
+  expect(changes.at(-1)).toEqual({ kind: "loading", scopeKey: "current" });
+});
+
+it("routes local buttons through an optional bridge while its original handle guards disabled and stale removals", async () => {
+  const view = list(), entry = view.entries[0];
+  if (entry.availability.kind !== "ready" || entry.environmentDigest === null) throw new Error("Expected ready synthetic text checker");
+  const choice: PluginTextReviewSelection = { package: entry.package, resourceId: entry.resourceId, environmentDigest: entry.environmentDigest,
+    rules: [entry.availability.view.binding.declaration.rules[0].rule] };
+  read.mockResolvedValue({ settingsRevision: "1", entries: [] });
+  const ref = createRef<TextReviewSelectionsHandle>(), change = vi.fn(), refresh = vi.fn(), remove = vi.fn();
+  const props = { value: [choice], onChange: change, active: true, scopeKey: "fixed", actionBridge: { ref, onRefresh: refresh, onRemove: remove } };
+  const rendered = render(<TextReviewSelections {...props} disabled={false}/>), user = userEvent.setup();
+  await screen.findByRole("button", { name: "Remove from this action" });
+  await user.click(screen.getByRole("button", { name: "Refresh text checkers" }));
+  expect(refresh).toHaveBeenCalledOnce(); expect(read).toHaveBeenCalledOnce();
+  act(() => { expect(ref.current?.refresh()).toBe(true); }); await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  await user.click(await screen.findByRole("button", { name: "Remove from this action" }));
+  expect(remove).toHaveBeenCalledWith(choice); expect(change).not.toHaveBeenCalled();
+  act(() => { expect(ref.current?.remove({ ...choice, rules: [] })).toBe(false); expect(ref.current?.remove(choice)).toBe(true); });
+  expect(change).toHaveBeenCalledWith([]);
+  rendered.rerender(<TextReviewSelections {...props} disabled/>);
+  act(() => { expect(ref.current?.refresh()).toBe(false); expect(ref.current?.remove(choice)).toBe(false); });
+  expect(read).toHaveBeenCalledTimes(2);
 });

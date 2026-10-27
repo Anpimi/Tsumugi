@@ -9,7 +9,10 @@ import * as translationValidation from "./generated/translation.validators";
 import type { CandidateDecisionRequest, CandidateDisposition } from "./translationCommands";
 import type { CandidateAuditCapture } from "./CandidateDecisionSession";
 import type { WorkspaceSelection } from "./app-v2/workspace/workspaceSelection";
-import type { ReviewEntryTarget, ReviewEntryDecisionPayload, ReviewEntryBasisPayload, ReviewEntryPendingPayload } from "./app-v2/features/review/reviewTypes";
+import type { ReviewEntryTarget, ReviewEntryDecisionPayload, ReviewEntryBasisPayload, ReviewEntryPendingPayload, RetainedReviewPendingPayload } from "./app-v2/features/review/reviewTypes";
+import type { EntryChecksPreparePayload, EntryChecksRunPayload, EntryChecksConsentPayload, EntryChecksPendingPayload, EntryChecksDiscoveryPayload, EntryChecksRemovePayload, EntryChecksCapture } from "./app-v2/features/review/checksTypes";
+import type { EntryIssueWaiverPayload, EntryIssueFindingPayload, EntryIssuesReadPayload } from "./app-v2/features/review/issuesTypes";
+import type { ReviewHistoryCommandPayload } from "./app-v2/features/review/historyTypes";
 import * as reviewValidation from "./generated/review.validators";
 import { validContentSelection } from "./contentSelection";
 import { createContext, useContext, type ReactNode } from "react";
@@ -305,13 +308,34 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "review.recover-entry-cancel": RetainedReviewPendingPayload;
+  "review.entry-prepare-checks": EntryChecksPreparePayload;
+  "review.entry-run-checks": EntryChecksRunPayload;
+  "review.entry-checker-consent": EntryChecksConsentPayload;
+  "review.entry-cancel-checks": EntryChecksPendingPayload;
+  "review.entry-check-checks": EntryChecksPendingPayload;
+  "review.entry-retry-checks": EntryChecksPendingPayload;
+  "review.entry-refresh-checkers": EntryChecksDiscoveryPayload;
+  "review.entry-remove-checker": EntryChecksRemovePayload;
+  "review.entry-grant-waiver": EntryIssueWaiverPayload;
+  "review.entry-revoke-waiver": EntryIssueWaiverPayload;
+  "review.entry-reject-finding": EntryIssueFindingPayload;
+  "review.entry-restore-finding": EntryIssueFindingPayload;
+  "review.entry-repair-finding": EntryIssueFindingPayload;
+  "review.entry-issues-refresh": EntryIssuesReadPayload;
+  "review.entry-issues-page": EntryIssuesReadPayload;
+  "review.entry-issues-semantic-refresh": EntryIssuesReadPayload;
+  "review.entry-issues-edit": EntryIssuesReadPayload;
+  "review.entry-history-refresh": ReviewHistoryCommandPayload;
+  "review.entry-history-first": ReviewHistoryCommandPayload;
+  "review.entry-history-next": ReviewHistoryCommandPayload;
   "review.entry-approve": ReviewEntryDecisionPayload;
   "review.entry-request-changes": ReviewEntryDecisionPayload;
   "review.entry-adopt-current": ReviewEntryBasisPayload;
   "review.entry-check": ReviewEntryPendingPayload;
   "review.entry-retry": ReviewEntryPendingPayload;
-  "review.recover-entry-check": ReviewEntryPendingPayload;
-  "review.recover-entry-retry": ReviewEntryPendingPayload;
+  "review.recover-entry-check": RetainedReviewPendingPayload;
+  "review.recover-entry-retry": RetainedReviewPendingPayload;
   "translation.preview-candidate-batch": TranslationCandidateBatchPreviewCommandPayload;
   "translation.confirm-candidate-batch": TranslationCandidateBatchCommandPayload;
   "translation.continue-candidate-batch": TranslationCandidateBatchCommandPayload;
@@ -617,7 +641,18 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
 export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-finding" | "review.restore-finding" | "review.repair-finding"> | PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
   | ResourceCommand<"entry-review-decision", "review.entry-approve" | "review.entry-request-changes">
   | ResourceCommand<"entry-review-basis", "review.entry-adopt-current">
-  | ResourceCommand<"entry-review-pending", "review.entry-check" | "review.entry-retry" | "review.recover-entry-check" | "review.recover-entry-retry">
+  | ResourceCommand<"entry-review-pending", "review.entry-check" | "review.entry-retry">
+  | ResourceCommand<"retained-review-pending", "review.recover-entry-check" | "review.recover-entry-retry" | "review.recover-entry-cancel">
+  | ResourceCommand<"entry-checks-prepare", "review.entry-prepare-checks">
+  | ResourceCommand<"entry-checks-run", "review.entry-run-checks">
+  | ResourceCommand<"entry-checks-consent", "review.entry-checker-consent">
+  | ResourceCommand<"entry-checks-pending", "review.entry-cancel-checks" | "review.entry-check-checks" | "review.entry-retry-checks">
+  | ResourceCommand<"entry-checks-discovery", "review.entry-refresh-checkers">
+  | ResourceCommand<"entry-checks-remove-advisory", "review.entry-remove-checker">
+  | ResourceCommand<"entry-issue-waiver", "review.entry-grant-waiver" | "review.entry-revoke-waiver">
+  | ResourceCommand<"entry-issue-finding", "review.entry-reject-finding" | "review.entry-restore-finding" | "review.entry-repair-finding">
+  | ResourceCommand<"entry-issues-read", "review.entry-issues-refresh" | "review.entry-issues-page" | "review.entry-issues-semantic-refresh" | "review.entry-issues-edit">
+  | ResourceCommand<"entry-review-history", "review.entry-history-refresh" | "review.entry-history-first" | "review.entry-history-next">
   | ResourceCommand<"source-check", "source.prepare-check" | "source.start-check" | "source.finish-check">
   | ResourceCommand<"source-plugin-pending", "source.check-plugin-start" | "source.retry-plugin-request">
   | ResourceCommand<"task-saved-build", "tasks.open-saved-build">
@@ -739,6 +774,41 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind === "retained-review-pending") {
+    if (payload?.kind !== command.payloadKind || !payload.pending) return unavailable;
+    const pending = payload.pending;
+    const human = pending.kind !== "check" && pending.kind !== "prepare-check";
+    const session = human ? pending.session : pending.request;
+    return (human ? validReviewEntryPending({ kind: "entry-review-pending", pending }) : validChecksPending(pending))
+      && session.projectId === command.scope.projectId && session.sessionToken === command.scope.sessionToken
+      && (command.id !== "review.recover-entry-cancel" || pending.kind === "check") ? command.availability(payload) : unavailable;
+  }
+  if (command.payloadKind === "entry-checks-prepare") return payload?.kind === command.payloadKind && validChecksCapture(payload) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-checks-run") return payload?.kind === command.payloadKind && validChecksCapture(payload) && validChecksPreparation(payload.preparation)
+    && identities(payload.consent) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-checks-consent") return payload?.kind === command.payloadKind && validChecksCapture(payload) && validChecksPreparation(payload.preparation)
+    && validIdentity(payload.attemptId) && validIdentity(payload.inputDigest) && typeof payload.approved === "boolean" ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-checks-pending") return payload?.kind === command.payloadKind && validChecksPending(payload.pending)
+    && payload.pending.request.projectId === command.scope.projectId && payload.pending.request.sessionToken === command.scope.sessionToken
+    && (command.id !== "review.entry-cancel-checks" || payload.pending.kind === "check") ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-checks-discovery") return payload?.kind === command.payloadKind && validIdentity(payload.scopeKey) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-checks-remove-advisory") return payload?.kind === command.payloadKind && validIdentity(payload.scopeKey)
+    && validAdvisorySelection(payload.choice) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-issue-waiver") return payload?.kind === command.payloadKind && validIssueCapture(payload)
+    && validIdentity(payload.runId) && validIdentity(payload.issueId) && nullableIdentity(payload.expectedWaiverId)
+    && payload.grant === (command.id === "review.entry-grant-waiver") ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-issue-finding") return payload?.kind === command.payloadKind && validIssueCapture(payload)
+    && validIdentity(payload.runId) && validIdentity(payload.issueId) && nullableIdentity(payload.expectedDecisionId)
+    && ["qa", "ai-semantic"].includes(payload.purpose) && !!payload.evidence && typeof payload.evidence === "object"
+    && payload.disposition === (command.id === "review.entry-reject-finding" ? "rejected" : command.id === "review.entry-restore-finding" ? "restored" : "repair-requested")
+    ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-issues-read") return payload?.kind === command.payloadKind
+    && [payload.unitId, payload.locale, payload.basis].every(validIdentity) && editSequence(payload.offset) && nullableIdentity(payload.semanticAttemptId)
+    && (command.id === "review.entry-issues-refresh" ? payload.operation === "refresh" : command.id === "review.entry-issues-page" ? ["first", "next"].includes(payload.operation)
+      : command.id === "review.entry-issues-semantic-refresh" ? payload.operation === "semantic" : payload.operation === "edit") ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-review-history") return payload?.kind === command.payloadKind && validIdentity(payload.unitId) && validIdentity(payload.locale)
+    && editSequence(payload.offset) && (command.id !== "review.entry-history-first" || payload.offset === 0) ? command.availability(payload) : unavailable;
+
   if (command.payloadKind === "entry-review-decision") return payload?.kind === command.payloadKind && validReviewEntryTarget(payload)
     && payload.selectionId !== null && payload.revisionId !== null && editSequence(payload.editSeq)
     && typeof payload.actor === "string" && !!payload.actor.trim() && typeof payload.reason === "string"
@@ -927,10 +997,35 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   return !command.payloadKind && payload === undefined ? command.availability() : { enabled: false, reason: "unavailable" };
 }
 function validIdentity(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
-function validReviewEntryTarget(value: ReviewEntryTarget | null | undefined): boolean {
+function validReviewTargetBasis(value: Omit<ReviewEntryTarget, "expectedDecisionId"> | null | undefined): boolean {
   return !!value && [value.unitId, value.locale, value.basis, value.sourceSnapshotId, value.sourceRevisionId].every(validIdentity)
-    && nullableIdentity(value.selectionId) && nullableIdentity(value.revisionId) && nullableIdentity(value.expectedDecisionId)
+    && nullableIdentity(value.selectionId) && nullableIdentity(value.revisionId)
     && (value.selectionId === null) === (value.revisionId === null);
+}
+function validReviewEntryTarget(value: ReviewEntryTarget | null | undefined): boolean {
+  return validReviewTargetBasis(value) && !!value && nullableIdentity(value.expectedDecisionId);
+}
+function validAdvisorySelection(value: EntryChecksRemovePayload["choice"] | null | undefined): boolean {
+  return !!value && validIdentity(value.environmentDigest) && validIdentity(value.resourceId) && !!value.package && !!value.package.plugin
+    && [value.package.packageDigest, value.package.plugin.id, value.package.plugin.publisher, value.package.plugin.version].every(validIdentity)
+    && Array.isArray(value.rules) && value.rules.every(rule => !!rule && validIdentity(rule.id) && Number.isSafeInteger(rule.schemaVersion) && rule.schemaVersion > 0 && Number.isSafeInteger(rule.behaviorVersion) && rule.behaviorVersion > 0);
+}
+function validChecksCapture(value: EntryChecksCapture): boolean {
+  return validReviewTargetBasis(value) && nullableIdentity(value.currentRunId) && taskRevision(value.settingsRevision)
+    && Array.isArray(value.advisoryChecks) && value.advisoryChecks.every(validAdvisorySelection);
+}
+function validChecksPreparation(value: EntryChecksRunPayload["preparation"] | null | undefined): boolean {
+  return !!value && reviewValidation.validateRequestPrepareCheck(value.request)
+    && reviewValidation.validateResponsePrepareCheck({ kind: "plugin", view: value.view });
+}
+function validChecksPending(value: EntryChecksPendingPayload["pending"] | null | undefined): boolean {
+  return !!value && value.submittedSeq === null && nullableIdentity(value.previousRunId) && !!value.basisEvidence
+    && (value.kind === "prepare-check" ? reviewValidation.validateRequestPrepareCheck(value.request)
+      : value.kind === "check" && reviewValidation.validateRequestCheck({ projectId: value.request.projectId, sessionToken: value.request.sessionToken, check: value.request, executions: value.executions }));
+}
+function validIssueCapture(value: EntryIssueWaiverPayload | EntryIssueFindingPayload): boolean {
+  return validReviewTargetBasis(value) && !!value.basisEvidence && typeof value.basisEvidence === "object"
+    && editSequence(value.editSeq) && typeof value.actor === "string" && !!value.actor.trim() && typeof value.reason === "string" && !!value.reason.trim();
 }
 function validReviewEntryPending(value: ReviewEntryPendingPayload): boolean {
   const pending = value.pending;
@@ -1333,6 +1428,17 @@ export class WorkbenchCommands {
     if (command.payloadKind === "entry-review-decision" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-review-basis" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-review-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "retained-review-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-checks-prepare" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-checks-run" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-checks-consent" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-checks-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-checks-discovery" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-checks-remove-advisory" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-issue-waiver" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-issue-finding" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-issues-read" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-review-history" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "project-metadata-reconcile" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "source-check" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "source-plugin-pending" && payload?.kind === command.payloadKind) command.handler(payload);

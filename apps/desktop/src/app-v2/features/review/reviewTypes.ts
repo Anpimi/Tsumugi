@@ -1,5 +1,5 @@
 import type { QueryKey } from "@tanstack/react-query";
-import type { useReviewDraftSession, ReviewHumanPending } from "../../../ReviewDraftSession";
+import type { useReviewDraftSession, ReviewHumanPending, ReviewPending } from "../../../ReviewDraftSession";
 import type { ProjectView } from "../../../projectCommands";
 import type { ReviewTarget, ReviewWrite } from "../../../reviewCommands";
 import type { WorkbenchCommands } from "../../../workbenchCommands";
@@ -21,6 +21,7 @@ export interface ReviewEntryCapture extends ReviewEntryTarget { actor: string; r
 export interface ReviewEntryDecisionPayload extends ReviewEntryCapture { kind: "entry-review-decision"; decision: ReviewWrite["kind"] }
 export interface ReviewEntryBasisPayload extends ReviewEntryCapture { kind: "entry-review-basis"; current: ReviewEntryTarget }
 export interface ReviewEntryPendingPayload { kind: "entry-review-pending"; pending: ReviewHumanPending }
+export interface RetainedReviewPendingPayload { kind: "retained-review-pending"; pending: ReviewPending }
 export interface EntryReviewPanelProps {
   project: ProjectView;
   target: ReviewTarget;
