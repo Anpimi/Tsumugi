@@ -109,7 +109,7 @@ function decisionPayload(owner: ReviewOwner, kind: ReviewWrite["kind"] = "approv
   const key = reviewDraftKey(selected);
   return { kind: "entry-review-decision", decision: kind, unitId: selected.unitId, locale: selected.locale, basis: selected.basis,
     sourceSnapshotId: selected.sourceSnapshotId, sourceRevisionId: selected.sourceRevisionId, selectionId: selected.selectionId,
-    revisionId: selected.revisionId, expectedDecisionId: selected.currentDecision?.decisionId ?? null,
+    revisionId: selected.revisionId, expectedDecisionId: selected.currentDecision?.decisionId ?? null, expectedFallbackId: selected.currentFallback?.fallbackId ?? null,
     actor: state.actor, reason: state.drafts[key] ?? "", editSeq: state.editSeq[key] ?? 0 };
 }
 
@@ -276,4 +276,21 @@ it("restores a blurred action's focus to its result after settlement while leavi
   await act(async () => second.resolve({ ...reviewDecisionFixture(secondRequest, target), decisionId: fixtureIdentity(9893) }));
   await waitFor(() => expect(h.owner().current().busyMutation).toBe(false));
   expect(reason).toHaveFocus(); expect(reason).toHaveValue("New reason B"); expect(result).not.toHaveFocus();
+});
+
+
+it("requires an explicit rebind when only the source fallback record changes and keeps the reason", async () => {
+  const target = reviewTargetFixture({ selectionId: null, revisionId: null, translationText: null });
+  const h = await harness(target), user = await audit("Reviewer", "Reason for the previous fallback state");
+  const next = { ...target, currentFallback: { fallbackId: fixtureIdentity(9896), actionId: fixtureIdentity(9897),
+    unitId: target.unitId, locale: target.locale, sourceRevisionId: target.sourceRevisionId, allow: true,
+    previousFallbackId: null, actor: "Another reviewer", reason: "Use the source here", createdAt: "2026-10-28T00:00:00Z", policyVersion: "balanced-1" } };
+  h.show({ target: next });
+  expect(h.owner().current().selected?.currentFallback).toBeNull();
+  expect(screen.getByText(w("entryReviewBasisChanged"))).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: w("entryReviewAdoptCurrent") }));
+  await waitFor(() => expect(h.owner().current().selected?.currentFallback?.fallbackId).toBe(next.currentFallback.fallbackId));
+  expect(screen.getByRole("textbox", { name: w("entryReviewReason") })).toHaveValue("Reason for the previous fallback state");
+  expect(screen.queryByText(w("entryReviewBasisChanged"))).not.toBeInTheDocument();
+  expect(invoke).not.toHaveBeenCalled();
 });

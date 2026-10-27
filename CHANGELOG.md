@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Entry issues in the opt-in desktop workspace can prepare AI meaning and style reviews, preview shared text and budgets, and record results through the existing task confirmation flow. Uncertain starts and recordings remain available after entry views close. Entry details also offer explicit permission to use source text when no translation is selected, with the reviewer and reason retained.
+
 - Entry issues can open the exact source or translation range in the editor, including emoji and text after line breaks. Existing drafts are preserved, stale locations are rejected, and returning keeps the original issue scope without rerunning checks.
 
 - The opt-in desktop workspace adds rule-check preparation, per-checker execution consent, and recovery of the original check after entry views close. Issues support waivers for eligible required findings and rejection, restoration, or repair requests for advisory findings. Entry history shows recorded reviews, checks, waivers, and source fallbacks alongside translation versions.

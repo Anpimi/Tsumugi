@@ -1,0 +1,8 @@
+.section { min-inline-size: 0; padding: var(--space-5) var(--space-6); display: grid; gap: var(--space-4); }
+.section h3 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.meta { color: var(--color-text-secondary); margin: 0; font-size: var(--text-sm); }
+.record, .result { display: grid; gap: var(--space-3); min-inline-size: 0; }
+.record p { margin: 0; }
+.text { min-inline-size: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.result:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }

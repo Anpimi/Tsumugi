@@ -10,6 +10,8 @@ import type { CandidateDecisionRequest, CandidateDisposition } from "./translati
 import type { CandidateAuditCapture } from "./CandidateDecisionSession";
 import type { WorkspaceSelection } from "./app-v2/workspace/workspaceSelection";
 import type { ReviewEntryTarget, ReviewEntryDecisionPayload, ReviewEntryBasisPayload, ReviewEntryPendingPayload, RetainedReviewPendingPayload } from "./app-v2/features/review/reviewTypes";
+import type { EntrySemanticCapture, EntrySemanticPreparePayload, EntrySemanticStartPayload, EntrySemanticConsentPayload, EntrySemanticScopePayload, EntrySemanticReadPayload, EntrySemanticRecordPayload, EntrySemanticPendingPayload, EntrySemanticTaskPayload, EntrySemanticCancelPayload } from "./app-v2/features/review/semanticTypes";
+import type { EntryFallbackPayload } from "./app-v2/features/review/fallbackTypes";
 import type { EntryChecksPreparePayload, EntryChecksRunPayload, EntryChecksConsentPayload, EntryChecksPendingPayload, EntryChecksDiscoveryPayload, EntryChecksRemovePayload, EntryChecksCapture } from "./app-v2/features/review/checksTypes";
 import type { EntryIssueWaiverPayload, EntryIssueFindingPayload, EntryIssuesReadPayload, EntryIssueLocatePayload } from "./app-v2/features/review/issuesTypes";
 import type { ReviewHistoryCommandPayload } from "./app-v2/features/review/historyTypes";
@@ -308,6 +310,26 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "review.entry-semantic-current": EntrySemanticScopePayload;
+  "review.entry-semantic-prepare": EntrySemanticPreparePayload;
+  "review.entry-semantic-start": EntrySemanticStartPayload;
+  "review.entry-semantic-consent": EntrySemanticConsentPayload;
+  "review.entry-semantic-show-attempt": EntrySemanticReadPayload;
+  "review.entry-semantic-refresh": EntrySemanticReadPayload;
+  "review.entry-semantic-record": EntrySemanticRecordPayload;
+  "review.entry-semantic-cancel": EntrySemanticCancelPayload;
+  "review.entry-semantic-check-start": EntrySemanticPendingPayload;
+  "review.entry-semantic-retry-start": EntrySemanticPendingPayload;
+  "review.entry-semantic-discard-start": EntrySemanticPendingPayload;
+  "review.entry-semantic-confirm-record": EntrySemanticTaskPayload;
+  "review.entry-semantic-check-record": EntrySemanticTaskPayload;
+  "review.entry-semantic-retry-record": EntrySemanticTaskPayload;
+  "review.entry-semantic-dismiss-record": EntrySemanticTaskPayload;
+  "review.entry-semantic-refresh-record": EntrySemanticTaskPayload;
+  "review.entry-semantic-check-cancel": EntrySemanticCancelPayload;
+  "review.entry-semantic-retry-cancel": EntrySemanticCancelPayload;
+  "review.entry-allow-fallback": EntryFallbackPayload;
+  "review.entry-withdraw-fallback": EntryFallbackPayload;
   "review.entry-locate-issue": EntryIssueLocatePayload;
   "review.recover-entry-cancel": RetainedReviewPendingPayload;
   "review.entry-prepare-checks": EntryChecksPreparePayload;
@@ -640,6 +662,16 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-finding" | "review.restore-finding" | "review.repair-finding"> | PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"entry-semantic-scope", "review.entry-semantic-current">
+  | ResourceCommand<"entry-semantic-prepare", "review.entry-semantic-prepare">
+  | ResourceCommand<"entry-semantic-start", "review.entry-semantic-start">
+  | ResourceCommand<"entry-semantic-consent", "review.entry-semantic-consent">
+  | ResourceCommand<"entry-semantic-read", "review.entry-semantic-show-attempt" | "review.entry-semantic-refresh">
+  | ResourceCommand<"entry-semantic-record", "review.entry-semantic-record">
+  | ResourceCommand<"entry-semantic-cancel", "review.entry-semantic-cancel" | "review.entry-semantic-check-cancel" | "review.entry-semantic-retry-cancel">
+  | ResourceCommand<"entry-semantic-pending", "review.entry-semantic-check-start" | "review.entry-semantic-retry-start" | "review.entry-semantic-discard-start">
+  | ResourceCommand<"entry-semantic-task", "review.entry-semantic-confirm-record" | "review.entry-semantic-check-record" | "review.entry-semantic-retry-record" | "review.entry-semantic-dismiss-record" | "review.entry-semantic-refresh-record">
+  | ResourceCommand<"entry-review-fallback", "review.entry-allow-fallback" | "review.entry-withdraw-fallback">
   | ResourceCommand<"entry-review-decision", "review.entry-approve" | "review.entry-request-changes">
   | ResourceCommand<"entry-review-basis", "review.entry-adopt-current">
   | ResourceCommand<"entry-review-pending", "review.entry-check" | "review.entry-retry">
@@ -776,6 +808,34 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind === "entry-semantic-scope") return payload?.kind === command.payloadKind && editSequence(payload.sequence) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-prepare") return payload?.kind === command.payloadKind && validSemanticCapture(payload) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-start") return payload?.kind === command.payloadKind && validSemanticCapture(payload) && validSemanticPreparation(payload.preparation) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-consent") return payload?.kind === command.payloadKind && validSemanticCapture(payload) && validSemanticPreparation(payload.preparation)
+    && typeof payload.approved === "boolean" ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-read") return payload?.kind === command.payloadKind && validIdentity(payload.attemptId) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-record") return payload?.kind === command.payloadKind && validSemanticCapture(payload)
+    && [payload.attemptId, payload.taskId, payload.itemId, payload.resultId, payload.recoveryUnitId].every(validIdentity) && editSequence(payload.queryVersion) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-pending") {
+    if (payload?.kind !== command.payloadKind || !payload.pending || !validSemanticPreparation(payload.pending.preparation)) return unavailable;
+    const pending = payload.pending, request = pending.request;
+    return reviewValidation.validateRequestSemanticStart(request) && request.confirmed && request.projectId === command.scope.projectId && request.sessionToken === command.scope.sessionToken
+      && request.attemptId === pending.preparation.value.attemptId && request.digest === pending.preparation.value.preview.digest && typeof pending.absent === "boolean"
+      ? command.availability(payload) : unavailable;
+  }
+  if (command.payloadKind === "entry-semantic-task") return payload?.kind === command.payloadKind && !!payload.activity && !!payload.activity.intent
+    && payload.activity.intent.operation === "ai-semantic-review" && payload.activity.intent.action === "adopt-result"
+    && [payload.activity.intent.taskId, payload.activity.intent.attemptId, payload.activity.intent.unit?.unitId].every(validIdentity)
+    && (payload.queryVersion === null ? command.id !== "review.entry-semantic-confirm-record" : editSequence(payload.queryVersion)) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-semantic-cancel") return payload?.kind === command.payloadKind && [payload.taskId, payload.attemptId].every(validIdentity)
+    && nullableIdentity(payload.requestId) && (payload.queryVersion === null || editSequence(payload.queryVersion))
+    && (command.id === "review.entry-semantic-cancel" ? payload.requestId === null && payload.queryVersion !== null : payload.requestId !== null) ? command.availability(payload) : unavailable;
+
+  if (command.payloadKind === "entry-review-fallback") return payload?.kind === command.payloadKind && validReviewTargetBasis(payload)
+    && payload.selectionId === null && payload.revisionId === null && !!payload.basisEvidence && typeof payload.basisEvidence === "object"
+    && nullableIdentity(payload.expectedFallbackId) && editSequence(payload.editSeq) && typeof payload.actor === "string" && !!payload.actor.trim()
+    && typeof payload.reason === "string" && !!payload.reason.trim() && payload.allow === (command.id === "review.entry-allow-fallback")
+    && (payload.allow ? payload.expectedFallbackId === null : payload.expectedFallbackId !== null) ? command.availability(payload) : unavailable;
   if (command.payloadKind === "entry-issue-locate") return payload?.kind === command.payloadKind && validIdentity(payload.unitId) && validIdentity(payload.locale)
     && validIdentity(payload.basis) && !!payload.intent && validIdentity(payload.intent.runId) && !!payload.intent.diagnostic && !!payload.intent.diagnostic.location
     && !!payload.intent.source && (payload.intent.source.purpose === "qa" || payload.intent.source.purpose === "ai-semantic" && !!payload.intent.source.origin
@@ -1005,13 +1065,22 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   return !command.payloadKind && payload === undefined ? command.availability() : { enabled: false, reason: "unavailable" };
 }
 function validIdentity(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
-function validReviewTargetBasis(value: Omit<ReviewEntryTarget, "expectedDecisionId"> | null | undefined): boolean {
+function validSemanticCapture(value: EntrySemanticCapture): boolean {
+  const basis = value.basisEvidence;
+  return validReviewTargetBasis(value) && validIdentity(value.selectionId) && validIdentity(value.revisionId) && editSequence(value.sequence) && !!basis
+    && basis.sourceSnapshotId === value.sourceSnapshotId && basis.sourceRevisionId === value.sourceRevisionId
+    && basis.selectionId === value.selectionId && basis.revisionId === value.revisionId && nullableIdentity(basis.contextRevisionId) && identities(basis.termRevisionIds);
+}
+function validSemanticPreparation(value: EntrySemanticStartPayload["preparation"] | null | undefined): boolean {
+  return !!value && editSequence(value.sequence) && validIdentity(value.scope) && reviewValidation.validateResponseSemanticPrepare(value.value);
+}
+function validReviewTargetBasis(value: Omit<ReviewEntryTarget, "expectedDecisionId" | "expectedFallbackId"> | null | undefined): boolean {
   return !!value && [value.unitId, value.locale, value.basis, value.sourceSnapshotId, value.sourceRevisionId].every(validIdentity)
     && nullableIdentity(value.selectionId) && nullableIdentity(value.revisionId)
     && (value.selectionId === null) === (value.revisionId === null);
 }
 function validReviewEntryTarget(value: ReviewEntryTarget | null | undefined): boolean {
-  return validReviewTargetBasis(value) && !!value && nullableIdentity(value.expectedDecisionId);
+  return validReviewTargetBasis(value) && !!value && nullableIdentity(value.expectedDecisionId) && nullableIdentity(value.expectedFallbackId);
 }
 function validAdvisorySelection(value: EntryChecksRemovePayload["choice"] | null | undefined): boolean {
   return !!value && validIdentity(value.environmentDigest) && validIdentity(value.resourceId) && !!value.package && !!value.package.plugin
@@ -1433,7 +1502,17 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "entry-review-decision" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "entry-semantic-scope" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-prepare" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-start" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-consent" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-read" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-record" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-cancel" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-task" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-review-fallback" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-review-decision" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-review-basis" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-review-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "retained-review-pending" && payload?.kind === command.payloadKind) command.handler(payload);

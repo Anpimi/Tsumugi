@@ -1,1 +1,3 @@
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.semantic { min-block-size: 0; max-block-size: 45vh; overflow: auto; padding: var(--space-4) var(--space-6); }
+.semantic:empty { display: none; }

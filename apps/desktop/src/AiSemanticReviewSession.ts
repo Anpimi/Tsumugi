@@ -78,15 +78,15 @@ export function useAiSemanticReviewSession(project: ProjectView, target: ReviewT
     return live() && stateRef.current.sequence === value.sequence && scope() === value.scope
       && connectionConfigCurrent(connections.current(), value.value.preview.config);
   }
-  async function prepare() {
-    if (!live() || working.current || stateRef.current.pending) return;
+  async function prepare(currentRead: () => boolean = () => true) {
+    if (!live() || working.current || stateRef.current.pending || !currentRead()) return;
     const before = stateRef.current, captured = scope(), selected = targets();
     if (!selected.length || !before.rules.length || !connectionConfigCurrent(connections.current(), before.config)) return;
     working.current = true; update(value => ({ ...value, busy: "prepare", prepared: null, consent: false, failure: null, notice: null }));
     try {
       const value = await aiSemanticReviewCommands.prepare({ ...session, config: before.config, targets: selected, rules: before.rules });
       if (!live()) return;
-      if (stateRef.current.sequence !== before.sequence || captured !== scope()) { update(value => ({ ...value, notice: "newer" })); return; }
+      if (stateRef.current.sequence !== before.sequence || captured !== scope() || !currentRead()) { update(value => ({ ...value, notice: "newer" })); return; }
       update(current => ({ ...current, prepared: { value, sequence: before.sequence, scope: captured }, consent: false }));
     } catch (error) { if (live()) update(value => ({ ...value, failure: commandFailure(error) })); }
     finally { working.current = false; update(value => ({ ...value, busy: null })); }
@@ -130,9 +130,9 @@ export function useAiSemanticReviewSession(project: ProjectView, target: ReviewT
       if (unknown) await lookupStart(pending, failure);
     } finally { working.current = false; update(value => ({ ...value, busy: null })); }
   }
-  async function start() {
+  async function start(currentRead: () => boolean = () => true) {
     const before = stateRef.current, prepared = before.prepared;
-    if (!prepared || !before.consent || before.pending || working.current || !preparationCurrent(prepared)) return;
+    if (!prepared || !before.consent || before.pending || working.current || !preparationCurrent(prepared) || !currentRead()) return;
     await send({ ...session, attemptId: prepared.value.attemptId, digest: prepared.value.preview.digest, confirmed: true }, prepared);
   }
   async function check() {

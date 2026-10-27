@@ -8,6 +8,7 @@ import { ArrowUp, BookOpen, ChevronDown, Circle, CircleDot, Command, Layers, Pan
 import { ApplicationReadProvider } from "../ApplicationReadProvider";
 import { SessionReadProvider } from "../SessionReadProvider";
 import { executionContext } from "../executionCommands";
+import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../ExecutionTaskSession";
 import { readRecentProjects, recentProjectName, rememberProject, type RecentProject } from "../recentProjects";
 import { Button, IconButton } from "../design-system/Button";
 import { Field, TextInput } from "../design-system/Field";
@@ -102,8 +103,10 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const revealReview = useCallback(() => { requestReview(); setReviewRecovery(true); }, [requestReview]);
   const hideReviewRecovery = useCallback(() => setReviewRecovery(false), []);
   const publishReviewOwner = useCallback((owner: ReviewOwner | null) => { reviewStatus.current.owner = owner; setReviewOwner(owner); }, []);
-  const revealTask = useCallback((operation: string | null) => {
-    if (operation === "ai-semantic-review") revealReview(); else revealImport();
+  const [executionTasks, setExecutionTasks] = useState<ReturnType<typeof useExecutionTaskSession> | null>(null);
+  const publishExecutionTasks = useCallback((owner: ReturnType<typeof useExecutionTaskSession> | null) => setExecutionTasks(owner), []);
+  const revealTask = useCallback((operation: string | null, attemptId: string | null) => {
+    if (operation === "ai-semantic-review" || operation === null && attemptId !== null && reviewStatus.current.owner?.semantic.current().attempts.includes(attemptId)) revealReview(); else revealImport();
   }, [revealReview, revealImport]);
   const [candidateBatchOpen, setCandidateBatchOpen] = useState(false);
   const revealCandidateBatch = useCallback(() => { requestCandidates(); setCandidateBatchOpen(true); }, [requestCandidates]);
@@ -181,9 +184,9 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
-    reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery }}>
+    reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery }}>
     {(importRequested || reviewRequested) && drafts ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
-      <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask}>
+      <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
           <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
         </Suspense></FeatureBoundary> : null}
@@ -199,7 +202,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
       <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
     </Suspense></FeatureBoundary> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
-    <RouterProvider router={runtime.router} />
+    <ExecutionTaskHandleProvider value={executionTasks}><RouterProvider router={runtime.router} /></ExecutionTaskHandleProvider>
   </WorkspaceContext.Provider>;
 }
 
@@ -500,7 +503,7 @@ function WorkspaceShell() {
     {pendingDrafts.length ? <Banner tone="warning" action={<Button onClick={() => revealDraft(pendingDrafts[0].key)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: pendingDrafts.length })}</Banner> : null}
     {importNeedsAttention && !importVisible ? <Banner tone="warning" action={<Button onClick={revealImport}>{message("importOpen")}</Button>}>{message("importPendingNotice")}</Banner> : null}
     {reviewOwner && commandsReady && commands ? <Suspense fallback={null}><ReviewRecovery project={session.project} owner={reviewOwner} commands={commands} gate={gate} viewId={currentId}
-      disabled={disabled} visible={reviewRecovery || !reviewPanelVisible} onOpen={(unitId, locale) => { void inspectReview(unitId, locale).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
+      disabled={disabled} visible={reviewRecovery || !reviewPanelVisible} semanticVisible={!reviewPanelVisible || view?.detailTab !== "issues"} onOpen={(unitId, locale) => { void inspectReview(unitId, locale).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
     {candidateOwners && commandsReady && commands ? <Suspense fallback={null}><CandidateRecovery project={session.project} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
       disabled={disabled} visible showDecisions={!candidatePanelVisible && !candidateBatchOwnsPending} showProtection={!protectionPanelVisible} onOpen={(unitId, locale) => { void inspectCandidate(unitId, locale, null).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
     {comparisonOwner && commandsReady && commands ? <Suspense fallback={null}><ComparisonRecovery project={session.project} owner={comparisonOwner} commands={commands} gate={gate} viewId={currentId}

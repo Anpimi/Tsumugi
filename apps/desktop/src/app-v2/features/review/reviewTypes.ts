@@ -16,6 +16,7 @@ export interface ReviewEntryTarget {
   selectionId: string | null;
   revisionId: string | null;
   expectedDecisionId: string | null;
+  expectedFallbackId: string | null;
 }
 export interface ReviewEntryCapture extends ReviewEntryTarget { actor: string; reason: string; editSeq: number }
 export interface ReviewEntryDecisionPayload extends ReviewEntryCapture { kind: "entry-review-decision"; decision: ReviewWrite["kind"] }

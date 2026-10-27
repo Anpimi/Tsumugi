@@ -5,6 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import translationFixture from "../../test/fixtures/translation-commands.json";
 import { draftCommands, type DraftBasis, type DraftHead } from "../draftCommands";
 import { executionCommands } from "../executionCommands";
+import { aiSemanticReviewCommands } from "../aiSemanticReviewCommands";
+import { connectionCommands } from "../connectionCommands";
+import { connectionFixture } from "../testSupport/connectionFixture";
+import { semanticPreparedFixture } from "../testSupport/aiSemanticReviewFixture";
 import { i18n } from "../i18n";
 import type { workbenchEn } from "../i18n/workbench";
 import type { ProjectView } from "../projectCommands";
@@ -157,4 +161,53 @@ it("keeps prepared checker permissions through the retained host and recovers th
   expect(reviewCommands.checkAction).toHaveBeenLastCalledWith(submitted);
   expect(reviewCommands.prepareCheck).toHaveBeenCalledTimes(1); expect(reviewCommands.check).toHaveBeenCalledTimes(1); expect(executionCommands.identity).toHaveBeenCalledTimes(2);
   expect(draftCommands.write).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
+});
+
+it("keeps the original semantic start reachable after all entry views close without starting another model request", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(connectionCommands, "read").mockResolvedValue(connectionFixture([]));
+  let prepared: ReturnType<typeof semanticPreparedFixture> | null = null;
+  vi.spyOn(aiSemanticReviewCommands, "prepare").mockImplementation(async request => {
+    prepared = semanticPreparedFixture(current, structuredClone(request.config));
+    prepared.preview.rules = [...request.rules]; return structuredClone(prepared);
+  });
+  vi.spyOn(aiSemanticReviewCommands, "start").mockRejectedValue(new Error("Synthetic lost semantic start acknowledgement"));
+  vi.spyOn(aiSemanticReviewCommands, "read").mockResolvedValue({ attemptId: fixtureIdentity(2401), view: null });
+  vi.spyOn(aiSemanticReviewCommands, "startAction").mockRejectedValueOnce(new Error("Synthetic original start temporarily unavailable"))
+    .mockImplementation(async request => {
+      if (!prepared) throw new Error("No original preparation");
+      return { projectId: request.projectId, attemptId: request.attemptId, taskId: fixtureIdentity(9919), inputDigest: "f".repeat(64), preview: structuredClone(prepared.preview) };
+    });
+  const close = vi.fn(async () => ({ closed: true }));
+  controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
+  const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(details).toBeEnabled()); await user.click(details);
+  await user.click(await screen.findByRole("tab", { name: w("issues") }));
+  const panel = await screen.findByRole("region", { name: i18n.t("workbenchV2.entrySemanticTitle") });
+  const setup = panel.querySelector("summary");
+  if (setup && !setup.parentElement?.hasAttribute("open")) await user.click(setup);
+  await user.click(within(panel).getByText(i18n.t("ai.connection")));
+  fireEvent.change(within(panel).getByLabelText(i18n.t("ai.endpoint")), { target: { value: "https://model.example/v1/chat/completions" } });
+  fireEvent.change(within(panel).getByLabelText(i18n.t("ai.model")), { target: { value: "synthetic-entry-review" } });
+  const prepare = within(panel).getByRole("button", { name: i18n.t("semanticReview.prepare") });
+  await waitFor(() => expect(prepare).toBeEnabled()); await user.click(prepare);
+  const consent = await within(panel).findByRole("checkbox", { name: i18n.t("semanticReview.consent") });
+  const start = within(panel).getByRole("button", { name: i18n.t("semanticReview.start") });
+  expect(start).toBeDisabled(); await user.click(consent); await waitFor(() => expect(start).toBeEnabled()); await user.click(start);
+  await waitFor(() => expect(within(panel).getByRole("button", { name: i18n.t("semanticReview.check") })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: target.locale }) }) }));
+  await screen.findByText(w("noViews"));
+  const check = await screen.findByRole("button", { name: i18n.t("semanticReview.check") });
+  expect(screen.queryByText(w("reviewRecoveryBusy"))).not.toBeInTheDocument();
+  await waitFor(() => expect(check).toBeEnabled()); await user.click(check);
+  await waitFor(() => expect(screen.queryByRole("button", { name: i18n.t("semanticReview.check") })).not.toBeInTheDocument());
+  expect(aiSemanticReviewCommands.startAction).toHaveBeenCalledTimes(2);
+  expect(screen.getByText(w("entrySemanticStarted"))).toBeVisible();
+  expect(vi.mocked(aiSemanticReviewCommands.startAction).mock.calls[1][0]).toEqual(vi.mocked(aiSemanticReviewCommands.start).mock.calls[0][0]);
+  expect(aiSemanticReviewCommands.prepare).toHaveBeenCalledTimes(1); expect(aiSemanticReviewCommands.start).toHaveBeenCalledTimes(1);
+  expect(aiSemanticReviewCommands.read).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
+  expect(draftCommands.write).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(reviewCommands.check).not.toHaveBeenCalled();
 });

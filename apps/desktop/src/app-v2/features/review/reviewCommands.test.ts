@@ -9,7 +9,7 @@ it("binds the review decision to its complete target, audit, and command action"
   const commands = new WorkbenchCommands(), handler = vi.fn();
   const input: ReviewEntryDecisionPayload = { kind: "entry-review-decision", decision: "approve", unitId: fixtureIdentity(9911), locale: "zh-CN",
     basis: "a".repeat(64), sourceSnapshotId: fixtureIdentity(9912), sourceRevisionId: fixtureIdentity(9913), selectionId: fixtureIdentity(9914),
-    revisionId: fixtureIdentity(9915), expectedDecisionId: null, actor: "Human reviewer", reason: "", editSeq: 0 };
+    revisionId: fixtureIdentity(9915), expectedDecisionId: null, expectedFallbackId: null, actor: "Human reviewer", reason: "", editSeq: 0 };
   const remove = commands.register({ id: "review.entry-approve", scope, nameKey: "workbenchV2.entryReviewApprove", category: "review", binding: null,
     confirmation: "none", risk: "writes-review", payloadKind: "entry-review-decision", availability: () => ({ enabled: true }), handler });
   const dispatch = (value: unknown) => Reflect.apply(commands.dispatch, commands, ["review.entry-approve", scope, value]);

@@ -60,10 +60,11 @@ async function harness(strict = false) {
   const drafts = new TranslationDrafts({ context: session.reads.context, reads: session.reads, ports: { list: async () => ({ items: [], next: null }) } });
   expect(await drafts.initialize()).toBe(true);
   lifecycle.register(drafts.lifecycleParticipant());
-  const owners: { left?: Tasks; right?: Tasks } = {}, onReveal = vi.fn(), register = vi.spyOn(lifecycle, "register");
+  const owners: { left?: Tasks; right?: Tasks; published?: Tasks | null } = {}, onReveal = vi.fn(), register = vi.spyOn(lifecycle, "register");
+  const onOwner = vi.fn((value: Tasks | null) => { owners.published = value; });
   function tree(visible = true, reveal = onReveal) {
     const content = <SessionReadProvider context={session.reads.context} reads={session.reads} bridge={false}>
-      <ExecutionOwnerHost project={project} drafts={drafts} lifecycle={lifecycle} onReveal={reveal}>
+      <ExecutionOwnerHost project={project} drafts={drafts} lifecycle={lifecycle} onReveal={reveal} onOwner={onOwner}>
         <Probe onOwner={value => { owners.left = value; }}/>
         {visible ? <Probe onOwner={value => { owners.right = value; }}/> : null}
       </ExecutionOwnerHost>
@@ -74,7 +75,7 @@ async function harness(strict = false) {
   await waitFor(() => expect(owners.left).toBeDefined());
   const participant = [...register.mock.calls].reverse().find(([value]) => value.id === "execution-tasks")?.[0];
   if (!participant) throw new Error("Task lifecycle did not register");
-  return { ports, lifecycle, session, drafts, view, tree, participant, register, onReveal, owner: (side: "left" | "right" = "left") => {
+  return { ports, lifecycle, session, drafts, view, tree, participant, register, onReveal, published: () => owners.published, owner: (side: "left" | "right" = "left") => {
     const owner = owners[side]; if (!owner) throw new Error("Task consumer is not mounted"); return owner;
   } };
 }
@@ -88,6 +89,7 @@ describe("ExecutionOwnerHost", () => {
   it("shares one task instance and the real draft reservation across retained consumers and StrictMode replay", async () => {
     const h = await harness(true);
     expect(h.owner("left")).toBe(h.owner("right"));
+    expect(h.published()).toBe(h.owner());
     await confirm(h);
     expect(h.owner("right").currentActivity()).toBe(h.owner("left").currentActivity());
     const token = h.drafts.reserveMutation();
@@ -100,7 +102,7 @@ describe("ExecutionOwnerHost", () => {
     h.view.rerender(h.tree(true, latestReveal));
     expect(h.register).toHaveBeenCalledTimes(registered);
     h.participant.reveal?.();
-    expect(latestReveal).toHaveBeenCalledWith(fixture.detail.operation); expect(h.onReveal).not.toHaveBeenCalled();
+    expect(latestReveal).toHaveBeenCalledWith(fixture.detail.operation, fixture.detail.attemptId); expect(h.onReveal).not.toHaveBeenCalled();
     await act(async () => { await h.owner().submit(); });
     expect(h.owner("right").currentActivity()?.phase).toBe("recorded");
     expect(h.drafts.getSnapshot().mutationReserved).toBe(false);
@@ -129,7 +131,7 @@ describe("ExecutionOwnerHost", () => {
     expect(h.ports.close).not.toHaveBeenCalled(); expect(h.ports.open).toHaveBeenCalledOnce();
     // The joint guard can stop at the draft owner before reaching this bridge.
     h.participant.reveal?.();
-    expect(h.onReveal).toHaveBeenCalledWith(fixture.detail.operation);
+    expect(h.onReveal).toHaveBeenCalledWith(fixture.detail.operation, fixture.detail.attemptId);
     expect(h.owner().currentActivity()).toEqual(original);
     expect(calls("adopt_execution")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
     invoke.mockImplementation((command: string, payload) => command === "read_execution_adoption_action"
@@ -152,7 +154,7 @@ describe("ExecutionOwnerHost", () => {
       const permit = await h.lifecycle.prepareLeave({ kind }); expect(permit).not.toBeNull(); permit?.release();
     }
     await act(async () => { expect(await h.lifecycle.close()).toBe(false); });
-    expect(h.onReveal).toHaveBeenCalledWith(null); expect(h.ports.close).not.toHaveBeenCalled();
+    expect(h.onReveal).toHaveBeenCalledWith(null, fixture.detail.attemptId); expect(h.ports.close).not.toHaveBeenCalled();
     await act(async () => { h.session.reads.retire(); });
     expect(h.participant.inspect({ kind: "close-window" })).toEqual(before);
     await act(async () => { await h.owner().retry(cancellation.taskId); await h.owner().cancel({ ...cancellation, taskId: fixtureIdentity(951) }); });

@@ -93,6 +93,12 @@ export function useExecutionTaskSession() {
   if (!owner) throw new Error("Task cancellation requires a project session owner");
   return owner;
 }
+
+/** Forward the retained owner's handle to sibling views without creating a
+ * second task session or changing the router's mounted subtree. */
+export function ExecutionTaskHandleProvider({ value, children }: { value: ReturnType<typeof useExecutionTaskSession> | null; children: ReactNode }) {
+  return <TaskContext.Provider value={value}>{children}</TaskContext.Provider>;
+}
 const unresolved = (value: Cancellation) => value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown";
 
 export function ExecutionTaskSession({ project, children }: { project: ProjectView; children: ReactNode }) {

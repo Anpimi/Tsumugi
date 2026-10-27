@@ -24,6 +24,8 @@ const EntriesCandidates = lazy(() => import("../candidates/EntriesCandidates"));
 const EntryProtection = lazy(() => import("../candidates/EntryProtection"));
 const ComparisonPanel = lazy(() => import("../comparison/ComparisonPanel"));
 const EntryReviewPanel = lazy(() => import("../review/EntryReviewPanel"));
+const EntryFallbackPanel = lazy(() => import("../review/EntryFallbackPanel"));
+const EntrySemanticPanel = lazy(() => import("../review/EntrySemanticPanel"));
 const EntryChecksPanel = lazy(() => import("../review/EntryChecksPanel"));
 const EntryIssuesPanel = lazy(() => import("../review/EntryIssuesPanel"));
 const EntryReviewHistory = lazy(() => import("../review/EntryReviewHistory"));
@@ -79,7 +81,9 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         <div><dt>{t("entrySourceRevision")}</dt><dd className={styles.key}>{target.sourceRevisionId}</dd></div></dl>
       <p className={styles.meta}>{t("factsHelp")}</p>
       {reviewOwner !== undefined ? reviewOwner && drafts && commands ? <Suspense fallback={<LoadingState label={t("reviewLoading")} />}><EntryReviewPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
-        viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/></Suspense>
+        viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
+        <EntryFallbackPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
+          viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/></Suspense>
         : <LoadingState label={t("reviewLoading")} /> : null}
       {drafts && owners && commands ? <Suspense fallback={<LoadingState label={t("entryProtectionLoading")} />}><EntryProtection project={project} target={target} drafts={drafts} owners={owners} commands={commands} gate={gate}
         viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/></Suspense> : null}
@@ -105,6 +109,10 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
           viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
         <EntryIssuesPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
           viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }} onEdit={() => { void onEdit(unitId, locale); }} onReviewEdit={onReviewEdit}/>
+        <EntryFallbackPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
+          viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
+        <EntrySemanticPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
+          viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
       </Suspense> : null}
     </TabsContent>
     {candidatePanel ? <TabsContent value={view.detailTab} className={local.candidates}>

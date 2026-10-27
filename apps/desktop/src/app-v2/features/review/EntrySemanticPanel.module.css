@@ -1,0 +1,21 @@
+.section, .preview, .previewItem, .results, .result { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.section { padding: var(--space-5) var(--space-6); }
+.section h3, .section h4, .section h5 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.section h4, .section h5 { font-size: var(--text-sm); }
+.meta { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.configuration { display: grid; gap: var(--space-4); min-inline-size: 0; margin: 0; padding: var(--space-4); border: var(--border-width) solid var(--color-border-subtle); }
+.configuration legend { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+.configuration :global(.field) { display: grid; gap: var(--space-2); margin-block: var(--space-3); font-size: var(--text-sm); }
+.configuration :global(.field) input, .configuration :global(.field) select { min-inline-size: 0; inline-size: 100%; border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; }
+.configuration :global(.secondary-button) { border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; font-size: var(--text-sm); }
+.configuration :global(.execution-actions) { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.configuration fieldset { min-inline-size: 0; border: var(--border-width) solid var(--color-border-subtle); padding: var(--space-3); }
+.configuration :global(.source-check), .check { display: flex; gap: var(--space-2); align-items: start; font-size: var(--text-sm); }
+.checks { display: grid; gap: var(--space-3); }
+.checkbox { inline-size: 16px; min-inline-size: 16px; block-size: 16px; padding: 0; accent-color: var(--color-accent-solid); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; min-inline-size: 0; }
+.preview, .results { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }
+.result { border-inline-start: var(--border-width) solid var(--color-border-subtle); padding-inline-start: var(--space-3); }
+.feedback { display: grid; gap: var(--space-3); }
+.feedback:focus-visible, .preview:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }

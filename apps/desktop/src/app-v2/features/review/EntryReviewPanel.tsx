@@ -18,12 +18,13 @@ const unavailable: CommandAvailability = { enabled: false, reason: "unavailable"
 function targetCapture(target: ReviewTarget): ReviewEntryTarget {
   return { unitId: target.unitId, locale: target.locale, basis: target.basis, sourceSnapshotId: target.sourceSnapshotId,
     sourceRevisionId: target.sourceRevisionId, selectionId: target.selectionId, revisionId: target.revisionId,
-    expectedDecisionId: target.currentDecision?.decisionId ?? null };
+    expectedDecisionId: target.currentDecision?.decisionId ?? null, expectedFallbackId: target.currentFallback?.fallbackId ?? null };
 }
 function sameTarget(left: ReviewEntryTarget, right: ReviewEntryTarget): boolean {
   return left.unitId === right.unitId && left.locale === right.locale && left.basis === right.basis
     && left.sourceSnapshotId === right.sourceSnapshotId && left.sourceRevisionId === right.sourceRevisionId
-    && left.selectionId === right.selectionId && left.revisionId === right.revisionId && left.expectedDecisionId === right.expectedDecisionId;
+    && left.selectionId === right.selectionId && left.revisionId === right.revisionId && left.expectedDecisionId === right.expectedDecisionId
+    && left.expectedFallbackId === right.expectedFallbackId;
 }
 function sameAudit(left: ReviewEntryCapture, right: ReviewEntryCapture): boolean {
   return sameTarget(left, right) && left.actor === right.actor && left.reason === right.reason && left.editSeq === right.editSeq;
@@ -81,7 +82,7 @@ export default function EntryReviewPanel({ project, target, owner, drafts, comma
   }
   function currentRead() {
     const current = reads.client.getQueryCache().find({ queryKey: reads.key(read.key), exact: true });
-    return !reads.retired && !!current && current.state.status === "success" && current.state.fetchStatus === "idle"
+    return !reads.retired && !!current && current.state.status === "success" && current.state.error === null && current.state.fetchStatus === "idle"
       && !current.state.isInvalidated && current.state.data === read.data;
   }
   function readProof() {

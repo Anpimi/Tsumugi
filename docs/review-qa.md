@@ -48,6 +48,10 @@ Under **Advisory findings**, reviewers can manage non-mandatory findings produce
 
 ## AI meaning and style review
 
+In the opt-in desktop workspace, open an entry's **Issues** tab for AI review of its currently selected saved translation. Review the text, sharing choices, connection, and request limits before agreeing to start. Recording a completed result uses a separate confirmation and adds advisory findings; it does not edit the translation or approve it. If a start or recording has an uncertain result, its original recovery controls remain available after all entry views close. Checking a result does not start another model request; retrying a missing start can.
+
+Entry details and Issues also offer **Use source-language text** for entries with no selected translation. Enter your name and reason in Human review, then allow or withdraw permission for that entry. A selected empty translation still counts as a selected translation. If the source or permission changes while you are writing a reason, check the current entry and choose **Use current entry** before continuing. Earlier permissions remain in History.
+
 Expand **AI meaning and style review** to run an advisory LLM check for meaning, style, or both on the currently selected saved translation (or an explicit batch of entry/language pairs selected in Review):
 
 1. **Preview and consent**: AI review reuses your configured model connections, term/context sharing controls, and task request budgets. Inspect the preview showing the exact saved source, selected translation, included guidance, destination endpoint, and budget, then confirm consent to dispatch the batch.
