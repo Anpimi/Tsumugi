@@ -1,15 +1,17 @@
-import { createRef, useLayoutEffect } from "react";
-import { act, cleanup, screen } from "@testing-library/react";
+import { createRef, useLayoutEffect, type ReactNode } from "react";
+import { act, cleanup, render as renderHeadless, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
-import { TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget, type CancellationRetryIntent } from "./ExecutionTaskSession";
+import { ExecutionTaskProvider, TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget, type CancellationRetryIntent } from "./ExecutionTaskSession";
+import { TranslationDrafts } from "./app-v2/features/editor/translationDrafts";
+import { SessionReads } from "./sessionReads";
 import type { ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
 import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
-import { executionCommands, type AttemptDetail, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
-import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { executionCommands, executionContext, type AttemptDetail, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
+import { SessionReadProvider, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { validateResponseAttempt } from "./generated/execution.validators";
 
@@ -27,6 +29,16 @@ function Probe() {
   const reads = useSessionReads();
   useLayoutEffect(() => { owner = value; translation = draft; sessionReads = reads; });
   return <TaskCancellationFeedback origin="tasks" />;
+}
+function TaskOnlyProbe() {
+  const value = useExecutionTaskSession();
+  useLayoutEffect(() => { owner = value; });
+  return null;
+}
+function HeadlessTaskHarness({ reads, mutations, children }: { reads: SessionReads; mutations: TranslationDrafts; children: ReactNode }) {
+  return <SessionReadProvider context={executionContext(project)} reads={reads} bridge={false}>
+    <ExecutionTaskProvider project={project} mutations={mutations}>{children}</ExecutionTaskProvider>
+  </SessionReadProvider>;
 }
 function FailedReadProbe() {
   const reads = useSessionReads();
@@ -82,6 +94,29 @@ function installApplication() {
     throw new Error(command);
   });
 }
+
+it("uses the headless draft coordinator for task adoption and preserves its original unknown across consumer removal", async () => {
+  const context = executionContext(project), reads = new SessionReads(context);
+  const mutations = new TranslationDrafts({ context, reads, ports: { list: async () => ({ items: [], next: null }) } });
+  expect(await mutations.initialize()).toBe(true);
+  const view = renderHeadless(<HeadlessTaskHarness reads={reads} mutations={mutations}><TaskOnlyProbe/></HeadlessTaskHarness>);
+  installApplication(); await confirmApplication();
+  const external = mutations.reserveMutation(); expect(external).not.toBeNull();
+  await act(async () => { await owner.submit(); });
+  expect(owner.currentActivity()?.failure).toBe("busy"); expect(calls("create_execution_identity")).toHaveLength(0);
+  mutations.releaseMutation(external!);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload) => command === "adopt_execution" ? Promise.reject(new Error("Lost ACK")) : original(command, payload));
+  await act(async () => { await owner.submit(); });
+  const request = structuredClone(owner.currentActivity()?.prepare);
+  expect(owner.currentActivity()?.phase).toBe("unknown"); expect(owner.unresolved()).toBe(true);
+  expect(mutations.getSnapshot().mutationReserved).toBe(true); expect(mutations.reserveMutation()).toBeNull();
+  view.rerender(<HeadlessTaskHarness reads={reads} mutations={mutations}>{null}</HeadlessTaskHarness>);
+  await act(async () => { await owner.checkAdoption(); });
+  expect(owner.currentActivity()?.phase).toBe("recorded"); expect(owner.currentActivity()?.prepare).toEqual(request);
+  expect(owner.unresolved()).toBe(false); expect(mutations.getSnapshot().mutationReserved).toBe(false);
+  expect(calls("create_execution_identity")).toHaveLength(1); expect(calls("adopt_execution")).toHaveLength(1);
+});
 
 it("shares the existing translation reservation before identity and excludes same-task cancellation", async () => {
   render(<Probe />, project); installApplication(); await confirmApplication();

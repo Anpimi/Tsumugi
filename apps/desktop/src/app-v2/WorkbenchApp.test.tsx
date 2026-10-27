@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { StrictMode } from "react";
+import { StrictMode, useLayoutEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
@@ -18,8 +18,23 @@ import type { DraftBasis, DraftHead } from "../draftCommands";
 import type { ProjectView } from "../projectCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle } from "./platform/projectLifecycle";
+import type { TranslationImportPanelProps } from "./features/import/TranslationImportPanel";
+import { Button } from "../design-system/Button";
+import { fixtureIdentity } from "../testSupport/executionFixture";
+import { translationCaptureFixture, translationImportChoice, translationSelectionFixture } from "../testSupport/translationFixture";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
+let importPresentation: TranslationImportPanelProps | null = null;
+vi.mock("./features/import/TranslationImportPanel", () => ({ default: function ImportPresentationProbe(props: TranslationImportPanelProps) {
+  useLayoutEffect(() => { importPresentation = props; });
+  return <section aria-label={i18n.t("workbenchV2.importTitle")}><h1>{i18n.t("workbenchV2.importTitle")}</h1>
+    <output aria-label="Retained import file">{props.owners.imports.state.fileName}</output>
+    <output aria-label="Retained import locale">{props.owners.imports.state.targetLocale}</output>
+    <Button disabled={props.disabled} onClick={() => props.owners.imports.setFile("retained-import.json")}>Retain import selection</Button>
+    <Button onClick={props.onBack}>{i18n.t("workbenchV2.importBack")}</Button>
+    <Button disabled={props.disabled} onClick={() => props.onOpenEntry(translationFixture.save.unitId, "zh-CN")}>{i18n.t("workbenchV2.importOpenEntry")}</Button>
+  </section>;
+} }));
 
 const project: ProjectView = { locator: "/synthetic/project", sessionToken: "session", reconciliationState: "settled", metadata: { projectId: "project", metadataRevision: "1", displayName: "Synthetic project", sourceLocale: "en", targetLocales: ["zh-CN"] } };
 const emptyChecks = { passed: 0, findings: 0, missing: 0, unavailable: 0, failed: 0, cancelled: 0, unknown: 0, notApplicable: 0, findingCount: 0 };
@@ -38,6 +53,7 @@ const page: SegmentPage = {
 };
 let controller: ProjectLifecycle;
 beforeEach(async () => {
+  importPresentation = null;
   localStorage.clear(); history.replaceState(null, "", "/");
   await i18n.changeLanguage("zh-CN");
   vi.spyOn(sourceCommands, "scope").mockResolvedValue({ currentSnapshot: "snapshot", revision: "1" });
@@ -47,6 +63,131 @@ beforeEach(async () => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); controller?.dispose(); });
+
+async function openImportWorkspace(opened: ProjectView = project) {
+  const close = vi.fn(async () => ({ closed: true }));
+  controller = new ProjectLifecycle({ open: vi.fn(async () => opened), close,
+    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  const register = vi.spyOn(controller, "register");
+  render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: "项目文件夹" }), { target: { value: opened.locator } });
+  fireEvent.click(screen.getByRole("button", { name: "打开项目" }));
+  const button = await screen.findByRole("button", { name: i18n.t("workbenchV2.importTitle") });
+  await waitFor(() => expect(button).toBeEnabled());
+  return { close, register, button };
+}
+async function openImportPalette() {
+  const open = screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") });
+  await waitFor(() => expect(open).toBeEnabled()); fireEvent.click(open);
+  const dialog = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.commands") });
+  const option = within(dialog).getByRole("option", { name: i18n.t("workbenchV2.importTitle") });
+  expect(option).not.toHaveAttribute("aria-disabled", "true"); fireEvent.click(option);
+  return screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
+}
+
+describe("import workspace assembly", () => {
+  it("protects lazy owner registration and allows a loaded idle importer to close normally", async () => {
+    const { button, close, register } = await openImportWorkspace();
+    const loading = register.mock.calls.find(([participant]) => participant.id === "translation-import-loading")![0];
+    expect(loading.inspect({ kind: "close-project" }).status).toBe("ready");
+    fireEvent.click(button); expect(loading.inspect({ kind: "close-project" }).status).toBe("blocked");
+    await screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
+    expect(loading.inspect({ kind: "close-project" }).status).toBe("ready");
+    await act(async () => { expect(await controller.close()).toBe(true); });
+    expect(close).toHaveBeenCalledOnce(); expect(controller.getSnapshot().retainedSession).toBeNull();
+    expect(screen.queryByRole("region", { name: i18n.t("workbenchV2.importTitle") })).not.toBeInTheDocument();
+  });
+
+  it("retains one import owner across back, tabs, language changes and reopening through the empty-workspace palette", async () => {
+    const opened = { ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN", "ja"] } };
+    const { button, register } = await openImportWorkspace(opened);
+    expect(register.mock.calls.some(([participant]) => participant.id === "translation-import")).toBe(false);
+    fireEvent.click(button);
+    await screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
+    const registrations = register.mock.calls.filter(([participant]) => participant.id === "translation-import").length;
+    const original = importPresentation!.owners.imports.current;
+    fireEvent.click(screen.getByRole("button", { name: "Retain import selection" }));
+    expect(screen.getByLabelText("Retained import file")).toHaveTextContent("retained-import.json");
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importBack") }));
+    expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.newView") }));
+    await waitFor(() => expect(within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.views") })).getAllByRole("button", { name: i18n.t("workbenchV2.viewName", { locale: "zh-CN" }) })).toHaveLength(2));
+    await openImportPalette();
+    expect(importPresentation!.owners.imports.current()).toBe(original());
+    expect(importPresentation!.owners.imports.current().fileName).toBe("retained-import.json");
+    const language = screen.getByRole("button", { name: "zh-CN" }); language.focus(); fireEvent.keyDown(language, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "ja" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "ja" })).toBeVisible());
+    expect(importPresentation!.owners.imports.current().targetLocale).toBe("zh-CN");
+    expect(location.hash).not.toContain("entryMode");
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: "ja" }) }) }));
+    await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: "zh-CN" }) }) }));
+    await screen.findByText(i18n.t("workbenchV2.noViews"));
+    await openImportPalette();
+    expect(importPresentation!.owners.imports.current().fileName).toBe("retained-import.json");
+    expect(register.mock.calls.filter(([participant]) => participant.id === "translation-import")).toHaveLength(registrations);
+  });
+
+  it("opens the imported entry with its locale and a clean all-entry queue instead of the previous search and filter", async () => {
+    const unitId = translationFixture.save.unitId, sourceRevisionId = translationFixture.save.sourceRevisionId;
+    const opened = { ...project, metadata: { ...project.metadata, projectId: translationFixture.save.projectId } };
+    const row = { ...page.rows[0], protection: { ...page.rows[0].protection, unitId },
+      content: { ...page.rows[0].content, unitId, sourceRevisionId, nativeKey: "imported.target", selectionId: null, revisionId: null, translationPreview: null } };
+    vi.mocked(segmentCommands.page).mockImplementation(async request => ({ ...page, projectId: opened.metadata.projectId, query: request.query,
+      scopeId: request.query.text ? "old-search-scope" : "all-entry-scope", rows: [row] }));
+    const queue = vi.spyOn(segmentCommands, "queueWindow").mockImplementation(async request => ({ projectId: opened.metadata.projectId, locale: request.locale,
+      scopeId: "all-entry-scope", sourceSnapshotId: "snapshot", query: { text: "", selection: "all" }, queryFingerprint: page.queryFingerprint,
+      epoch: page.epoch, sequence: "1", total: 1, firstPosition: 0, previousUnitId: null, nextUnitId: null, rows: [row] }));
+    vi.spyOn(draftCommands, "read").mockImplementation(async ({ key }) => ({ head: { key, revision: "0", writerId: null, value: null },
+      current: { kind: "current", basis: { sourceRevisionId, selectionId: null, revisionId: null, text: null }, nativeKey: "imported.target", sourceText: "Imported source" } }));
+    await openImportWorkspace(opened);
+    const search = screen.getByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+    fireEvent.change(search, { target: { value: "previous search" } });
+    fireEvent.submit(screen.getByRole("form", { name: i18n.t("workbenchV2.searchEntries") }));
+    await waitFor(() => expect(location.hash).toContain("query=previous+search"));
+    const filter = screen.getByRole("button", { name: i18n.t("workbenchV2.allEntries") }); filter.focus(); fireEvent.keyDown(filter, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: i18n.t("workbenchV2.unselectedEntries") }));
+    await waitFor(() => expect(location.hash).toContain("preset=unselected"));
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importTitle") }));
+    await screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importOpenEntry") }));
+    const input = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "imported.target" }) });
+    expect(input).toBeVisible(); expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") })).toHaveValue("");
+    expect(queue).toHaveBeenCalledWith(expect.objectContaining({ locale: "zh-CN", scopeId: "all-entry-scope", anchorUnitId: unitId }));
+    expect(location.hash).toContain(`focus=${unitId}`); expect(location.hash).toContain("preset=all"); expect(location.hash).not.toContain("query=");
+  });
+
+  it("reveals a hidden unknown import with no tabs while preserving its original request and allowing recovery presentation to close", async () => {
+    const snapshot = translationFixture.start.expectedSourceSnapshotId;
+    vi.mocked(sourceCommands.scope).mockResolvedValue({ currentSnapshot: snapshot, revision: "1" });
+    vi.spyOn(translationCommands, "selectPlugin").mockResolvedValue(translationSelectionFixture(snapshot));
+    vi.spyOn(translationCommands, "preflightPlugin").mockImplementation(async request => translationCaptureFixture(request.attemptId, snapshot));
+    let identity = 60; vi.spyOn(executionCommands, "identity").mockImplementation(async () => fixtureIdentity(identity++));
+    const start = vi.spyOn(translationCommands, "startPlugin").mockRejectedValue(new Error("Lost start acknowledgement"));
+    vi.spyOn(executionCommands, "pluginStartAction").mockResolvedValue(null);
+    const { button, close } = await openImportWorkspace(); fireEvent.click(button);
+    await screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
+    const owner = importPresentation!.owners.imports;
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importBack") }));
+    await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: "zh-CN" }) }) }));
+    await screen.findByText(i18n.t("workbenchV2.noViews"));
+    await act(async () => { await owner.chooseFolder(translationImportChoice(snapshot)); owner.setFile("zh.json"); owner.confirmLanguage(true);
+      await owner.preflight(); owner.consentProducer(true); owner.confirmLanguage(true); await owner.start(); });
+    const pending = structuredClone(owner.current().pendingStart); expect(pending).not.toBeNull();
+    await act(async () => { expect(await controller.close()).toBe(false); });
+    const recovery = await screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
+    expect(importPresentation!.viewId).toBeNull(); expect(owner.current().pendingStart).toEqual(pending); expect(close).not.toHaveBeenCalled();
+    fireEvent.compositionStart(recovery);
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importBack") })); expect(recovery).toBeVisible();
+    fireEvent.compositionEnd(recovery);
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importBack") }));
+    await screen.findByText(i18n.t("workbenchV2.noViews"));
+    await openImportPalette(); expect(owner.current().pendingStart).toEqual(pending); expect(start).toHaveBeenCalledTimes(1);
+  });
+
+});
 
 describe("real-port workspace assembly", () => {
   it("opens through the project controller and keeps search input separate in two views sharing entry facts", async () => {

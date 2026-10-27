@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { createWorkspaceStore } from "./workspaceStore";
+import { workspaceViewHref } from "./workspaceRouter";
 
 describe("workspace view state", () => {
+  it("keeps the entry presentation mode local to each tab and out of the URL", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
+    expect(store.getState().views.one.entryMode).toBe("table");
+    store.getState().patch("one", { entryMode: "import" });
+    store.getState().open({ id: "two", kind: "entries", locale: "ja" });
+    expect(store.getState().views.one.entryMode).toBe("import"); expect(store.getState().views.two.entryMode).toBe("table");
+    expect(workspaceViewHref(store.getState().views.one)).toBe("/view/one?kind=entries&locale=zh-CN&preset=all");
+    store.getState().patch("one", { locale: "ja" }); expect(store.getState().views.one.entryMode).toBe("import");
+  });
   it("keeps submitted search, unfinished input and position separate for each tab and session", () => {
     const first = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
     first.getState().patch("one", { query: "harvest" });

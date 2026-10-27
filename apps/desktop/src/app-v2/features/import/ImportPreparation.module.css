@@ -1,0 +1,16 @@
+.preparation { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; padding: var(--space-6); }
+.header h3, .review h4 { margin: 0; font-size: var(--text-md); line-height: var(--line-md); font-weight: var(--weight-semibold); }
+.header p, .secondary { color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); }
+.header p { margin-block: var(--space-3) 0; }
+.preparation p { overflow-wrap: anywhere; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-5); }
+.fields button { max-width: 100%; height: auto; min-height: var(--control-md); white-space: normal; text-align: start; overflow-wrap: anywhere; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.actions p { margin: 0; }
+.check { display: flex; align-items: flex-start; gap: var(--space-4); font-size: var(--text-base); line-height: var(--line-base); }
+.check input { flex: none; accent-color: var(--color-accent-solid); margin-block-start: var(--space-2); }
+.review { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-5); }
+.review p, .review ul { margin-block: var(--space-4); }
+.diagnostics { overflow-wrap: anywhere; font-size: var(--text-sm); line-height: var(--line-sm); margin-block: var(--space-4); }
+.diagnostics dd { margin-inline-start: 0; margin-block-end: var(--space-4); }
+.diagnostics code { font-family: var(--font-mono); }

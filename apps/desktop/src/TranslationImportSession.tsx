@@ -4,7 +4,7 @@ import { executionCommands, executionContext, type AdoptionAction, type AttemptD
 import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { sourceCommands } from "./sourceCommands";
-import { useExecutionTaskSession } from "./ExecutionTaskSession";
+import { useExecutionTaskSession, type MutationCoordinator } from "./ExecutionTaskSession";
 import type { PluginTranslationRequest } from "./pluginCommands";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { translationCommands, matchesTranslationEnvironment, translationRequest, confirmTranslationAction, confirmTranslationReceipt, type TranslationAdoptRequest, type TranslationDecision,
@@ -131,10 +131,18 @@ function metadata(project: ProjectView, locale: string) { return `${project.meta
 function sameRow(left: TranslationPreviewRow, right: TranslationPreviewRow) { return JSON.stringify(left) === JSON.stringify(right); }
 function eligible(row: TranslationPreviewRow) { return row.status === "unique" && !!row.unitId && !!row.occurrenceId && !!row.sourceRevisionId && row.currentSelection === null; }
 
-/** Fixed user decisions and original mutation continuations outlive their view. */
 export function TranslationImportSession({ project, children }: { project: ProjectView; children: ReactNode }) {
-  const drafts = useTranslationDraftSession(), reads = useSessionReads(), tasks = useExecutionTaskSession();
-  const draftsRef = useRef(drafts); draftsRef.current = drafts;
+  const mutations = useTranslationDraftSession(), tasks = useExecutionTaskSession();
+  return <TranslationImportProvider project={project} mutations={mutations} tasks={tasks}>{children}</TranslationImportProvider>;
+}
+
+/** Fixed user decisions and original mutation continuations outlive their view. */
+export function TranslationImportProvider({ project, mutations, tasks, children }: {
+  project: ProjectView; mutations: MutationCoordinator;
+  tasks: Pick<ReturnType<typeof useExecutionTaskSession>, "cancel">; children: ReactNode;
+}) {
+  const reads = useSessionReads();
+  const mutationsRef = useRef(mutations); mutationsRef.current = mutations;
   const [session] = useState(() => executionContext(project));
   const [state, setState] = useState<TranslationImportState>(() => ({ folder: null, translation: null, fileName: "",
     targetLocale: project.metadata.targetLocales[0] ?? "", preflight: null, confirmed: false, pendingStart: null, checkingStart: false, startRetryAllowed: false,
@@ -144,7 +152,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
     editSeq: 0, completionVersion: 0, failure: null }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(false);
   const submittedStartSeq = useRef(0), submittedVersion = useRef(0), submittedProjectionVersion = useRef(0);
-  const version = useRef(0), mutation = useRef<symbol | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
+  const version = useRef(0), mutation = useRef<{ token: symbol; owner: MutationCoordinator } | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
   const readCleanup = useRef<(() => void) | null>(null);
   function current() { return stateRef.current; }
   function live() { return mounted.current && !reads.retired && projectRef.current.sessionToken === session.sessionToken && projectRef.current.metadata.projectId === session.projectId; }
@@ -156,7 +164,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
   useLayoutEffect(() => { mounted.current = true; return () => {
     mounted.current = false; version.current++;
     readCleanup.current?.(); readCleanup.current = null;
-    if (mutation.current) draftsRef.current.releaseMutation(mutation.current);
+    if (mutation.current) mutation.current.owner.releaseMutation(mutation.current.token);
     mutation.current = null;
   }; }, []);
   useLayoutEffect(() => {
@@ -562,13 +570,13 @@ export function TranslationImportSession({ project, children }: { project: Proje
   }
   function reserveMutation() {
     if (mutation.current) return false;
-    const token = draftsRef.current.reserveMutation();
+    const coordinator = mutationsRef.current, token = coordinator.reserveMutation();
     if (!token) { update(before => ({ ...before, failure: "input-busy" })); return false; }
-    mutation.current = token; return true;
+    mutation.current = { token, owner: coordinator }; return true;
   }
   function releaseMutation() {
     if (!mutation.current || pending() || current().batchProgress) return;
-    draftsRef.current.releaseMutation(mutation.current); mutation.current = null;
+    mutation.current.owner.releaseMutation(mutation.current.token); mutation.current = null;
   }
   function original(basis: TranslationPreview, row: TranslationPreviewRow, decision: TranslationDecision, actionId: string, recoveryUnitId: string): TranslationImportPending {
     if (!row.unitId || !row.occurrenceId || !row.sourceRevisionId) throw invalid();

@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { useStore } from "zustand";
 import { isTauri } from "@tauri-apps/api/core";
@@ -29,6 +29,7 @@ import type { DraftKey } from "../draftCommands";
 import type { TranslationDrafts, TranslationDraftSnapshot } from "./features/editor/translationDrafts";
 import type { EditorCommand, SegmentEditorHandle } from "./features/editor/SegmentEditor";
 import type { LifecycleParticipant } from "./platform/projectLifecycle";
+import type { ImportOwners } from "./features/import/importTypes";
 import { TokenizedText } from "../design-system/TokenizedText";
 import { installWorkspaceMenu } from "./nativeMenu";
 import { FeatureBoundary } from "./FeatureBoundary";
@@ -38,11 +39,15 @@ import appStyles from "./WorkbenchApp.module.css";
 const EntriesView = lazy(() => import("./features/entries/EntriesView"));
 const EntryDetails = lazy(() => import("./features/entries/EntryDetails"));
 const SegmentEditor = lazy(() => import("./features/editor/SegmentEditor"));
+const ImportOwnerHost = lazy(() => import("./features/import/ImportOwnerHost"));
+const TranslationImportPanel = lazy(() => import("./features/import/TranslationImportPanel"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
+  openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void;
-  drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void };
+  drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
+  importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void };
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
@@ -56,6 +61,12 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const [navigationFailed, setNavigationFailed] = useState(false);
   const [drafts, setDrafts] = useState<TranslationDrafts | null>(null), [draftLoadFailed, setDraftLoadFailed] = useState(false), [draftAttempt, setDraftAttempt] = useState(0);
   const [recoveryKey, setRecoveryKey] = useState<DraftKey | null>(null);
+  const [importRequested, setImportRequested] = useState(false), [importOwners, setImportOwners] = useState<ImportOwners | null>(null), [importRecovery, setImportRecovery] = useState(false);
+  const importStatus = useRef({ requested: false, owners: null as ImportOwners | null });
+  const requestImport = useCallback(() => { importStatus.current.requested = true; setImportRequested(true); }, []);
+  const revealImport = useCallback(() => { requestImport(); setImportRecovery(true); }, [requestImport]);
+  const hideImportRecovery = useCallback(() => { setImportRecovery(false); }, []);
+  const publishImportOwners = useCallback((value: ImportOwners | null) => { importStatus.current.owners = value; setImportOwners(value); }, []);
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   readonlyRef.current = readOnly;
   // A stable registration protects the gap before the heavy draft module loads.
@@ -66,6 +77,12 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     prepareLeave: (intent, proof, current) => draftParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
     reveal: () => draftParticipant.current?.reveal?.(),
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId]);
+  useLayoutEffect(() => lifecycle.register({ id: "translation-import-loading", area: "translation", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-import-presentation" }
+      : { status: importStatus.current.requested && !importStatus.current.owners ? "blocked" : "ready",
+        revision: importStatus.current.requested ? importStatus.current.owners ? "import-owner-ready" : "import-owner-loading" : "import-not-requested" },
+    prepareLeave: async () => false, reveal: revealImport,
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealImport]);
   useEffect(() => {
     let alive = true, owner: TranslationDrafts | undefined;
     setDrafts(null); setDraftLoadFailed(false);
@@ -99,14 +116,19 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
   return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed,
-    retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey }}>
+    retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
+    importOwners, importRecovery, requestImport, revealImport, hideImportRecovery }}>
+    {importRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
+      <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
+    </Suspense></FeatureBoundary> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <RouterProvider router={runtime.router} />
   </WorkspaceContext.Provider>;
 }
 
 function WorkspaceShell() {
-  const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft } = useWorkspaceContext();
+  const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
+    importOwners, importRecovery, requestImport, revealImport, hideImportRecovery } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
@@ -116,16 +138,29 @@ function WorkspaceShell() {
   const narrow = useSyncExternalStore(subscribeWidth, () => innerWidth <= 1100, () => false);
   const wide = useSyncExternalStore(subscribeWidth, () => innerWidth >= 1440, () => false);
   const [registries, setRegistries] = useState<Map<string | null, WorkbenchCommands>>(new Map());
+  const [registeredCommands, setRegisteredCommands] = useState<WorkbenchCommands | null>(null);
   const [palette, setPalette] = useState(false), [drawer, setDrawer] = useState(false);
   const paletteRelease = useRef<(() => void) | null>(null), drawerRelease = useRef<(() => void) | null>(null);
   const [commandFailed, setCommandFailed] = useState(false);
+  const [pendingImport, setPendingImport] = useState<{ viewId: string | null; locale: string | null } | null>(null);
   const entries = useRef<EntriesHandle>(null), dock = useRef<HTMLDivElement>(null);
   const recoveryEditor = useRef<SegmentEditorHandle>(null);
   const split = useRef<HTMLDivElement>(null), splitHandle = useRef<HTMLDivElement>(null);
   const currentId = state.activeViewId;
+  const importVisible = importRecovery || view?.kind === "entries" && view.entryMode === "import";
+  const revealedImportFailure = useRef<typeof lifecycleState.failure>(null);
   const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
   const pendingDrafts = draftState.summaries.filter(summary => summary.hasPending);
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
+  useEffect(() => {
+    const failure = lifecycleState.failure, importer = importOwners?.imports;
+    if (!failure || revealedImportFailure.current === failure || failure.code !== "leave-blocked" || failure.ownerId !== "translation-drafts" || !importer) return;
+    // The shared draft coordinator may be the first blocked owner while the
+    // import owns its reservation. Reveal that original request without routing.
+    if (importer.hasPending() || importer.current().busy && draftState.mutationReserved && !draftState.summaries.some(summary => summary.hasPending)) {
+      revealedImportFailure.current = failure; revealImport();
+    }
+  }, [lifecycleState.failure, importOwners, draftState.mutationReserved, draftState.summaries, revealImport]);
   const currentScope = () => {
     const current = lifecycle.getSnapshot();
     return !readOnly && current.phase === "idle" && !current.pending && current.session?.project.sessionToken === session.project.sessionToken
@@ -154,32 +189,59 @@ function WorkspaceShell() {
     return () => { alive = false; };
   }, [ids, store]);
   const commands = registries.get(currentId);
+  const commandsReady = !!commands && registeredCommands === commands;
   const scope = useMemo(() => ({ ...executionContext(session.project), area: "translation" as const }), [session.project.sessionToken, session.project.metadata.projectId]);
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void lifecycle.refresh(); entries.current?.refresh(); },
+    openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
   actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void lifecycle.refresh(); entries.current?.refresh(); },
+    openImport: async () => {
+      requestImport();
+      if (!importOwners) {
+        const current = store.getState(), active = current.activeViewId ? current.views[current.activeViewId] : null;
+        setPendingImport({ viewId: current.activeViewId, locale: active?.locale ?? null }); return;
+      }
+      if (importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending() || importOwners.imports.hasActive() || importOwners.tasks.unresolved())) { revealImport(); return; }
+      const current = store.getState(), active = current.activeViewId ? current.views[current.activeViewId] : null;
+      const accepted = active?.kind === "entries" ? await runtime.navigation.update(active.id, { entryMode: "import", focusMode: false })
+        : await runtime.navigation.open({ kind: "entries", locale: active?.locale ?? session.project.metadata.targetLocales[0] ?? "", entryMode: "import", focusMode: false });
+      if (accepted) hideImportRecovery();
+    },
+    canOpenImport: () => !!drafts && draftState.hydration === "ready" && !draftState.retired && !pendingImport,
     confirm: async advance => { if (recoveryKey && drafts) await drafts.confirm(recoveryKey); else await entries.current?.confirm(advance); },
     exitEditor: async () => { if (recoveryKey) revealDraft(null); else await entries.current?.exitEditor(); },
     toggleFocus: async () => { if (!recoveryKey) await entries.current?.toggleFocus(); },
-    isEditing: () => recoveryKey !== null || !!entries.current?.isEditing(),
+    isEditing: () => recoveryKey !== null || !importVisible && !!entries.current?.isEditing(),
     canAdvance: () => recoveryKey === null && !!entries.current?.isEditing(),
     canConfirm: () => recoveryKey ? !!drafts && !readOnly && !lifecycleState.pending && draftState.hydration === "ready" && !draftState.retired && !draftState.mutationReserved
       && !!recoveryEntry?.value && !recoveryEntry.value.pending && !recoveryEntry.busy && recoveryEntry.basisCurrent && recoveryEntry.currentFailure === null
       && recoveryEntry.failure?.kind !== "journal" && recoveryEntry.failure?.kind !== "journal-conflict" : !!entries.current?.canConfirm(),
   };
+  useEffect(() => {
+    if (!pendingImport || !importOwners) return;
+    setPendingImport(null);
+    const current = store.getState(), active = current.activeViewId ? current.views[current.activeViewId] : null;
+    // Lazy owners must finish registering before a navigation permit captures
+    // the participant set. A later tab/language choice cancels this presentation.
+    if (disabled || current.activeViewId !== pendingImport.viewId || (active?.locale ?? null) !== pendingImport.locale
+      || !gate.canDispatch({ viewId: pendingImport.viewId, source: "button" })) return;
+    void actions.current.openImport().catch(() => setCommandFailed(true));
+  }, [pendingImport, importOwners, disabled, store, gate]);
   useLayoutEffect(() => {
-    if (!commands) return;
-    return registerWorkspaceCommands({ commands, store, gate, viewId: currentId, defaultLocale: session.project.metadata.targetLocales[0], scope, getCurrentScope: currentScope, navigation: runtime.navigation,
+    if (!commands) { setRegisteredCommands(null); return; }
+    const remove = registerWorkspaceCommands({ commands, store, gate, viewId: currentId, defaultLocale: session.project.metadata.targetLocales[0], scope, getCurrentScope: currentScope, navigation: runtime.navigation,
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
+      openImport: () => actions.current.openImport(), canOpenImport: () => actions.current.canOpenImport(),
       confirm: advance => actions.current.confirm(advance), exitEditor: () => actions.current.exitEditor(), toggleFocus: () => actions.current.toggleFocus(),
       isEditing: () => actions.current.isEditing(), canConfirm: () => actions.current.canConfirm(), canAdvance: () => actions.current.canAdvance() }, onError: () => setCommandFailed(true) });
+    setRegisteredCommands(commands); return remove;
   }, [commands, currentId, gate, store, runtime, lifecycle, scope, narrow, readOnly]);
   const dispatcher = useMemo(() => createWorkspaceCommandDispatcher({ gate, modifier: navigator.platform.includes("Mac") ? "meta" : "ctrl", getContext: () => {
     const id = store.getState().activeViewId, owner = registries.get(id), actualScope = currentScope();
-    return owner && actualScope ? { viewId: id, scope: actualScope, commands: owner } : null;
-  } }), [gate, store, registries, scope, readOnly]);
+    return owner && owner === registeredCommands && actualScope ? { viewId: id, scope: actualScope, commands: owner } : null;
+  } }), [gate, store, registries, registeredCommands, scope, readOnly]);
   const dispatch = (id: WorkspaceCommandId) => dispatcher.dispatch(id, { source: "button", viewId: currentId });
   const dispatchEditor = (id: EditorCommand, source: "button" | "keyboard", inputOwner?: string) => dispatcher.dispatch(id, { source, viewId: currentId, inputOwner });
   const dispatchRecoveryEditor = (id: EditorCommand, source: "button" | "keyboard", inputOwner?: string) => dispatcher.dispatch(id, { source, viewId: currentId, inputOwner, dialogId: "draft-recovery" });
@@ -197,11 +259,36 @@ function WorkspaceShell() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [dispatcher, currentId, gate, store, runtime]);
   useEffect(() => {
-    if (!isTauri() || !commands) return;
+    if (!isTauri() || !commandsReady) return;
     return installWorkspaceMenu(dispatcher.list({ source: "native-menu" }), key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId: currentId }), () => setCommandFailed(true));
-  }, [dispatcher, commands, currentId, i18n.resolvedLanguage, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, actions.current.canConfirm()]);
+  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, actions.current.canConfirm()]);
   useEffect(() => () => { paletteRelease.current?.(); drawerRelease.current?.(); }, [gate]);
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
+  const importNeedsAttention = !!importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending()
+    || !session.reads.retired && importOwners.imports.hasActive() || importOwners.tasks.unresolved());
+  async function backFromImport() {
+    if (!gate.canDispatch({ viewId: currentId, source: "button" })) return;
+    if (importRecovery) { hideImportRecovery(); return; }
+    if (view) await runtime.navigation.update(view.id, { entryMode: "table", focusMode: false });
+  }
+  async function openImportedEntry(unitId: string, locale: string) {
+    const target = { entryMode: "table" as const, locale, focus: unitId, query: "", searchInput: "", preset: "all", queueScopeId: null,
+      queueAnchor: unitId, queueActive: true, editing: true, focusMode: false, cursor: null, afterOrdinal: 0, scroll: { top: 0, left: 0 }, selection: [] };
+    const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
+      : await runtime.navigation.open({ kind: "entries", ...target });
+    if (accepted) hideImportRecovery();
+  }
+  function importPanel() {
+    return <FeatureBoundary key="translation-import-presentation" fallback={<ErrorState title={message("importUnavailable")} description={message("importHelp")} />}>
+      <Suspense fallback={<LoadingState label={message("importLoading")} />}>
+        {drafts && importOwners && commandsReady && commands ? <TranslationImportPanel project={session.project} owners={importOwners} drafts={drafts} commands={commands} gate={gate} viewId={currentId}
+          disabled={disabled || draftState.hydration !== "ready" || draftState.retired} visible={importVisible}
+          onBack={() => { void backFromImport().catch(() => setCommandFailed(true)); }} onOpenEntry={(unitId, locale) => { void openImportedEntry(unitId, locale).catch(() => setCommandFailed(true)); }}/>
+          : draftLoadFailed || draftState.hydration === "failed" ? <ErrorState title={message("importUnavailable")} description={message("draftIndexFailed")} />
+            : <LoadingState label={message("importLoading")} />}
+      </Suspense>
+    </FeatureBoundary>;
+  }
   function panel() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
@@ -209,20 +296,22 @@ function WorkspaceShell() {
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}><EntryDetails unitId={view?.focus ?? null} locale={activeLocale} disabled={disabled} /></Suspense></FeatureBoundary></TabsContent>
     </TabsRoot>;
   }
-  return <div className={styles.frame} data-focus-mode={view?.focusMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
+  return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
     <header className={styles.titlebar} data-tauri-drag-region>
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
-        { id: "open", label: message("openProject"), onSelect: () => dispatch("workspace.open-project"), disabled: disabled || !commands }, { id: "close", label: message("closeProject"), onSelect: () => dispatch("workspace.close-project"), disabled: disabled || !commands },
+        { id: "open", label: message("openProject"), onSelect: () => dispatch("workspace.open-project"), disabled: disabled || !commandsReady }, { id: "close", label: message("closeProject"), onSelect: () => dispatch("workspace.close-project"), disabled: disabled || !commandsReady },
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled}>{activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
       <Button size="sm" disabled={!drafts || draftState.summaries.length === 0} onClick={() => { const first = draftState.summaries[0]; if (first) revealDraft(first.key); }}>{message("draftRecoveryTitle")}</Button>
-      <Button className={styles.commandSearch} size="sm" disabled={!commands || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
-      <IconButton className={styles.dockToggle} label={message("openAgent")} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
+      <Button className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
+      <IconButton className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
     </header>
     {commandFailed ? <Banner tone="error">{message("actionFailed")}</Banner> : null}
+    {pendingImport && !importOwners ? <Banner>{message("importLoading")}</Banner> : null}
     {draftLoadFailed || draftState.hydration === "failed" ? <Banner tone="error" action={<Button onClick={retryDrafts}>{message("draftIndexRetry")}</Button>}>{message("draftIndexFailed")}</Banner>
       : !drafts || draftState.hydration === "idle" || draftState.hydration === "loading" ? <Banner>{message("draftIndexLoading")}</Banner> : null}
     {pendingDrafts.length ? <Banner tone="warning" action={<Button onClick={() => revealDraft(pendingDrafts[0].key)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: pendingDrafts.length })}</Banner> : null}
+    {importNeedsAttention && !importVisible ? <Banner tone="warning" action={<Button onClick={revealImport}>{message("importOpen")}</Button>}>{message("importPendingNotice")}</Banner> : null}
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
         {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined}><IconButton label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} disabled={id !== "entries" || disabled} title={id !== "entries" ? message("comingLater") : undefined} onClick={event => {
@@ -247,14 +336,14 @@ function WorkspaceShell() {
               <Button size="sm" aria-current={id === currentId ? "page" : undefined} onClick={() => { if (!disabled) void runtime.navigation.activate(id); }}>{item.pinned ? <Pin /> : null}{name}</Button>
               {!item.pinned ? <IconButton size="xs" label={message("closeView", { name })} disabled={disabled} onClick={() => void runtime.navigation.close(id)}><X /></IconButton> : null}
             </div>;
-          })}<IconButton size="xs" label={message("newView")} disabled={disabled || !commands} onClick={() => dispatch("workspace.new-view")}><Plus /></IconButton>
-            {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
+          })}<IconButton size="xs" label={message("newView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}><Plus /></IconButton>
+            {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
           </div>
-          {view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} project={session.project} view={view} drafts={commands ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
+          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
             const accepted = await runtime.navigation.update(view.id, patch);
             if (accepted && patch.dock === "details" && narrow) showDock();
             return accepted;
-          }} /></Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
+          }} /></Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
         </main></SplitPanel>
         {!narrow ? <><SplitHandle label={message("resizeDock")} elementRef={splitHandle} /><SplitPanel id="workspace-dock" key={wide ? "wide" : "compact"} groupResizeBehavior="preserve-pixel-size" defaultSize={view?.dockSize ?? (wide ? 380 : 340)} minSize={300} maxSize="45%"><aside className={styles.dock} ref={dock} tabIndex={-1} aria-label={message("agent")}>{panel()}</aside></SplitPanel></> : null}
       </SplitView>

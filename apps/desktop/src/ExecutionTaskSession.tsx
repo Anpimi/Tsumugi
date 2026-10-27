@@ -10,6 +10,10 @@ import type { QueryKey } from "@tanstack/react-query";
 import { validateResponseAdoptionAction } from "./generated/execution.validators";
 
 type Origin = "tasks" | "source" | "ai" | "arena" | "release" | "resources";
+export interface MutationCoordinator {
+  reserveMutation: () => symbol | null;
+  releaseMutation: (token: symbol) => void;
+}
 export interface CancellationTarget { readonly taskId: string; readonly attemptId: string; readonly origin: Origin }
 export interface CancellationRetryIntent extends CancellationTarget { readonly requestId: string }
 type Cancellation = { target: CancellationTarget } & (
@@ -91,21 +95,28 @@ export function useExecutionTaskSession() {
 }
 const unresolved = (value: Cancellation) => value.phase === "preparing" || value.phase === "pending" || value.phase === "checking" || value.phase === "unknown";
 
-/** Own fixed task decisions and original requests independently of their consumers. */
 export function ExecutionTaskSession({ project, children }: { project: ProjectView; children: ReactNode }) {
+  const mutations = useTranslationDraftSession();
+  return <ExecutionTaskProvider project={project} mutations={mutations}>{children}</ExecutionTaskProvider>;
+}
+
+/** Own fixed task decisions and original requests independently of their consumers. */
+export function ExecutionTaskProvider({ project, mutations, children }: {
+  project: ProjectView; mutations: MutationCoordinator; children: ReactNode;
+}) {
   const reads = useSessionReads();
-  const translation = useTranslationDraftSession();
+  const mutationsRef = useRef(mutations); mutationsRef.current = mutations;
   const [session] = useState(() => Object.freeze(executionContext(project)));
   const [state, setState] = useState<Cancellations>(() => Object.freeze({}));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive();
   const [activity, setActivity] = useState<TaskActivity | null>(null);
   const activityRef = useRef<TaskActivity | null>(null);
-  const reservation = useRef<symbol | null>(null);
+  const reservation = useRef<{ token: symbol; owner: MutationCoordinator } | null>(null);
   const readCapture = useRef<{ intent: TaskIntent; key: QueryKey; total: number } | null>(null);
   const readCleanup = useRef<(() => void) | null>(null);
   useLayoutEffect(() => { mounted.current = true; return () => {
     mounted.current = false; readCleanup.current?.(); readCleanup.current = null;
-    const token = reservation.current; reservation.current = null; if (token) translation.releaseMutation(token);
+    release();
   }; }, []);
   useLayoutEffect(() => { projectRef.current = project; }, [project]);
   function live() {
@@ -208,8 +219,8 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     return next;
   }
   function release() {
-    const token = reservation.current; reservation.current = null;
-    if (token) translation.releaseMutation(token);
+    const held = reservation.current; reservation.current = null;
+    if (held) held.owner.releaseMutation(held.token);
   }
   function dismiss() { if (live() && !activityUnresolved(activityRef.current)) { updateActivity(null); readCapture.current = null; release(); } }
   function cancellationBlocks(taskId: string) {
@@ -454,9 +465,9 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       } catch (error) { fail(value, error, true); }
       return;
     }
-    const token = translation.reserveMutation();
+    const coordinator = mutationsRef.current, token = coordinator.reserveMutation();
     if (!token) { change(start, { failure: "busy" }); return; }
-    reservation.current = token;
+    reservation.current = { token, owner: coordinator };
     let value = change(start, { phase: "identifying", failure: null });
     try {
       const actionId = await executionCommands.identity(session);

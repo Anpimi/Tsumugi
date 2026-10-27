@@ -7,6 +7,7 @@ export type ViewKind = typeof viewKinds[number];
 export interface WorkspaceView {
   id: string;
   kind: ViewKind;
+  entryMode: "table" | "import";
   locale: string;
   preset: string;
   query: string;
@@ -60,6 +61,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
   return {
     id,
     kind: input.kind,
+    entryMode: input.entryMode ?? "table",
     locale: input.locale,
     preset: input.preset ?? "all",
     query: input.query ?? "",

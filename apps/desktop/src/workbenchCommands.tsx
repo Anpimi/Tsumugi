@@ -31,6 +31,7 @@ type PlainWorkbenchCommandId = "strategy.check-pending" | "strategy.retry-pendin
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
   | "workspace.agent" | "workspace.details" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
+  | "translation.import" | "translation.refresh-import" | "translation.reset-import"
   | "translation.confirm" | "translation.confirm-next" | "translation.exit-editor" | "translation.focus-mode"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"

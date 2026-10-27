@@ -1,11 +1,14 @@
-import { useLayoutEffect } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { useLayoutEffect, type ReactNode } from "react";
+import { act, cleanup, render as renderHeadless, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useSessionReads } from "./SessionReadProvider";
-import { useTranslationImportSession } from "./TranslationImportSession";
+import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
+import { TranslationImportProvider, useTranslationImportSession } from "./TranslationImportSession";
+import { ExecutionTaskProvider, useExecutionTaskSession, type MutationCoordinator } from "./ExecutionTaskSession";
+import { TranslationDrafts } from "./app-v2/features/editor/translationDrafts";
+import { SessionReads } from "./sessionReads";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { translationCommands, type PluginStartRequest, type TranslationAdoptRequest, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
-import type { AdoptionAction, Receipt } from "./executionCommands";
+import { executionContext, type AdoptionAction, type Receipt } from "./executionCommands";
 import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -16,6 +19,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "isolated-import", locator: "C:\\isolated\\import-owner", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(900), displayName: "Fixture", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let owner: ReturnType<typeof useTranslationImportSession>, drafts: ReturnType<typeof useTranslationDraftSession>;
+let taskOwner: ReturnType<typeof useExecutionTaskSession>;
 let importReads: ReturnType<typeof useSessionReads>;
 let preview: TranslationPreview, pageSize: number, nextIdentity: number, requests: Map<string, TranslationAdoptRequest>;
 function Probe() {
@@ -23,6 +27,31 @@ function Probe() {
   useLayoutEffect(() => { owner = value; drafts = manual; importReads = reads; });
   return <><output aria-label="Import outcome">{value.state.uncertain.length ? "Unknown" : value.state.completionVersion ? "Applied" : "Ready"}</output>
     <output aria-label="Import basis">{value.state.preview?.basis}</output><output aria-label="Manual input">{manual.draft?.text}</output></>;
+}
+function ImportOnlyProbe() {
+  const value = useTranslationImportSession();
+  useLayoutEffect(() => { owner = value; });
+  return null;
+}
+function HeadlessImportOwner({ project, mutations, children }: { project: ProjectView; mutations: MutationCoordinator; children: ReactNode }) {
+  const tasks = useExecutionTaskSession();
+  useLayoutEffect(() => { taskOwner = tasks; });
+  return <TranslationImportProvider project={project} mutations={mutations} tasks={tasks}>{children}</TranslationImportProvider>;
+}
+function HeadlessImportHarness({ project: currentProject = project, reads, mutations, children }: {
+  project?: ProjectView; reads: SessionReads; mutations: MutationCoordinator; children: ReactNode;
+}) {
+  return <SessionReadProvider context={executionContext(currentProject)} reads={reads} bridge={false}>
+    <ExecutionTaskProvider project={currentProject} mutations={mutations}>
+      <HeadlessImportOwner project={currentProject} mutations={mutations}>{children}</HeadlessImportOwner>
+    </ExecutionTaskProvider>
+  </SessionReadProvider>;
+}
+async function headlessDrafts() {
+  const context = executionContext(project), reads = new SessionReads(context);
+  const mutations = new TranslationDrafts({ context, reads, ports: { list: async () => ({ items: [], next: null }) } });
+  expect(await mutations.initialize()).toBe(true);
+  return { reads, mutations };
 }
 function rowFor(request: TranslationAdoptRequest) { return preview.rows.find(row => row.itemId === request.itemId)!; }
 function action(request: TranslationAdoptRequest) { return translationActionFixture(request, translationRecoveryUnit(rowFor(request))); }
@@ -124,6 +153,74 @@ async function applyRow(decision: "candidate-only" | "select-if-empty" | "replac
   await act(async () => { await owner.applyRow(); });
 }
 function calls(command: string) { return invoke.mock.calls.filter(([name]) => name === command); }
+
+it("shares the headless draft coordinator and retains the original unknown import across hidden consumers and changed scope", async () => {
+  const { reads, mutations } = await headlessDrafts();
+  const view = renderHeadless(<HeadlessImportHarness reads={reads} mutations={mutations}><ImportOnlyProbe/></HeadlessImportHarness>);
+  await ready();
+  const external = mutations.reserveMutation(); expect(external).not.toBeNull();
+  await applyRow();
+  expect(owner.current().failure).toBe("input-busy"); expect(calls("create_execution_identity")).toHaveLength(0);
+  mutations.releaseMutation(external!);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload) => command === "adopt_execution" ? Promise.reject(new Error("Lost ACK"))
+    : command === "read_translation_adoption_action" ? Promise.resolve(null) : original(command, payload));
+  await applyRow();
+  const pending = structuredClone(owner.current().uncertain[0]);
+  expect(owner.hasPending()).toBe(true); expect(mutations.getSnapshot().mutationReserved).toBe(true);
+  expect(mutations.reserveMutation()).toBeNull();
+  view.rerender(<HeadlessImportHarness project={{ ...project, metadata: { ...project.metadata, targetLocales: [], sourceLocale: "fr" } }}
+    reads={reads} mutations={mutations}>{null}</HeadlessImportHarness>);
+  await act(async () => { reads.invalidate(["source"]); });
+  const writes = calls("prepare_translation_adoption").length + calls("adopt_execution").length;
+  await act(async () => { await owner.checkReceipt(pending.request.actionId); });
+  expect(calls("prepare_translation_adoption").length + calls("adopt_execution").length).toBe(writes);
+  expect(owner.current().uncertain[0]).toMatchObject({ request: pending.request, receiptChecked: true });
+  invoke.mockImplementation(original);
+  await act(async () => { await owner.retryAction(pending.request.actionId); });
+  expect(calls("prepare_translation_adoption").map(([, args]) => args.request)).toEqual([pending.request, pending.request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(owner.hasPending()).toBe(false); expect(owner.current().completionVersion).toBe(1);
+  expect(mutations.getSnapshot().mutationReserved).toBe(false);
+});
+
+it("releases the headless reservation from its original coordinator on destruction before a late identity", async () => {
+  const { reads, mutations } = await headlessDrafts(), replacement = await headlessDrafts();
+  const release = vi.spyOn(mutations, "releaseMutation"), otherRelease = vi.spyOn(replacement.mutations, "releaseMutation");
+  const view = renderHeadless(<HeadlessImportHarness reads={reads} mutations={mutations}><ImportOnlyProbe/></HeadlessImportHarness>);
+  await ready(); act(() => owner.chooseRow(owner.current().preview!.rows[0], "candidate-only"));
+  const original = invoke.getMockImplementation()!; let identify!: (value: string) => void;
+  invoke.mockImplementation((command: string, payload) => command === "create_execution_identity"
+    ? new Promise<string>(resolve => { identify = resolve; }) : original(command, payload));
+  let pending!: Promise<void>; act(() => { pending = owner.applyRow(); });
+  await waitFor(() => expect(identify).toBeDefined());
+  expect(mutations.getSnapshot().mutationReserved).toBe(true);
+  view.rerender(<HeadlessImportHarness reads={reads} mutations={replacement.mutations}>{null}</HeadlessImportHarness>);
+  view.unmount();
+  expect(release).toHaveBeenCalledTimes(1); expect(otherRelease).not.toHaveBeenCalled();
+  expect(mutations.getSnapshot().mutationReserved).toBe(false);
+  await act(async () => { identify(fixtureIdentity(999)); await pending; });
+  expect(calls("prepare_translation_adoption")).toHaveLength(0); expect(calls("adopt_execution")).toHaveLength(0);
+});
+
+it("delegates headless import cancellation to the task owner's original request and explicit retry", async () => {
+  const { reads, mutations } = await headlessDrafts();
+  const view = renderHeadless(<HeadlessImportHarness reads={reads} mutations={mutations}><ImportOnlyProbe/></HeadlessImportHarness>);
+  await ready(); const detail = translationAttemptFixture(preview), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload) => command === "cancel_execution_task" ? Promise.reject(new Error("Lost cancellation ACK"))
+    : command === "read_execution_cancellation_action" ? Promise.resolve(null) : original(command, payload));
+  await act(async () => { await owner.cancelTask({ ...detail, attemptId: fixtureIdentity(999) }); });
+  expect(calls("create_execution_identity")).toHaveLength(0);
+  await act(async () => { await owner.cancelTask(detail); });
+  const request = structuredClone(calls("cancel_execution_task")[0][1].request);
+  expect(taskOwner.current(detail.taskId)?.phase).toBe("unknown"); expect(taskOwner.unresolved()).toBe(true);
+  view.rerender(<HeadlessImportHarness reads={reads} mutations={mutations}>{null}</HeadlessImportHarness>);
+  invoke.mockImplementation((command: string, payload) => command === "cancel_execution_task" ? Promise.resolve("1") : original(command, payload));
+  await act(async () => { await taskOwner.retry(detail.taskId); });
+  expect(calls("cancel_execution_task").map(([, args]) => args.request)).toEqual([request, request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(taskOwner.current(detail.taskId)?.phase).toBe("recorded"); expect(taskOwner.unresolved()).toBe(false);
+});
 
 it("retains folder, language consent and fixed ready evidence across complete consumer removal", async () => {
   const view = render(<Probe/>, project);

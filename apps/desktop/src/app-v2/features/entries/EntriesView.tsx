@@ -26,6 +26,7 @@ type Props = {
   drafts: TranslationDrafts | null; gate: InteractionGate;
   dispatch: SegmentEditorProps["dispatch"];
   onRevealDraft: (key: DraftKey) => void;
+  onImport?: () => void;
   ref?: Ref<EntriesHandle>;
 };
 export interface EntriesHandle {
@@ -48,7 +49,7 @@ function EntryFacts({ row }: { row: SegmentRow }) {
   </div>;
 }
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
@@ -189,6 +190,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
         onKeyDown={event => { if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) { if (event.key === "Enter") event.preventDefault(); event.stopPropagation(); } }} /></div>
       <Button type="submit" size="sm" disabled={disabled || searchTooLong}>{t("search")}</Button>
       <IconButton label={t("refresh")} disabled={disabled || capturing} onClick={() => { void refresh(); }}><RefreshCw /></IconButton>
+      {onImport ? <Button size="sm" disabled={disabled || !drafts || drafts.getSnapshot().hydration !== "ready" || drafts.getSnapshot().retired} onClick={onImport}>{t("importTitle")}</Button> : null}
       {current ? <span className={styles.count} title={view.queueActive ? t("fixedQueueHelp") : undefined}>{t(view.queueActive ? "fixedQueue" : "entryCount", { count: current.total })}</span> : null}
       {isEditing() ? <Button size="sm" onClick={() => { void toggleFocus(); }}>{t(view.focusMode ? "editorTableMode" : "editorFocusMode")}</Button> : null}
     </form>

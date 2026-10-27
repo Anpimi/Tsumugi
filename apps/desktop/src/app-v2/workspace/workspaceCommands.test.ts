@@ -8,6 +8,33 @@ const scope: CommandScope = { projectId: "project-a", sessionToken: "session-a",
 const navigation = () => ({ open: vi.fn(async () => true), activate: vi.fn(async () => true), close: vi.fn(async () => true), update: vi.fn(async () => true) });
 
 describe("workspace commands in the existing registry", () => {
+  it("uses one import command for toolbar, palette and native menu including an empty workspace", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] });
+    const gate = new InteractionGate(), commands = new WorkbenchCommands(), openImport = vi.fn(); let ready = false;
+    let liveScope = scope;
+    registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => liveScope, navigation: navigation(),
+      actions: { openImport, canOpenImport: () => ready }, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: null, scope, commands }), modifier: "meta" });
+    expect(dispatcher.dispatch("translation.import", { viewId: null, source: "button" })).toBe(false);
+    ready = true;
+    for (const source of ["button", "palette", "native-menu"] as const) {
+      expect(dispatcher.list({ source }).find(value => value.id === "translation.import")).toMatchObject({ binding: null, availability: { enabled: true } });
+      expect(dispatcher.dispatch("translation.import", { viewId: null, source })).toBe(true);
+    }
+    expect(openImport).toHaveBeenCalledTimes(3);
+    gate.setComposing("import-field", true); expect(dispatcher.dispatch("translation.import", { viewId: null, source: "native-menu" })).toBe(false);
+    gate.setComposing("import-field", false); liveScope = { ...scope, sessionToken: "different" };
+    expect(dispatcher.dispatch("translation.import", { viewId: null, source: "palette" })).toBe(false);
+    expect(openImport).toHaveBeenCalledTimes(3);
+  });
+
+  it("disables table search commands while the retained import presentation is active", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", entryMode: "import" }] });
+    const gate = new InteractionGate(); gate.setVisibleOwner("one"); const commands = new WorkbenchCommands(), search = vi.fn();
+    registerWorkspaceCommands({ commands, store, gate, viewId: "one", scope, getCurrentScope: () => scope, navigation: navigation(), actions: { focusSearch: search }, onError: vi.fn() });
+    expect(commands.describe("workspace.search", scope)?.availability.enabled).toBe(false);
+    expect(commands.describe("workspace.focus-search", scope)?.availability.enabled).toBe(false); expect(search).not.toHaveBeenCalled();
+  });
   it("rechecks the captured view, live session, availability and IME before dispatch", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }, { id: "two", kind: "entries", locale: "ja" }] });
     const gate = new InteractionGate(); gate.setVisibleOwner("one");
