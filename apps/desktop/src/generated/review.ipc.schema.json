@@ -1115,6 +1115,120 @@
         ],
         "type": "object"
       },
+      "SegmentPageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "$ref": "#/definitions/SegmentQuery"
+          },
+          "scopeId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "query",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "SegmentQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/definitions/SegmentSelectionFilter"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "selection"
+        ],
+        "type": "object"
+      },
+      "SegmentScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "excluded": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "queryFingerprint": {
+            "type": "string"
+          },
+          "readVersion": {
+            "type": "string"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "scopeId",
+          "queryFingerprint",
+          "readVersion",
+          "excluded"
+        ],
+        "type": "object"
+      },
+      "SegmentSelectionFilter": {
+        "enum": [
+          "all",
+          "selected",
+          "unselected"
+        ],
+        "type": "string"
+      },
       "SourceContextSelection": {
         "additionalProperties": false,
         "properties": {
@@ -1405,6 +1519,12 @@
       "scope": {
         "$ref": "#/definitions/ReviewScopeRequest"
       },
+      "segmentPage": {
+        "$ref": "#/definitions/SegmentPageRequest"
+      },
+      "segmentScope": {
+        "$ref": "#/definitions/SegmentScopeRequest"
+      },
       "semanticPrepare": {
         "$ref": "#/definitions/AiSemanticReviewPrepareRequest"
       },
@@ -1442,6 +1562,8 @@
       "target",
       "diagnosticLocation",
       "summary",
+      "segmentPage",
+      "segmentScope",
       "neighbor",
       "scope",
       "history",
@@ -5529,6 +5651,143 @@
         ],
         "type": "object"
       },
+      "SegmentPage": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "$ref": "#/definitions/SegmentQuery"
+          },
+          "queryFingerprint": {
+            "type": "string"
+          },
+          "readVersion": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/SegmentRow"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "projectId",
+          "locale",
+          "query",
+          "sourceSnapshotId",
+          "scopeId",
+          "queryFingerprint",
+          "readVersion",
+          "epoch",
+          "sequence",
+          "rows",
+          "nextCursor",
+          "total"
+        ],
+        "type": "object"
+      },
+      "SegmentQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "selection": {
+            "$ref": "#/definitions/SegmentSelectionFilter"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "selection"
+        ],
+        "type": "object"
+      },
+      "SegmentRow": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/definitions/ReviewSummary"
+          },
+          "sourceTruncated": {
+            "type": "boolean"
+          },
+          "translationTruncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "sourceTruncated",
+          "translationTruncated"
+        ],
+        "type": "object"
+      },
+      "SegmentScopeCapture": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "$ref": "#/definitions/ReviewScopeCapture"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "queryFingerprint": {
+            "type": "string"
+          },
+          "readVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "queryFingerprint",
+          "readVersion",
+          "capture"
+        ],
+        "type": "object"
+      },
+      "SegmentSelectionFilter": {
+        "enum": [
+          "all",
+          "selected",
+          "unselected"
+        ],
+        "type": "string"
+      },
       "SelectedSourceContext": {
         "additionalProperties": false,
         "properties": {
@@ -7126,6 +7385,12 @@
       "scope": {
         "$ref": "#/definitions/ReviewScopeCapture"
       },
+      "segmentPage": {
+        "$ref": "#/definitions/SegmentPage"
+      },
+      "segmentScope": {
+        "$ref": "#/definitions/SegmentScopeCapture"
+      },
       "semanticPrepare": {
         "$ref": "#/definitions/AiSemanticReviewPrepared"
       },
@@ -7177,6 +7442,8 @@
       "target",
       "diagnosticLocation",
       "summary",
+      "segmentPage",
+      "segmentScope",
       "neighbor",
       "scope",
       "history",

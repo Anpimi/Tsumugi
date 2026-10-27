@@ -18,6 +18,7 @@ export interface WorkspaceView {
   dockOpen: boolean;
   dockSize: number | null;
   afterOrdinal: number;
+  cursor: string | null;
   pinned: boolean;
 }
 
@@ -65,6 +66,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     dockOpen: input.dockOpen ?? true,
     dockSize: input.dockSize ?? null,
     afterOrdinal: input.afterOrdinal ?? 0,
+    cursor: input.cursor ?? null,
     pinned: input.pinned ?? false,
   };
 }

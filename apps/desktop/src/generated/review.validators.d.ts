@@ -18,6 +18,8 @@ export declare function validateRequestNeighbor(value: unknown): value is Reques
 export declare function validateRequestPage(value: unknown): value is Requests["page"];
 export declare function validateRequestPrepareCheck(value: unknown): value is Requests["prepareCheck"];
 export declare function validateRequestScope(value: unknown): value is Requests["scope"];
+export declare function validateRequestSegmentPage(value: unknown): value is Requests["segmentPage"];
+export declare function validateRequestSegmentScope(value: unknown): value is Requests["segmentScope"];
 export declare function validateRequestSemanticPrepare(value: unknown): value is Requests["semanticPrepare"];
 export declare function validateRequestSemanticRead(value: unknown): value is Requests["semanticRead"];
 export declare function validateRequestSemanticStart(value: unknown): value is Requests["semanticStart"];
@@ -45,6 +47,8 @@ export declare function validateResponseNeighbor(value: unknown): value is Respo
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponsePrepareCheck(value: unknown): value is Responses["prepareCheck"];
 export declare function validateResponseScope(value: unknown): value is Responses["scope"];
+export declare function validateResponseSegmentPage(value: unknown): value is Responses["segmentPage"];
+export declare function validateResponseSegmentScope(value: unknown): value is Responses["segmentScope"];
 export declare function validateResponseSemanticPrepare(value: unknown): value is Responses["semanticPrepare"];
 export declare function validateResponseSemanticRead(value: unknown): value is Responses["semanticRead"];
 export declare function validateResponseSemanticStart(value: unknown): value is Responses["semanticStart"];

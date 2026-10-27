@@ -56,6 +56,23 @@ mod contracts {
         round_trip!("responses", "work", WorkPage);
         round_trip!("responses", "eligibility", Eligibility);
         round_trip!("responses", "editor", ReviewEditorSnapshot);
+        let segment_fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/segmentCommands.contract.json"
+        ))
+        .unwrap();
+        fn segment_round_trip<T: serde::de::DeserializeOwned + Serialize>(value: &serde_json::Value) {
+            assert_eq!(serde_json::to_value(serde_json::from_value::<T>(value.clone()).unwrap()).unwrap(), *value);
+        }
+        segment_round_trip::<SegmentPageRequest>(&segment_fixture["requests"]["segmentPage"]);
+        segment_round_trip::<SegmentScopeRequest>(&segment_fixture["requests"]["segmentScope"]);
+        segment_round_trip::<SegmentPage>(&segment_fixture["responses"]["segmentPage"]);
+        segment_round_trip::<SegmentScopeCapture>(&segment_fixture["responses"]["segmentScope"]);
+        let mut unknown_filter = segment_fixture["requests"]["segmentPage"].clone();
+        unknown_filter["query"]["selection"] = serde_json::json!("approved");
+        assert!(serde_json::from_value::<SegmentPageRequest>(unknown_filter).is_err());
+        let mut invalid_cursor = segment_fixture["requests"]["segmentPage"].clone();
+        invalid_cursor["cursor"] = serde_json::json!("row-offset-50");
+        assert!(serde_json::from_value::<SegmentPageRequest>(invalid_cursor).is_err());
         let mut summary = fixture["responses"]["summary"].clone();
         summary["rows"][0]["currentCheck"]["hasIncomplete"] = serde_json::json!(true);
         let core: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summary.clone()).unwrap();
@@ -105,7 +122,8 @@ mod contracts {
 use tsumugi_core::{
     CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewDiagnosticLocation,
     ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
-    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
+    ReviewTarget, ReviewWrite, SegmentPage, SegmentQuery, SegmentScopeCapture, Waiver, WaiverWrite,
+    WorkPage,
 };
 
 
@@ -137,6 +155,20 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Revi
     scope_id: Option<ExecutionId>,
     after_ordinal: u32,
     limit: u32
+});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SegmentPageRequest {
+    locale: String,
+    query: SegmentQuery,
+    scope_id: Option<ExecutionId>,
+    cursor: Option<ExecutionId>,
+    limit: u32
+});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SegmentScopeRequest {
+    locale: String,
+    scope_id: ExecutionId,
+    query_fingerprint: String,
+    read_version: String,
+    excluded: Vec<ExecutionId>
 });
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -209,6 +241,70 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Elig
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
     let result = map_execution(error, stage);
     result
+}
+
+#[tauri::command]
+pub async fn read_segment_page(
+    state: State<'_, AppState>,
+    request: SegmentPageRequest,
+) -> Result<SegmentPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_segment_page",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .read_segment_page(
+                    request.project_id,
+                    &request.locale,
+                    &request.query,
+                    request.scope_id,
+                    request.cursor,
+                    request.limit,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn capture_segment_scope(
+    state: State<'_, AppState>,
+    request: SegmentScopeRequest,
+) -> Result<SegmentScopeCapture, CommandError> {
+    state
+        .sessions
+        .run(
+            "capture_segment_scope",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .capture_segment_scope(
+                    request.project_id,
+                    &request.locale,
+                    request.scope_id,
+                    &request.query_fingerprint,
+                    &request.read_version,
+                    &request.excluded,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]

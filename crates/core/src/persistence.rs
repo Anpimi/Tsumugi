@@ -104,6 +104,7 @@ pub use review::{
     ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewRepairStatus,
     ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,
     ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
+    SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
 };
 pub use translation::{
     ArenaMergeActionRead, CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,

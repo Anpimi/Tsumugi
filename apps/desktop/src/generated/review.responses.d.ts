@@ -124,6 +124,7 @@ export type ReviewCheckerView =
       plugin: PluginTextReviewView;
     };
 export type UnsignedDecimal = string;
+export type SegmentSelectionFilter = "all" | "selected" | "unselected";
 /**
  * Pinned local decisions are separate from raw SDK facts and the provider projection.
  */
@@ -289,6 +290,8 @@ export interface Responses {
   page: ReviewPage;
   prepareCheck: ReviewCheckPreparation;
   scope: ReviewScopeCapture;
+  segmentPage: SegmentPage;
+  segmentScope: SegmentScopeCapture;
   semanticPrepare: AiSemanticReviewPrepared;
   semanticRead: AiSemanticReviewLookup;
   semanticStart: ExecutionId;
@@ -981,6 +984,61 @@ export interface ReviewScopeUnit {
   expectedDecisionId: ExecutionId | null;
   unitId: ExecutionId;
 }
+export interface SegmentPage {
+  epoch: ExecutionId;
+  locale: string;
+  nextCursor: ExecutionId | null;
+  projectId: ExecutionId;
+  query: SegmentQuery;
+  queryFingerprint: string;
+  readVersion: string;
+  rows: SegmentRow[];
+  scopeId: ExecutionId;
+  sequence: Revision;
+  sourceSnapshotId: ExecutionId;
+  total: number;
+}
+export interface SegmentQuery {
+  selection: SegmentSelectionFilter;
+  text: string;
+}
+export interface SegmentRow {
+  content: ReviewSummary;
+  sourceTruncated: boolean;
+  translationTruncated: boolean;
+}
+export interface ReviewSummary {
+  basis: string;
+  currentCheck: ReviewSummaryCheck | null;
+  currentDecision: ReviewSummaryDecision | null;
+  locale: string;
+  nativeKey: string;
+  revisionId: ExecutionId | null;
+  selectionId: ExecutionId | null;
+  sourcePreview: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  translationPreview: string | null;
+  unitId: ExecutionId;
+}
+export interface ReviewSummaryCheck {
+  basis: string;
+  hasFindings: boolean;
+  hasIncomplete: boolean;
+  outcome: ReviewCheckOutcome;
+  runId: ExecutionId;
+}
+export interface ReviewSummaryDecision {
+  basis: string;
+  decisionId: ExecutionId;
+  kind: ReviewDecisionKind;
+}
+export interface SegmentScopeCapture {
+  capture: ReviewScopeCapture;
+  projectId: ExecutionId;
+  queryFingerprint: string;
+  readVersion: string;
+}
 export interface AiSemanticReviewPrepared {
   attemptId: ExecutionId;
   preview: AiSemanticReviewPreviewView;
@@ -1309,32 +1367,6 @@ export interface ReviewSummaryPage {
   scopeId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   total: number;
-}
-export interface ReviewSummary {
-  basis: string;
-  currentCheck: ReviewSummaryCheck | null;
-  currentDecision: ReviewSummaryDecision | null;
-  locale: string;
-  nativeKey: string;
-  revisionId: ExecutionId | null;
-  selectionId: ExecutionId | null;
-  sourcePreview: string;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  translationPreview: string | null;
-  unitId: ExecutionId;
-}
-export interface ReviewSummaryCheck {
-  basis: string;
-  hasFindings: boolean;
-  hasIncomplete: boolean;
-  outcome: ReviewCheckOutcome;
-  runId: ExecutionId;
-}
-export interface ReviewSummaryDecision {
-  basis: string;
-  decisionId: ExecutionId;
-  kind: ReviewDecisionKind;
 }
 export interface ReviewWaiverActionRead {
   receipt: Waiver;

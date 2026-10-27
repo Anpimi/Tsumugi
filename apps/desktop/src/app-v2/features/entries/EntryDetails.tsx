@@ -18,8 +18,8 @@ export default function EntryDetails({ unitId, locale, disabled }: { unitId: str
   const target = query.data.target;
   const decision = target.currentDecision;
   const check = target.currentCheck;
-  const review = !decision ? t("notReviewed") : decision.basis !== target.basis ? t("needsReview") : decision.kind === "approve" ? t("approved") : t("changesRequested");
-  const checkStatus = !check ? t("notChecked") : check.basis !== target.basis ? t("checkOutdated") : t(`checkOutcome.${check.outcome}`);
+  const review = !decision ? t("noCurrentReview") : decision.basis !== target.basis ? t("needsReview") : decision.kind === "approve" ? t("approved") : t("changesRequested");
+  const checkStatus = !check ? t("noCurrentCheck") : check.basis !== target.basis ? t("checkOutdated") : t(`checkOutcome.${check.outcome}`);
   return <div className={styles.details}>
     <h2>{t("detail")}</h2><span className={styles.key}>{target.nativeKey}</span>
     <dl><div><dt>{t("selectedTranslation")}</dt><dd>{target.selectionId === null ? t("noTranslation") : t("selected")}</dd></div>

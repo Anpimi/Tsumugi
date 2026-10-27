@@ -2,7 +2,7 @@
 
 Create a new `createWorkspaceStore({ initialLocale })` for each opened project session. A view contains only display choices: its language, submitted query, unfinished search input, row selection, scroll position, page position, focused row and right panel. Project reads, editable translation drafts, pending writes and grants stay with their existing owners.
 
-`query` is the submitted search. `searchInput` keeps unfinished typing when switching tabs. `scroll` is `{ top, left }`, `selection` is `string[]`, `focus` is a row ID or `null`, `dock` is `"agent" | "details"`, and `afterOrdinal` is the page position. Two tabs can show the same entity while keeping these choices separate. They must still share the same entity draft and project reads.
+`query` is the submitted search. `searchInput` keeps unfinished typing when switching tabs. `scroll` is `{ top, left }`, `selection` is `string[]`, `focus` is a row ID or `null`, `dock` is `"agent" | "details"`, and `afterOrdinal` is the displayed row offset. `cursor` keeps the opaque page token; it is never serialized in the address or interpreted as a row ID. Two tabs can show the same entity while keeping these choices separate. They must still share the same entity draft and project reads.
 
 ## Connect the router
 

@@ -48,6 +48,7 @@ pub(super) use views::ReadScopes;
 pub use views::{
     ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture,
     ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
 };
 
 // A selected translation may predate the captured source. These associations

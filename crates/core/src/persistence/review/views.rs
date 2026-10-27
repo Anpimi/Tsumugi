@@ -1,6 +1,8 @@
 //! Session-local read scopes fix membership and order without persisting business data.
 use super::*;
 use std::{cell::RefCell, collections::VecDeque};
+mod segments;
+pub use segments::{SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter};
 
 const MAX_READ_SCOPES: usize = 8;
 const PREVIEW_CHARS: usize = 256;
@@ -13,6 +15,7 @@ struct ReadScope {
     locale: String,
     query: String,
     units: Vec<(ExecutionId, u32)>,
+    segment: Option<segments::SegmentReadContext>,
 }
 
 #[derive(Debug, Default)]
@@ -300,6 +303,9 @@ impl ProjectStore {
                 "review-scope-source-changed",
             ));
         }
+        if let Some(context) = &scope.segment {
+            segments::check_read_basis(self, connection, context)?;
+        }
         Ok(scope)
     }
 
@@ -330,7 +336,7 @@ impl ProjectStore {
                 .prepare(
                     "SELECT o.unit_id,MIN(o.ordinal) FROM source_occurrences o
                  JOIN source_units u ON u.unit_id=o.unit_id
-                 WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001",
+                 WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal),o.unit_id LIMIT 10001",
                 )
                 .map_err(sql)?;
             statement
@@ -354,7 +360,7 @@ impl ProjectStore {
                AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t
                                WHERE t.unit_id=o.unit_id AND t.locale=?2)
              LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
-             WHERE o.snapshot_id=?1 ORDER BY o.ordinal LIMIT 10001",
+             WHERE o.snapshot_id=?1 ORDER BY o.ordinal,o.unit_id LIMIT 10001",
                 )
                 .map_err(sql)?;
             let rows = statement
@@ -401,6 +407,7 @@ impl ProjectStore {
             locale: locale.to_owned(),
             query: query.to_owned(),
             units,
+            segment: None,
         };
         let mut retained = self.review_scopes.0.borrow_mut();
         if retained.len() == MAX_READ_SCOPES {

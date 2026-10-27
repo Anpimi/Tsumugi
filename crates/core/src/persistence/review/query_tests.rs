@@ -762,3 +762,442 @@ fn multi_statement_reads_hold_a_snapshot_until_the_external_writer_can_commit() 
         Some("After")
     );
 }
+
+fn segment_query(text: &str, selection: SegmentSelectionFilter) -> SegmentQuery {
+    SegmentQuery {
+        text: text.into(),
+        selection,
+    }
+}
+
+#[test]
+fn segment_pages_share_one_basis_and_freeze_the_complete_filter() {
+    let (_directory, mut store, project, _) = fixture();
+    let source = (0..2000)
+        .map(|index| (format!("entry-{index:04}"), format!("Source {index} 世界")))
+        .collect::<BTreeMap<_, _>>();
+    adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
+    let query = segment_query("", SegmentSelectionFilter::All);
+    let (legacy, old_sql, old_time) = measure(&store, || {
+        store
+            .review_summary_page(project, "zh-CN", 0, 50, "", None)
+            .unwrap()
+    });
+    let (first, sql, elapsed) = measure(&store, || {
+        store
+            .read_segment_page(project, "zh-CN", &query, None, None, 50)
+            .unwrap()
+    });
+    assert_eq!(first.total, 2000);
+    assert_eq!(
+        first
+            .rows
+            .iter()
+            .map(|row| &row.content)
+            .collect::<Vec<_>>(),
+        legacy.rows.iter().collect::<Vec<_>>()
+    );
+    assert!(
+        sql.len() <= old_sql.len() + 3,
+        "per-row reads returned: {} vs {}",
+        sql.len(),
+        old_sql.len()
+    );
+    println!(
+        "segment data=2000 page=50 statements={} bytes={} elapsed_us={} legacy_statements={} legacy_bytes={} legacy_elapsed_us={}",
+        sql.len(),
+        serde_json::to_vec(&first).unwrap().len(),
+        elapsed.as_micros(),
+        old_sql.len(),
+        serde_json::to_vec(&legacy).unwrap().len(),
+        old_time.as_micros()
+    );
+    let capture = store
+        .capture_segment_scope(
+            project,
+            "zh-CN",
+            first.scope_id,
+            &first.query_fingerprint,
+            &first.read_version,
+            &[first.rows[0].content.unit_id],
+        )
+        .unwrap();
+    assert_eq!(capture.capture.units.len(), 1999);
+    let mut ids = first
+        .rows
+        .iter()
+        .map(|row| row.content.unit_id)
+        .collect::<Vec<_>>();
+    let mut cursor = first.next_cursor;
+    while let Some(next) = cursor {
+        let page = store
+            .read_segment_page(
+                project,
+                "zh-CN",
+                &query,
+                Some(first.scope_id),
+                Some(next),
+                100,
+            )
+            .unwrap();
+        assert_eq!(page.read_version, first.read_version);
+        assert_eq!(page.query_fingerprint, first.query_fingerprint);
+        assert!(serde_json::to_vec(&page).unwrap().len() <= crate::content::MAX_CONTENT_PAGE_BYTES);
+        ids.extend(page.rows.iter().map(|row| row.content.unit_id));
+        cursor = page.next_cursor;
+    }
+    assert_eq!(ids.len(), 2000);
+    assert_eq!(ids.iter().collect::<BTreeSet<_>>().len(), 2000);
+    assert_eq!(
+        capture
+            .capture
+            .units
+            .iter()
+            .map(|row| row.unit_id)
+            .collect::<Vec<_>>(),
+        ids[1..]
+    );
+}
+
+#[test]
+fn segment_selection_search_and_cursor_correlation_keep_equal_text_identities_separate() {
+    let (_directory, mut store, project, _) = fixture();
+    adopt_source(
+        &mut store,
+        br#"{"first":"same","second":"same","third":"different"}"#,
+    );
+    let query = segment_query("same", SegmentSelectionFilter::All);
+    let first = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    let second = store
+        .read_segment_page(
+            project,
+            "zh-CN",
+            &query,
+            Some(first.scope_id),
+            first.next_cursor,
+            1,
+        )
+        .unwrap();
+    assert_eq!(first.total, 2);
+    assert_eq!(second.total, 2);
+    assert_ne!(
+        first.rows[0].content.unit_id,
+        second.rows[0].content.unit_id
+    );
+    assert_eq!(
+        first.rows[0].content.source_preview,
+        second.rows[0].content.source_preview
+    );
+    assert!(second.next_cursor.is_none());
+    for (locale, changed) in [
+        ("fr-FR", query.clone()),
+        ("zh-CN", segment_query("other", SegmentSelectionFilter::All)),
+        (
+            "zh-CN",
+            segment_query("same", SegmentSelectionFilter::Selected),
+        ),
+    ] {
+        assert!(
+            store
+                .read_segment_page(
+                    project,
+                    locale,
+                    &changed,
+                    Some(first.scope_id),
+                    first.next_cursor,
+                    1
+                )
+                .is_err()
+        );
+    }
+    assert!(
+        store
+            .read_segment_page(
+                ExecutionId::new(),
+                "zh-CN",
+                &query,
+                Some(first.scope_id),
+                None,
+                1
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .read_segment_page(
+                project,
+                "zh-CN",
+                &query,
+                Some(first.scope_id),
+                Some(ExecutionId::new()),
+                1
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .capture_segment_scope(
+                project,
+                "zh-CN",
+                first.scope_id,
+                "wrong",
+                &first.read_version,
+                &[]
+            )
+            .is_err()
+    );
+    assert!(
+        store
+            .capture_segment_scope(
+                project,
+                "zh-CN",
+                first.scope_id,
+                &first.query_fingerprint,
+                "wrong",
+                &[]
+            )
+            .is_err()
+    );
+    translate(
+        &mut store,
+        project,
+        first.rows[0].content.unit_id,
+        "zh-CN",
+        "",
+    );
+    let selected = store
+        .read_segment_page(
+            project,
+            "zh-CN",
+            &segment_query("", SegmentSelectionFilter::Selected),
+            None,
+            None,
+            50,
+        )
+        .unwrap();
+    let unselected = store
+        .read_segment_page(
+            project,
+            "zh-CN",
+            &segment_query("", SegmentSelectionFilter::Unselected),
+            None,
+            None,
+            50,
+        )
+        .unwrap();
+    assert_eq!(selected.total, 1);
+    assert_eq!(
+        selected.rows[0].content.translation_preview.as_deref(),
+        Some("")
+    );
+    assert_eq!(unselected.total, 2);
+    assert!(
+        unselected
+            .rows
+            .iter()
+            .all(|row| row.content.selection_id.is_none())
+    );
+}
+
+#[test]
+fn segment_committed_fact_changes_expire_pages_and_captures_without_replacing_membership() {
+    let (_directory, mut store, project, units) = fixture();
+    let query = segment_query("", SegmentSelectionFilter::All);
+    let assert_expired = |store: &ProjectStore, page: &SegmentPage| {
+        assert_eq!(
+            store
+                .read_segment_page(
+                    project,
+                    "zh-CN",
+                    &query,
+                    Some(page.scope_id),
+                    page.next_cursor,
+                    1
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+        assert_eq!(
+            store
+                .capture_segment_scope(
+                    project,
+                    "zh-CN",
+                    page.scope_id,
+                    &page.query_fingerprint,
+                    &page.read_version,
+                    &[]
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+        // The old capture endpoint cannot bypass the strict Segment basis either.
+        assert!(
+            store
+                .review_scope_capture(project, "zh-CN", page.scope_id, &[])
+                .is_err()
+        );
+    };
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    translate(&mut store, project, units[0], "zh-CN", "New translation");
+    assert_expired(&store, &page);
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    store
+        .save_term(&crate::SaveTerm {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Hello".into(),
+            aliases: vec![],
+            target: "你好".into(),
+            protected: false,
+            scope_unit_id: None,
+            expected_revision_id: None,
+            reason: "Term update".into(),
+        })
+        .unwrap();
+    assert_expired(&store, &page);
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    let target = store.review_target(project, units[0], "zh-CN").unwrap();
+    store
+        .write_review(&ReviewWrite {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: units[0],
+            locale: "zh-CN".into(),
+            expected_basis: target.basis,
+            expected_decision_id: None,
+            actor: "Reviewer".into(),
+            kind: ReviewDecisionKind::Approve,
+            reason: String::new(),
+        })
+        .unwrap();
+    assert_expired(&store, &page);
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    adopt_source(&mut store, br#"{"new":"New source"}"#);
+    assert_expired(&store, &page);
+    assert_eq!(
+        store
+            .read_segment_page(project, "zh-CN", &query, None, None, 1)
+            .unwrap()
+            .total,
+        1
+    );
+}
+
+#[test]
+fn segment_external_commits_and_scope_eviction_cannot_reuse_old_cursors() {
+    let (directory, store, project, _) = fixture();
+    let query = segment_query("", SegmentSelectionFilter::All);
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    let external =
+        rusqlite::Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    external
+        .execute(
+            "UPDATE project_metadata SET display_name='External test change' WHERE row_id=1",
+            [],
+        )
+        .unwrap();
+    assert!(
+        store
+            .read_segment_page(
+                project,
+                "zh-CN",
+                &query,
+                Some(page.scope_id),
+                page.next_cursor,
+                1
+            )
+            .is_err()
+    );
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 1)
+        .unwrap();
+    for _ in 0..8 {
+        store
+            .read_segment_page(project, "zh-CN", &query, None, None, 1)
+            .unwrap();
+    }
+    assert!(
+        store
+            .read_segment_page(
+                project,
+                "zh-CN",
+                &query,
+                Some(page.scope_id),
+                page.next_cursor,
+                1
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn segment_unicode_previews_and_encoded_pages_are_bounded() {
+    let (_directory, mut store, project, _) = fixture();
+    let long = "界😀e\u{301}".repeat(1000);
+    let source = BTreeMap::from([("long", long.as_str()), ("short", "short")]);
+    adopt_source(&mut store, &serde_json::to_vec(&source).unwrap());
+    let query = segment_query("", SegmentSelectionFilter::All);
+    let page = store
+        .read_segment_page(project, "zh-CN", &query, None, None, 100)
+        .unwrap();
+    assert!(page.rows[0].source_truncated);
+    assert_eq!(page.rows[0].content.source_preview.chars().count(), 256);
+    assert!(!page.rows[1].source_truncated);
+    assert!(serde_json::to_vec(&page).unwrap().len() <= crate::content::MAX_CONTENT_PAGE_BYTES);
+    for limit in [0, 101] {
+        assert!(
+            store
+                .read_segment_page(project, "zh-CN", &query, None, None, limit)
+                .is_err()
+        );
+    }
+    assert!(
+        store
+            .read_segment_page(
+                project,
+                "zh-CN",
+                &segment_query(&"界".repeat(86), SegmentSelectionFilter::All),
+                None,
+                None,
+                1
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn segment_byte_limited_pages_continue_at_the_first_unreturned_row() {
+    let (_directory, mut store, project, _) = fixture();
+    let text = "😀".repeat(256);
+    let source = (0..100).map(|index| (format!("entry-{index:03}-{}", "k".repeat(244)), text.clone())).collect::<BTreeMap<_, _>>();
+    let bytes = serde_json::to_vec(&source).unwrap();
+    assert!(bytes.len() <= crate::content::MAX_SOURCE_BYTES);
+    adopt_source(&mut store, &bytes);
+    let all = store.review_summary_page(project, "zh-CN", 0, 100, "", None).unwrap();
+    for row in &all.rows { translate(&mut store, project, row.unit_id, "zh-CN", &text); }
+    let query = segment_query("", SegmentSelectionFilter::All);
+    let first = store.read_segment_page(project, "zh-CN", &query, None, None, 100).unwrap();
+    assert!(first.rows.len() < 100, "fixture must reach the byte limit before the row limit");
+    assert!(serde_json::to_vec(&first).unwrap().len() <= crate::content::MAX_CONTENT_PAGE_BYTES);
+    let second = store.read_segment_page(project, "zh-CN", &query, Some(first.scope_id), first.next_cursor, 100).unwrap();
+    assert!(second.next_cursor.is_none());
+    let ids = first.rows.iter().chain(&second.rows).map(|row| row.content.unit_id).collect::<Vec<_>>();
+    assert_eq!(ids, all.rows.iter().map(|row| row.unit_id).collect::<Vec<_>>());
+    assert_eq!(second.read_version, first.read_version);
+}

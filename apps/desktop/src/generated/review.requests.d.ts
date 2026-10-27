@@ -15,6 +15,7 @@ export type CheckImplementation =
 export type TextReviewField = "source" | "translation";
 export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type ReviewFindingDisposition = "rejected" | "restored" | "repair-requested";
+export type SegmentSelectionFilter = "all" | "selected" | "unselected";
 export type AiSemanticReviewRule = "meaning" | "style";
 
 export interface Requests {
@@ -35,6 +36,8 @@ export interface Requests {
   page: ReviewPageRequest;
   prepareCheck: ReviewCheckRequest;
   scope: ReviewScopeRequest;
+  segmentPage: SegmentPageRequest;
+  segmentScope: SegmentScopeRequest;
   semanticPrepare: AiSemanticReviewPrepareRequest;
   semanticRead: AiSemanticReviewReadRequest;
   semanticStart: AiSemanticReviewStartRequest;
@@ -244,6 +247,28 @@ export interface ReviewScopeRequest {
   excluded: ExecutionId[];
   locale: string;
   projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+}
+export interface SegmentPageRequest {
+  cursor?: ExecutionId | null;
+  limit: number;
+  locale: string;
+  projectId: ExecutionId;
+  query: SegmentQuery;
+  scopeId?: ExecutionId | null;
+  sessionToken: string;
+}
+export interface SegmentQuery {
+  selection: SegmentSelectionFilter;
+  text: string;
+}
+export interface SegmentScopeRequest {
+  excluded: ExecutionId[];
+  locale: string;
+  projectId: ExecutionId;
+  queryFingerprint: string;
+  readVersion: string;
   scopeId: ExecutionId;
   sessionToken: string;
 }

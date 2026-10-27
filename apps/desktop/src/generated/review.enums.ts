@@ -17,6 +17,7 @@ export const ReviewRunPurposeValues = ["qa","ai-semantic"] as const;
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
+export const SegmentSelectionFilterValues = ["all","selected","unselected"] as const;
 export const SourceContextDirectionValues = ["before","after"] as const;
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const SourceContextOmissionReasonValues = ["not-selected","byte-budget","item-limit"] as const;

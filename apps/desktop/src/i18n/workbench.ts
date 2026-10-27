@@ -27,6 +27,10 @@ export const workbenchEn = {
   searchTooLong: "This search is too long. Use a shorter phrase.",
   editMenu: "Edit",
   continueClosing: "Keep waiting and close",
+  entryFilter: "Filter entries", selectedEntries: "With a selected translation", unselectedEntries: "Without a selected translation",
+  filterMissing: "This filter is unavailable", chooseFilter: "Choose another filter above.",
+  viewChanged: "Project content changed or this view expired. Refresh it to read the current content.", textShortened: "Preview shortened. Open details for the complete text.",
+  noCurrentReview: "No current review", noCurrentCheck: "No current checks",
 } as const;
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
@@ -45,4 +49,8 @@ export const workbenchZh: Messages = {
   searchTooLong: "查找内容太长，请缩短后再试。",
   editMenu: "编辑",
   continueClosing: "继续等待并关闭",
+  entryFilter: "筛选条目", selectedEntries: "已选用译文", unselectedEntries: "尚未选用译文",
+  filterMissing: "这个筛选暂不可用", chooseFilter: "请在上方选择另一个筛选。",
+  viewChanged: "项目内容已变化，或此视图已过期。请刷新后继续查看。", textShortened: "这里只显示部分文字，详情中可以查看全文。",
+  noCurrentReview: "没有当前有效的审阅记录", noCurrentCheck: "没有当前有效的检查记录",
 };

@@ -2,7 +2,7 @@
 
 ## Desktop workspace
 
-The new desktop entry reads existing project folders through the application's normal Core and Host commands. It supports entry views, project-wide text search, language selection, and details. Each view keeps its own unsubmitted search and position; views share the project's read cache. Project switching and window closing go through the existing session exit checks.
+The new desktop entry reads existing project folders through the application's normal Core and Host commands. It supports entry views, project-wide text search, language selection, filters for entries with or without a selected translation, and details. An explicitly selected empty translation belongs to the selected filter. Each view keeps its own unsubmitted search and position; views share the project's read cache. Project switching and window closing go through the existing session exit checks.
 
 ```sh
 pnpm --dir apps/desktop tauri:workbench
@@ -13,6 +13,8 @@ This entry uses a separate application identifier and local preferences. It does
 ```sh
 pnpm --dir apps/desktop build:workbench
 ```
+
+Pages use opaque cursors tied to a fixed query and read basis. A content change or expired scope requires an explicit refresh; paging never silently captures a different result set. Each page response contains at most 100 rows and 256 KiB of encoded JSON. Text previews contain at most 256 Unicode scalars and report truncation; details keep the complete text. The Core reuses its current review projection and scope capture. Candidate, protection, applicability, and terminology summaries are not part of this first read contract yet.
 
 ## Visual samples
 

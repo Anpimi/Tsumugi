@@ -679,6 +679,158 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
 
 #[test]
 #[cfg(any(windows, target_os = "macos"))]
+fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("mod");
+    std::fs::create_dir_all(source.join("i18n")).unwrap();
+    std::fs::write(source.join("manifest.json"), br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#).unwrap();
+    std::fs::write(source.join("i18n/default.json"), br#"{"first":"same","second":"same","third":"same"}"#).unwrap();
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .build()
+        .unwrap();
+    let project = call(&view, "create_project", json!({
+        "destination":temp.path().join("project"), "displayName":"Segment reads",
+        "sourceLocale":"en", "targetLocales":["zh-CN"]
+    })).unwrap();
+    let context = json!({"sessionToken":project["sessionToken"], "projectId":project["metadata"]["projectId"]});
+    let selection = ExecutionId::new();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_mut().unwrap().execution_parts().unwrap().0.source.selection = Some((
+            selection,
+            Arc::new(capture::Selection::authorize(source).unwrap()),
+        ));
+    });
+    let attempt = ExecutionId::new();
+    let mut start = context.clone();
+    start["selectionId"] = json!(selection);
+    start["sourceLanguage"] = json!("en");
+    start["attemptId"] = json!(attempt);
+    call(&view, "start_source_import", start).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = loop {
+        app.state::<AppState>().sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            host.tick(store).unwrap();
+        });
+        let mut request = context.clone();
+        request["attemptId"] = json!(attempt);
+        request["offset"] = json!(0);
+        request["limit"] = json!(1);
+        let detail = call(&view, "read_execution_attempt", request).unwrap();
+        if detail["items"][0]["status"]["validation"] == "valid" {
+            break detail["items"][0]["resultId"].clone();
+        }
+        assert!(Instant::now() < deadline, "{detail}");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    let mut preview = context.clone();
+    preview["attemptId"] = json!(attempt);
+    preview["resultId"] = result.clone();
+    preview["after"] = json!(0);
+    preview["limit"] = json!(10);
+    let preview = call(&view, "read_source_preview", preview).unwrap();
+    let action = ExecutionId::new();
+    let mut prepare = context.clone();
+    prepare["attemptId"] = json!(attempt);
+    prepare["resultId"] = result;
+    prepare["actionId"] = json!(action);
+    prepare["confirmation"] = preview["confirmation"].clone();
+    call(&view, "prepare_source_adoption", prepare).unwrap();
+    let mut adopt = context.clone();
+    adopt["actionId"] = json!(action);
+    call(&view, "adopt_execution", adopt).unwrap();
+
+    let mut request = context.clone();
+    request["locale"] = json!("zh-CN");
+    request["query"] = json!({"text":"same", "selection":"all"});
+    request["scopeId"] = Value::Null;
+    request["cursor"] = Value::Null;
+    request["limit"] = json!(1);
+    let first = call(&view, "read_segment_page", request.clone()).unwrap();
+    let typed: tsumugi_core::SegmentPage = serde_json::from_value(first.clone()).unwrap();
+    assert_eq!(typed.total, 3);
+    assert_eq!(typed.rows.len(), 1);
+    assert_eq!(first["projectId"], context["projectId"]);
+    assert_eq!(first["query"], request["query"]);
+    assert!(!first["nextCursor"].is_null());
+    let mut continuation = request.clone();
+    continuation["scopeId"] = first["scopeId"].clone();
+    continuation["cursor"] = first["nextCursor"].clone();
+    let second = call(&view, "read_segment_page", continuation.clone()).unwrap();
+    continuation["cursor"] = second["nextCursor"].clone();
+    let third = call(&view, "read_segment_page", continuation.clone()).unwrap();
+    let pages = [&first, &second, &third];
+    let units: std::collections::BTreeSet<_> = pages.iter()
+        .map(|page| page["rows"][0]["content"]["unitId"].as_str().unwrap())
+        .collect();
+    assert_eq!(units.len(), 3, "equal source text must retain distinct identities");
+    for page in pages {
+        for field in ["scopeId", "sourceSnapshotId", "queryFingerprint", "readVersion", "epoch", "sequence"] {
+            assert_eq!(page[field], first[field], "{field}");
+        }
+        assert_eq!(page["rows"][0]["content"]["sourcePreview"], "same");
+    }
+    assert!(third["nextCursor"].is_null());
+    let mut scope = context.clone();
+    scope["locale"] = request["locale"].clone();
+    scope["scopeId"] = first["scopeId"].clone();
+    scope["queryFingerprint"] = first["queryFingerprint"].clone();
+    scope["readVersion"] = first["readVersion"].clone();
+    scope["excluded"] = json!([]);
+    let frozen = call(&view, "capture_segment_scope", scope.clone()).unwrap();
+    let frozen_typed: tsumugi_core::SegmentScopeCapture = serde_json::from_value(frozen.clone()).unwrap();
+    assert_eq!(frozen_typed.capture.units.len(), 3, "capture includes unseen pages");
+    assert_eq!(frozen["projectId"], context["projectId"]);
+    assert_eq!(frozen["readVersion"], first["readVersion"]);
+    assert_eq!(frozen["queryFingerprint"], first["queryFingerprint"]);
+    let mut excluded = scope.clone();
+    excluded["excluded"] = json!([first["rows"][0]["content"]["unitId"]]);
+    let excluded = call(&view, "capture_segment_scope", excluded).unwrap();
+    assert_eq!(excluded["capture"]["units"].as_array().unwrap().len(), 2);
+    assert!(excluded["capture"]["units"].as_array().unwrap().iter()
+        .all(|unit| unit["unitId"] != first["rows"][0]["content"]["unitId"]));
+    for query in [json!({"text":"different", "selection":"all"}), json!({"text":"same", "selection":"selected"})] {
+        let mut wrong = continuation.clone();
+        wrong["query"] = query;
+        assert!(call(&view, "read_segment_page", wrong).is_err());
+    }
+    for (field, value) in [("projectId", json!(ExecutionId::new())), ("sessionToken", json!("foreign-session"))] {
+        let mut wrong_page = continuation.clone();
+        wrong_page[field] = value.clone();
+        assert_eq!(call(&view, "read_segment_page", wrong_page).unwrap_err()["code"], "session-invalid");
+        let mut wrong_scope = scope.clone();
+        wrong_scope[field] = value;
+        assert_eq!(call(&view, "capture_segment_scope", wrong_scope).unwrap_err()["code"], "session-invalid");
+    }
+    for field in ["queryFingerprint", "readVersion"] {
+        let mut wrong = scope.clone();
+        wrong[field] = json!("unrelated-basis");
+        assert!(call(&view, "capture_segment_scope", wrong).is_err());
+    }
+
+    let row = &first["rows"][0]["content"];
+    let mut save = context.clone();
+    save["actionId"] = json!(ExecutionId::new());
+    save["unitId"] = row["unitId"].clone();
+    save["locale"] = request["locale"].clone();
+    save["sourceRevisionId"] = row["sourceRevisionId"].clone();
+    save["expectedSelectionId"] = Value::Null;
+    save["text"] = json!("Saved translation");
+    call(&view, "save_translation_revision", save).unwrap();
+    assert!(call(&view, "read_segment_page", continuation).is_err());
+    assert!(call(&view, "capture_segment_scope", scope).is_err());
+    assert_eq!(frozen_typed.capture.units.len(), 3, "an earlier captured value remains fixed");
+    request["query"]["selection"] = json!("selected");
+    assert_eq!(call(&view, "read_segment_page", request.clone()).unwrap()["total"], 1);
+    request["query"]["selection"] = json!("unselected");
+    assert_eq!(call(&view, "read_segment_page", request).unwrap()["total"], 2);
+}
+
+#[test]
+#[cfg(any(windows, target_os = "macos"))]
 fn translation_ipc_imports_candidates_edits_and_reopens() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("mod");

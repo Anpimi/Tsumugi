@@ -1,0 +1,92 @@
+{
+  "requests": {
+    "segmentPage": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "sessionToken": "synthetic-review-session",
+      "locale": "zh-CN",
+      "query": {
+        "text": "",
+        "selection": "all"
+      },
+      "scopeId": null,
+      "cursor": null,
+      "limit": 50
+    },
+    "segmentScope": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "sessionToken": "synthetic-review-session",
+      "locale": "zh-CN",
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "queryFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "excluded": []
+    }
+  },
+  "responses": {
+    "segmentPage": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "query": {
+        "text": "",
+        "selection": "all"
+      },
+      "queryFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "epoch": "40000000-0000-4000-8000-000000000020",
+      "sequence": "1",
+      "rows": [
+        {
+          "content": {
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "nativeKey": "wooden-barrel",
+            "sourcePreview": "Wooden barrel",
+            "translationPreview": "木桶 👩🏽‍💻 é",
+            "currentDecision": {
+              "kind": "request-changes",
+              "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "decisionId": "40000000-0000-4000-8000-000000000009"
+            },
+            "locale": "zh-CN",
+            "currentCheck": {
+              "outcome": "completed",
+              "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "hasFindings": true,
+              "hasIncomplete": false,
+              "runId": "40000000-0000-4000-8000-000000000010"
+            },
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "sourceTruncated": false,
+          "translationTruncated": false
+        }
+      ],
+      "nextCursor": null,
+      "total": 1
+    },
+    "segmentScope": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "queryFingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "capture": {
+        "scopeId": "40000000-0000-4000-8000-000000000013",
+        "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "units": [
+          {
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "expectedDecisionId": "40000000-0000-4000-8000-000000000009",
+            "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "query": "",
+        "locale": "zh-CN",
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+      }
+    }
+  }
+}
