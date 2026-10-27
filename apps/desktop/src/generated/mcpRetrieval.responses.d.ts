@@ -123,6 +123,7 @@ export type CommandStage =
   | "plugin-install"
   | "plugin-settings"
   | "model-connections"
+  | "draft-storage"
   | "execution-read"
   | "execution-cancel"
   | "execution-recover"

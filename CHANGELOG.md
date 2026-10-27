@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- A desktop Host journal for unconfirmed translation input, with bounded local storage and recovery reads. The editor recovery flow is not connected yet; see [Local draft journal](docs/local-drafts.md) for storage and recovery limits.
+
 - An opt-in desktop workspace with real project reads, separate entry views, bounded pagination, selection filters, search, entry details, and guarded project switching and window closing. Entries show candidate counts, manual protection, applicable terms, and changes that need review. Pages share one read basis; content changes require a refresh before paging or freezing the filtered scope. Editing and project chat remain in the existing workbench.
 
 - **macOS & Windows desktop workbench**: Native desktop builds for Windows x64 and macOS (Apple Silicon and Intel targets) with English and Simplified Chinese UI, project creation/opening/renaming/closing, recent-project path reconciliation, editable target locales, descriptor-based file authorization, and `Ctrl+S` / `Cmd+S` editor shortcuts.

@@ -10,6 +10,7 @@ mod connections;
 #[cfg(feature = "wire-schema")]
 pub(crate) mod contracts;
 mod dispatch;
+mod drafts;
 mod execution;
 pub(crate) mod mcp;
 mod mcp_retrieval;
@@ -60,6 +61,7 @@ pub enum CommandStage {
     PluginInstall,
     PluginSettings,
     ModelConnections,
+    DraftStorage,
     ExecutionRead,
     ExecutionCancel,
     ExecutionRecover,
@@ -380,6 +382,7 @@ pub struct AppState {
     review_check_cancellations: ReviewCheckRegistry,
     plugins: Arc<plugins::ApplicationPlugins>,
     model_connections: OnceLock<tsumugi_core::model_connections::ModelConnectionStore>,
+    local_drafts: OnceLock<drafts::DraftStore>,
     chatgpt_accounts: Arc<OnceLock<Arc<connections::chatgpt::ChatGptAccounts>>>,
     #[cfg(test)]
     review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
@@ -410,6 +413,7 @@ impl Default for AppState {
             review_check_cancellations: Arc::default(),
             plugins,
             model_connections: OnceLock::new(),
+            local_drafts: OnceLock::new(),
             chatgpt_accounts,
             #[cfg(test)]
             review_compute_probe: Mutex::default(),
@@ -1187,6 +1191,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
             // Connection configuration performs no IO. Its missing-store reads
             // remain empty without creating a database or plugin permission.
             connections::configure(&app.state::<AppState>(), &directory)?;
+            drafts::configure(&app.state::<AppState>(), &directory)?;
             app.state::<AppState>().plugins.configure(directory)?;
         }
         app.state::<AppState>()

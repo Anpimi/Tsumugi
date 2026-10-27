@@ -26,6 +26,26 @@ struct Responses {
     changes: changes::ProjectChanges,
     notification: changes::ChangeNotification,
 }
+
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct DraftRequests {
+    read: drafts::DraftReadRequest,
+    write: drafts::DraftWriteRequest,
+    clear: drafts::DraftClearRequest,
+    list: drafts::DraftListRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct DraftResponses {
+    read: drafts::DraftReadView,
+    written: drafts::DraftHead,
+    cleared: drafts::DraftHead,
+    page: drafts::DraftPage,
+    error: CommandError,
+}
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
@@ -763,6 +783,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
+            "draft": schemas::<DraftRequests, DraftResponses>(),
             "mcp": schemas::<McpRequests, McpResponses>(),
             "mcpRetrieval": schemas::<McpRetrievalRequests, McpRetrievalResponses>(),
             "connections": schemas::<ConnectionRequests, ConnectionResponses>(),

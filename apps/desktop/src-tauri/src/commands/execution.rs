@@ -18,6 +18,8 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
+        super::drafts::read_local_draft,super::drafts::write_local_draft,
+        super::drafts::clear_local_draft,super::drafts::list_local_drafts,
         source::select_source,source::select_webvtt_source,source::read_webvtt_integration,source::preflight_source,source::start_source_import,source::read_source_import_start,
         super::mcp::read_mcp_share_session,super::mcp::prepare_mcp_share,
         super::mcp::authorize_mcp_share,super::mcp::read_mcp_share,super::mcp::revoke_mcp_share,
