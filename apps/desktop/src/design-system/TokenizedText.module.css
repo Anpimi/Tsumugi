@@ -1,0 +1,8 @@
+.text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.text[data-tone="ai"] { color: var(--color-ai-solid); }
+.placeholder,
+.tag { font-family: var(--font-mono); font-size: inherit; color: var(--color-text-secondary); text-decoration: underline; text-decoration-color: var(--color-border-strong); text-underline-offset: var(--space-1); }
+.text[data-tone="ai"] .placeholder,
+.text[data-tone="ai"] .tag { color: inherit; }
+.newline { white-space: pre-wrap; }
+.newline::before { content: ""; display: inline-block; width: var(--space-3); height: var(--space-3); margin-inline: var(--space-1); border-inline-start: var(--border-width) solid var(--color-text-tertiary); border-block-end: var(--border-width) solid var(--color-text-tertiary); vertical-align: middle; }

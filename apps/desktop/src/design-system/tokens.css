@@ -1,0 +1,149 @@
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --color-bg-canvas: #f5f5f3;
+  --color-bg-surface: #ffffff;
+  --color-bg-raised: #ffffff;
+  --color-bg-subtle: #efefec;
+  --color-bg-muted: #e6e6e2;
+  --color-border-subtle: #e6e6e2;
+  --color-border-default: #d6d6d1;
+  --color-border-strong: #8e9097;
+  --color-text-primary: #1c1d1f;
+  --color-text-secondary: #5c5f66;
+  --color-text-tertiary: #6e7077;
+  --color-accent-solid: #3f4fc0;
+  --color-accent-on-solid: #ffffff;
+  --color-accent-text: #3646b0;
+  --color-accent-soft: #edeffc;
+  --color-success: #18794e;
+  --color-warning: #8f5a00;
+  --color-danger: #c0352b;
+  --color-success-soft: #e8f5ee;
+  --color-warning-soft: #fdf3e1;
+  --color-danger-soft: #fcecea;
+  --color-ai-solid: #7a4fc0;
+  --color-ai-soft: #f3eefb;
+  --color-transparent: transparent;
+  --color-overlay: rgb(0 0 0 / 0.32);
+  --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.08);
+  --shadow-dialog: 0 12px 40px rgb(0 0 0 / 0.18);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg-canvas: #131417;
+  --color-bg-surface: #1b1c20;
+  --color-bg-raised: #222328;
+  --color-bg-subtle: #232429;
+  --color-bg-muted: #2b2d33;
+  --color-border-subtle: #26282d;
+  --color-border-default: #34363d;
+  --color-border-strong: #6b6e77;
+  --color-text-primary: #ecedef;
+  --color-text-secondary: #a3a6ad;
+  --color-text-tertiary: #878a92;
+  --color-accent-solid: #8e99f6;
+  --color-accent-on-solid: #101219;
+  --color-accent-text: #aab3ff;
+  --color-accent-soft: #272c4d;
+  --color-success: #4cc38a;
+  --color-warning: #e5a94a;
+  --color-danger: #f07a70;
+  --color-success-soft: rgb(76 195 138 / 0.12);
+  --color-warning-soft: rgb(229 169 74 / 0.12);
+  --color-danger-soft: rgb(240 122 112 / 0.12);
+  --color-ai-solid: #b79cf5;
+  --color-ai-soft: #2e2648;
+}
+
+:root {
+  --font-ui: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --text-xs: calc(11px * var(--font-scale, 1));
+  --text-sm: calc(12px * var(--font-scale, 1));
+  --text-base: calc(13px * var(--font-scale, 1));
+  --text-md: calc(14px * var(--font-scale, 1));
+  --text-editor: calc(var(--editor-font-size, 15px) * var(--font-scale, 1));
+  --text-lg: calc(16px * var(--font-scale, 1));
+  --text-xl: calc(20px * var(--font-scale, 1));
+  --line-xs: calc(16px * var(--font-scale, 1));
+  --line-sm: calc(18px * var(--font-scale, 1));
+  --line-base: calc(20px * var(--font-scale, 1));
+  --line-md: calc(22px * var(--font-scale, 1));
+  --line-editor: calc(var(--editor-line-height, 26px) * var(--font-scale, 1));
+  --line-lg: calc(24px * var(--font-scale, 1));
+  --line-xl: calc(28px * var(--font-scale, 1));
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+  --space-9: 32px;
+  --space-10: 40px;
+  --control-xs: 22px;
+  --control-sm: 26px;
+  --control-md: 30px;
+  --control-lg: 36px;
+  --button-padding-sm: 10px;
+  --button-padding-md: 12px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-round: 50%;
+  --border-width: 1px;
+  --selection-width: 2px;
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --icon-size: 16px;
+  --icon-size-empty: 24px;
+  --icon-stroke: 1.75;
+  --size-activity-bar: 44px;
+  --size-title-bar: 40px;
+  --size-tab-bar: 32px;
+  --size-toolbar: 36px;
+  --size-status-bar: 24px;
+  --size-dock-wide: 380px;
+  --size-dock-compact: 340px;
+  --size-dialog: 480px;
+  --size-command: 560px;
+  --size-conversation: 760px;
+  --size-form: 480px;
+  --size-tooltip: 320px;
+  --size-menu: 200px;
+  --size-progress: 3px;
+  --size-split-handle: 4px;
+  --size-editor-min: 78px;
+  --opacity-disabled: 0.4;
+  --duration-fast: 100ms;
+  --duration-base: 160ms;
+  --duration-slow: 240ms;
+  --duration-spinner: 900ms;
+  --duration-progress: 1500ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --z-popover: 20;
+  --z-dialog: 40;
+  --z-tooltip: 60;
+}
+
+[data-density="compact"] {
+  --control-xs: 20px;
+  --control-sm: 24px;
+  --control-md: 28px;
+  --control-lg: 34px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+    --duration-slow: 0ms;
+  }
+}

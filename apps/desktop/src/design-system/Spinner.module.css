@@ -1,0 +1,15 @@
+.spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  animation: spin var(--duration-spinner) linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}

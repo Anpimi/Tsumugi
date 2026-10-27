@@ -1,0 +1,8 @@
+.group { min-height: 0; min-width: 0; height: 100%; width: 100%; }
+.panel { min-width: 0; min-height: 0; }
+.handle { position: relative; width: var(--size-split-handle); flex-shrink: 0; background: var(--color-bg-canvas); outline: none; }
+.handle[aria-orientation="horizontal"] { width: auto; height: var(--size-split-handle); }
+.handle:hover,
+.handle[data-separator="active"],
+.handle:focus-visible { background: var(--color-accent-solid); }
+.handle:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: calc(-1 * var(--focus-width)); }

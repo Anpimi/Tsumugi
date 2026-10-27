@@ -5,6 +5,8 @@
 /node_modules/
 **/node_modules/
 apps/desktop/dist/
+apps/desktop/dist-workbench-preview/
+apps/desktop/storybook-static/
 runtimes/javascript-host/dist/
 runtimes/agent-service/dist/
 

@@ -1,0 +1,6 @@
+.track { position: relative; width: 100%; height: var(--size-progress); overflow: hidden; background: var(--color-bg-muted); border-radius: var(--radius-sm); }
+.fill { width: var(--progress-value); height: 100%; background: var(--color-accent-solid); }
+.track[data-tone="ai"] .fill { background: var(--color-ai-solid); }
+.track[data-indeterminate] .fill { width: 30%; animation: progress var(--duration-progress) var(--ease-standard) infinite; }
+@keyframes progress { from { transform: translateX(-100%); } to { transform: translateX(440%); } }
+@media (prefers-reduced-motion: reduce) { .track[data-indeterminate] .fill { animation: none; width: 40%; } }

@@ -1,0 +1,12 @@
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

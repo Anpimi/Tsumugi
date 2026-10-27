@@ -1,7 +1,9 @@
 import type { UiMessages } from "./types";
+import { workbenchPreviewZh } from "./workbenchPreview";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+workbenchPreview: workbenchPreviewZh,
 semanticReview: {
   recordItem: "{{entry}} → {{locale}} 的审校建议",
   errors: { selection: "请先在“译文”中选择一条基于当前源文的已保存译文，再准备审校。未保存的草稿不会发送。", stale: "已保存源文、所选译文或审校预览已发生变化。请重新生成预览并确认授权；原请求与结果仍会保留。", pairs: "请至少选择一个条目，且条目与语言组合数不能超过上限（最多 100 个）。请调高上限或减少所选条目后再试。", rules: "请先选择“语义”、“风格”或同时勾选两者，再生成审校预览。", output: "模型返回的内容不符合审校格式或范围要求，无法记录此项。其他已完成项仍会保留，系统不会自动重发请求。" },

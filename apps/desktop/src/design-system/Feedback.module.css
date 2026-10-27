@@ -1,0 +1,18 @@
+.banner { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-4) var(--space-5); background: var(--color-accent-soft); color: var(--color-text-primary); border-radius: var(--radius-md); font-size: var(--text-base); line-height: var(--line-base); }
+.banner[data-tone="success"] { background: var(--color-success-soft); }
+.banner[data-tone="warning"] { background: var(--color-warning-soft); }
+.banner[data-tone="error"] { background: var(--color-danger-soft); }
+.icon { width: var(--icon-size); height: var(--icon-size); margin-block-start: var(--space-1); color: var(--color-accent-text); }
+[data-tone="success"] > .icon { color: var(--color-success); }
+[data-tone="warning"] > .icon { color: var(--color-warning); }
+[data-tone="error"] > .icon { color: var(--color-danger); }
+.message { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); min-height: var(--size-editor-min); padding: var(--space-8); text-align: center; color: var(--color-text-secondary); }
+.emptyIcon,
+.emptyIcon > svg { display: inline-flex; width: var(--icon-size-empty); height: var(--icon-size-empty); stroke-width: var(--icon-stroke); }
+.errorIcon { color: var(--color-danger); }
+.title { margin: 0; color: var(--color-text-primary); font-size: var(--text-lg); font-weight: var(--weight-semibold); line-height: var(--line-lg); }
+.description { max-width: 40ch; margin: 0; color: var(--color-text-secondary); font-size: var(--text-base); line-height: var(--line-base); overflow-wrap: anywhere; }
+.loadingTitle { margin: 0; color: var(--color-text-primary); font-size: var(--text-base); line-height: var(--line-base); }
+@media (max-width: 600px) { .banner { flex-wrap: wrap; } .actions { margin-inline-start: auto; } }

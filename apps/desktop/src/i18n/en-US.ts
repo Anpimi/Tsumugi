@@ -1,5 +1,7 @@
 import { strategyEn } from "./strategy";
+import { workbenchPreviewEn } from "./workbenchPreview";
 export const enUS = {
+workbenchPreview: workbenchPreviewEn,
 semanticReview: {
   recordItem: "Advisory findings for {{entry}} → {{locale}}",
   errors: { selection: "Select a saved translation for the current source in Translations before preparing a review. Unsaved text is not sent.", stale: "The saved source, selected translation, or prepared review has changed. Generate a new preview and confirm again; the previous request and results remain available.", pairs: "Select at least one entry within the entry-language pair limit (up to 100). Increase the limit or select fewer items before preparing.", rules: "Select Meaning, Style, or both before preparing the review.", output: "The model response did not match the expected review format or scope and cannot be recorded. Other completed items are kept, and no replacement request is sent automatically." },

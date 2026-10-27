@@ -1,0 +1,13 @@
+.overlay { position: fixed; inset: 0; z-index: var(--z-dialog); background: var(--color-overlay); }
+.content { position: fixed; z-index: var(--z-dialog); top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(var(--size-dialog), calc(100vw - var(--space-9))); max-height: calc(100dvh - var(--space-9)); display: flex; flex-direction: column; background: var(--color-bg-raised); color: var(--color-text-primary); border-radius: var(--radius-xl); box-shadow: var(--shadow-dialog); font-family: var(--font-ui); font-size: var(--text-base); line-height: var(--line-base); outline: none; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); padding: var(--space-7); flex-shrink: 0; }
+.heading { min-width: 0; }
+.title { margin: 0; font-size: var(--text-lg); line-height: var(--line-lg); font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.description { margin: var(--space-4) 0 0; color: var(--color-text-secondary); font-size: var(--text-base); line-height: var(--line-base); max-width: 40ch; }
+.body { min-height: 0; overflow: auto; padding: 0 var(--space-7) var(--space-7); }
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-4); padding: 0 var(--space-7) var(--space-7); flex-shrink: 0; }
+.sheet { top: 0; bottom: 0; left: auto; right: 0; transform: none; width: min(var(--size-dock-wide), 100vw); max-height: 100dvh; border-radius: 0; animation: slideRight var(--duration-slow) var(--ease-standard); }
+.sheet[data-side="left"] { left: 0; right: auto; animation-name: slideLeft; }
+.sheet .body { flex: 1; }
+@keyframes slideRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes slideLeft { from { transform: translateX(-100%); } to { transform: translateX(0); } }

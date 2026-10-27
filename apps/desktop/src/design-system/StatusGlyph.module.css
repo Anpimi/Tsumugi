@@ -1,0 +1,16 @@
+.group { display: inline-flex; align-items: center; gap: var(--space-1); vertical-align: middle; flex-shrink: 0; }
+.glyph { position: relative; }
+.glyph,
+.protected { display: inline-flex; align-items: center; justify-content: center; width: var(--icon-size); height: var(--icon-size); color: var(--color-text-secondary); border-radius: var(--radius-sm); }
+.glyph[data-state="untranslated"] { color: var(--color-text-tertiary); }
+.glyph[data-state="draft"] { color: var(--color-accent-solid); }
+.glyph[data-state="candidate"] { color: var(--color-ai-solid); }
+.glyph[data-state="reviewed"] { color: var(--color-success); }
+.glyph[data-state="stale"] { color: var(--color-warning); }
+.glyph[data-state="blocked"] { color: var(--color-danger); }
+.glyph[data-state="translated"] svg,
+.glyph[data-state="blocked"] svg,
+.glyph[data-state="stale"] svg { fill: currentColor; }
+.half { position: absolute; inset: 0; fill: currentColor; clip-path: inset(0 50% 0 0); }
+.glyph:focus-visible,
+.protected:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
