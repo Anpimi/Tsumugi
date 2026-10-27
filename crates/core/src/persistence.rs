@@ -113,6 +113,8 @@ pub use translation::{
     TranslationEditBasis, TranslationHistory, TranslationMatch, TranslationOrigin,
     TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
     TranslationSelection, TranslationSelectionDecision, TranslationSourceContext,
+    TranslationActionOutcome, TranslationActionReplay, TranslationSaveRecovery,
+    TranslationSelectionRecovery,
 };
 
 const DATABASE_FILENAME: &str = "project.sqlite3";

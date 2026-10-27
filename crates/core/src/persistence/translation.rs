@@ -11,7 +11,12 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 mod candidates;
+mod recovery;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
+pub use recovery::{
+    TranslationActionOutcome, TranslationActionReplay, TranslationSaveRecovery,
+    TranslationSelectionRecovery,
+};
 pub(in crate::persistence) use candidates::selectable as candidate_selectable;
 pub(in crate::persistence) use candidates::rejected as candidate_rejected;
 pub(in crate::persistence) use candidates::summaries as candidate_summaries;
@@ -1633,7 +1638,7 @@ impl ProjectStore {
             {
                 return Err(error(ErrorCode::ResultMismatch, "translation-action"));
             }
-            save_receipt_in(connection, request.project_id, &selection).map(Some)
+            save_receipt_for_request_in(connection, request, &selection).map(Some)
         });
         if receipt.is_ok() && self.is_reconciling() {
             self.reconcile_execution()?;
@@ -1669,6 +1674,12 @@ impl ProjectStore {
             {
                 return Err(error(ErrorCode::ResultMismatch, "translation-action"));
             }
+            if selection.revision_id != request.revision_id
+                || selection.previous_event_id != request.expected_selection_id
+                || (selection.sequence == 1) != selection.previous_event_id.is_none()
+            {
+                return Err(error(ErrorCode::CorruptLedger, "translation-selection-receipt"));
+            }
             Ok(Some(selection))
         });
         if selection.is_ok() && self.is_reconciling() {
@@ -1689,7 +1700,7 @@ impl ProjectStore {
         request: &SaveTranslationRevision,
     ) -> Result<TranslationSaveReceipt, ExecutionError> {
         self.save_revision(request, None, |connection, selection| {
-            save_receipt_in(connection, request.project_id, selection)
+            save_receipt_for_request_in(connection, request, selection)
         })
     }
     /// Read a historical merge without repeating current target/basis admission.
@@ -1880,6 +1891,8 @@ impl ProjectStore {
         #[cfg(test)]
         if merge.is_some() {
             super::migration_crash_hook("before-arena-merge-commit");
+        } else {
+            super::migration_crash_hook("before-manual-save-commit");
         }
         commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
@@ -1888,6 +1901,8 @@ impl ProjectStore {
         #[cfg(test)]
         if merge.is_some() {
             super::migration_crash_hook("after-arena-merge-commit");
+        } else {
+            super::migration_crash_hook("after-manual-save-commit");
         }
         Ok(result)
     }
@@ -1983,6 +1998,25 @@ pub(super) fn check_protection_basis(
         ));
     }
     Ok(())
+}
+
+fn save_receipt_for_request_in(
+    connection: &Connection,
+    request: &SaveTranslationRevision,
+    selection: &TranslationSelection,
+) -> Result<TranslationSaveReceipt, ExecutionError> {
+    let receipt = save_receipt_in(connection, request.project_id, selection)?;
+    // The request digest proves identity, but the returned rows must still
+    // describe that request before a recovery read can clear uncertainty.
+    if receipt.revision.text != request.text
+        || receipt.revision.source_revision_id != request.source_revision_id
+        || !receipt.revision.contributors.is_empty()
+        || selection.previous_event_id != request.expected_selection_id
+        || (selection.sequence == 1) != selection.previous_event_id.is_none()
+    {
+        return Err(error(ErrorCode::CorruptLedger, "translation-save-receipt"));
+    }
+    Ok(receipt)
 }
 
 fn save_receipt_in(
@@ -2116,7 +2150,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    fn project_with_source() -> (
+    pub(super) fn project_with_source() -> (
         tempfile::TempDir,
         ProjectStore,
         Vec<crate::content::ContentRow>,

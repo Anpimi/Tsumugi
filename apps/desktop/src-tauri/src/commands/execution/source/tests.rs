@@ -1139,7 +1139,16 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     save["sourceRevisionId"] = page["rows"][0]["sourceRevisionId"].clone();
     save["expectedSelectionId"] = Value::Null;
     save["text"] = json!("人工编辑");
-    let manual = call(&view, "save_translation_revision", save.clone()).unwrap();
+    let pending = call(&view, "recover_translation_save", save.clone()).unwrap();
+    assert_eq!(pending["outcome"], json!({"kind":"pending","replay":"explicit-same-request"}));
+    assert_eq!(call(&view, "read_translation_history", history.clone()).unwrap()["total"], "1");
+    let manual = std::thread::scope(|scope| {
+        let one = scope.spawn(|| call(&view, "save_translation_revision", save.clone()).unwrap());
+        let two = scope.spawn(|| call(&view, "save_translation_revision", save.clone()).unwrap());
+        let first = one.join().unwrap();
+        assert_eq!(two.join().unwrap(), first);
+        first
+    });
     assert_eq!(
         call(&view, "save_translation_revision", save.clone()).unwrap(),
         manual
@@ -1153,6 +1162,15 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     select["revisionId"] = imported["rows"][0]["revisionId"].clone();
     let restored = call(&view, "select_translation_revision", select.clone()).unwrap();
     assert_eq!(restored["revisionId"], imported["rows"][0]["revisionId"]);
+    let recovered_save = call(&view, "recover_translation_save", save.clone()).unwrap();
+    assert_eq!(recovered_save["outcome"], json!({"kind":"recorded","receipt":manual}));
+    assert!(recovered_save["request"].get("sessionToken").is_none());
+    assert_eq!(call(&view, "recover_translation_selection", select.clone()).unwrap()["outcome"], json!({"kind":"recorded","receipt":restored}));
+    let mut changed_save = save.clone();
+    changed_save["text"] = json!("Different original input");
+    let mismatch = call(&view, "recover_translation_save", changed_save).unwrap();
+    assert_eq!(mismatch["outcome"], json!({"kind":"mismatch"}));
+    assert_eq!(mismatch["request"]["text"], "Different original input");
     let project_id = ExecutionId::parse(context["projectId"].as_str().unwrap()).unwrap();
     let unit_id = ExecutionId::parse(history["unitId"].as_str().unwrap()).unwrap();
     let before_reads = app.state::<AppState>().sessions.with(move |sessions| {
@@ -1205,11 +1223,13 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     for command in [
         "read_translation_save_action",
         "read_translation_selection_action",
+        "recover_translation_save",
+        "recover_translation_selection",
     ] {
-        let original = if command == "read_translation_save_action" {
-            &save
-        } else {
+        let original = if matches!(command, "read_translation_selection_action" | "recover_translation_selection") {
             &select
+        } else {
+            &save
         };
         for field in ["sessionToken", "projectId"] {
             let mut foreign = original.clone();
@@ -1228,6 +1248,12 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
         let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         host.quiescing = true;
     });
+    assert_eq!(call(&view, "save_translation_revision", save.clone()).unwrap(), manual);
+    assert_eq!(call(&view, "select_translation_revision", select.clone()).unwrap(), restored);
+    let mut blocked = save.clone();
+    blocked["actionId"] = json!(ExecutionId::new());
+    assert_eq!(call(&view, "recover_translation_save", blocked.clone()).unwrap()["outcome"], json!({"kind":"pending","replay":"blocked"}));
+    assert!(call(&view, "save_translation_revision", blocked).is_err());
     assert_eq!(call(&view, "read_translation_import_start", translation.clone()).unwrap(), translation_start_read);
     assert_eq!(call(&view, "read_translation_save_action", save.clone()).unwrap(), manual);
     assert_eq!(call(&view, "read_translation_selection_action", select.clone()).unwrap(), restored);
@@ -1251,6 +1277,29 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     assert_eq!(call(&view, "read_translation_adoption_action", import_read.clone()).unwrap(), expected_import_read);
     assert_eq!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.changes_since(tsumugi_core::execution::Revision::new(0).unwrap()).sequence), sequence_before_action);
     assert_eq!(after_reads, before_reads);
+    // A real SQLite commit failure leaves no receipt but keeps write admission
+    // closed until an explicit recovery read, even after the lock is released.
+    let mut interrupted = save.clone();
+    interrupted["actionId"] = json!(ExecutionId::new());
+    interrupted["unitId"] = page["rows"][1]["unitId"].clone();
+    interrupted["sourceRevisionId"] = page["rows"][1]["sourceRevisionId"].clone();
+    let mut other_history = history.clone();
+    other_history["unitId"] = interrupted["unitId"].clone();
+    let other = call(&view, "read_translation_history", other_history).unwrap();
+    interrupted["expectedSelectionId"] = other["current"]["eventId"].clone();
+    interrupted["text"] = json!("Retained original input");
+    let reader = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    reader.execute_batch("BEGIN; SELECT * FROM project_metadata").unwrap();
+    let failed = call(&view, "save_translation_revision", interrupted.clone()).unwrap_err();
+    assert_eq!(failed["code"], "outcome-unknown");
+    reader.execute_batch("ROLLBACK").unwrap();
+    assert!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.is_reconciling()));
+    assert_eq!(call(&view, "save_translation_revision", interrupted.clone()).unwrap_err()["code"], "outcome-unknown");
+    assert!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.is_reconciling()));
+    assert_eq!(call(&view, "recover_translation_save", interrupted.clone()).unwrap()["outcome"], json!({"kind":"pending","replay":"explicit-same-request"}));
+    assert!(!app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().store.is_reconciling()));
+    let replayed = call(&view, "save_translation_revision", interrupted.clone()).unwrap();
+    assert_eq!(call(&view, "save_translation_revision", interrupted).unwrap(), replayed);
     wait_for_execution_idle(&view, &context);
     call(
         &view,
@@ -1275,8 +1324,14 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     history["sessionToken"] = reopened["sessionToken"].clone();
     save["sessionToken"] = reopened["sessionToken"].clone();
     select["sessionToken"] = reopened["sessionToken"].clone();
-    assert_eq!(call(&view, "read_translation_save_action", save).unwrap(), manual);
-    assert_eq!(call(&view, "read_translation_selection_action", select).unwrap(), restored);
+    assert_eq!(call(&view, "read_translation_save_action", save.clone()).unwrap(), manual);
+    assert_eq!(call(&view, "read_translation_selection_action", select.clone()).unwrap(), restored);
+    assert_eq!(call(&view, "recover_translation_save", save.clone()).unwrap()["outcome"], json!({"kind":"recorded","receipt":manual}));
+    assert_eq!(call(&view, "recover_translation_selection", select.clone()).unwrap()["outcome"], json!({"kind":"recorded","receipt":restored}));
+    assert!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().execution.is_none()));
+    assert_eq!(call(&view, "save_translation_revision", save).unwrap(), manual);
+    assert_eq!(call(&view, "select_translation_revision", select).unwrap(), restored);
+    assert!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().execution.is_none()));
     let saved = call(&view, "read_translation_history", history).unwrap();
     assert_eq!(saved["total"], "2");
     assert_eq!(saved["current"]["revisionId"], restored["revisionId"]);

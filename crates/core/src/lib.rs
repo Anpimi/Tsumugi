@@ -58,7 +58,8 @@ pub use persistence::{
     TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
     TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
     ArenaMergeActionRead, TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision,
-    TranslationSourceContext, Waiver, WaiverWrite, WorkItem, WorkPage,
+    TranslationSourceContext, TranslationActionOutcome, TranslationActionReplay,
+    TranslationSaveRecovery, TranslationSelectionRecovery, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, TeamTranslationAdoptionHandler, ArenaRevealTarget, ArenaRevealTargetKind, ComparisonEntry, ComparisonRequest, ComparisonSummary,

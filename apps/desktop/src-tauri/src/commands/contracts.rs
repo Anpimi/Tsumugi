@@ -284,6 +284,8 @@ struct TranslationRequests {
     select: execution::source::translation::TranslationSelectRequest,
     save_action: execution::source::translation::TranslationSaveRequest,
     selection_action: execution::source::translation::TranslationSelectRequest,
+    recover_save: execution::source::translation::TranslationSaveRequest,
+    recover_selection: execution::source::translation::TranslationSelectRequest,
     candidate_decision: execution::source::translation::CandidateDecisionRequest,
 }
 #[derive(JsonSchema)]
@@ -310,6 +312,8 @@ struct TranslationResponses {
     selected: tsumugi_core::TranslationSelection,
     save_action: Option<tsumugi_core::TranslationSaveReceipt>,
     selection_action: Option<tsumugi_core::TranslationSelection>,
+    recover_save: tsumugi_core::TranslationSaveRecovery,
+    recover_selection: tsumugi_core::TranslationSelectionRecovery,
     candidate_decision: tsumugi_core::CandidateDecision,
     candidate_action: Option<tsumugi_core::CandidateDecision>,
 }

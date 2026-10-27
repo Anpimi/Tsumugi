@@ -12,6 +12,7 @@ import type { PluginTranslationRequest, PluginTranslationView } from "./pluginCo
 import { validateRequestAdopt, validateResponseCheckReview, validateResponseProjectionReview, validateResponseChecked, validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaveAction, validateResponseSelectionAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
 import { validateResponseAdoption } from "./generated/execution.validators";
 import { validateResponseProjectionStartAction, validateResponseCandidateDecision, validateResponseCandidateAction } from "./generated/translation.validators";
+import { validateResponseRecoverSave, validateResponseRecoverSelection } from "./generated/translation.validators";
 import type { CandidateDecisionRequest } from "./generated/translation.requests";
 import type { CandidateDecision } from "./generated/translation.responses";
 export type { CandidateDecisionRequest } from "./generated/translation.requests";
@@ -19,6 +20,7 @@ export type { CandidateDecision, CandidateDecisionWrite, CandidateDisposition } 
 
 export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
 export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
+export type { TranslationSaveRecovery, TranslationSelectionRecovery } from "./generated/translation.responses";
 
 export function translationHistoryAfter(ordinal: string, pageSize: number): string {
   const after = BigInt(ordinal) - BigInt(pageSize);
@@ -65,9 +67,34 @@ export const translationCommands = {
     const selection = await checkedInvoke("read_translation_selection_action", request, validateResponseSelectionAction);
     return selection === null ? null : confirmTranslationSelection(request, selection);
   },
+  recoverSave: async (request: TranslationSaveRequest) => {
+    const result = await checkedInvoke("recover_translation_save", request, validateResponseRecoverSave);
+    if (!sameRecoveryRequest(request, result.request)) throw invalidSaveReceipt();
+    if (result.outcome.kind === "recorded") validateSaveReceipt(result.outcome.receipt, request);
+    return result;
+  },
+  recoverSelection: async (request: TranslationSelectRequest) => {
+    const result = await checkedInvoke("recover_translation_selection", request, validateResponseRecoverSelection);
+    if (!sameRecoveryRequest(request, result.request)) throw invalidSaveReceipt();
+    if (result.outcome.kind === "recorded") confirmTranslationSelection(request, result.outcome.receipt);
+    return result;
+  },
   save: async (request: TranslationSaveRequest) => validateSaveReceipt(await checkedInvoke("save_translation_revision", request, validateResponseSaved), request),
   select: async (request: TranslationSelectRequest) => confirmTranslationSelection(request, await checkedInvoke("select_translation_revision", request, validateResponseSelected)),
 };
+
+function sameRecoveryRequest(
+  expected: TranslationSaveRequest | TranslationSelectRequest,
+  actual: Responses["recoverSave"]["request"] | Responses["recoverSelection"]["request"],
+) {
+  return actual.projectId === expected.projectId && actual.actionId === expected.actionId
+    && actual.unitId === expected.unitId && actual.locale === expected.locale
+    && actual.sourceRevisionId === expected.sourceRevisionId
+    && (actual.expectedSelectionId ?? null) === (expected.expectedSelectionId ?? null)
+    && ("text" in expected
+      ? "text" in actual && actual.text === expected.text
+      : "revisionId" in actual && actual.revisionId === expected.revisionId);
+}
 
 export function confirmCandidateDecision(request: CandidateDecisionRequest, value: CandidateDecision) {
   const expected = request.decision, actual = value.request;

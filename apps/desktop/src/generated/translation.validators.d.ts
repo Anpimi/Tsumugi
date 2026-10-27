@@ -17,6 +17,8 @@ export declare function validateRequestPreview(value: unknown): value is Request
 export declare function validateRequestProjectionPrepare(value: unknown): value is Requests["projectionPrepare"];
 export declare function validateRequestProjectionStart(value: unknown): value is Requests["projectionStart"];
 export declare function validateRequestProjectionStartAction(value: unknown): value is Requests["projectionStartAction"];
+export declare function validateRequestRecoverSave(value: unknown): value is Requests["recoverSave"];
+export declare function validateRequestRecoverSelection(value: unknown): value is Requests["recoverSelection"];
 export declare function validateRequestSave(value: unknown): value is Requests["save"];
 export declare function validateRequestSaveAction(value: unknown): value is Requests["saveAction"];
 export declare function validateRequestSelect(value: unknown): value is Requests["select"];
@@ -40,6 +42,8 @@ export declare function validateResponsePrepared(value: unknown): value is Respo
 export declare function validateResponsePreview(value: unknown): value is Responses["preview"];
 export declare function validateResponseProjectionReview(value: unknown): value is Responses["projectionReview"];
 export declare function validateResponseProjectionStartAction(value: unknown): value is Responses["projectionStartAction"];
+export declare function validateResponseRecoverSave(value: unknown): value is Responses["recoverSave"];
+export declare function validateResponseRecoverSelection(value: unknown): value is Responses["recoverSelection"];
 export declare function validateResponseSaveAction(value: unknown): value is Responses["saveAction"];
 export declare function validateResponseSaved(value: unknown): value is Responses["saved"];
 export declare function validateResponseSelected(value: unknown): value is Responses["selected"];

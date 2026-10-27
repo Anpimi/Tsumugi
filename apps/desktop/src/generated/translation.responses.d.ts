@@ -64,6 +64,34 @@ export type UnsignedDecimal = string;
 export type TranslationOrigin = "import" | "manual" | "ai";
 export type TranslationMatch =
   "unique" | "unmatched" | "ambiguous" | "selected-conflict" | "source-changed" | "applied";
+export type TranslationActionOutcome =
+  | {
+      kind: "recorded";
+      receipt: TranslationSaveReceipt;
+    }
+  | {
+      kind: "pending";
+      replay: TranslationActionReplay;
+    }
+  | {
+      kind: "mismatch";
+    };
+/**
+ * Replay safety is not admission, fresh authority, or proof that an action never ran.
+ */
+export type TranslationActionReplay = "explicit-same-request" | "blocked";
+export type TranslationActionOutcome2 =
+  | {
+      kind: "recorded";
+      receipt: TranslationSelection;
+    }
+  | {
+      kind: "pending";
+      replay: TranslationActionReplay;
+    }
+  | {
+      kind: "mismatch";
+    };
 
 export interface Responses {
   action: TranslationSelection | null;
@@ -82,6 +110,8 @@ export interface Responses {
   preview: TranslationPreview;
   projectionReview: TranslationProjectionReview;
   projectionStartAction: TranslationProjectionStartRead | null;
+  recoverSave: TranslationSaveRecovery;
+  recoverSelection: TranslationSelectionRecovery;
   saveAction: TranslationSaveReceipt | null;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
@@ -436,6 +466,13 @@ export interface TranslationProjectionStartRead {
   translationAttemptId: ExecutionId;
   translationResultId: ExecutionId;
 }
+export interface TranslationSaveRecovery {
+  outcome: TranslationActionOutcome;
+  /**
+   * The complete queried business request, without a Host session token.
+   */
+  request: SaveTranslationRevision;
+}
 /**
  * Immutable confirmation of one save, including the basis for the next edit.
  * The selection sequence is scoped to this unit and locale.
@@ -451,6 +488,28 @@ export interface TranslationEditBasis {
   selectionId: ExecutionId;
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
+}
+export interface SaveTranslationRevision {
+  actionId: ExecutionId;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface TranslationSelectionRecovery {
+  outcome: TranslationActionOutcome2;
+  request: SelectTranslationRevision;
+}
+export interface SelectTranslationRevision {
+  actionId: ExecutionId;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
 }
 export interface TranslationImportStartRead {
   inputDigest: string;

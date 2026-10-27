@@ -156,6 +156,34 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Tran
     revision_id: ExecutionId,
 });
 
+impl TranslationSaveRequest {
+    fn original(&self) -> SaveTranslationRevision {
+        SaveTranslationRevision {
+            project_id: self.project_id,
+            action_id: self.action_id,
+            unit_id: self.unit_id,
+            locale: self.locale.clone(),
+            source_revision_id: self.source_revision_id,
+            expected_selection_id: self.expected_selection_id,
+            text: self.text.clone(),
+        }
+    }
+}
+
+impl TranslationSelectRequest {
+    fn original(&self) -> SelectTranslationRevision {
+        SelectTranslationRevision {
+            project_id: self.project_id,
+            action_id: self.action_id,
+            unit_id: self.unit_id,
+            locale: self.locale.clone(),
+            source_revision_id: self.source_revision_id,
+            expected_selection_id: self.expected_selection_id,
+            revision_id: self.revision_id,
+        }
+    }
+}
+
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -600,15 +628,7 @@ pub async fn read_translation_save_action(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .translation_save_receipt_by_request(&SaveTranslationRevision {
-                    project_id: request.project_id,
-                    action_id: request.action_id,
-                    unit_id: request.unit_id,
-                    locale: request.locale,
-                    source_revision_id: request.source_revision_id,
-                    expected_selection_id: request.expected_selection_id,
-                    text: request.text,
-                })
+                .translation_save_receipt_by_request(&request.original())
                 .map_err(map_source)
             },
         )
@@ -633,19 +653,45 @@ pub async fn read_translation_selection_action(
                     CommandStage::ExecutionRead,
                 )?
                 .store
-                .translation_selection_by_request(&SelectTranslationRevision {
-                    project_id: request.project_id,
-                    action_id: request.action_id,
-                    unit_id: request.unit_id,
-                    locale: request.locale,
-                    source_revision_id: request.source_revision_id,
-                    expected_selection_id: request.expected_selection_id,
-                    revision_id: request.revision_id,
-                })
+                .translation_selection_by_request(&request.original())
                 .map_err(map_source)
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn recover_translation_save(
+    state: State<'_, AppState>,
+    request: TranslationSaveRequest,
+) -> Result<tsumugi_core::TranslationSaveRecovery, CommandError> {
+    state.sessions.run("recover_translation_save", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let mut recovery = active.store.recover_translation_save(&request.original()).map_err(map_source)?;
+        if active.execution.as_ref().is_some_and(ExecutionHost::is_quiescing) {
+            if let tsumugi_core::TranslationActionOutcome::Pending { replay } = &mut recovery.outcome {
+                *replay = tsumugi_core::TranslationActionReplay::Blocked;
+            }
+        }
+        Ok(recovery)
+    }).await
+}
+
+#[tauri::command]
+pub async fn recover_translation_selection(
+    state: State<'_, AppState>,
+    request: TranslationSelectRequest,
+) -> Result<tsumugi_core::TranslationSelectionRecovery, CommandError> {
+    state.sessions.run("recover_translation_selection", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let mut recovery = active.store.recover_translation_selection(&request.original()).map_err(map_source)?;
+        if active.execution.as_ref().is_some_and(ExecutionHost::is_quiescing) {
+            if let tsumugi_core::TranslationActionOutcome::Pending { replay } = &mut recovery.outcome {
+                *replay = tsumugi_core::TranslationActionReplay::Blocked;
+            }
+        }
+        Ok(recovery)
+    }).await
 }
 
 #[tauri::command]
@@ -665,18 +711,19 @@ pub async fn save_translation_revision(
                     request.project_id,
                     CommandStage::ExecutionAdopt,
                 )?;
+                // Only explicit recovery reads reconcile an uncertain commit.
+                // A duplicate write must not clear that guard before admission.
+                if active.store.is_reconciling() {
+                    return Err(map_adopt(ExecutionError::new(ErrorCode::OutcomeUnknown, "translation-session")));
+                }
+                let original = request.original();
+                if let Some(receipt) = active.store.translation_save_receipt_by_request(&original).map_err(map_adopt)? {
+                    return Ok(receipt);
+                }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 store
-                    .save_translation_edit(&SaveTranslationRevision {
-                        project_id: request.project_id,
-                        action_id: request.action_id,
-                        unit_id: request.unit_id,
-                        locale: request.locale,
-                        source_revision_id: request.source_revision_id,
-                        expected_selection_id: request.expected_selection_id,
-                        text: request.text,
-                    })
+                    .save_translation_edit(&original)
                     .map(Into::into)
                     .map_err(map_adopt)
             },
@@ -701,18 +748,17 @@ pub async fn select_translation_revision(
                     request.project_id,
                     CommandStage::ExecutionAdopt,
                 )?;
+                if active.store.is_reconciling() {
+                    return Err(map_source(ExecutionError::new(ErrorCode::OutcomeUnknown, "translation-session")));
+                }
+                let original = request.original();
+                if let Some(selection) = active.store.translation_selection_by_request(&original).map_err(map_source)? {
+                    return Ok(selection);
+                }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 store
-                    .select_translation_revision(&SelectTranslationRevision {
-                        project_id: request.project_id,
-                        action_id: request.action_id,
-                        unit_id: request.unit_id,
-                        locale: request.locale,
-                        source_revision_id: request.source_revision_id,
-                        expected_selection_id: request.expected_selection_id,
-                        revision_id: request.revision_id,
-                    })
+                    .select_translation_revision(&original)
                     .map_err(map_source)
             },
         )
@@ -722,6 +768,31 @@ pub async fn select_translation_revision(
 #[cfg(test)]
 mod contracts {
     use super::*;
+
+    #[test]
+    fn translation_recovery_fixture_preserves_original_requests_and_outcome_variants() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../test/fixtures/translationRecovery.contract.json"
+        )).unwrap();
+        for key in ["saveRecorded", "savePending", "saveBlocked", "saveMismatch"] {
+            let value: tsumugi_core::TranslationSaveRecovery = serde_json::from_value(fixture[key].clone()).unwrap();
+            assert_eq!(serde_json::to_value(value).unwrap(), fixture[key]);
+        }
+        for key in ["selectionRecorded", "selectionPending", "selectionBlocked", "selectionMismatch"] {
+            let value: tsumugi_core::TranslationSelectionRecovery = serde_json::from_value(fixture[key].clone()).unwrap();
+            assert_eq!(serde_json::to_value(value).unwrap(), fixture[key]);
+        }
+        for outcome in [
+            serde_json::json!({"kind":"pending"}),
+            serde_json::json!({"kind":"pending","replay":"automatic"}),
+            serde_json::json!({"kind":"confirmed-not-applied"}),
+            serde_json::json!({"kind":"mismatch","receipt":fixture["saveRecorded"]["outcome"]["receipt"]}),
+        ] {
+            let mut value = fixture["savePending"].clone();
+            value["outcome"] = outcome;
+            assert!(serde_json::from_value::<tsumugi_core::TranslationSaveRecovery>(value).is_err());
+        }
+    }
 
     #[test]
     fn translation_command_fixture_round_trips_camel_case_requests() {

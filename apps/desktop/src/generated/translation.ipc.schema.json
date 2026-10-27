@@ -878,6 +878,12 @@
       "projectionStartAction": {
         "$ref": "#/definitions/TranslationProjectionStartRequest"
       },
+      "recoverSave": {
+        "$ref": "#/definitions/TranslationSaveRequest"
+      },
+      "recoverSelection": {
+        "$ref": "#/definitions/TranslationSelectRequest"
+      },
       "save": {
         "$ref": "#/definitions/TranslationSaveRequest"
       },
@@ -923,6 +929,8 @@
       "select",
       "saveAction",
       "selectionAction",
+      "recoverSave",
+      "recoverSelection",
       "candidateDecision"
     ],
     "title": "Requests",
@@ -1759,6 +1767,204 @@
         ],
         "type": "object"
       },
+      "SaveTranslationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "expectedSelectionId",
+          "text"
+        ],
+        "type": "object"
+      },
+      "SelectTranslationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "expectedSelectionId",
+          "revisionId"
+        ],
+        "type": "object"
+      },
+      "TranslationActionOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/TranslationSaveReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "No receipt was found. This does not assert that work is still running or\nthat the original action cannot subsequently be submitted.",
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              },
+              "replay": {
+                "$ref": "#/definitions/TranslationActionReplay"
+              }
+            },
+            "required": [
+              "kind",
+              "replay"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mismatch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TranslationActionOutcome2": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/TranslationSelection"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "No receipt was found. This does not assert that work is still running or\nthat the original action cannot subsequently be submitted.",
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              },
+              "replay": {
+                "$ref": "#/definitions/TranslationActionReplay"
+              }
+            },
+            "required": [
+              "kind",
+              "replay"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mismatch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TranslationActionReplay": {
+        "description": "Replay safety is not admission, fresh authority, or proof that an action never ran.",
+        "enum": [
+          "explicit-same-request",
+          "blocked"
+        ],
+        "type": "string"
+      },
       "TranslationCheckReview": {
         "additionalProperties": false,
         "properties": {
@@ -2558,6 +2764,27 @@
         ],
         "type": "object"
       },
+      "TranslationSaveRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/TranslationActionOutcome"
+          },
+          "request": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/SaveTranslationRevision"
+              }
+            ],
+            "description": "The complete queried business request, without a Host session token."
+          }
+        },
+        "required": [
+          "request",
+          "outcome"
+        ],
+        "type": "object"
+      },
       "TranslationSelection": {
         "additionalProperties": false,
         "properties": {
@@ -2598,6 +2825,22 @@
           "revisionId",
           "actionId",
           "previousEventId"
+        ],
+        "type": "object"
+      },
+      "TranslationSelectionRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/TranslationActionOutcome2"
+          },
+          "request": {
+            "$ref": "#/definitions/SelectTranslationRevision"
+          }
+        },
+        "required": [
+          "request",
+          "outcome"
         ],
         "type": "object"
       },
@@ -2725,6 +2968,12 @@
           }
         ]
       },
+      "recoverSave": {
+        "$ref": "#/definitions/TranslationSaveRecovery"
+      },
+      "recoverSelection": {
+        "$ref": "#/definitions/TranslationSelectionRecovery"
+      },
       "saveAction": {
         "anyOf": [
           {
@@ -2786,6 +3035,8 @@
       "selected",
       "saveAction",
       "selectionAction",
+      "recoverSave",
+      "recoverSelection",
       "candidateDecision",
       "candidateAction"
     ],
