@@ -1,5 +1,21 @@
 # Workbench preview
 
+## Desktop workspace
+
+The new desktop entry reads existing project folders through the application's normal Core and Host commands. It supports entry views, project-wide text search, language selection, and details. Each view keeps its own unsubmitted search and position; views share the project's read cache. Project switching and window closing go through the existing session exit checks.
+
+```sh
+pnpm --dir apps/desktop tauri:workbench
+```
+
+This entry uses a separate application identifier and local preferences. It does not migrate project storage or replace the default desktop entry. Open an existing project folder; there is no project creation or editing in this entry yet. Agent chat, review actions, delivery, and durable draft recovery are still being connected. The browser build explains that project files require the desktop app.
+
+```sh
+pnpm --dir apps/desktop build:workbench
+```
+
+## Visual samples
+
 This development preview shows the entry table with an Agent panel, the decision inbox, delivery, and a run document. It uses display fixtures. Typing and navigation work locally; confirmation, model requests, file operations, and permission changes are disabled. Closing the preview discards its input.
 
 From the repository root:

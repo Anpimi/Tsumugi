@@ -1,0 +1,16 @@
+{
+  "identifier": "com.tsumugi.workbench.v2",
+  "build": {
+    "beforeDevCommand": "pnpm run dev:workbench",
+    "beforeBuildCommand": "pnpm run build:workbench",
+    "devUrl": "http://127.0.0.1:1423",
+    "frontendDist": "../dist-workbench"
+  },
+  "app": {
+    "windows": [{
+      "label": "main", "title": "Tsumugi", "url": "workbench.html",
+      "width": 1280, "height": 800, "minWidth": 960, "minHeight": 640,
+      "resizable": true, "titleBarStyle": "Overlay", "hiddenTitle": true
+    }]
+  }
+}

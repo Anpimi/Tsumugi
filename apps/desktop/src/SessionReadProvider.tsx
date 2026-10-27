@@ -5,8 +5,9 @@ import { SessionReads, type ChangeScope } from "./sessionReads";
 import type { SessionRequest } from "./executionCommands";
 
 const ReadsContext = createContext<SessionReads | null>(null);
-export function SessionReadProvider({ context, children, bridge = true }: { context: SessionRequest; children: ReactNode; bridge?: boolean }) {
-  const [reads] = useState(() => new SessionReads(context));
+export function SessionReadProvider({ context, children, bridge = true, reads: providedReads }: { context: SessionRequest; children: ReactNode; bridge?: boolean; reads?: SessionReads }) {
+  const [ownedReads] = useState(() => providedReads ?? new SessionReads(context));
+  const reads = providedReads ?? ownedReads;
   useEffect(() => bridge ? reads.start() : undefined, [reads, bridge]);
   return <ReadsContext.Provider value={reads}><QueryClientProvider client={reads.client}>{children}</QueryClientProvider></ReadsContext.Provider>;
 }

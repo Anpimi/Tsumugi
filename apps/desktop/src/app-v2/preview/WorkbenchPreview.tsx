@@ -13,7 +13,7 @@ import { Sheet } from "../../design-system/Dialog";
 import { CommandPalette } from "../../design-system/CommandPalette";
 import { SplitView, SplitPanel, SplitHandle } from "../../design-system/SplitView";
 import { sampleEntries } from "./fixtures";
-import styles from "./WorkbenchPreview.module.css";
+import styles from "../WorkbenchLayout.module.css";
 
 export type PreviewScreen = "entries" | "decisions" | "delivery" | "runs";
 export type PreviewState = "normal" | "empty" | "loading" | "error" | "conflict" | "pending" | "unknown";

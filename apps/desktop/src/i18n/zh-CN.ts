@@ -1,8 +1,10 @@
 import type { UiMessages } from "./types";
 import { workbenchPreviewZh } from "./workbenchPreview";
+import { workbenchZh } from "./workbench";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+workbenchV2: workbenchZh,
 workbenchPreview: workbenchPreviewZh,
 semanticReview: {
   recordItem: "{{entry}} → {{locale}} 的审校建议",

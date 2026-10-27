@@ -1,6 +1,8 @@
 import { strategyEn } from "./strategy";
 import { workbenchPreviewEn } from "./workbenchPreview";
+import { workbenchEn } from "./workbench";
 export const enUS = {
+workbenchV2: workbenchEn,
 workbenchPreview: workbenchPreviewEn,
 semanticReview: {
   recordItem: "Advisory findings for {{entry}} → {{locale}}",

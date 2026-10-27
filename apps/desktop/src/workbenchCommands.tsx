@@ -28,6 +28,8 @@ import type { ProjectView } from "./projectCommands";
 import { validateResponseProjectView } from "./generated/validators";
 
 type PlainWorkbenchCommandId = "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
+  | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
+  | "workspace.agent" | "workspace.details" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
@@ -494,7 +496,7 @@ interface CommandMetadata {
   nameKey: TranslationKey;
   category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena" | "tasks" | "release";
   scope: CommandScope;
-  binding: "Mod+S" | null;
+  binding: "Mod+S" | "Mod+O" | "Mod+Shift+W" | "Mod+T" | "Mod+W" | "Mod+L" | "Mod+I" | "Mod+F" | "Mod+K" | null;
   risk: "reads-strategy" | "retries-strategy-action" | "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch" | "reads-review"
     | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation" | "opens-review"
@@ -503,7 +505,7 @@ interface CommandMetadata {
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
     | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview"
     | "captures-release" | "runs-release-build" | "exports-release" | "reconciles-release" | "opens-release"
-    | "captures-translation-import" | "runs-translation-import" | "reconciles-project" | "captures-content-selection";
+    | "captures-translation-import" | "runs-translation-import" | "reconciles-project" | "captures-content-selection" | "changes-view";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {

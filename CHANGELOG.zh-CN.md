@@ -12,6 +12,8 @@
 
 ### Added
 
+- 新增可单独启动的桌面工作台入口，接入真实项目读取、独立条目视图、查找和详情，并在切换项目、关闭窗口前检查未完成的工作。编辑和项目消息仍使用原工作台。
+
 - **macOS 与 Windows 桌面工作台**：支持 Windows x64 与 macOS（Apple Silicon 及 Intel 构建目标）原生构建，提供英文和简体中文界面、项目创建/打开/重命名/关闭、最近项目路径校准、目标语言管理、基于文件描述符的本地文件授权，以及 `Ctrl+S` / `Command+S` 编辑器保存快捷键。
 - **SMAPI 与 WebVTT 本地化工作流**：
   - 支持从 SMAPI `manifest.json` 与平铺 JSONC `i18n/default.json` 导入源内容，并支持预览与导入 `i18n/<语言>.json` 译文文件。

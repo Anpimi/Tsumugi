@@ -29,9 +29,10 @@ export type IconButtonProps = Omit<ButtonProps, "kbd" | "aria-label"> & {
 };
 
 export function IconButton({ label, tooltipSide, size = "sm", className, disabled, pending, ...props }: IconButtonProps) {
-  const button = <Button {...props} size={size} disabled={disabled} pending={pending} aria-label={label} title={props.title ?? (disabled ? label : undefined)} className={cx(styles.iconButton, className)} />;
+  const blocked = disabled || pending;
+  const button = <Button {...props} size={size} disabled={disabled} pending={pending} aria-label={label} aria-hidden={blocked || undefined} tabIndex={blocked ? -1 : props.tabIndex} title={props.title ?? (disabled ? label : undefined)} className={cx(styles.iconButton, className)} />;
   return (
-    <Tooltip content={label} side={tooltipSide}>
+    <Tooltip content={props.title ?? label} side={tooltipSide}>
       {disabled || pending ? <span className={styles.disabledTrigger} tabIndex={0} role="button" aria-disabled="true" aria-label={label}>{button}</span> : button}
     </Tooltip>
   );

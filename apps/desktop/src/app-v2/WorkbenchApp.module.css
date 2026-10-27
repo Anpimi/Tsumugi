@@ -1,0 +1,11 @@
+.app { display: flex; flex-direction: column; min-height: 100dvh; height: 100dvh; overflow: hidden; }
+.app > div:has(> header) { flex: 1; min-height: 0; }
+.welcome { margin: auto; width: min(var(--size-form), calc(100% - var(--space-10))); padding-block: var(--space-8); overflow: auto; }
+.brand { display: block; font-size: var(--text-xl); line-height: var(--line-xl); font-weight: var(--weight-semibold); margin-block-end: var(--space-8); }
+.welcome h1 { font-size: var(--text-lg); line-height: var(--line-lg); margin: 0; }
+.welcome p { color: var(--color-text-secondary); margin-block: var(--space-4) var(--space-7); }
+.openForm { display: flex; flex-direction: column; gap: var(--space-5); }
+.recent { margin-block-start: var(--space-8); display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+.recent h2 { font-size: var(--text-sm); line-height: var(--line-sm); font-weight: var(--weight-regular); color: var(--color-text-secondary); }
+.viewTab { display: flex; align-items: center; }
+.viewTab[data-active] { color: var(--color-text-primary); background: var(--color-bg-subtle); border-radius: var(--radius-md); }
