@@ -9,6 +9,8 @@ import { confirmReviewFindingEvidence, confirmReviewFindingBasis, confirmReviewF
 import type { ReviewCheckRequest, ReviewCheckStartRequest, ReviewPluginCheckView } from "./reviewCommands";
 import type { PluginTextReviewSelection } from "./pluginCommands";
 import { useAiSemanticReviewSession } from "./AiSemanticReviewSession";
+import type { MutationCoordinator } from "./ExecutionTaskSession";
+import { useTranslationDraftSession } from "./TranslationDraftSession";
 type ReviewCheckPreparation = { request: ReviewCheckRequest; view: ReviewPluginCheckView };
 export type ReviewHumanPending = (
   | { kind: "finding"; request: ReviewFindingWrite; basisEvidence: ReviewBasis; evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin">; submittedSeq: number }
@@ -57,7 +59,7 @@ export interface ReviewDraftState {
   completionVersion: number;
 }
 
-interface ReviewSession {
+export interface ReviewSession {
   semantic: ReturnType<typeof useAiSemanticReviewSession>;
   state: ReviewDraftState;
   current: () => ReviewDraftState;
@@ -102,6 +104,14 @@ export function reviewDraftKey(target: Pick<ReviewTarget, "locale" | "unitId">) 
 function isConflict(error: unknown) { return (error as { code?: string } | null)?.code === "dependency-conflict"; }
 
 export function ReviewDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
+  const mutations = useTranslationDraftSession();
+  return <ReviewDraftProvider project={project} mutations={mutations}>{children}</ReviewDraftProvider>;
+}
+
+/** Keep review inputs and original requests independent of their consumers. */
+export function ReviewDraftProvider({ project, mutations, children }: {
+  project: ProjectView; mutations: MutationCoordinator; children: ReactNode;
+}) {
   const [state, setState] = useState<ReviewDraftState>(() => ({
     locale: project.metadata.targetLocales[0] ?? "", actor: "", drafts: {}, editSeq: {}, draftTargets: {}, selected: null, projection: null, chosen: {},
     pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false, notice: null, reasonValue: "", busyMutation: false, activeCheckId: null,
@@ -117,10 +127,15 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     }
   }), [reads]);
   const running = useRef(false);
+  const mutationsRef = useRef(mutations); mutationsRef.current = mutations;
+  const mutation = useRef<{ token: symbol; owner: MutationCoordinator } | null>(null);
   const cancelBatch = useRef(false);
   const targetScope = project.metadata.targetLocales.join("\u0000");
   useLayoutEffect(() => { projectRef.current = project; }, [project]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { mounted.current = true; return () => {
+    mounted.current = false;
+    releaseReservation();
+  }; }, []);
 
   function update(change: (before: ReviewDraftState) => ReviewDraftState) {
     const before = currentState.current;
@@ -131,6 +146,22 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     return after;
   }
   function current() { return currentState.current; }
+  function reserveMutation() {
+    if (mutation.current) return false;
+    const owner = mutationsRef.current, token = owner.reserveMutation();
+    if (token === null) return false;
+    mutation.current = { token, owner };
+    return true;
+  }
+  function releaseReservation() {
+    const held = mutation.current; mutation.current = null;
+    if (held) held.owner.releaseMutation(held.token);
+  }
+  function releaseSettledMutation() {
+    // A missing receipt cannot release an uncertain write. Its explicit replay
+    // owns the original token, including while newer input remains editable.
+    if (!running.current && !current().pending) releaseReservation();
+  }
   function localeAvailable(locale: string) { return locale !== "" && projectRef.current.metadata.targetLocales.includes(locale); }
   function setLocale(value: string) { update(before => ({ ...before, locale: value, selected: null, projection: null, checkReview: null, checkConsent: [] })); }
   function setActor(value: string) { update(before => ({ ...before, actor: value })); }
@@ -402,7 +433,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     const before = current();
     if (!mounted.current || running.current || before.pending || !localeAvailable(target.locale) || !currentRead()
       || (before.projection?.unitId === target.unitId && before.projection.locale === target.locale
-        && before.projection.basis !== target.basis)) return;
+        && before.projection.basis !== target.basis) || !reserveMutation()) return;
     running.current = true;
     update(value => ({ ...value, busyMutation: true, notice: null, reasonValue: "" }));
     try {
@@ -421,6 +452,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     finally {
       running.current = false;
       update(value => ({ ...value, busyMutation: false, activeCheckId: null }));
+      releaseSettledMutation();
     }
   }
   async function decide(kind: ReviewWrite["kind"], currentRead: () => boolean) {
@@ -466,7 +498,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function check(currentRead: () => boolean) {
     const capture = current().checkReview;
-    if (!capture || !mounted.current || running.current || current().pending || !currentRead() || !checkersConfirmed()) return;
+    if (!capture || !mounted.current || running.current || current().pending || !currentRead() || !checkersConfirmed() || !reserveMutation()) return;
     running.current = true; update(value => ({ ...value, busyMutation: true }));
     try {
       const session = executionContext(projectRef.current), executions: ReviewCheckStartRequest["executions"] = [];
@@ -481,7 +513,10 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
       update(value => ({ ...value, checkReview: null, checkConsent: [] }));
       await dispatch(action);
     } catch(error) { fail(error); }
-    finally { running.current = false; update(value => ({ ...value, busyMutation: false, activeCheckId: null })); }
+    finally {
+      running.current = false; update(value => ({ ...value, busyMutation: false, activeCheckId: null }));
+      releaseSettledMutation();
+    }
   }
   async function waive(issueId: string, grant: boolean, expectedWaiverId: string | null, currentRead: () => boolean) {
     const before = current(), target = before.selected;
@@ -518,14 +553,17 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function retryPending() {
     const action = current().pending;
-    if (!mounted.current || reads.retired || !action || running.current || !current().retryAllowed) return;
+    if (!mounted.current || reads.retired || !action || running.current || !mutation.current || !current().retryAllowed) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true, notice: null }));
     try {
       if (current().pending !== action) return;
       if (current().pending === action) await dispatch(action);
     }
-    finally { running.current = false; update(before => ({ ...before, busyMutation: false, activeCheckId: null })); }
+    finally {
+      running.current = false; update(before => ({ ...before, busyMutation: false, activeCheckId: null }));
+      releaseSettledMutation();
+    }
   }
   async function checkPending() {
     const action = current().pending;
@@ -533,7 +571,10 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     running.current = true;
     update(before => ({ ...before, busyMutation: true }));
     try { if (isHumanReviewPending(action)) await lookupHuman(action); else await lookupCheck(action); }
-    finally { running.current = false; update(before => ({ ...before, busyMutation: false })); }
+    finally {
+      running.current = false; update(before => ({ ...before, busyMutation: false }));
+      releaseSettledMutation();
+    }
   }
   async function cancelCheck() {
     const before = current(), actionId = before.activeCheckId ?? (before.pending?.kind === "check" ? before.pending.request.actionId : null);
@@ -545,41 +586,45 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   async function approveBatch() {
     const before = current();
     const frozen = Object.values(before.chosen), batchActor = before.actor.trim();
-    if (!mounted.current || running.current || before.pending || !batchActor || frozen.length === 0) return;
+    if (!mounted.current || running.current || before.pending || !batchActor || frozen.length === 0 || !reserveMutation()) return;
     running.current = true; cancelBatch.current = false;
     update(value => ({ ...value, busyMutation: true, batchRunning: true, batchStatus: null, notice: null }));
     const result = { applied: 0, conflicted: 0, failed: 0 };
     let processed = 0;
-    for (const target of frozen) {
-      if (cancelBatch.current || !mounted.current || current().pending || !localeAvailable(target.locale)) break;
-      try {
-        const session = executionContext(projectRef.current);
-        const actionId = await executionCommands.identity(session);
+    try {
+      for (const target of frozen) {
         if (cancelBatch.current || !mounted.current || current().pending || !localeAvailable(target.locale)) break;
-        const request: ReviewWrite = { projectId: session.projectId, actionId,
-          unitId: target.unitId, locale: target.locale, expectedBasis: target.basis,
-          expectedDecisionId: target.currentDecision?.decisionId ?? null, actor: batchActor, kind: "approve", reason: "" };
-        const action: ReviewHumanPending = { kind: "decision", session: structuredClone(session), request, submittedSeq: -1 };
-        const outcome = await dispatchHuman(action);
-        if (outcome.kind === "retired") break;
-        if (outcome.kind === "saved") {
-          result.applied++;
-          // An uncertain batch action is checked once, never a reason to resume
-          // the remaining batch after that recovery boundary.
-          if (outcome.checked) { processed++; break; }
-        } else if (outcome.kind === "pending") { result.failed++; processed++; break; }
-        else if (isConflict(outcome.error)) result.conflicted++;
-        else result.failed++;
-      } catch (error) {
-        if (hasUnknownOutcome(error)) { result.failed++; processed++; break; }
-        if (isConflict(error)) result.conflicted++; else result.failed++;
+        try {
+          const session = executionContext(projectRef.current);
+          const actionId = await executionCommands.identity(session);
+          if (cancelBatch.current || !mounted.current || current().pending || !localeAvailable(target.locale)) break;
+          const request: ReviewWrite = { projectId: session.projectId, actionId,
+            unitId: target.unitId, locale: target.locale, expectedBasis: target.basis,
+            expectedDecisionId: target.currentDecision?.decisionId ?? null, actor: batchActor, kind: "approve", reason: "" };
+          const action: ReviewHumanPending = { kind: "decision", session: structuredClone(session), request, submittedSeq: -1 };
+          const outcome = await dispatchHuman(action);
+          if (outcome.kind === "retired") break;
+          if (outcome.kind === "saved") {
+            result.applied++;
+            // An uncertain batch action is checked once, never a reason to resume
+            // the remaining batch after that recovery boundary.
+            if (outcome.checked) { processed++; break; }
+          } else if (outcome.kind === "pending") { result.failed++; processed++; break; }
+          else if (isConflict(outcome.error)) result.conflicted++;
+          else result.failed++;
+        } catch (error) {
+          if (hasUnknownOutcome(error)) { result.failed++; processed++; break; }
+          if (isConflict(error)) result.conflicted++; else result.failed++;
+        }
+        processed++;
       }
-      processed++;
+    } finally {
+      running.current = false;
+      update(value => ({ ...value, busyMutation: false, batchRunning: false,
+        batchStatus: { ...result, notStarted: frozen.length - processed },
+        completionVersion: value.completionVersion + (result.applied > 0 ? 1 : 0) }));
+      releaseSettledMutation();
     }
-    running.current = false;
-    update(value => ({ ...value, busyMutation: false, batchRunning: false,
-      batchStatus: { ...result, notStarted: frozen.length - processed },
-      completionVersion: value.completionVersion + (result.applied > 0 ? 1 : 0) }));
   }
   function stopBatch() { cancelBatch.current = true; }
 

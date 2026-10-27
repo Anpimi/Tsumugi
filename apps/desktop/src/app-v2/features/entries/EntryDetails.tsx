@@ -12,6 +12,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ViewPatch, WorkspaceView } from "../../workspace/workspaceStore";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { CandidateOwners } from "../candidates/candidateTypes";
+import type { ReviewOwner } from "../review/reviewTypes";
 import type { ComparisonSession } from "../comparison/ComparisonSession";
 import type { ComparisonView } from "../../../arenaCommands";
 import { readEntryDetails } from "./entryReads";
@@ -21,6 +22,7 @@ import local from "./EntryDetails.module.css";
 const EntriesCandidates = lazy(() => import("../candidates/EntriesCandidates"));
 const EntryProtection = lazy(() => import("../candidates/EntryProtection"));
 const ComparisonPanel = lazy(() => import("../comparison/ComparisonPanel"));
+const EntryReviewPanel = lazy(() => import("../review/EntryReviewPanel"));
 const tabs = ["detail", "context", "candidates", "issues", "history"] as const;
 interface Props {
   project: ProjectView; view: WorkspaceView | null; locale: string; disabled: boolean; visible: boolean;
@@ -28,10 +30,11 @@ interface Props {
   patch: (patch: ViewPatch) => void; onEdit: (unitId: string, locale: string) => Promise<boolean>;
   parentDialogId?: string; comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
   onOpenComparison: (view: ComparisonView) => Promise<boolean>;
-  onPresented: (viewId: string, kind: "candidates" | "protection" | "comparison", visible: boolean) => void;
+  reviewOwner?: ReviewOwner | null;
+  onPresented: (viewId: string, kind: "candidates" | "protection" | "comparison" | "review", visible: boolean) => void;
 }
 export default function EntryDetails({ project, view, locale, disabled, visible, drafts, owners, commands, gate, patch, onEdit, parentDialogId,
-  comparisonOwner, requestComparisons, onOpenComparison, onPresented }: Props) {
+  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads(), unitId = view?.focus ?? null;
   const comparisonButton = useRef<HTMLButtonElement>(null), previousComparison = useRef({ viewId: view?.id, unitId, open: view?.candidateCompareOpen });
@@ -49,8 +52,9 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
     onPresented(view.id, "protection", ready && !!owners && view.detailTab === "detail");
     onPresented(view.id, "candidates", ready && !!owners && ["candidates", "history"].includes(view.detailTab) && !view.candidateCompareOpen);
     onPresented(view.id, "comparison", ready && !!comparisonOwner && view.detailTab === "candidates" && view.candidateCompareOpen);
-    return () => { for (const kind of ["protection", "candidates", "comparison"] as const) onPresented(view.id, kind, false); };
-  }, [view?.id, view?.detailTab, view?.candidateCompareOpen, visible, unitId, query.data !== undefined, query.isError, drafts, commands, owners, comparisonOwner, onPresented]);
+    onPresented(view.id, "review", ready && !!reviewOwner && ["detail", "issues"].includes(view.detailTab));
+    return () => { for (const kind of ["protection", "candidates", "comparison", "review"] as const) onPresented(view.id, kind, false); };
+  }, [view?.id, view?.detailTab, view?.candidateCompareOpen, visible, unitId, query.data !== undefined, query.isError, drafts, commands, owners, comparisonOwner, reviewOwner !== null && reviewOwner !== undefined, onPresented]);
   if (!unitId || !view) return <EmptyState icon={<FileText />} title={t("chooseEntry")} description={t("chooseEntryHelp")} />;
   if (query.isError) return <ErrorState title={t("readFailed")} description={t("readFailedHelp")} action={<Button disabled={disabled} onClick={() => void query.refetch()}>{t("refresh")}</Button>} />;
   if (!query.data) return <LoadingState label={t("loadingDetails")} />;
@@ -69,6 +73,9 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         <div><dt>{t("context")}</dt><dd>{target.termConflict ? t("termConflict") : t("noTermConflict")}</dd></div>
         <div><dt>{t("entrySourceRevision")}</dt><dd className={styles.key}>{target.sourceRevisionId}</dd></div></dl>
       <p className={styles.meta}>{t("factsHelp")}</p>
+      {reviewOwner !== undefined ? reviewOwner && drafts && commands ? <Suspense fallback={<LoadingState label={t("reviewLoading")} />}><EntryReviewPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
+        viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/></Suspense>
+        : <LoadingState label={t("reviewLoading")} /> : null}
       {drafts && owners && commands ? <Suspense fallback={<LoadingState label={t("entryProtectionLoading")} />}><EntryProtection project={project} target={target} drafts={drafts} owners={owners} commands={commands} gate={gate}
         viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/></Suspense> : null}
       <h3>{t("source", { locale: "" })}</h3><p className={local.text}><TokenizedText text={target.sourceText} /></p>
@@ -86,7 +93,10 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
       {decision?.reason ? <p className={local.text}><TokenizedText text={decision.reason}/></p> : null}
       {check ? <ul className={local.findings}>{check.rules.flatMap(rule => rule.findings).map(finding => <li key={finding.issueId} className={local.text}><TokenizedText text={finding.detail}/></li>)}</ul> : null}
       {target.termConflict ? <p>{t("termConflict")}</p> : null}
-      <Button disabled={disabled || query.isFetching || !gate.canDispatch({ viewId: view.id, source: "button" })} onClick={() => { void onEdit(unitId, locale); }}>{t("entryFixTranslation")}</Button>
+      {reviewOwner !== undefined ? reviewOwner && drafts && commands ? <Suspense fallback={<LoadingState label={t("reviewLoading")} />}><EntryReviewPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
+        viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/></Suspense>
+        : <LoadingState label={t("reviewLoading")} /> : null}
+      <Button disabled={disabled || query.isFetching || !gate.canDispatch({ viewId: view.id, source: "button", dialogId: parentDialogId })} onClick={() => { void onEdit(unitId, locale); }}>{t("entryFixTranslation")}</Button>
     </TabsContent>
     {candidatePanel ? <TabsContent value={view.detailTab} className={local.candidates}>
       {view.detailTab === "candidates" && !view.candidateCompareOpen ? <Button ref={comparisonButton} size="sm" disabled={disabled || !gate.canDispatch({ viewId: view.id, source: "button", dialogId: parentDialogId })}

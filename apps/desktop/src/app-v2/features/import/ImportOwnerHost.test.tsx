@@ -1,6 +1,7 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useLayoutEffect, useState } from "react";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useExecutionTaskSession } from "../../../ExecutionTaskSession";
 import type { ApplicationShutdownView, AttemptDetail } from "../../../executionCommands";
 import type { ProjectView } from "../../../projectCommands";
 import { SessionReadProvider } from "../../../SessionReadProvider";
@@ -9,6 +10,7 @@ import { translationAttemptFixture, translationCaptureFixture, translationChecke
   translationPreviewFixture, translationProjectionFixture, translationSelectionFixture, translationStageAttempt } from "../../../testSupport/translationFixture";
 import { ProjectLifecycle } from "../../platform/projectLifecycle";
 import { TranslationDrafts } from "../editor/translationDrafts";
+import ExecutionOwnerHost from "../execution/ExecutionOwnerHost";
 import ImportOwnerHost from "./ImportOwnerHost";
 import type { ImportOwners } from "./importTypes";
 
@@ -69,22 +71,35 @@ async function harness(strict = false) {
   const session = lifecycle.getSnapshot().session!;
   const drafts = new TranslationDrafts({ context: session.reads.context, reads: session.reads, ports: { list: async () => ({ items: [], next: null }) } });
   expect(await drafts.initialize()).toBe(true);
-  let current: ImportOwners | null = null;
+  let current: ImportOwners | null = null, sharedTasks: ReturnType<typeof useExecutionTaskSession> | null = null;
   const onOwners = vi.fn((value: ImportOwners | null) => { current = value; }), onReveal = vi.fn(), register = vi.spyOn(lifecycle, "register");
   const content = <SessionReadProvider context={session.reads.context} reads={session.reads} bridge={false}>
-    <FeedbackHarness drafts={drafts} lifecycle={lifecycle} onOwners={onOwners} onReveal={onReveal}/>
+    <FeedbackHarness drafts={drafts} lifecycle={lifecycle} onOwners={onOwners} onReveal={onReveal} onTasks={value => { sharedTasks = value; }}/>
   </SessionReadProvider>;
   const view = render(strict ? <StrictMode>{content}</StrictMode> : content);
   await waitFor(() => expect(current).not.toBeNull());
-  const participant = register.mock.calls[0][0];
-  return { ports, lifecycle, session, drafts, view, participant, onOwners, onReveal, owners: () => {
+  const participant = register.mock.calls.find(([value]) => value.id === "translation-import")?.[0];
+  const taskParticipant = register.mock.calls.find(([value]) => value.id === "execution-tasks")?.[0];
+  if (!participant || !taskParticipant) throw new Error("Project owners did not register");
+  return { ports, lifecycle, session, drafts, view, participant, taskParticipant, onOwners, onReveal, tasks: () => {
+    if (!sharedTasks) throw new Error("Shared task owner is not mounted"); return sharedTasks;
+  }, owners: () => {
     if (!current) throw new Error("Import owner is not mounted"); return current;
   } };
 }
-function FeedbackHarness(props: { drafts: TranslationDrafts; lifecycle: ProjectLifecycle; onOwners: (value: ImportOwners | null) => void; onReveal: () => void }) {
+function TaskProbe({ onTasks }: { onTasks: (value: ReturnType<typeof useExecutionTaskSession>) => void }) {
+  const tasks = useExecutionTaskSession();
+  useLayoutEffect(() => { onTasks(tasks); });
+  return null;
+}
+function FeedbackHarness(props: { drafts: TranslationDrafts; lifecycle: ProjectLifecycle; onOwners: (value: ImportOwners | null) => void; onReveal: () => void;
+  onTasks: (value: ReturnType<typeof useExecutionTaskSession>) => void }) {
   const [, retain] = useState<ImportOwners | null>(null);
-  return <ImportOwnerHost project={project} drafts={props.drafts} lifecycle={props.lifecycle} onReveal={props.onReveal}
-    onOwners={value => { retain(value); props.onOwners(value); }}/>;
+  return <ExecutionOwnerHost project={project} drafts={props.drafts} lifecycle={props.lifecycle} onReveal={props.onReveal}>
+    <TaskProbe onTasks={props.onTasks}/>
+    <ImportOwnerHost project={project} drafts={props.drafts} lifecycle={props.lifecycle} onReveal={props.onReveal}
+      onOwners={value => { retain(value); props.onOwners(value); }}/>
+  </ExecutionOwnerHost>;
 }
 async function startProducer(h: Awaited<ReturnType<typeof harness>>) {
   await act(async () => {
@@ -199,14 +214,16 @@ describe("ImportOwnerHost", () => {
     invoke.mockImplementation((command: string, payload) => command === "cancel_execution_task" ? Promise.reject(new Error("Lost cancellation ACK"))
       : command === "read_execution_cancellation_action" ? Promise.resolve(null) : native(command, payload));
     const target = { taskId: fixtureIdentity(960), attemptId: preview.attemptId, origin: "tasks" as const };
-    await act(async () => { await h.owners().tasks.cancel(target); });
+    await act(async () => { await h.tasks().cancel(target); });
     const pending = structuredClone(h.owners().tasks.current(target.taskId));
     expect(pending?.phase).toBe("unknown"); expect(h.owners().imports.hasPending()).toBe(false);
     await act(async () => { expect(await h.lifecycle.close()).toBe(false); });
     expect(h.ports.close).not.toHaveBeenCalled(); expect(h.onReveal).toHaveBeenCalled();
-    const before = h.participant.inspect({ kind: "close-window" });
+    expect(h.participant.inspect({ kind: "close-window" }).status).toBe("ready");
+    const before = h.taskParticipant.inspect({ kind: "close-window" }); expect(before.status).toBe("blocked");
+    for (const kind of ["navigate", "language", "close-view", "restore"] as const) expect(h.taskParticipant.inspect({ kind }).status).toBe("ready");
     await act(async () => { h.session.reads.retire(); });
-    expect(h.participant.inspect({ kind: "close-window" })).toEqual(before);
+    expect(h.taskParticipant.inspect({ kind: "close-window" })).toEqual(before);
     await act(async () => { await h.owners().tasks.retry(target.taskId); await h.owners().tasks.cancel({ ...target, taskId: fixtureIdentity(961) }); });
     expect(calls("cancel_execution_task")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
     expect(h.owners().tasks.current(target.taskId)).toEqual(pending); h.lifecycle.dispose();

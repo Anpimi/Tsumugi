@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { ExecutionTaskProvider, useExecutionTaskSession } from "../../../ExecutionTaskSession";
+import { useExecutionTaskSession } from "../../../ExecutionTaskSession";
 import { executionContext, type AttemptDetail } from "../../../executionCommands";
 import { readCompleteAttempt } from "../../../executionRead";
 import { isCommandError, type ProjectView } from "../../../projectCommands";
@@ -82,10 +82,10 @@ function ImportOwnerBridge({ project, lifecycle, onOwners, onReveal }: Omit<Prop
     }
     function inspect(intent: LeaveIntent) {
       if (!leavesProject(intent)) return { status: "ready" as const, revision: "retained-project-session" };
-      const { imports: importer, tasks: taskOwner } = owners.current, value = importer.current(), observed = activity();
-      const pending = importer.hasPending(), unresolved = taskOwner.unresolved();
-      return { status: value.busy || pending || observed.active || unresolved ? "blocked" as const : "ready" as const,
-        revision: JSON.stringify([value, pending, observed.active, observed.revision, taskOwner.state, taskOwner.currentActivity(), unresolved]) };
+      const importer = owners.current.imports, value = importer.current(), observed = activity();
+      const pending = importer.hasPending();
+      return { status: value.busy || pending || observed.active ? "blocked" as const : "ready" as const,
+        revision: JSON.stringify([value, pending, observed.active, observed.revision]) };
     }
     return lifecycle.register({ id: "translation-import", area: "translation", scope: { kind: "project", ...context }, inspect,
       prepareLeave: async (intent, proof, current) => proof() && current() && inspect(intent).status === "ready",
@@ -102,6 +102,6 @@ function ImportTaskOwner(props: Props) {
 }
 
 function ImportOwnerHost(props: Props) {
-  return <ExecutionTaskProvider project={props.project} mutations={props.drafts}><ImportTaskOwner {...props}/></ExecutionTaskProvider>;
+  return <ImportTaskOwner {...props}/>;
 }
 export default memo(ImportOwnerHost);

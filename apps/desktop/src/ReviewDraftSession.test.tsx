@@ -122,6 +122,7 @@ it.each(kinds)("keeps a null %s unresolved with original diagnostics and permits
 
 it("holds one flight across write and lookup, preserves B through consumer removal, and settles independently of current facts", async () => {
   const { target, view } = setup(), writing = deferred<unknown>(), checking = deferred<unknown>();
+  act(() => { expect(manual.begin({ unitId: fixtureIdentity(3322), locale: target.locale, sourceRevisionId: fixtureIdentity(3323), key: "other", sourceText: "Other source" }, null, null)).toBe(true); });
   invoke.mockImplementation((name: string) => name === "create_execution_identity" ? Promise.resolve(fixtureIdentity(3320))
     : name === names.decision.write ? writing.promise : name === names.decision.read ? checking.promise : Promise.reject(new Error(name)));
   let operation!: Promise<void>;
@@ -131,7 +132,7 @@ it("holds one flight across write and lookup, preserves B through consumer remov
   await act(async () => { await owner.decide("approve", () => true); await owner.checkPending(); });
   expect(calls("create_execution_identity")).toHaveLength(1);
   act(() => { owner.setActor("Reviewer B"); owner.editReason(target, "Reason B");
-    manual.begin({ unitId: fixtureIdentity(3322), locale: target.locale, sourceRevisionId: fixtureIdentity(3323), key: "other", sourceText: "Other source" }, null, null, "Manual B"); });
+    manual.edit("Manual B"); });
   await act(async () => { writing.reject(new Error("Lost write")); });
   await waitFor(() => expect(owner.current().checkingAction).toBe(true));
   const pending = owner.current().pending!, original = calls(names.decision.write)[0][1].request.decision as ReviewWrite;

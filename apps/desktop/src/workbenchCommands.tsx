@@ -9,6 +9,8 @@ import * as translationValidation from "./generated/translation.validators";
 import type { CandidateDecisionRequest, CandidateDisposition } from "./translationCommands";
 import type { CandidateAuditCapture } from "./CandidateDecisionSession";
 import type { WorkspaceSelection } from "./app-v2/workspace/workspaceSelection";
+import type { ReviewEntryTarget, ReviewEntryDecisionPayload, ReviewEntryBasisPayload, ReviewEntryPendingPayload } from "./app-v2/features/review/reviewTypes";
+import * as reviewValidation from "./generated/review.validators";
 import { validContentSelection } from "./contentSelection";
 import { createContext, useContext, type ReactNode } from "react";
 import type { WorkspaceArea } from "./WorkbenchFrame";
@@ -42,6 +44,8 @@ type PlainWorkbenchCommandId = "translation.hide-candidate-batch" | "translation
   | "translation.confirm" | "translation.confirm-next" | "translation.exit-editor" | "translation.focus-mode"
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
+  | "review.open-retained-entry" | "review.discard-retained-inputs"
+  | "review.dismiss-entry-result"
   | "review.semantic-check-start" | "review.semantic-retry-start"
   | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
@@ -301,6 +305,13 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "review.entry-approve": ReviewEntryDecisionPayload;
+  "review.entry-request-changes": ReviewEntryDecisionPayload;
+  "review.entry-adopt-current": ReviewEntryBasisPayload;
+  "review.entry-check": ReviewEntryPendingPayload;
+  "review.entry-retry": ReviewEntryPendingPayload;
+  "review.recover-entry-check": ReviewEntryPendingPayload;
+  "review.recover-entry-retry": ReviewEntryPendingPayload;
   "translation.preview-candidate-batch": TranslationCandidateBatchPreviewCommandPayload;
   "translation.confirm-candidate-batch": TranslationCandidateBatchCommandPayload;
   "translation.continue-candidate-batch": TranslationCandidateBatchCommandPayload;
@@ -604,6 +615,9 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-finding" | "review.restore-finding" | "review.repair-finding"> | PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"entry-review-decision", "review.entry-approve" | "review.entry-request-changes">
+  | ResourceCommand<"entry-review-basis", "review.entry-adopt-current">
+  | ResourceCommand<"entry-review-pending", "review.entry-check" | "review.entry-retry" | "review.recover-entry-check" | "review.recover-entry-retry">
   | ResourceCommand<"source-check", "source.prepare-check" | "source.start-check" | "source.finish-check">
   | ResourceCommand<"source-plugin-pending", "source.check-plugin-start" | "source.retry-plugin-request">
   | ResourceCommand<"task-saved-build", "tasks.open-saved-build">
@@ -725,6 +739,17 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind === "entry-review-decision") return payload?.kind === command.payloadKind && validReviewEntryTarget(payload)
+    && payload.selectionId !== null && payload.revisionId !== null && editSequence(payload.editSeq)
+    && typeof payload.actor === "string" && !!payload.actor.trim() && typeof payload.reason === "string"
+    && payload.decision === (command.id === "review.entry-approve" ? "approve" : "request-changes")
+    && (payload.decision === "approve" || !!payload.reason.trim()) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-review-basis") return payload?.kind === command.payloadKind && validReviewEntryTarget(payload)
+    && validReviewEntryTarget(payload.current) && payload.current.unitId === payload.unitId && payload.current.locale === payload.locale
+    && editSequence(payload.editSeq) && typeof payload.actor === "string" && typeof payload.reason === "string" ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "entry-review-pending") return payload?.kind === command.payloadKind && validReviewEntryPending(payload)
+    && payload.pending.session.projectId === command.scope.projectId && payload.pending.session.sessionToken === command.scope.sessionToken
+    ? command.availability(payload) : unavailable;
   if (command.payloadKind === "translation-protection" && payload?.kind === command.payloadKind
     && payload.protected !== (command.id === "translation.protect-work")) return unavailable;
   if (command.payloadKind === "ai-plan-control" && payload?.kind === command.payloadKind && command.id !== `ai.plan.${payload.command}`) return unavailable;
@@ -902,6 +927,24 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   return !command.payloadKind && payload === undefined ? command.availability() : { enabled: false, reason: "unavailable" };
 }
 function validIdentity(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
+function validReviewEntryTarget(value: ReviewEntryTarget | null | undefined): boolean {
+  return !!value && [value.unitId, value.locale, value.basis, value.sourceSnapshotId, value.sourceRevisionId].every(validIdentity)
+    && nullableIdentity(value.selectionId) && nullableIdentity(value.revisionId) && nullableIdentity(value.expectedDecisionId)
+    && (value.selectionId === null) === (value.revisionId === null);
+}
+function validReviewEntryPending(value: ReviewEntryPendingPayload): boolean {
+  const pending = value.pending;
+  if (!pending || typeof pending !== "object" || !pending.session || !pending.request
+    || pending.session.projectId !== pending.request.projectId || !Number.isSafeInteger(pending.submittedSeq)
+    || pending.submittedSeq < (pending.kind === "decision" ? -1 : 0)) return false;
+  switch (pending.kind) {
+    case "decision": return reviewValidation.validateRequestDecision({ ...pending.session, decision: pending.request });
+    case "waiver": return reviewValidation.validateRequestWaiver({ ...pending.session, waiver: pending.request });
+    case "fallback": return reviewValidation.validateRequestFallback({ ...pending.session, fallback: pending.request });
+    case "finding": return reviewValidation.validateRequestFinding({ ...pending.session, finding: pending.request });
+    default: return false;
+  }
+}
 function validTarget(payload: ReviewFallbackCommandPayload | ReviewWaiverCommandPayload | ReviewFindingCommandPayload) { return validIdentity(payload.unitId) && validIdentity(payload.locale) && validIdentity(payload.basis); }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 function nullableIdentity(value: unknown) { return value === null || validIdentity(value); }
@@ -1287,7 +1330,10 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "project-metadata-reconcile" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "entry-review-decision" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-review-basis" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-review-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "project-metadata-reconcile" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "source-check" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "source-plugin-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "task-saved-build" && payload?.kind === command.payloadKind) command.handler(payload);
