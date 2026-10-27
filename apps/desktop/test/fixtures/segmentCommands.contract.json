@@ -63,7 +63,95 @@
             "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
           "sourceTruncated": false,
-          "translationTruncated": false
+          "translationTruncated": false,
+          "candidateCount": 2,
+          "protection": {
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "revision": "4",
+            "protected": true
+          },
+          "qa": {
+            "current": true,
+            "outcome": "completed",
+            "mandatoryCoverageComplete": false,
+            "mandatory": {
+              "passed": 2,
+              "findings": 1,
+              "missing": 0,
+              "unavailable": 0,
+              "failed": 0,
+              "cancelled": 0,
+              "unknown": 0,
+              "notApplicable": 0,
+              "findingCount": 1
+            },
+            "advisory": {
+              "passed": 0,
+              "findings": 0,
+              "missing": 0,
+              "unavailable": 0,
+              "failed": 0,
+              "cancelled": 0,
+              "unknown": 0,
+              "notApplicable": 0,
+              "findingCount": 0
+            }
+          },
+          "terms": {
+            "applicableEntryCount": 1,
+            "conflictingEntryCount": 0,
+            "revisionCount": 1,
+            "revisions": [
+              {
+                "termId": "wooden-barrel",
+                "revisionId": "40000000-0000-4000-8000-000000000008"
+              }
+            ],
+            "truncated": false
+          },
+          "applicability": {
+            "selectedSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "sourceBasisCurrent": true,
+            "capturedBasisCurrent": false,
+            "resourceImpact": {
+              "status": "needs-revalidation",
+              "reasonCount": 1,
+              "changes": [
+                {
+                  "changeId": "40000000-0000-4000-8000-000000000022",
+                  "kind": "term",
+                  "confidence": "explicit-unit"
+                }
+              ],
+              "truncated": false
+            },
+            "resourceReviewRequired": true
+          },
+          "qualification": {
+            "blockerCount": 4,
+            "exceptionCount": 0,
+            "blockers": [
+              {
+                "code": "changes-requested",
+                "reference": null
+              },
+              {
+                "code": "qa-incomplete-coverage",
+                "reference": null
+              },
+              {
+                "code": "qa-issue",
+                "reference": "synthetic-issue"
+              },
+              {
+                "code": "resource-impact-unresolved",
+                "reference": null
+              }
+            ],
+            "exceptions": [],
+            "truncated": false
+          }
         }
       ],
       "nextCursor": null,

@@ -73,6 +73,15 @@ mod contracts {
         let mut invalid_cursor = segment_fixture["requests"]["segmentPage"].clone();
         invalid_cursor["cursor"] = serde_json::json!("row-offset-50");
         assert!(serde_json::from_value::<SegmentPageRequest>(invalid_cursor).is_err());
+        let mut missing_summary = segment_fixture["responses"]["segmentPage"].clone();
+        missing_summary["rows"][0].as_object_mut().unwrap().remove("qa");
+        assert!(serde_json::from_value::<SegmentPage>(missing_summary).is_err());
+        let mut overflow_summary = segment_fixture["responses"]["segmentPage"].clone();
+        overflow_summary["rows"][0]["candidateCount"] = serde_json::json!(4_294_967_296u64);
+        assert!(serde_json::from_value::<SegmentPage>(overflow_summary).is_err());
+        let mut invalid_impact = segment_fixture["responses"]["segmentPage"].clone();
+        invalid_impact["rows"][0]["applicability"]["resourceImpact"]["status"] = serde_json::json!("resolved");
+        assert!(serde_json::from_value::<SegmentPage>(invalid_impact).is_err());
         let mut summary = fixture["responses"]["summary"].clone();
         summary["rows"][0]["currentCheck"]["hasIncomplete"] = serde_json::json!(true);
         let core: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summary.clone()).unwrap();

@@ -12,7 +12,20 @@ import { ProjectLifecycle } from "./platform/projectLifecycle";
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 
 const project: ProjectView = { locator: "/synthetic/project", sessionToken: "session", reconciliationState: "settled", metadata: { projectId: "project", metadataRevision: "1", displayName: "Synthetic project", sourceLocale: "en", targetLocales: ["zh-CN"] } };
-const page: SegmentPage = { projectId: "project", locale: "zh-CN", query: { text: "", selection: "all" }, queryFingerprint: "fingerprint", epoch: "epoch", sequence: "1", scopeId: "scope", sourceSnapshotId: "snapshot", readVersion: "1", total: 1, nextCursor: null, rows: [{ sourceTruncated: false, translationTruncated: false, content: { unitId: "unit", locale: "zh-CN", sourceSnapshotId: "snapshot", sourceRevisionId: "source", nativeKey: "dialogue.hello", sourcePreview: "Actual source from the read port", translationPreview: "从读取接口返回的译文", selectionId: "selection", revisionId: "revision", basis: "basis", currentCheck: null, currentDecision: null } }] };
+const emptyChecks = { passed: 0, findings: 0, missing: 0, unavailable: 0, failed: 0, cancelled: 0, unknown: 0, notApplicable: 0, findingCount: 0 };
+const page: SegmentPage = {
+  projectId: "project", locale: "zh-CN", query: { text: "", selection: "all" }, queryFingerprint: "fingerprint", epoch: "epoch", sequence: "1",
+  scopeId: "scope", sourceSnapshotId: "snapshot", readVersion: "1", total: 1, nextCursor: null,
+  rows: [{
+    sourceTruncated: false, translationTruncated: false,
+    content: { unitId: "unit", locale: "zh-CN", sourceSnapshotId: "snapshot", sourceRevisionId: "source", nativeKey: "dialogue.hello", sourcePreview: "Actual source from the read port", translationPreview: "从读取接口返回的译文", selectionId: "selection", revisionId: "revision", basis: "basis", currentCheck: null, currentDecision: null },
+    candidateCount: 0, protection: { unitId: "unit", locale: "zh-CN", revision: "0", protected: false },
+    qa: { current: false, outcome: null, mandatoryCoverageComplete: null, mandatory: emptyChecks, advisory: { ...emptyChecks } },
+    terms: { applicableEntryCount: 0, conflictingEntryCount: 0, revisionCount: 0, revisions: [], truncated: false },
+    applicability: { selectedSourceRevisionId: "source", sourceBasisCurrent: true, capturedBasisCurrent: true, resourceImpact: null, resourceReviewRequired: false },
+    qualification: { blockerCount: 2, exceptionCount: 0, blockers: [{ code: "approval-missing-or-stale", reference: null }, { code: "qa-missing-or-stale", reference: null }], exceptions: [], truncated: false },
+  }],
+};
 let controller: ProjectLifecycle;
 beforeEach(async () => {
   localStorage.clear(); history.replaceState(null, "", "/");
@@ -67,7 +80,7 @@ describe("real-port workspace assembly", () => {
   it("uses the original page cursor and starts a fresh scope when the selection filter changes", async () => {
     const read = vi.mocked(segmentCommands.page).mockImplementation(async request => {
       if (request.query.selection === "unselected") return { ...page, query: request.query, scopeId: "unselected-scope", total: 0, rows: [] };
-      return request.cursor ? { ...page, total: 2, rows: [{ ...page.rows[0], content: { ...page.rows[0].content, unitId: "unit-two", sourcePreview: "Second page source" } }] }
+      return request.cursor ? { ...page, total: 2, rows: [{ ...page.rows[0], protection: { ...page.rows[0].protection, unitId: "unit-two" }, content: { ...page.rows[0].content, unitId: "unit-two", sourcePreview: "Second page source" } }] }
         : { ...page, total: 2, nextCursor: "opaque-next" };
     });
     controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project) });

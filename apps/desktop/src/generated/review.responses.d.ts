@@ -125,6 +125,9 @@ export type ReviewCheckerView =
     };
 export type UnsignedDecimal = string;
 export type SegmentSelectionFilter = "all" | "selected" | "unselected";
+export type ResourceImpactConfidence = "explicit-unit" | "literal-possible";
+export type ResourceImpactKind = "term" | "context" | "context-fact";
+export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
 /**
  * Pinned local decisions are separate from raw SDK facts and the provider projection.
  */
@@ -1003,9 +1006,39 @@ export interface SegmentQuery {
   text: string;
 }
 export interface SegmentRow {
+  applicability: SegmentApplicability;
+  candidateCount: number;
   content: ReviewSummary;
+  protection: WorkProtection;
+  qa: SegmentQaSummary;
+  qualification: SegmentQualification;
   sourceTruncated: boolean;
+  terms: SegmentTermSummary;
   translationTruncated: boolean;
+}
+export interface SegmentApplicability {
+  /**
+   * The captured source and resources still match; this is not a usability verdict.
+   */
+  capturedBasisCurrent: boolean | null;
+  /**
+   * Recorded changes since selection can remain after a successful human recheck.
+   */
+  resourceImpact: SegmentResourceImpact | null;
+  resourceReviewRequired: boolean;
+  selectedSourceRevisionId: ExecutionId | null;
+  sourceBasisCurrent: boolean | null;
+}
+export interface SegmentResourceImpact {
+  changes: SegmentImpactChange[];
+  reasonCount: number;
+  status: ResourceImpactStatus;
+  truncated: boolean;
+}
+export interface SegmentImpactChange {
+  changeId: ExecutionId;
+  confidence: ResourceImpactConfidence;
+  kind: ResourceImpactKind;
 }
 export interface ReviewSummary {
   basis: string;
@@ -1032,6 +1065,52 @@ export interface ReviewSummaryDecision {
   basis: string;
   decisionId: ExecutionId;
   kind: ReviewDecisionKind;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
+}
+export interface SegmentQaSummary {
+  advisory: SegmentQaCounts;
+  current: boolean;
+  mandatory: SegmentQaCounts;
+  mandatoryCoverageComplete: boolean | null;
+  outcome: ReviewCheckOutcome | null;
+}
+export interface SegmentQaCounts {
+  cancelled: number;
+  failed: number;
+  findingCount: number;
+  findings: number;
+  missing: number;
+  notApplicable: number;
+  passed: number;
+  unavailable: number;
+  unknown: number;
+}
+export interface SegmentQualification {
+  blockerCount: number;
+  blockers: SegmentReason[];
+  exceptionCount: number;
+  exceptions: SegmentReason[];
+  truncated: boolean;
+}
+export interface SegmentReason {
+  code: string;
+  reference: string | null;
+}
+export interface SegmentTermSummary {
+  applicableEntryCount: number;
+  conflictingEntryCount: number;
+  revisionCount: number;
+  revisions: SegmentTermRef[];
+  truncated: boolean;
+}
+export interface SegmentTermRef {
+  revisionId: ExecutionId;
+  termId: string;
 }
 export interface SegmentScopeCapture {
   capture: ReviewScopeCapture;

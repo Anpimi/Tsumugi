@@ -4171,6 +4171,28 @@
         ],
         "type": "object"
       },
+      "ResourceImpactConfidence": {
+        "enum": [
+          "explicit-unit",
+          "literal-possible"
+        ],
+        "type": "string"
+      },
+      "ResourceImpactKind": {
+        "enum": [
+          "term",
+          "context",
+          "context-fact"
+        ],
+        "type": "string"
+      },
+      "ResourceImpactStatus": {
+        "enum": [
+          "needs-revalidation",
+          "unresolved"
+        ],
+        "type": "string"
+      },
       "ReviewBasis": {
         "additionalProperties": false,
         "properties": {
@@ -5651,6 +5673,76 @@
         ],
         "type": "object"
       },
+      "SegmentApplicability": {
+        "additionalProperties": false,
+        "properties": {
+          "capturedBasisCurrent": {
+            "description": "The captured source and resources still match; this is not a usability verdict.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resourceImpact": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SegmentResourceImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Recorded changes since selection can remain after a successful human recheck."
+          },
+          "resourceReviewRequired": {
+            "type": "boolean"
+          },
+          "selectedSourceRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceBasisCurrent": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "selectedSourceRevisionId",
+          "sourceBasisCurrent",
+          "capturedBasisCurrent",
+          "resourceImpact",
+          "resourceReviewRequired"
+        ],
+        "type": "object"
+      },
+      "SegmentImpactChange": {
+        "additionalProperties": false,
+        "properties": {
+          "changeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confidence": {
+            "$ref": "#/definitions/ResourceImpactConfidence"
+          },
+          "kind": {
+            "$ref": "#/definitions/ResourceImpactKind"
+          }
+        },
+        "required": [
+          "changeId",
+          "kind",
+          "confidence"
+        ],
+        "type": "object"
+      },
       "SegmentPage": {
         "additionalProperties": false,
         "properties": {
@@ -5720,6 +5812,155 @@
         ],
         "type": "object"
       },
+      "SegmentQaCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "cancelled": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "failed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "findingCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "findings": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "missing": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "notApplicable": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "passed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unavailable": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknown": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "passed",
+          "findings",
+          "missing",
+          "unavailable",
+          "failed",
+          "cancelled",
+          "unknown",
+          "notApplicable",
+          "findingCount"
+        ],
+        "type": "object"
+      },
+      "SegmentQaSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "advisory": {
+            "$ref": "#/definitions/SegmentQaCounts"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "mandatory": {
+            "$ref": "#/definitions/SegmentQaCounts"
+          },
+          "mandatoryCoverageComplete": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ReviewCheckOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "current",
+          "outcome",
+          "mandatoryCoverageComplete",
+          "mandatory",
+          "advisory"
+        ],
+        "type": "object"
+      },
+      "SegmentQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "blockerCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "blockers": {
+            "items": {
+              "$ref": "#/definitions/SegmentReason"
+            },
+            "type": "array"
+          },
+          "exceptionCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exceptions": {
+            "items": {
+              "$ref": "#/definitions/SegmentReason"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "blockerCount",
+          "exceptionCount",
+          "blockers",
+          "exceptions",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "SegmentQuery": {
         "additionalProperties": false,
         "properties": {
@@ -5736,14 +5977,84 @@
         ],
         "type": "object"
       },
+      "SegmentReason": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "reference"
+        ],
+        "type": "object"
+      },
+      "SegmentResourceImpact": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/definitions/SegmentImpactChange"
+            },
+            "type": "array"
+          },
+          "reasonCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/definitions/ResourceImpactStatus"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "reasonCount",
+          "changes",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "SegmentRow": {
         "additionalProperties": false,
         "properties": {
+          "applicability": {
+            "$ref": "#/definitions/SegmentApplicability"
+          },
+          "candidateCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
           "content": {
             "$ref": "#/definitions/ReviewSummary"
           },
+          "protection": {
+            "$ref": "#/definitions/WorkProtection"
+          },
+          "qa": {
+            "$ref": "#/definitions/SegmentQaSummary"
+          },
+          "qualification": {
+            "$ref": "#/definitions/SegmentQualification"
+          },
           "sourceTruncated": {
             "type": "boolean"
+          },
+          "terms": {
+            "$ref": "#/definitions/SegmentTermSummary"
           },
           "translationTruncated": {
             "type": "boolean"
@@ -5752,7 +6063,13 @@
         "required": [
           "content",
           "sourceTruncated",
-          "translationTruncated"
+          "translationTruncated",
+          "candidateCount",
+          "protection",
+          "qa",
+          "terms",
+          "applicability",
+          "qualification"
         ],
         "type": "object"
       },
@@ -5787,6 +6104,62 @@
           "unselected"
         ],
         "type": "string"
+      },
+      "SegmentTermRef": {
+        "additionalProperties": false,
+        "properties": {
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "termId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "termId",
+          "revisionId"
+        ],
+        "type": "object"
+      },
+      "SegmentTermSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "applicableEntryCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "conflictingEntryCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revisionCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/definitions/SegmentTermRef"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "applicableEntryCount",
+          "conflictingEntryCount",
+          "revisionCount",
+          "revisions",
+          "truncated"
+        ],
+        "type": "object"
       },
       "SelectedSourceContext": {
         "additionalProperties": false,
@@ -7298,6 +7671,30 @@
           "total",
           "nextOffset",
           "coverage"
+        ],
+        "type": "object"
+      },
+      "WorkProtection": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "revision",
+          "protected"
         ],
         "type": "object"
       }

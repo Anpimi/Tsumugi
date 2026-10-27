@@ -55,30 +55,51 @@ fn valid(request: &CandidateDecisionWrite) -> bool {
         && request.reason == request.reason.trim()
         && request.reason.len() <= 4096
 }
-fn load(c: &Connection, action: ExecutionId) -> Result<Option<CandidateDecision>, ExecutionError> {
-    let raw: Option<(String, String, Vec<u8>, String, Vec<u8>, String)> = c.query_row(
-        "SELECT revision_id,source_snapshot_id,request,request_digest,receipt,receipt_digest FROM translation_candidate_decisions WHERE action_id=?1",
-        [action.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
-    ).optional().map_err(super::super::ledger::sql_error)?;
-    let Some((revision, snapshot, bytes, digest, receipt, receipt_digest)) = raw else {
-        return Ok(None);
-    };
-    let request: CandidateDecisionWrite = codec::decode(&bytes, MAX_INPUT_BYTES)?;
-    let value: CandidateDecision = codec::decode(&receipt, MAX_INPUT_BYTES)?;
-    if !valid(&request)
-        || codec::digest(&bytes) != digest
-        || codec::digest(&receipt) != receipt_digest
-        || request.action_id != action
-        || request.revision_id.to_string() != revision
-        || value.request != request
-        || value.source_snapshot_id.to_string() != snapshot
-    {
-        return Err(error(
-            ErrorCode::CorruptLedger,
-            "candidate-decision-receipt",
-        ));
+struct StoredDecision {
+    revision: String,
+    snapshot: String,
+    request: Vec<u8>,
+    request_digest: String,
+    receipt: Vec<u8>,
+    receipt_digest: String,
+}
+impl StoredDecision {
+    fn from_row(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            revision: row.get(offset)?,
+            snapshot: row.get(offset + 1)?,
+            request: row.get(offset + 2)?,
+            request_digest: row.get(offset + 3)?,
+            receipt: row.get(offset + 4)?,
+            receipt_digest: row.get(offset + 5)?,
+        })
     }
-    Ok(Some(value))
+
+    fn decode(self, action: ExecutionId) -> Result<CandidateDecision, ExecutionError> {
+        let request: CandidateDecisionWrite = codec::decode(&self.request, MAX_INPUT_BYTES)?;
+        let value: CandidateDecision = codec::decode(&self.receipt, MAX_INPUT_BYTES)?;
+        if !valid(&request)
+            || codec::digest(&self.request) != self.request_digest
+            || codec::digest(&self.receipt) != self.receipt_digest
+            || request.action_id != action
+            || request.revision_id.to_string() != self.revision
+            || value.request != request
+            || value.source_snapshot_id.to_string() != self.snapshot
+        {
+            return Err(error(
+                ErrorCode::CorruptLedger,
+                "candidate-decision-receipt",
+            ));
+        }
+        Ok(value)
+    }
+}
+fn load(c: &Connection, action: ExecutionId) -> Result<Option<CandidateDecision>, ExecutionError> {
+    c.query_row(
+        "SELECT revision_id,source_snapshot_id,request,request_digest,receipt,receipt_digest FROM translation_candidate_decisions WHERE action_id=?1",
+        [action.to_string()], |row| StoredDecision::from_row(row, 0),
+    ).optional().map_err(super::super::ledger::sql_error)?
+        .map(|raw| raw.decode(action)).transpose()
 }
 pub(super) fn latest(
     c: &Connection,
@@ -104,7 +125,91 @@ pub(in crate::persistence) fn selectable(
     Ok(())
 }
 pub(in crate::persistence) fn rejected(c: &Connection, revision: ExecutionId) -> Result<bool, ExecutionError> {
-    Ok(latest(c, revision)?.is_some_and(|value| value.request.disposition == CandidateDisposition::Rejected))
+    Ok(latest(c, revision)?.is_some_and(|value| is_rejected(&value)))
+}
+fn is_rejected(value: &CandidateDecision) -> bool {
+    value.request.disposition == CandidateDisposition::Rejected
+}
+
+/// Unselected, non-rejected revisions remain candidates even after a source
+/// change or an earlier selection. Applicability is a separate observation.
+/// Callers keep these reads in the same snapshot as their current row facts.
+pub(in crate::persistence) fn summaries(
+    c: &Connection,
+    project: ExecutionId,
+    units: &[ExecutionId],
+    locale: &str,
+) -> Result<std::collections::BTreeMap<ExecutionId, u32>, ExecutionError> {
+    check_target(c, project, locale)?;
+    if units.iter().collect::<BTreeSet<_>>().len() != units.len() {
+        return Err(error(ErrorCode::InvalidInput, "candidate-summary-units"));
+    }
+    let wanted = serde_json::to_string(units)
+        .map_err(|_| error(ErrorCode::InvalidInput, "candidate-summary-units"))?;
+    let project_key = project.to_string();
+    let mut statement = c.prepare(
+        "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2))
+         SELECT wanted.unit_id,u.unit_id,COUNT(r.revision_id)
+         FROM wanted
+         LEFT JOIN source_units u ON u.unit_id=wanted.unit_id AND u.project_id=?1
+         LEFT JOIN translation_selections s ON s.unit_id=u.unit_id AND s.locale=?3
+           AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t
+                           WHERE t.unit_id=u.unit_id AND t.locale=?3)
+         LEFT JOIN translation_revisions r ON r.unit_id=u.unit_id
+           AND r.project_id=?1 AND r.locale=?3 AND r.revision_id IS NOT s.revision_id
+         GROUP BY wanted.unit_id,u.unit_id",
+    ).map_err(super::super::ledger::sql_error)?;
+    let rows = statement.query_map(params![project_key, wanted, locale], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?))
+    }).map_err(super::super::ledger::sql_error)?;
+    let mut counts = std::collections::BTreeMap::new();
+    for row in rows {
+        let (unit, owner, count) = row.map_err(super::super::ledger::sql_error)?;
+        if owner.as_ref() != Some(&unit) {
+            return Err(error(ErrorCode::Unauthorized, "candidate-summary-scope"));
+        }
+        counts.insert(id(unit)?, u32::try_from(count)
+            .map_err(|_| error(ErrorCode::LimitExceeded, "candidate-summary-count"))?);
+    }
+
+    // Only the latest original decision receipts are needed. Do not fetch
+    // revision bodies or turn every history row into an individual query.
+    let mut statement = c.prepare(
+        "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2))
+         SELECT r.unit_id,r.source_revision_id,r.origin_kind,d.action_id,
+                d.revision_id,d.source_snapshot_id,d.request,d.request_digest,d.receipt,d.receipt_digest
+         FROM wanted JOIN translation_revisions r ON r.unit_id=wanted.unit_id
+           AND r.project_id=?1 AND r.locale=?3
+         LEFT JOIN translation_selections s ON s.unit_id=r.unit_id AND s.locale=?3
+           AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t
+                           WHERE t.unit_id=r.unit_id AND t.locale=?3)
+         JOIN translation_candidate_decisions d ON d.revision_id=r.revision_id
+           AND d.rowid=(SELECT latest.rowid FROM translation_candidate_decisions latest
+                        WHERE latest.revision_id=r.revision_id ORDER BY latest.rowid DESC LIMIT 1)
+         WHERE r.revision_id IS NOT s.revision_id",
+    ).map_err(super::super::ledger::sql_error)?;
+    let rows = statement.query_map(params![project_key, wanted, locale], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?, StoredDecision::from_row(row, 4)?))
+    }).map_err(super::super::ledger::sql_error)?;
+    for row in rows {
+        let (unit, source, origin, action, raw) = row.map_err(super::super::ledger::sql_error)?;
+        let unit = id(unit)?;
+        let value = raw.decode(id(action)?)?;
+        if value.request.project_id != project || value.request.unit_id != unit
+            || value.request.locale != locale || value.request.source_revision_id != id(source)?
+            || origin != "ai"
+        {
+            return Err(error(ErrorCode::CorruptLedger, "candidate-summary-decision"));
+        }
+        if is_rejected(&value) {
+            let count = counts.get_mut(&unit)
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-summary-scope"))?;
+            *count = count.checked_sub(1)
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-summary-count"))?;
+        }
+    }
+    Ok(counts)
 }
 fn belongs(c: &Connection, request: &CandidateDecisionWrite) -> Result<bool, ExecutionError> {
     c.query_row("SELECT EXISTS(SELECT 1 FROM translation_revisions WHERE project_id=?1 AND revision_id=?2 AND unit_id=?3 AND locale=?4 AND source_revision_id=?5 AND origin_kind='ai')",
@@ -166,7 +271,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     }
     for value in previous
         .values()
-        .filter(|value| value.request.disposition == CandidateDisposition::Rejected)
+        .filter(|value| is_rejected(value))
     {
         if current_selection(c, value.request.unit_id, &value.request.locale)?
             .is_some_and(|s| s.revision_id == value.request.revision_id)
@@ -179,6 +284,10 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "candidates/summary_tests.rs"]
+mod summary_tests;
 impl ProjectStore {
     pub fn translation_candidate_decision(
         &self,

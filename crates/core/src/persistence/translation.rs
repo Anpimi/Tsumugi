@@ -14,6 +14,7 @@ mod candidates;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
 pub(in crate::persistence) use candidates::selectable as candidate_selectable;
 pub(in crate::persistence) use candidates::rejected as candidate_rejected;
+pub(in crate::persistence) use candidates::summaries as candidate_summaries;
 
 /// Immutable matching scopes from the current adopted source. This observation
 /// allocates no identities and grants neither execution nor adoption authority.

@@ -684,7 +684,10 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     let source = temp.path().join("mod");
     std::fs::create_dir_all(source.join("i18n")).unwrap();
     std::fs::write(source.join("manifest.json"), br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#).unwrap();
-    std::fs::write(source.join("i18n/default.json"), br#"{"first":"same","second":"same","third":"same"}"#).unwrap();
+    let source_text = format!("same {}", "你好🧵".repeat(100));
+    std::fs::write(source.join("i18n/default.json"), serde_json::to_vec(&json!({
+        "first":source_text, "second":source_text, "third":source_text,
+    })).unwrap()).unwrap();
     let app = crate::commands::register_commands(tauri::test::mock_builder())
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .unwrap();
@@ -749,7 +752,9 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     request["scopeId"] = Value::Null;
     request["cursor"] = Value::Null;
     request["limit"] = json!(1);
+    let read_started = Instant::now();
     let first = call(&view, "read_segment_page", request.clone()).unwrap();
+    println!("segment ipc-fixture data=3 page=1 bytes={} round_trip_us={}", serde_json::to_vec(&first).unwrap().len(), read_started.elapsed().as_micros());
     let typed: tsumugi_core::SegmentPage = serde_json::from_value(first.clone()).unwrap();
     assert_eq!(typed.total, 3);
     assert_eq!(typed.rows.len(), 1);
@@ -771,7 +776,18 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
         for field in ["scopeId", "sourceSnapshotId", "queryFingerprint", "readVersion", "epoch", "sequence"] {
             assert_eq!(page[field], first[field], "{field}");
         }
-        assert_eq!(page["rows"][0]["content"]["sourcePreview"], "same");
+        assert_eq!(page["rows"][0]["content"]["sourcePreview"], source_text.chars().take(256).collect::<String>());
+        assert_eq!(page["rows"][0]["sourceTruncated"], true);
+        assert_eq!(page["rows"][0]["translationTruncated"], false);
+        assert_eq!(page["rows"][0]["candidateCount"], 0);
+        assert_eq!(page["rows"][0]["protection"]["unitId"], page["rows"][0]["content"]["unitId"]);
+        assert_eq!(page["rows"][0]["protection"]["locale"], "zh-CN");
+        assert_eq!(page["rows"][0]["qa"]["current"], false);
+        assert!(page["rows"][0]["qa"]["outcome"].is_null());
+        assert!(page["rows"][0]["qa"]["mandatoryCoverageComplete"].is_null());
+        assert!(page["rows"][0]["applicability"]["sourceBasisCurrent"].is_null());
+        assert!(page["rows"][0]["applicability"]["capturedBasisCurrent"].is_null());
+        assert!(serde_json::to_vec(page).unwrap().len() <= content::MAX_CONTENT_PAGE_BYTES);
     }
     assert!(third["nextCursor"].is_null());
     let mut scope = context.clone();
@@ -818,13 +834,83 @@ fn segment_ipc_pages_and_freezes_one_basis_and_rejects_stale_or_foreign_reads() 
     save["locale"] = request["locale"].clone();
     save["sourceRevisionId"] = row["sourceRevisionId"].clone();
     save["expectedSelectionId"] = Value::Null;
-    save["text"] = json!("Saved translation");
-    call(&view, "save_translation_revision", save).unwrap();
+    let translation_text = "译文🧵".repeat(100);
+    save["text"] = json!(translation_text);
+    let saved = call(&view, "save_translation_revision", save.clone()).unwrap();
     assert!(call(&view, "read_segment_page", continuation).is_err());
     assert!(call(&view, "capture_segment_scope", scope).is_err());
     assert_eq!(frozen_typed.capture.units.len(), 3, "an earlier captured value remains fixed");
     request["query"]["selection"] = json!("selected");
-    assert_eq!(call(&view, "read_segment_page", request.clone()).unwrap()["total"], 1);
+    let selected = call(&view, "read_segment_page", request.clone()).unwrap();
+    assert_eq!(selected["total"], 1);
+    assert_eq!(selected["rows"][0]["content"]["translationPreview"], translation_text.chars().take(256).collect::<String>());
+    assert_eq!(selected["rows"][0]["translationTruncated"], true);
+    assert_eq!(selected["rows"][0]["protection"]["protected"], true);
+    assert_eq!(selected["rows"][0]["candidateCount"], 0, "current selection is not a candidate");
+    assert_eq!(selected["rows"][0]["applicability"]["sourceBasisCurrent"], true);
+    assert_eq!(selected["rows"][0]["applicability"]["capturedBasisCurrent"], true);
+
+    let captured_request = |page: &Value| json!({
+        "sessionToken":context["sessionToken"], "projectId":context["projectId"], "locale":"zh-CN",
+        "scopeId":page["scopeId"], "queryFingerprint":page["queryFingerprint"],
+        "readVersion":page["readVersion"], "excluded":[],
+    });
+    let continuation_request = |page: &Value| {
+        let mut follow = request.clone();
+        follow["scopeId"] = page["scopeId"].clone();
+        follow
+    };
+    let mut release = context.clone();
+    release["actionId"] = json!(ExecutionId::new());
+    release["unitId"] = row["unitId"].clone();
+    release["locale"] = json!("zh-CN");
+    release["sourceRevisionId"] = row["sourceRevisionId"].clone();
+    release["selectionId"] = saved["selection"]["eventId"].clone();
+    release["expectedRevision"] = selected["rows"][0]["protection"]["revision"].clone();
+    release["protected"] = json!(false);
+    release["confirmedRelease"] = json!(true);
+    call(&view, "set_work_protection", release).unwrap();
+    assert!(call(&view, "read_segment_page", continuation_request(&selected)).is_err());
+    assert!(call(&view, "capture_segment_scope", captured_request(&selected)).is_err());
+    let released = call(&view, "read_segment_page", request.clone()).unwrap();
+    assert_eq!(released["rows"][0]["protection"]["protected"], false);
+
+    save["actionId"] = json!(ExecutionId::new());
+    save["expectedSelectionId"] = saved["selection"]["eventId"].clone();
+    save["text"] = json!("Replacement translation");
+    call(&view, "save_translation_revision", save).unwrap();
+    assert!(call(&view, "read_segment_page", continuation_request(&released)).is_err());
+    assert!(call(&view, "capture_segment_scope", captured_request(&released)).is_err());
+    let replacement = call(&view, "read_segment_page", request.clone()).unwrap();
+    assert_eq!(replacement["rows"][0]["candidateCount"], 1, "comparable historical revision remains a candidate");
+    assert_eq!(replacement["rows"][0]["translationTruncated"], false);
+
+    for index in 0..9 {
+        let mut term = context.clone();
+        term["term"] = json!({
+            "projectId":context["projectId"], "actionId":ExecutionId::new(), "termId":null,
+            "locale":"zh-CN", "source":format!("scope-only-{index}"), "aliases":[],
+            "target":format!("Target {index}"), "protected":false, "scopeUnitId":row["unitId"],
+            "expectedRevisionId":null, "reason":"Synthetic unit-scoped term",
+        });
+        call(&view, "save_term", term).unwrap();
+    }
+    assert!(call(&view, "read_segment_page", continuation_request(&replacement)).is_err());
+    assert!(call(&view, "capture_segment_scope", captured_request(&replacement)).is_err());
+    let resources = call(&view, "read_segment_page", request.clone()).unwrap();
+    let enriched = &resources["rows"][0];
+    assert_eq!(enriched["terms"]["applicableEntryCount"], 9, "unit-scoped applicability does not require a literal source hit");
+    assert_eq!(enriched["terms"]["conflictingEntryCount"], 0);
+    assert_eq!(enriched["terms"]["revisionCount"], 9);
+    assert_eq!(enriched["terms"]["revisions"].as_array().unwrap().len(), 8);
+    assert_eq!(enriched["terms"]["truncated"], true);
+    assert_eq!(enriched["applicability"]["sourceBasisCurrent"], true);
+    assert_eq!(enriched["applicability"]["capturedBasisCurrent"], false);
+    assert_eq!(enriched["applicability"]["resourceReviewRequired"], true);
+    assert_eq!(enriched["applicability"]["resourceImpact"]["reasonCount"], 9);
+    assert_eq!(enriched["applicability"]["resourceImpact"]["changes"].as_array().unwrap().len(), 8);
+    assert_eq!(enriched["applicability"]["resourceImpact"]["truncated"], true);
+    assert!(serde_json::to_vec(&resources).unwrap().len() <= content::MAX_CONTENT_PAGE_BYTES);
     request["query"]["selection"] = json!("unselected");
     assert_eq!(call(&view, "read_segment_page", request).unwrap()["total"], 2);
 }

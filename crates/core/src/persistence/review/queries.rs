@@ -71,13 +71,23 @@ pub(super) fn targets_in_with_cancel(
     locale: &str,
     cancellation: &Cancellation,
 ) -> Result<Vec<ReviewTarget>, ExecutionError> {
+    Ok(targets_and_terms_in(connection, project_id, units, locale, cancellation)?.0)
+}
+
+pub(super) fn targets_and_terms_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    units: &[ExecutionId],
+    locale: &str,
+    cancellation: &Cancellation,
+) -> Result<(Vec<ReviewTarget>, BTreeMap<ExecutionId, resources::TermResolution>), ExecutionError> {
     check_read_cancel(cancellation)?;
     check_project(connection, project_id, locale)?;
     if units.len() > MAX_SCOPE || units.iter().collect::<BTreeSet<_>>().len() != units.len() {
         return Err(failure(ErrorCode::InvalidInput, "review-units"));
     }
     if units.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), BTreeMap::new()));
     }
     let project = project_id.to_string();
     let unit_json = serde_json::to_string(units)
@@ -388,12 +398,13 @@ pub(super) fn targets_in_with_cancel(
         }
     }
     check_read_cancel(cancellation)?;
-    units
+    let ordered = units
         .iter()
         .map(|unit| {
             targets
                 .remove(unit)
                 .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((ordered, resolutions))
 }

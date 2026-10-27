@@ -31,6 +31,11 @@ export const workbenchEn = {
   filterMissing: "This filter is unavailable", chooseFilter: "Choose another filter above.",
   viewChanged: "Project content changed or this view expired. Refresh it to read the current content.", textShortened: "Preview shortened. Open details for the complete text.",
   noCurrentReview: "No current review", noCurrentCheck: "No current checks",
+  candidateCount: "Candidates: {{count}}", candidateHelp: "Saved alternatives, including older versions that may need another review.",
+  protectedEntry: "Protected", protectionHelp: "Automatic selection cannot replace this entry.",
+  applicableTerms: "Term groups: {{count}}", applicableTermsHelp: "Terms that apply to this entry. Some apply by scope even when their wording is absent from the text.",
+  conflictingTerms: "Term conflicts: {{count}}", resourceReviewRequired: "Resource changes need review",
+  basisChanged: "Earlier source or resources", basisChangedHelp: "The saved version used earlier source or resources. This history remains after a recheck.",
 } as const;
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
@@ -53,4 +58,9 @@ export const workbenchZh: Messages = {
   filterMissing: "这个筛选暂不可用", chooseFilter: "请在上方选择另一个筛选。",
   viewChanged: "项目内容已变化，或此视图已过期。请刷新后继续查看。", textShortened: "这里只显示部分文字，详情中可以查看全文。",
   noCurrentReview: "没有当前有效的审阅记录", noCurrentCheck: "没有当前有效的检查记录",
+  candidateCount: "候选 {{count}}", candidateHelp: "已保存但未选用的版本，也包含可能需要重新审阅的旧版本。",
+  protectedEntry: "已保护", protectionHelp: "自动选择不会覆盖这条内容。",
+  applicableTerms: "术语 {{count}} 组", applicableTermsHelp: "适用于这条内容的术语，有些由范围指定，不一定出现在文本中。",
+  conflictingTerms: "术语冲突 {{count}} 组", resourceReviewRequired: "资源变化待核对",
+  basisChanged: "依据有变化", basisChangedHelp: "保存时使用的源文或资源后来有变化。重新核对后，这段历史仍会保留。",
 };

@@ -10,7 +10,7 @@ import { TextInput } from "../../../design-system/Field";
 import { Menu } from "../../../design-system/Menu";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
-import type { SegmentQuery } from "../../../segmentCommands";
+import type { SegmentQuery, SegmentRow } from "../../../segmentCommands";
 import type { WorkspaceView } from "../../workspace/workspaceStore";
 import { captureEntries, entryPageKey, entrySelectionFilter, readEntryPage, type EntryCapture } from "./entryReads";
 import styles from "../../WorkbenchLayout.module.css";
@@ -22,6 +22,18 @@ type Props = {
   ref?: Ref<EntriesHandle>;
 };
 export interface EntriesHandle { refresh: () => void; focusSearch: () => void }
+
+function EntryFacts({ row }: { row: SegmentRow }) {
+  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  if (!row.candidateCount && !row.protection.protected && !row.terms.applicableEntryCount && row.applicability.capturedBasisCurrent !== false) return null;
+  return <div className={styles.entryMeta}>
+    {row.candidateCount ? <span title={t("candidateHelp")}>{t("candidateCount", { count: row.candidateCount })}</span> : null}
+    {row.protection.protected ? <span title={t("protectionHelp")}>{t("protectedEntry")}</span> : null}
+    {row.terms.applicableEntryCount ? <span title={t("applicableTermsHelp")}>{t("applicableTerms", { count: row.terms.applicableEntryCount })}</span> : null}
+    {row.terms.conflictingEntryCount ? <span>{t("conflictingTerms", { count: row.terms.conflictingEntryCount })}</span> : null}
+    {row.applicability.resourceReviewRequired ? <span>{t("resourceReviewRequired")}</span> : row.applicability.capturedBasisCurrent === false ? <span title={t("basisChangedHelp")}>{t("basisChanged")}</span> : null}
+  </div>;
+}
 
 export default function EntriesView({ project, view, disabled, patch, navigate, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
@@ -98,12 +110,12 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
       <Banner>{t("readOnly")}</Banner>
       {!selection ? <ErrorState title={t("filterMissing")} description={t("chooseFilter")} /> : !availableLocale ? <ErrorState title={t("languageMissing")} description={t("chooseLanguage")} /> : failed ? <ErrorState title={t("readFailed")} description={t(stalePage ? "viewChanged" : "readFailedHelp")} action={<Button onClick={() => { void scope.refetch(); if (scope.data?.currentSnapshot) void captureCurrent(true); }}>{t("refresh")}</Button>} /> : empty ? <EmptyState icon={<Layers />} title={t("noSource")} description={t("noSourceHelp")} /> : loading || !currentPage ? <LoadingState label={t("loadingEntries")} /> : currentPage.rows.length === 0 ? <EmptyState icon={<Search />} title={t("noMatches")} description={t("noMatchesHelp")} /> : <div className={styles.table}>
         <div className={styles.tableHeader}><span>{t("row")}</span><span>{t("detail")}</span><span>{t("source", { locale: project.metadata.sourceLocale })}</span><span>{t("translation", { locale: view.locale })}</span></div>
-        {currentPage.rows.map(({ content: row, sourceTruncated, translationTruncated }, index) => <article key={row.unitId} className={styles.entry} data-selected={view.focus === row.unitId || undefined}>
+        {currentPage.rows.map((summary, index) => { const { content: row, sourceTruncated, translationTruncated } = summary; return <article key={row.unitId} className={styles.entry} data-selected={view.focus === row.unitId || undefined}>
           <div className={styles.entryNumber}><Button size="xs" aria-label={t("openEntry", { key: row.nativeKey })} onClick={() => { patch({ selection: [row.unitId], dock: "details" }); void navigate({ focus: row.unitId }); }}>{view.afterOrdinal + index + 1}</Button></div>
           <div className={styles.entryStatus}><IconButton label={t("showEntryDetails", { key: row.nativeKey })} onClick={() => { patch({ dock: "details", selection: [row.unitId] }); void navigate({ focus: row.unitId }); }}><MoreHorizontal /></IconButton></div>
           <div className={styles.source}><TokenizedText text={row.sourcePreview} />{sourceTruncated ? <span title={t("textShortened")}>…</span> : null}{view.focus === row.unitId ? <div className={styles.entryMeta}><span className={styles.key}>{row.nativeKey}</span></div> : null}</div>
-          <div className={styles.target}>{row.translationPreview === null ? <span className={styles.meta}>{t("noTranslation")}</span> : <><TokenizedText text={row.translationPreview} />{translationTruncated ? <span title={t("textShortened")}>…</span> : null}</>}</div>
-        </article>)}
+          <div className={styles.target}>{row.translationPreview === null ? <span className={styles.meta}>{t("noTranslation")}</span> : <><TokenizedText text={row.translationPreview} />{translationTruncated ? <span title={t("textShortened")}>…</span> : null}</>}<EntryFacts row={summary} /></div>
+        </article>; })}
         <div className={styles.actions}>
           {view.cursor !== null ? <Button onClick={() => { restored.current = false; patch({ afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 } }); }}>{t("firstPage")}</Button> : null}
           {currentPage.nextCursor !== null ? <Button onClick={() => { restored.current = false; patch({ afterOrdinal: view.afterOrdinal + currentPage.rows.length, cursor: currentPage.nextCursor, scroll: { top: 0, left: 0 } }); }}>{t("nextPage")}</Button> : null}

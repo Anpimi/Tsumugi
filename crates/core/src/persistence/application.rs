@@ -24,6 +24,7 @@ pub(super) use control::{
     OpenControlValidation, allows_cancelled_ancestor, check_enqueue, check_input, prepare_open,
     protect_manual_in, record_input, stop_execution_plan_in,
 };
+pub(in crate::persistence) use control::protection_summaries;
 
 pub(super) fn initialize(c: &rusqlite::Connection) -> rusqlite::Result<()> {
     control::initialize(c)?;

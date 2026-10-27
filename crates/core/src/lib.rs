@@ -51,6 +51,7 @@ pub use persistence::{
     ReviewRepairStatus, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
     ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, RevisionSelectionRef,
     SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
+    SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary, SegmentQaCounts, SegmentQaSummary,
     SaveContext, SaveTerm, SaveTranslationRevision, SelectTranslationRevision, TaskActivity,
     TaskActivityPhase, TaskActivityRow, TaskView, TermOrigin, TermResolution, TermResolutionEntry,
     TermRevision, TermSaveActionRead, TmMatchKind, TmSuggestion, TranslationAdoptionConfirmation,

@@ -1,6 +1,8 @@
 //! Strict pages share the existing review scope and committed change clock.
 use super::*;
 use crate::execution::Revision;
+mod rows;
+pub use rows::{SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentRow, SegmentTermRef, SegmentTermSummary};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -17,15 +19,6 @@ pub enum SegmentSelectionFilter {
 pub struct SegmentQuery {
     pub text: String,
     pub selection: SegmentSelectionFilter,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub struct SegmentRow {
-    pub content: ReviewSummary,
-    pub source_truncated: bool,
-    pub translation_truncated: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -192,7 +185,7 @@ impl ProjectStore {
                 .take(limit as usize)
                 .map(|(unit, _)| *unit)
                 .collect::<Vec<_>>();
-            let targets = queries::targets_in(connection, project_id, &units, locale)?;
+            let rows = rows::project(self, connection, project_id, &units, locale)?;
             let mut page = SegmentPage {
                 project_id,
                 locale: locale.to_owned(),
@@ -212,15 +205,7 @@ impl ProjectStore {
                 .map_err(|_| failure(ErrorCode::InvalidInput, "segment-page"))?
                 .len()
                 + 64;
-            for target in targets {
-                let row = SegmentRow {
-                    source_truncated: target.source_text.chars().count() > PREVIEW_CHARS,
-                    translation_truncated: target
-                        .translation_text
-                        .as_ref()
-                        .is_some_and(|text| text.chars().count() > PREVIEW_CHARS),
-                    content: target.into(),
-                };
+            for row in rows {
                 let size = serde_json::to_vec(&row)
                     .map_err(|_| failure(ErrorCode::InvalidInput, "segment-row"))?
                     .len()

@@ -32,6 +32,8 @@ pub(super) use checks::{
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
+pub use checks::{SegmentQaCounts, SegmentQaSummary};
+
 mod actions;
 pub use actions::{ReviewDecisionActionRead, ReviewWaiverActionRead, ReviewFallbackActionRead};
 mod findings;
@@ -49,6 +51,7 @@ pub use views::{
     ReviewDiagnosticLocation, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture,
     ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
     SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
+    SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary,
 };
 
 // A selected translation may predate the captured source. These associations

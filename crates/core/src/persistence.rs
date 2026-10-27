@@ -105,6 +105,7 @@ pub use review::{
     ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,
     ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
     SegmentPage, SegmentQuery, SegmentRow, SegmentScopeCapture, SegmentSelectionFilter,
+    SegmentApplicability, SegmentImpactChange, SegmentQualification, SegmentReason, SegmentResourceImpact, SegmentTermRef, SegmentTermSummary, SegmentQaCounts, SegmentQaSummary,
 };
 pub use translation::{
     ArenaMergeActionRead, CandidateDecision, CandidateDecisionWrite, CandidateDisposition, SaveTranslationRevision,

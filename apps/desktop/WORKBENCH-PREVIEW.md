@@ -14,7 +14,9 @@ This entry uses a separate application identifier and local preferences. It does
 pnpm --dir apps/desktop build:workbench
 ```
 
-Pages use opaque cursors tied to a fixed query and read basis. A content change or expired scope requires an explicit refresh; paging never silently captures a different result set. Each page response contains at most 100 rows and 256 KiB of encoded JSON. Text previews contain at most 256 Unicode scalars and report truncation; details keep the complete text. The Core reuses its current review projection and scope capture. Candidate, protection, applicability, and terminology summaries are not part of this first read contract yet.
+Pages use opaque cursors tied to a fixed query and read basis. A content change or expired scope requires an explicit refresh; paging never silently captures a different result set. Each page response contains at most 100 rows and 256 KiB of encoded JSON. Text previews contain at most 256 Unicode scalars and report truncation; details keep the complete text.
+
+Rows include candidate counts, manual protection, current QA coverage and findings, applicable terminology, and source or resource changes from the existing Core owners. Reference lists contain at most eight items and report their full count and truncation. Selection, human review, QA, and applicability stay separate: saving a translation does not approve it, and missing current check evidence does not mean it passed. Resource-change history can remain after a human recheck; the current blockers indicate whether further review is required. The entry list shows the relevant candidate, protection, terminology, and change notices. Full editing and review actions remain in the existing workbench.
 
 ## Visual samples
 

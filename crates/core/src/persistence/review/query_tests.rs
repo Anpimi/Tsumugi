@@ -8,18 +8,22 @@ use std::{
 
 thread_local! {
     static SQL: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static SQL_TIME: RefCell<Duration> = const { RefCell::new(Duration::ZERO) };
 }
 fn traced(event: TraceEvent<'_>) {
-    if let TraceEvent::Stmt(_, sql) = event {
-        SQL.with(|statements| statements.borrow_mut().push(sql.to_owned()));
+    match event {
+        TraceEvent::Stmt(_, sql) => SQL.with(|statements| statements.borrow_mut().push(sql.to_owned())),
+        TraceEvent::Profile(_, elapsed) => SQL_TIME.with(|total| *total.borrow_mut() += elapsed),
+        _ => {}
     }
 }
 fn measure<T>(store: &ProjectStore, read: impl FnOnce() -> T) -> (T, Vec<String>, Duration) {
     SQL.with(|statements| statements.borrow_mut().clear());
+    SQL_TIME.with(|total| *total.borrow_mut() = Duration::ZERO);
     store
         .connection()
         .unwrap()
-        .trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(traced));
+        .trace_v2(TraceEventCodes::SQLITE_TRACE_STMT | TraceEventCodes::SQLITE_TRACE_PROFILE, Some(traced));
     let start = Instant::now();
     let value = read();
     let elapsed = start.elapsed();
@@ -783,11 +787,13 @@ fn segment_pages_share_one_basis_and_freeze_the_complete_filter() {
             .review_summary_page(project, "zh-CN", 0, 50, "", None)
             .unwrap()
     });
+    let old_sql_time = SQL_TIME.with(|total| *total.borrow());
     let (first, sql, elapsed) = measure(&store, || {
         store
             .read_segment_page(project, "zh-CN", &query, None, None, 50)
             .unwrap()
     });
+    let sql_time = SQL_TIME.with(|total| *total.borrow());
     assert_eq!(first.total, 2000);
     assert_eq!(
         first
@@ -797,20 +803,19 @@ fn segment_pages_share_one_basis_and_freeze_the_complete_filter() {
             .collect::<Vec<_>>(),
         legacy.rows.iter().collect::<Vec<_>>()
     );
-    assert!(
-        sql.len() <= old_sql.len() + 3,
-        "per-row reads returned: {} vs {}",
-        sql.len(),
-        old_sql.len()
-    );
+    let (_, wider_sql, _) = measure(&store, || store.read_segment_page(project, "zh-CN", &query, None, None, 100).unwrap());
+    assert_eq!(sql.len(), wider_sql.len(), "query count must not grow with the number of rows");
+    assert!(sql.len() <= 32, "per-row reads returned: {}", sql.len());
     println!(
-        "segment data=2000 page=50 statements={} bytes={} elapsed_us={} legacy_statements={} legacy_bytes={} legacy_elapsed_us={}",
+        "segment data=2000 page=50 statements={} bytes={} elapsed_us={} sql_profile_us={} legacy_statements={} legacy_bytes={} legacy_elapsed_us={} legacy_sql_profile_us={}",
         sql.len(),
         serde_json::to_vec(&first).unwrap().len(),
         elapsed.as_micros(),
+        sql_time.as_micros(),
         old_sql.len(),
         serde_json::to_vec(&legacy).unwrap().len(),
-        old_time.as_micros()
+        old_time.as_micros(),
+        old_sql_time.as_micros()
     );
     let capture = store
         .capture_segment_scope(
@@ -1200,4 +1205,41 @@ fn segment_byte_limited_pages_continue_at_the_first_unreturned_row() {
     let ids = first.rows.iter().chain(&second.rows).map(|row| row.content.unit_id).collect::<Vec<_>>();
     assert_eq!(ids, all.rows.iter().map(|row| row.unit_id).collect::<Vec<_>>());
     assert_eq!(second.read_version, first.read_version);
+}
+
+#[test]
+fn segment_row_facts_keep_resource_history_review_qa_and_protection_independent() {
+    let (_directory, mut store, project, units) = fixture();
+    let target = store.review_target(project, units[0], "zh-CN").unwrap();
+    store.save_translation_edit(&crate::SaveTranslationRevision {
+        project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
+        source_revision_id: target.source_revision_id, expected_selection_id: None, text: "Term {{name}}".into(),
+    }).unwrap();
+    store.save_term(&crate::SaveTerm {
+        project_id: project, action_id: ExecutionId::new(), term_id: None, locale: "zh-CN".into(), source: "Hello".into(), aliases: vec![],
+        target: "Term".into(), protected: true, scope_unit_id: None, expected_revision_id: None, reason: "Current terminology".into(),
+    }).unwrap();
+    let query = segment_query("", SegmentSelectionFilter::All);
+    let before = store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap();
+    let row = before.rows.iter().find(|row| row.content.unit_id == units[0]).unwrap();
+    assert!(row.protection.protected);
+    assert_eq!(row.candidate_count, 0);
+    assert_eq!(row.terms.applicable_entry_count, 1);
+    assert_eq!(row.terms.revision_count, 1);
+    assert!(row.applicability.resource_review_required);
+    assert_eq!(row.applicability.source_basis_current, Some(true));
+    assert_eq!(row.applicability.captured_basis_current, Some(false));
+    assert!(!row.qa.current);
+    assert!(row.content.current_decision.is_none());
+    let target = store.review_target(project, units[0], "zh-CN").unwrap();
+    store.write_review(&ReviewWrite { project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(), expected_basis: target.basis.clone(), expected_decision_id: None, actor: "Reviewer".into(), kind: ReviewDecisionKind::Approve, reason: String::new() }).unwrap();
+    store.run_review_checks(project, units[0], "zh-CN", &target.basis, ExecutionId::new()).unwrap();
+    let after = store.read_segment_page(project, "zh-CN", &query, None, None, 50).unwrap();
+    let row = after.rows.iter().find(|row| row.content.unit_id == units[0]).unwrap();
+    assert!(row.qa.current);
+    assert_eq!(row.content.current_decision.as_ref().unwrap().kind, ReviewDecisionKind::Approve);
+    assert!(row.applicability.resource_impact.is_some(), "recorded resource changes do not vanish after review");
+    assert!(!row.applicability.resource_review_required, "the original review owner resolves the current follow-up");
+    assert_eq!(row.applicability.captured_basis_current, Some(false), "captured basis is independent of human acceptance");
+    assert_eq!(row.qualification.blocker_count, 0);
 }

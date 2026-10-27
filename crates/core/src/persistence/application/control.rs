@@ -8,6 +8,10 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+#[path = "control/protection_tests.rs"]
+mod protection_tests;
+
 const TABLES: &[(&str, &str)] = &[
     super::services::TABLE,
     (
@@ -482,6 +486,14 @@ pub(super) fn protection(
         )
         .optional()
         .map_err(sql)?;
+    protection_value(unit, locale, row)
+}
+
+fn protection_value(
+    unit: ExecutionId,
+    locale: &str,
+    row: Option<(i64, bool)>,
+) -> Result<WorkProtection, ExecutionError> {
     let (revision, protected) = row.unwrap_or((0, false));
     Ok(WorkProtection {
         unit_id: unit,
@@ -489,6 +501,63 @@ pub(super) fn protection(
         revision: Revision::new(revision as u64)?,
         protected,
     })
+}
+
+/// Batch the existing protection observation without reading each unit again.
+/// Callers own the snapshot shared with the rest of their row observations.
+pub(in crate::persistence) fn protection_summaries(
+    c: &Connection,
+    project: ExecutionId,
+    units: &[ExecutionId],
+    locale: &str,
+) -> Result<std::collections::BTreeMap<ExecutionId, WorkProtection>, ExecutionError> {
+    let parsed = crate::Locale::parse(locale)
+        .map_err(|_| err(ErrorCode::InvalidInput, "work-protection-locale"))?;
+    if parsed.as_str() != locale {
+        return Err(err(ErrorCode::Unauthorized, "work-protection-scope"));
+    }
+    if units.iter().collect::<std::collections::BTreeSet<_>>().len() != units.len() {
+        return Err(err(ErrorCode::InvalidInput, "work-protection-units"));
+    }
+    let wanted = serde_json::to_string(units)
+        .map_err(|_| err(ErrorCode::InvalidInput, "work-protection-units"))?;
+    let mut statement = c.prepare(
+        "SELECT p.project_id,wanted.value,u.unit_id,a.revision,a.protected
+         FROM project_metadata p LEFT JOIN json_each(?1) wanted ON 1
+         LEFT JOIN source_units u ON u.unit_id=wanted.value AND u.project_id=p.project_id
+         LEFT JOIN application_protections a ON a.unit_id=u.unit_id AND a.locale=?2
+         WHERE p.row_id=1",
+    ).map_err(sql)?;
+    let rows = statement.query_map(params![wanted, locale], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?, row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Option<bool>>(4)?))
+    }).map_err(sql)?;
+    let project_key = project.to_string();
+    let mut found_project = false;
+    let mut values = std::collections::BTreeMap::new();
+    for row in rows {
+        let (owner, requested, unit, revision, protected) = row.map_err(sql)?;
+        found_project = true;
+        if owner != project_key {
+            return Err(err(ErrorCode::Unauthorized, "work-protection-scope"));
+        }
+        let Some(requested) = requested else { continue };
+        if unit.as_ref() != Some(&requested) {
+            return Err(err(ErrorCode::Unauthorized, "work-protection-scope"));
+        }
+        let unit = ExecutionId::parse(&requested)?;
+        let row = match (revision, protected) {
+            (None, None) => None,
+            (Some(revision), Some(protected)) => Some((revision, protected)),
+            _ => return Err(err(ErrorCode::CorruptLedger, "work-protection-read")),
+        };
+        values.insert(unit, protection_value(unit, locale, row)?);
+    }
+    if !found_project {
+        return Err(err(ErrorCode::CorruptLedger, "work-protection-project"));
+    }
+    Ok(values)
 }
 pub(in crate::persistence) fn protect_manual_in(
     c: &Connection,
