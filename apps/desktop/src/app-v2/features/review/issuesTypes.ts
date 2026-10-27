@@ -1,5 +1,7 @@
 import type { AdvisoryFinding, ReviewBasis, ReviewFindingDisposition } from "../../../reviewCommands";
 import type { EntryReviewPanelProps } from "./reviewTypes";
+import type { ReviewDiagnosticIntent } from "../../../reviewDiagnosticNavigation";
+import type { EntryReviewEditorRequest } from "./navigationTypes";
 
 export interface EntryIssueCapture {
   unitId: string;
@@ -39,4 +41,14 @@ export interface EntryIssuesReadPayload {
   operation: "refresh" | "first" | "next" | "semantic" | "edit";
   semanticAttemptId: string | null;
 }
-export interface EntryIssuesPanelProps extends EntryReviewPanelProps { onEdit?: () => void }
+export interface EntryIssueLocatePayload {
+  kind: "entry-issue-locate";
+  unitId: string;
+  locale: string;
+  basis: string;
+  intent: ReviewDiagnosticIntent;
+}
+export interface EntryIssuesPanelProps extends EntryReviewPanelProps {
+  onEdit?: () => void;
+  onReviewEdit?: (request: EntryReviewEditorRequest, proof: () => boolean) => Promise<boolean>;
+}

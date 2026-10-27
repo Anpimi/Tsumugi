@@ -144,6 +144,8 @@ export class TranslationDrafts {
   }
 
   getSnapshot = () => this.state;
+  /** Existing input generation; opening a retained Host draft does not advance it. */
+  inputVersion = () => this.inputRevision;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   getEntry = (key: DraftKey): DraftEntry | undefined => this.records.get(identity(key))?.entry;
   private validKey(key: DraftKey) { return key.projectId === this.context.projectId; }

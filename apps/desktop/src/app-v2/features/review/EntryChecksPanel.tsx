@@ -3,7 +3,7 @@ import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails } from "../../../CommandFailure";
 import { executionContext } from "../../../executionCommands";
-import { ReviewCheckerDetails, ReviewDiagnosticDetails, capturedRuleLabel, checkerIdentity, ruleIdentity } from "../../../ReviewCheckers";
+import { ReviewCheckerDetails, capturedRuleLabel, checkerIdentity, ruleIdentity } from "../../../ReviewCheckers";
 import { isHumanReviewPending, reviewDraftKey } from "../../../ReviewDraftSession";
 import type { CheckRuleResult, ReviewTarget } from "../../../reviewCommands";
 import { reviewFindingLabel } from "../../../reviewLabels";
@@ -220,7 +220,7 @@ export default function EntryChecksPanel({ project, target, owner, drafts, comma
       : rule.status === "cancelled" ? "review.checkCancelledHelp" : rule.status === "unknown" ? "review.checkUnknownHelp" : "review.incompleteCoverageHelp")}</p> : null}
     {rule.findings.length ? <ul>{rule.findings.map(finding => <li key={finding.issueId}><p>{reviewFindingLabel(legacy, finding.rule, finding.code)}</p>
       {finding.detail ? <div className={styles.text}><TokenizedText text={finding.detail}/></div> : null}
-      <ReviewDiagnosticDetails run={run} rule={rule} code={finding.code}/></li>)}</ul> : null}
+      </li>)}</ul> : null}
   </li> : null;
   if (!visible) return null;
   return <section ref={root} className={styles.section} aria-label={t("entryChecksTitle")}>

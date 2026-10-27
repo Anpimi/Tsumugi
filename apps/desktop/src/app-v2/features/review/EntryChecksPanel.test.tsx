@@ -14,6 +14,7 @@ import type { CheckRun, ReviewCheckRequest, ReviewCheckStartRequest, ReviewTarge
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
+import { reviewDiagnosticFixture } from "../../../testSupport/reviewDiagnosticFixture";
 import { reviewCheckFixture, reviewTargetFixture } from "../../../testSupport/reviewFixture";
 import { coreRuleKeyFixture, formatReviewSlotFixture, textReviewSlotFixture, textReviewViewFixture } from "../../../testSupport/textReviewFixture";
 import { WorkbenchCommands } from "../../../workbenchCommands";
@@ -250,4 +251,12 @@ it("invalidates old checker slots when a newer discovery revision arrives before
   expect(h.owner().current().checkConsent).toEqual([]); expect(screen.queryByRole("checkbox", { name: i18n.t("review.checkConsent") })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: w("entryChecksRun") })).not.toBeInTheDocument();
   expect(calls("create_execution_identity")).toHaveLength(1); expect(calls("run_review_checks")).toHaveLength(0);
+});
+
+it("does not label a current diagnostic as historical when its location controls are in the issues panel", async () => {
+  const fixture = reviewDiagnosticFixture(); await harness(fixture.target);
+  expect(await screen.findByText(w("entryChecksCurrentRecord"))).toBeInTheDocument();
+  expect(screen.getByText(fixture.finding.detail)).toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("review.diagnosticNavigation.historical"))).not.toBeInTheDocument();
+  expect(calls("read_review_diagnostic_location")).toHaveLength(0);
 });

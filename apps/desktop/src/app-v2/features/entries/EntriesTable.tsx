@@ -3,12 +3,15 @@ import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/rea
 import { MoreHorizontal } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button, IconButton } from "../../../design-system/Button";
+import { Field, TextArea } from "../../../design-system/Field";
 import { TokenizedText } from "../../../design-system/TokenizedText";
+import { diagnosticTextareaSelection, textareaDisplayText } from "../../../reviewDiagnosticNavigation";
 import type { SegmentRow, SegmentSourceComparison, SourceVersionComparison } from "../../../segmentCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { WorkspaceView } from "../../workspace/workspaceStore";
-import SegmentEditor, { type SegmentEditorHandle, type SegmentEditorProps } from "../editor/SegmentEditor";
+import SegmentEditor, { diagnosticDraftCurrent, type SegmentEditorHandle, type SegmentEditorProps } from "../editor/SegmentEditor";
 import type { TranslationDrafts } from "../editor/translationDrafts";
+import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import EntryStatus from "./EntryStatus";
 import styles from "./EntriesTable.module.css";
 
@@ -36,6 +39,9 @@ export interface EntriesTableProps {
   onSelection: (unitId: string, checked: boolean) => void;
   canSelect: (unitId: string) => boolean;
   sourceComparison?: SegmentSourceComparison | null;
+  diagnosticFocus?: EntryDiagnosticFocus | null;
+  diagnosticCurrent?: () => boolean;
+  onDiagnosticFocus?: (id: string, applied: boolean) => void;
   renderCandidate?: (row: SegmentRow) => ReactNode;
   footer?: ReactNode;
   ref?: Ref<EntriesTableHandle>;
@@ -44,11 +50,49 @@ const noSubscription = () => () => {};
 const noSnapshot = () => null;
 const estimatedRowHeight = 112;
 
-function EntrySource({ summary, active, drafts, projectId, locale, comparison }: { summary: SegmentRow; active: boolean; drafts: TranslationDrafts | null; projectId: string; locale: string; comparison: SourceVersionComparison | undefined }) {
+function EntrySource({ summary, active, drafts, projectId, locale, comparison, diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, gate, viewId, disabled }: {
+  summary: SegmentRow; active: boolean; drafts: TranslationDrafts | null; projectId: string; locale: string; comparison: SourceVersionComparison | undefined;
+  diagnosticFocus?: EntryDiagnosticFocus | null; diagnosticCurrent?: () => boolean; onDiagnosticFocus?: (id: string, applied: boolean) => void;
+  gate: InteractionGate; viewId: string; disabled: boolean;
+}) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   useSyncExternalStore(active && drafts ? drafts.subscribe : noSubscription, active && drafts ? drafts.getSnapshot : noSnapshot, noSnapshot);
+  useSyncExternalStore(active ? gate.subscribe : noSubscription, active ? gate.getSnapshot : noSnapshot, noSnapshot);
+  const field = useRef<HTMLTextAreaElement>(null), consumed = useRef(new Set<string>()), ownerId = `entry-source-${useId()}`;
+  const sourceFocus = diagnosticFocus?.unitId === summary.content.unitId && diagnosticFocus.locale === locale && diagnosticFocus.location.field === "source" ? diagnosticFocus : null;
   const current = active ? drafts?.getEntry({ projectId, unitId: summary.content.unitId, locale })?.current : null;
   const complete = current?.kind === "current";
+  function reject() {
+    if (!sourceFocus || sourceFocus.status !== "pending" || consumed.current.has(sourceFocus.id)) return;
+    consumed.current.add(sourceFocus.id); onDiagnosticFocus?.(sourceFocus.id, false);
+  }
+  useEffect(() => {
+    if (!sourceFocus || sourceFocus.status !== "pending" || consumed.current.has(sourceFocus.id)) return;
+    const moved = (event: FocusEvent) => { if (event.target !== field.current) reject(); };
+    document.addEventListener("focusin", moved);
+    return () => document.removeEventListener("focusin", moved);
+  }, [sourceFocus, onDiagnosticFocus]);
+  useLayoutEffect(() => () => gate.releaseOwner(ownerId), [gate, ownerId, viewId]);
+  useLayoutEffect(() => {
+    const focus = sourceFocus; if (!focus || focus.status !== "pending" || consumed.current.has(focus.id)) return;
+    const control = field.current;
+    const permitted = () => active && !disabled && gate.canDispatch({ viewId, source: "button" })
+      && (gate.getSnapshot().inputOwner === null || gate.getSnapshot().inputOwner?.ownerId === ownerId) && (diagnosticCurrent?.() ?? true);
+    if (!permitted() || document.activeElement !== document.body && document.activeElement !== control) { reject(); return; }
+    if (!drafts || !current) return;
+    consumed.current.add(focus.id);
+    const key = { projectId, unitId: summary.content.unitId, locale }, selection = diagnosticTextareaSelection(focus.sourceText, focus.location.range);
+    if (!control || !selection || !control.isConnected || control.closest("[hidden], [inert]") || control.value !== selection.text
+      || !diagnosticDraftCurrent(drafts, key, focus, true)) { onDiagnosticFocus?.(focus.id, false); return; }
+    control.focus({ preventScroll: true });
+    if (!permitted() || document.activeElement !== control || !control.isConnected || !diagnosticDraftCurrent(drafts, key, focus, true)) { onDiagnosticFocus?.(focus.id, false); return; }
+    control.setSelectionRange(selection.start, selection.end); onDiagnosticFocus?.(focus.id, true);
+  });
+  if (sourceFocus && active && complete) return <Field label={t("editorDiagnosticSourceLabel", { key: summary.content.nativeKey })} description={t("editorDiagnosticSourceHelp")}>
+    <TextArea ref={field} rows={4} readOnly value={textareaDisplayText(current.sourceText)}
+      onFocus={() => gate.setInputOwner(viewId, ownerId)} onBlur={() => { reject(); gate.releaseOwner(ownerId); }}
+      onCompositionStart={() => { reject(); gate.setComposing(ownerId, true); }} onCompositionEnd={() => gate.setComposing(ownerId, false)}/>
+  </Field>;
   if (comparison) return <div className={styles.sourceVersions}>
     <div className={styles.previousVersion} data-source-version="previous">
       <span className={styles.versionLabel}>{t("sourceComparisonPrevious")}</span>
@@ -63,21 +107,24 @@ function EntrySource({ summary, active, drafts, projectId, locale, comparison }:
   return <><TokenizedText text={complete ? current.sourceText : summary.content.sourcePreview} />{summary.sourceTruncated && !complete ? <span title={t("textShortened")}>…</span> : null}</>;
 }
 
-const EntryContent = memo(function EntryContent({ summary, active, focused, projectId, sourceLocale, locale, viewId, drafts, gate, disabled, dispatch, editorRef, comparison, renderCandidate, onDetails }: {
+const EntryContent = memo(function EntryContent({ summary, active, focused, projectId, sourceLocale, locale, viewId, drafts, gate, disabled, dispatch, editorRef, comparison, renderCandidate, onDetails, diagnosticFocus, diagnosticCurrent, onDiagnosticFocus }: {
   summary: SegmentRow; active: boolean; focused: boolean; projectId: string; sourceLocale: string; locale: string; viewId: string;
   drafts: TranslationDrafts | null; gate: InteractionGate; disabled: boolean; dispatch: SegmentEditorProps["dispatch"]; editorRef: Ref<SegmentEditorHandle>;
   comparison: SourceVersionComparison | undefined; renderCandidate: EntriesTableProps["renderCandidate"]; onDetails: EntriesTableProps["onDetails"];
+  diagnosticFocus?: EntryDiagnosticFocus | null; diagnosticCurrent?: () => boolean; onDiagnosticFocus?: (id: string, applied: boolean) => void;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const row = summary.content;
   return <>
-    <div className={styles.source} lang={sourceLocale}><EntrySource summary={summary} active={active} drafts={drafts} projectId={projectId} locale={locale} comparison={comparison} />
+    <div className={styles.source} lang={sourceLocale}><EntrySource summary={summary} active={active} drafts={drafts} projectId={projectId} locale={locale} comparison={comparison}
+      diagnosticFocus={active && focused ? diagnosticFocus : null} diagnosticCurrent={diagnosticCurrent} onDiagnosticFocus={onDiagnosticFocus} gate={gate} viewId={viewId} disabled={disabled}/>
       <div className={styles.sourceActions}>{focused ? <span className={styles.key}>{row.nativeKey}</span> : null}
         <IconButton size="xs" label={t("showEntryDetails", { key: row.nativeKey })} onClick={() => onDetails(row.unitId)}><MoreHorizontal /></IconButton>
       </div>
     </div>
     <div className={styles.target} lang={locale}>{active && drafts
-      ? <SegmentEditor ref={editorRef} drafts={drafts} draftKey={{ projectId, unitId: row.unitId, locale }} viewId={viewId} gate={gate} disabled={disabled} nativeKey={row.nativeKey} dispatch={dispatch} />
+      ? <SegmentEditor ref={editorRef} drafts={drafts} draftKey={{ projectId, unitId: row.unitId, locale }} viewId={viewId} gate={gate} disabled={disabled} nativeKey={row.nativeKey} dispatch={dispatch}
+        autoFocus={!diagnosticFocus} diagnosticFocus={diagnosticFocus} diagnosticCurrent={diagnosticCurrent} onDiagnosticFocus={onDiagnosticFocus}/>
       : row.translationPreview === null ? <span className={styles.meta}>{t("noTranslation")}</span>
         : <><TokenizedText text={row.translationPreview} />{summary.translationTruncated ? <span title={t("textShortened")}>…</span> : null}</>}
       {focused && renderCandidate ? renderCandidate(summary) : null}
@@ -86,7 +133,7 @@ const EntryContent = memo(function EntryContent({ summary, active, focused, proj
 });
 
 /** Backend pages bound the data; this viewport bounds the mounted row DOM. */
-export default function EntriesTable({ rows, firstPosition, total, projectId, sourceLocale, view, drafts, gate, disabled, dispatch, scroll, selectedIds, onScroll, onEdit, onDetails, onMove, onSelection, canSelect, sourceComparison, renderCandidate, footer, ref }: EntriesTableProps) {
+export default function EntriesTable({ rows, firstPosition, total, projectId, sourceLocale, view, drafts, gate, disabled, dispatch, scroll, selectedIds, onScroll, onEdit, onDetails, onMove, onSelection, canSelect, sourceComparison, diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, renderCandidate, footer, ref }: EntriesTableProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const rangeId = useId(), listOwner = `entry-list-${view.id}`;
   const viewport = useRef<HTMLDivElement>(null), activeEditor = useRef<SegmentEditorHandle>(null);
@@ -222,7 +269,9 @@ export default function EntriesTable({ rows, firstPosition, total, projectId, so
           <div className={styles.entryStatus}><EntryStatus row={summary} projectId={projectId} drafts={drafts} /></div>
           <EntryContent summary={summary} active={active} focused={view.focus === row.unitId} projectId={projectId} sourceLocale={sourceLocale} locale={view.locale} viewId={view.id}
             drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} editorRef={activeEditor}
-            comparison={view.compareSource ? sourceByUnit.get(row.unitId) : undefined} renderCandidate={renderCandidate} onDetails={onDetails} />
+            comparison={view.compareSource ? sourceByUnit.get(row.unitId) : undefined} renderCandidate={renderCandidate} onDetails={onDetails}
+            diagnosticFocus={active && diagnosticFocus?.unitId === row.unitId && diagnosticFocus.locale === view.locale ? diagnosticFocus : null}
+            diagnosticCurrent={diagnosticCurrent} onDiagnosticFocus={onDiagnosticFocus}/>
         </article>;
       })}
     </div>

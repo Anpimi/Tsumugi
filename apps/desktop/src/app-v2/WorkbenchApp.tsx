@@ -19,6 +19,7 @@ import { SplitView, SplitPanel, SplitHandle } from "../design-system/SplitView";
 import { CommandPalette } from "../design-system/CommandPalette";
 import { ProjectLifecycle, type ProjectSession } from "./platform/projectLifecycle";
 import { useNativeProjectClose, useProjectLifecycle } from "./platform/useProjectLifecycle";
+import type { EntryReviewEditorRequest } from "./features/review/navigationTypes";
 import { createWorkspaceStore, type WorkspaceView } from "./workspace/workspaceStore";
 import { createWorkspaceRouter } from "./workspace/workspaceRouter";
 import { InteractionGate } from "./workspace/interactionGate";
@@ -220,6 +221,7 @@ function WorkspaceShell() {
   const [registries, setRegistries] = useState<Map<string | null, WorkbenchCommands>>(new Map());
   const [registeredCommands, setRegisteredCommands] = useState<WorkbenchCommands | null>(null);
   const [palette, setPalette] = useState(false), [drawer, setDrawer] = useState(false);
+  const drawerEditorClose = useRef(false);
   const paletteRelease = useRef<(() => void) | null>(null), drawerRelease = useRef<(() => void) | null>(null);
   const [commandFailed, setCommandFailed] = useState(false);
   const [presented, setPresented] = useState<{ candidates: string | null; protection: string | null; comparison: string | null; review: string | null }>({ candidates: null, protection: null, comparison: null, review: null });
@@ -406,6 +408,11 @@ function WorkspaceShell() {
         : await runtime.navigation.open({ kind: "entries", ...target });
     } catch { setCommandFailed(true); return false; }
   }
+  async function openReviewEditor(request: EntryReviewEditorRequest, proof: () => boolean) {
+    const parentDialogId = narrow && drawer ? "workspace-dock" : undefined;
+    if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId }) || !proof()) return false;
+    return await entries.current?.openReviewEditor(request, proof, () => { if (parentDialogId) { drawerEditorClose.current = true; closeDrawer(); } }) ?? false;
+  }
   async function openSavedComparison(comparison: ComparisonView, parentDialogId?: string): Promise<boolean> {
     if (!comparison.comparisonId || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
     const target = { entryMode: "table" as const, locale: comparison.locale, focus: comparison.unitId, dock: "details" as const,
@@ -470,7 +477,7 @@ function WorkspaceShell() {
       <TabsContent value="agent" className={styles.dockContent}><EmptyState icon={<Sparkles />} title={message("agent")} description={message("agentHelp")} /></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}><EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
-        patch={patch => { if (view) store.getState().patch(view.id, patch); }} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
+        patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         comparisonOwner={comparisonOwner} requestComparisons={requestComparisons} onOpenComparison={comparison => openSavedComparison(comparison, narrow && drawer ? "workspace-dock" : undefined)}
         reviewOwner={reviewOwner}
         parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/></Suspense></FeatureBoundary></TabsContent>
@@ -532,7 +539,7 @@ function WorkspaceShell() {
           })}<IconButton size="xs" label={message("newView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}><Plus /></IconButton>
             {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
           </div>
-          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} onCandidateBatch={candidateOwners && commandsReady ? previewCandidateBatch : undefined} candidateBatchTriggerRef={candidateBatchTrigger} candidateBatchBlocked={candidateBatchBlocked} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
+          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} commands={commandsReady ? commands : null} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} onCandidateBatch={candidateOwners && commandsReady ? previewCandidateBatch : undefined} candidateBatchTriggerRef={candidateBatchTrigger} candidateBatchBlocked={candidateBatchBlocked} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
             const accepted = await runtime.navigation.update(view.id, patch);
             if (accepted && patch.dock === "details" && narrow) showDock();
             return accepted;
@@ -542,7 +549,7 @@ function WorkspaceShell() {
       </SplitView>
     </div>
     <footer className={styles.statusbar}><span><Circle />{message(readOnly ? "retired" : "liveProject")}</span><span className={styles.statusEnd}>{message("language")} · {activeLocale}</span></footer>
-    <Sheet open={drawer && narrow} onOpenChange={open => { if (!open) closeDrawer(); }} title={message("agent")} description={session.project.metadata.displayName} closeLabel={message("close")}>{panel()}</Sheet>
+    <Sheet open={drawer && narrow} onCloseAutoFocus={event => { if (drawerEditorClose.current) { event.preventDefault(); drawerEditorClose.current = false; } }} onOpenChange={open => { if (!open) closeDrawer(); }} title={message("agent")} description={session.project.metadata.displayName} closeLabel={message("close")}>{panel()}</Sheet>
     <Sheet open={recoveryKey !== null} onOpenChange={open => { if (!open) revealDraft(null); }} title={message("draftRecoveryTitle")} description={message("draftRecoveryHelp")} closeLabel={message("close")}
       onOpenAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => recoveryEditor.current?.focus()); }}
       onEscapeKeyDown={event => {

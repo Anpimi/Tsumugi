@@ -2,13 +2,14 @@ import { useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useStat
 import { useTranslation } from "react-i18next";
 import { sameDraftBasis, type DraftBasis, type DraftKey, type DraftValue } from "../../../draftCommands";
 import { readExactPaste } from "../../../exactPaste";
-import { textareaDisplayText } from "../../../reviewDiagnosticNavigation";
+import { diagnosticTextareaSelection, textareaDisplayText } from "../../../reviewDiagnosticNavigation";
 import { Button } from "../../../design-system/Button";
 import { Banner, ErrorState, LoadingState } from "../../../design-system/Feedback";
 import { Field, TextArea } from "../../../design-system/Field";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { InteractionGate, InteractionIntent } from "../../workspace/interactionGate";
 import type { TranslationDrafts } from "./translationDrafts";
+import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import styles from "../../WorkbenchLayout.module.css";
 
 export type EditorCommand = "translation.confirm" | "translation.confirm-next" | "translation.exit-editor";
@@ -22,6 +23,9 @@ export interface SegmentEditorProps {
   nativeKey?: string;
   autoFocus?: boolean;
   allowAdvance?: boolean;
+  diagnosticFocus?: EntryDiagnosticFocus | null;
+  diagnosticCurrent?: () => boolean;
+  onDiagnosticFocus?: (id: string, applied: boolean) => void;
   dispatch: (id: EditorCommand, source: "button" | "keyboard", inputOwner?: string) => boolean;
   ref?: Ref<SegmentEditorHandle>;
 }
@@ -40,8 +44,19 @@ interface PasteFlight {
   applying: boolean;
 }
 
+/** Selecting a diagnostic never changes the retained draft or its editing basis. */
+export function diagnosticDraftCurrent(drafts: TranslationDrafts, key: DraftKey, focus: EntryDiagnosticFocus, source = false): boolean {
+  const entry = drafts.getEntry(key), value = entry?.value;
+  return !drafts.getSnapshot().retired && focus.unitId === key.unitId && focus.locale === key.locale && !!entry && !!value
+    && entry.current.kind === "current" && entry.currentFailure === null && entry.basisCurrent && !entry.busy && !entry.checking && !value.pending
+    && entry.current.sourceText === focus.sourceText && sameDraftBasis(entry.current.basis, focus.basis) && sameDraftBasis(value.basis, focus.basis)
+    && value.editSeq === focus.editSeq && entry.current.basis.text === focus.translationText
+    && (source || focus.translationText !== null && value.text === focus.translationText);
+}
+
 /** Views borrow the session's entity draft; mounting an editor never owns its lifetime. */
-export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled, nativeKey, autoFocus = true, allowAdvance = true, dispatch, ref }: SegmentEditorProps) {
+export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled, nativeKey, autoFocus = true, allowAdvance = true,
+  diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, dispatch, ref }: SegmentEditorProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const snapshot = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
@@ -50,6 +65,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   const ownerId = `segment-editor-${useId()}`;
   const field = useRef<HTMLTextAreaElement>(null), composing = useRef(false), mounted = useRef(false), copySequence = useRef(0);
   const firstLoaded = useRef({ drafts, keys: new Set<string>() });
+  const located = useRef(new Set<string>());
   const pasteFlight = useRef<PasteFlight | null>(null);
   const [pasteFeedback, setPasteFeedback] = useState<PasteFeedback | null>(null);
   const [readAttempt, setReadAttempt] = useState(0);
@@ -79,8 +95,37 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     if (firstLoaded.current.drafts !== drafts) firstLoaded.current = { drafts, keys: new Set() };
     if (!entry || firstLoaded.current.keys.has(identity)) return;
     firstLoaded.current.keys.add(identity);
-    if (autoFocus && !disabled && !snapshot.retired && gate.getSnapshot().visibleViewId === viewId) field.current?.focus();
-  }, [drafts, entry !== undefined, identity, autoFocus, disabled, snapshot.retired, gate, viewId]);
+    if (autoFocus && !diagnosticFocus && !disabled && !snapshot.retired && gate.getSnapshot().visibleViewId === viewId) field.current?.focus();
+  }, [drafts, entry !== undefined, identity, autoFocus, disabled, snapshot.retired, gate, viewId, diagnosticFocus]);
+  function rejectDiagnostic() {
+    if (diagnosticFocus?.status !== "pending" || diagnosticFocus.location.field !== "translation" || located.current.has(diagnosticFocus.id)) return;
+    located.current.add(diagnosticFocus.id); onDiagnosticFocus?.(diagnosticFocus.id, false);
+  }
+  useEffect(() => {
+    if (diagnosticFocus?.status !== "pending" || diagnosticFocus.location.field !== "translation" || located.current.has(diagnosticFocus.id)) return;
+    const moved = (event: FocusEvent) => { if (event.target !== field.current) rejectDiagnostic(); };
+    document.addEventListener("focusin", moved);
+    return () => document.removeEventListener("focusin", moved);
+  }, [diagnosticFocus, onDiagnosticFocus]);
+  useLayoutEffect(() => {
+    const focus = diagnosticFocus;
+    if (!focus || focus.status !== "pending" || focus.location.field !== "translation" || located.current.has(focus.id)) return;
+    const control = field.current, current = gate.getSnapshot();
+    const permitted = () => !disabled && !composing.current && !pasteFlight.current && gate.canDispatch({ viewId, source: "button" })
+      && (gate.getSnapshot().inputOwner === null || gate.getSnapshot().inputOwner?.ownerId === ownerId)
+      && (diagnosticCurrent?.() ?? true);
+    if (focus.unitId !== draftKey.unitId || focus.locale !== draftKey.locale || !permitted()
+      || current.visibleViewId !== viewId || document.activeElement !== document.body && document.activeElement !== control) { rejectDiagnostic(); return; }
+    if (!entry || !value || !control) return;
+    located.current.add(focus.id);
+    const selection = focus.translationText === null ? null : diagnosticTextareaSelection(focus.translationText, focus.location.range);
+    if (!selection || !control.isConnected || control.closest("[hidden], [inert]") || control.readOnly || control.value !== selection.text
+      || !diagnosticDraftCurrent(drafts, draftKey, focus)) { onDiagnosticFocus?.(focus.id, false); return; }
+    control.focus({ preventScroll: true });
+    if (!permitted() || document.activeElement !== control || !control.isConnected || !diagnosticDraftCurrent(drafts, draftKey, focus)) { onDiagnosticFocus?.(focus.id, false); return; }
+    control.setSelectionRange(selection.start, selection.end);
+    onDiagnosticFocus?.(focus.id, true);
+  }, [diagnosticFocus, diagnosticCurrent, onDiagnosticFocus, snapshot.revision, interaction, disabled, identity, entry !== undefined]);
   useLayoutEffect(() => {
     const flight = pasteFlight.current;
     if (flight && !flight.applying && !pasteCurrent(flight)) cancelPaste("editorPasteChanged");
@@ -183,9 +228,10 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   }
 
   const editor = value ? <TextArea ref={field} editor rows={3} aria-label={t("editorLabel", { key: nativeKey ?? (entry.current.kind === "current" ? entry.current.nativeKey : draftKey.unitId) })}
-    aria-describedby={`${ownerId}-hint${status ? ` ${ownerId}-status` : ""}`} value={value.text} readOnly={readonly}
+    aria-describedby={`${ownerId}-hint${status ? ` ${ownerId}-status` : ""}`} value={textareaDisplayText(value.text)} readOnly={readonly}
     onPaste={pasteOriginalText}
     onChange={event => {
+      rejectDiagnostic();
       const flight = pasteFlight.current;
       if (!flight?.applying) {
         if (flight) cancelPaste("editorPasteChanged");
@@ -194,11 +240,12 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
       if (!readonly) drafts.edit(draftKey, event.currentTarget.value);
     }}
     onFocus={() => gate.setInputOwner(viewId, ownerId)} onBlur={() => {
+      rejectDiagnostic();
       const flight = pasteFlight.current;
       if (flight && !flight.applying) { flight.valid = false; flight.intent.release(); }
       composing.current = false; gate.releaseOwner(ownerId);
     }}
-    onCompositionStart={() => { cancelPaste("editorPasteChanged"); composing.current = true; gate.setInputOwner(viewId, ownerId); gate.setComposing(ownerId, true); }}
+    onCompositionStart={() => { rejectDiagnostic(); cancelPaste("editorPasteChanged"); composing.current = true; gate.setInputOwner(viewId, ownerId); gate.setComposing(ownerId, true); }}
     onCompositionEnd={() => { composing.current = false; gate.setComposing(ownerId, false); }}
     onSelect={event => {
       const flight = pasteFlight.current, control = event.currentTarget;

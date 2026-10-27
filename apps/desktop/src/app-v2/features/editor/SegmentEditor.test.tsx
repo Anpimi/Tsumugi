@@ -6,6 +6,7 @@ import type { DraftBasis, DraftHead, DraftKey, DraftReadView, DraftValue } from 
 import type { TranslationSaveReceipt, TranslationSaveRequest } from "../../../translationCommands";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { TranslationDrafts, type TranslationDraftPorts } from "./translationDrafts";
+import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import SegmentEditor, { type EditorCommand, type SegmentEditorHandle, type SegmentEditorProps } from "./SegmentEditor";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, parameters?: { key?: string }) => parameters?.key === undefined ? key : `${key}:${parameters.key}` }) }));
@@ -70,6 +71,68 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
     ready: async () => { await drafts.initialize(); await drafts.open(key); } };
 }
 const input = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:dialogue.hello" });
+
+async function diagnosticEditor() {
+  const text = "A\r\n👩🏽‍💻\rB\nZ é";
+  const basis: DraftBasis = { ...initial, selectionId: fixture.receipt.selection.eventId, revisionId: fixture.receipt.selection.revisionId, text };
+  const head: DraftHead = { key, revision: "1", writerId, value: { basis, text, editSeq: "9007199254740993", pending: null } };
+  const h = harness(head, currentView(basis)); await h.ready();
+  const focus: EntryDiagnosticFocus = { id: "exact-translation-range", unitId: key.unitId, locale: key.locale, sourceText: "Source text",
+    translationText: text, basis: copy(basis), editSeq: "9007199254740993", location: { field: "translation", range: { encoding: "utf16", start: 3, end: 10 } }, status: "pending" };
+  return { ...h, focus, text };
+}
+
+it("applies an exact UTF-16 diagnostic once using only the textarea newline projection", async () => {
+  const h = await diagnosticEditor(), located = vi.fn();
+  const ui = render(<SegmentEditor {...h.props} diagnosticFocus={h.focus} onDiagnosticFocus={located}/>);
+  const field = input(); expect(field).toHaveFocus(); expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(9);
+  expect(field.value).toBe("A\n👩🏽‍💻\nB\nZ é"); expect(h.drafts.getEntry(key)?.value?.text).toBe(h.text);
+  expect(located.mock.calls).toEqual([[h.focus.id, true]]);
+  expect(h.text).toContain("\r\n"); const setValue = vi.spyOn(field, "value", "set");
+  ui.rerender(<SegmentEditor {...h.props} diagnosticFocus={{ ...h.focus, status: "applied" }} onDiagnosticFocus={located}/>);
+  expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(9); expect(field).toHaveFocus();
+  expect(setValue).not.toHaveBeenCalled(); expect(h.drafts.getEntry(key)?.value?.text).toBe(h.text);
+  act(() => field.setSelectionRange(1, 1)); fireEvent.select(field);
+  ui.rerender(<SegmentEditor {...h.props} diagnosticFocus={{ ...h.focus }} onDiagnosticFocus={located}/>);
+  expect(field.selectionStart).toBe(1); expect(field.selectionEnd).toBe(1); expect(located).toHaveBeenCalledTimes(1);
+  expect(setValue).not.toHaveBeenCalled();
+  expect(h.ports.write).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.identity).not.toHaveBeenCalled();
+});
+
+it.each(["newer input", "IME", "moved focus", "revoked parent ticket"] as const)("rejects diagnostic focus after %s without stealing or replacing input", async change => {
+  const h = await diagnosticEditor(), located = vi.fn();
+  const ui = render(<><SegmentEditor {...h.props} autoFocus={false}/><input aria-label="Another input"/></>), field = input();
+  if (change === "newer input") fireEvent.change(field, { target: { value: "New draft B é 👩🏽‍💻" } });
+  else if (change === "IME") fireEvent.compositionStart(field);
+  else if (change === "moved focus") act(() => screen.getByRole("textbox", { name: "Another input" }).focus());
+  const before = document.activeElement;
+  ui.rerender(<><SegmentEditor {...h.props} diagnosticFocus={h.focus} diagnosticCurrent={() => change !== "revoked parent ticket"} onDiagnosticFocus={located}/><input aria-label="Another input"/></>);
+  expect(located.mock.calls).toEqual([[h.focus.id, false]]); expect(document.activeElement).toBe(before);
+  expect(h.drafts.getEntry(key)?.value?.text).toBe(change === "newer input" ? "New draft B é 👩🏽‍💻" : h.text);
+  if (change === "IME") fireEvent.compositionEnd(field);
+  ui.rerender(<><SegmentEditor {...h.props} diagnosticFocus={h.focus} diagnosticCurrent={() => true} onDiagnosticFocus={located}/><input aria-label="Another input"/></>);
+  expect(located).toHaveBeenCalledTimes(1); expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.identity).not.toHaveBeenCalled();
+});
+
+it("rejects a range inside a collapsed CRLF instead of expanding it", async () => {
+  const h = await diagnosticEditor(), located = vi.fn();
+  render(<SegmentEditor {...h.props} diagnosticFocus={{ ...h.focus, location: { field: "translation", range: { encoding: "utf16", start: 2, end: 3 } } }} onDiagnosticFocus={located}/>);
+  expect(located.mock.calls).toEqual([[h.focus.id, false]]); expect(input()).not.toHaveFocus();
+  expect(h.drafts.getEntry(key)?.value?.text).toBe(h.text); expect(h.ports.save).not.toHaveBeenCalled();
+});
+
+it("consumes pending focus when the user visits another control before the draft read completes", async () => {
+  const h = await diagnosticEditor(), reading = deferred<DraftReadView>(), located = vi.fn();
+  h.ports.read.mockImplementationOnce(() => reading.promise);
+  const drafts = new TranslationDrafts({ context, ports: h.ports, reads: { invalidate: vi.fn() } }); await drafts.initialize();
+  render(<><SegmentEditor {...h.props} drafts={drafts} diagnosticFocus={h.focus} onDiagnosticFocus={located}/><input aria-label="Another input"/></>);
+  const other = screen.getByRole("textbox", { name: "Another input" });
+  act(() => { other.focus(); other.blur(); }); expect(document.activeElement).toBe(document.body);
+  expect(located.mock.calls).toEqual([[h.focus.id, false]]);
+  await act(async () => reading.resolve({ head: { key, revision: "1", writerId, value: { basis: copy(h.focus.basis), text: h.text, editSeq: h.focus.editSeq, pending: null } }, current: currentView(h.focus.basis) }));
+  await screen.findByRole("textbox", { name: "editorLabel:dialogue.hello" });
+  expect(input()).not.toHaveFocus(); expect(located).toHaveBeenCalledTimes(1); expect(drafts.getEntry(key)?.value?.text).toBe(h.text);
+});
 
 it("uses the entry label, keeps disabled text selectable, and delegates all confirmation buttons", async () => {
   const h = harness(draftHead()); await h.ready();

@@ -4,10 +4,12 @@ import { useTranslation } from "react-i18next";
 import { semanticReviewRead } from "../../../aiSemanticReviewQueries";
 import type { AiSemanticReviewView } from "../../../aiSemanticReviewCommands";
 import { CommandFailureDetails, commandFailure } from "../../../CommandFailure";
+import { sameDraftBasis, sameDraftValue } from "../../../draftCommands";
 import { executionContext } from "../../../executionCommands";
 import { reviewDraftKey } from "../../../ReviewDraftSession";
-import type { AdvisoryFinding, ReviewFindingDecision, ReviewFindingView, ReviewTarget } from "../../../reviewCommands";
-import { currentDiagnosticRun, currentSemanticDiagnosticRun, sameReviewBasis } from "../../../reviewDiagnosticNavigation";
+import { reviewCommands, sameAiOrigin, type AdvisoryFinding, type ReviewFindingDecision, type ReviewFindingView, type ReviewTarget } from "../../../reviewCommands";
+import { currentDiagnosticRun, currentSemanticDiagnosticRun, diagnosticIntentMatchesTarget, diagnosticLocationMatchesTarget, diagnosticTextareaSelection,
+  reviewDiagnostics, semanticReviewDiagnostics, sameReviewBasis, validDiagnosticSelection, type ReviewDiagnosticIntent } from "../../../reviewDiagnosticNavigation";
 import { reviewFindingsRead } from "../../../reviewQueries";
 import { ruleIdentity } from "../../../reviewIdentity";
 import { reviewFindingLabel, reviewRuleLabel } from "../../../reviewLabels";
@@ -16,7 +18,7 @@ import type { CommandAvailability } from "../../../workbenchCommands";
 import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
-import type { EntryIssueCapture, EntryIssueFindingPayload, EntryIssuesPanelProps, EntryIssuesReadPayload, EntryIssueWaiverPayload } from "./issuesTypes";
+import type { EntryIssueCapture, EntryIssueFindingPayload, EntryIssueLocatePayload, EntryIssuesPanelProps, EntryIssuesReadPayload, EntryIssueWaiverPayload } from "./issuesTypes";
 import styles from "./EntryIssuesPanel.module.css";
 
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
@@ -27,12 +29,13 @@ function targetMatches(capture: EntryIssueCapture, target: ReviewTarget) {
 }
 
 /** Current QA and advisory evidence remain distinct; audit input and original actions belong to the shared Review owner. */
-export default function EntryIssuesPanel({ project, target, owner, drafts, commands, gate, viewId, disabled, visible, parentDialogId, read, onEdit }: EntryIssuesPanelProps) {
+export default function EntryIssuesPanel({ project, target, owner, drafts, commands, gate, viewId, disabled, visible, parentDialogId, read, onEdit, onReviewEdit }: EntryIssuesPanelProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), { t: legacy } = useTranslation(), reads = useSessionReads();
   const state = owner.state, shared = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const context = executionContext(project), commandScope = { ...context, area: "translation" as const };
   const scope = JSON.stringify([context.projectId, context.sessionToken, target.unitId, target.locale, viewId]);
+  const targetIdentity = JSON.stringify([scope, target.basis, target.basisEvidence, target.sourceText, target.translationText, target.currentCheck?.runId]);
   const [cursor, setCursor] = useState({ scope, offset: 0 });
   const offset = cursor.scope === scope ? cursor.offset : 0;
   const options = reviewFindingsRead(context, target.unitId, target.locale, offset);
@@ -42,21 +45,22 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
     return { subscribe: (notify: () => void) => cache.subscribe(event => { if (matchQuery(filters, event.query)) notify(); }), snapshot: () => cache.find(filters)?.state };
   }, [reads, JSON.stringify(read.key)]);
   useSyncExternalStore(record.subscribe, record.snapshot, record.snapshot);
-  const mounted = useRef(false), flight = useRef(false), live = useRef({ scope, visible, disabled, parentDialogId });
-  const root = useRef<HTMLElement>(null), result = useRef<HTMLDivElement>(null), focus = useRef<{ scope: string; origin: HTMLButtonElement } | null>(null);
+  const mounted = useRef(false), flight = useRef(false), live = useRef({ scope, targetIdentity, visible, disabled, parentDialogId });
+  const root = useRef<HTMLElement>(null), result = useRef<HTMLDivElement>(null), focus = useRef<{ scope: string; identity: string; origin: HTMLButtonElement } | null>(null);
   const [working, setWorking] = useState(false), [feedback, setFeedback] = useState<{ scope: string; kind: "saved" | "changed" | "failed" } | null>(null);
+  const [navigation, setNavigation] = useState<{ identity: string; kind: "loading" | "changed" | "failed" } | null>(null);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useLayoutEffect(() => { live.current = { scope, visible, disabled, parentDialogId }; });
+  useLayoutEffect(() => { live.current = { scope, targetIdentity, visible, disabled, parentDialogId }; });
   function present() {
     return mounted.current && visible && !disabled && !reads.retired && !drafts.getSnapshot().retired
       && reads.context.projectId === context.projectId && reads.context.sessionToken === context.sessionToken
-      && live.current.scope === scope && live.current.visible && !live.current.disabled && live.current.parentDialogId === parentDialogId
+      && live.current.scope === scope && live.current.targetIdentity === targetIdentity && live.current.visible && !live.current.disabled && live.current.parentDialogId === parentDialogId
       && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
   }
   useLayoutEffect(() => {
     if (working || !focus.current) return;
     const ticket = focus.current; focus.current = null;
-    if (ticket.scope === scope && present() && (document.activeElement === document.body || document.activeElement === ticket.origin)) result.current?.focus();
+    if (ticket.scope === scope && ticket.identity === targetIdentity && present() && (document.activeElement === document.body || document.activeElement === ticket.origin)) result.current?.focus();
   });
   function parentFresh() {
     const current = reads.client.getQueryCache().find({ queryKey: reads.key(read.key), exact: true });
@@ -128,6 +132,85 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
     return { current: () => present() && project.metadata.targetLocales.includes(target.locale) && parentFresh() && witnesses.every(value => value.valid()),
       dispose: () => witnesses.forEach(value => value.dispose()) };
   }
+  function inputProof(field?: "source" | "translation") {
+    const key = { projectId: context.projectId, unitId: target.unitId, locale: target.locale };
+    const captured = drafts.getEntry(key)?.value ?? null, version = drafts.inputVersion();
+    const basis = { sourceRevisionId: target.sourceRevisionId, selectionId: target.selectionId, revisionId: target.revisionId, text: target.translationText };
+    return () => {
+      if (drafts.inputVersion() !== version) return false;
+      const entry = drafts.getEntry(key), value = entry?.value ?? null;
+      if (captured) return value !== null && sameDraftValue(captured, value);
+      if (value === null) return true;
+      if (!entry || !entry.basisCurrent || value.pending !== null || value.merge != null || !sameDraftBasis(value.basis, basis)) return false;
+      // A Host read can reveal pre-existing input without creating a new user
+      // intent. Source-only focus and ordinary editing keep that input intact.
+      if (field !== "translation" && entry.head.value && sameDraftValue(entry.head.value, value)) return true;
+      return entry.head.value === null && value.editSeq === "0" && value.text === (target.translationText ?? "");
+    };
+  }
+  function cleanLocationInput(payload: EntryIssueLocatePayload) {
+    const entry = drafts.getEntry({ projectId: context.projectId, unitId: target.unitId, locale: target.locale });
+    if (!entry) return true;
+    const value = entry.value;
+    return value !== null && entry.basisCurrent && value.pending === null && value.merge == null
+      && (payload.intent.diagnostic.location?.field === "source" || value.text === (target.translationText ?? ""))
+      && sameDraftBasis(value.basis, { sourceRevisionId: target.sourceRevisionId, selectionId: target.selectionId, revisionId: target.revisionId, text: target.translationText });
+  }
+  function semanticFacts() {
+    const current = reads.client.getQueryState<AiSemanticReviewView | null>(reads.key(semanticOptions.key));
+    return { findings: currentPage(), view: current?.status === "success" && current.fetchStatus === "idle" && !current.error && !current.isInvalidated ? current.data : null };
+  }
+  function locateCurrent(payload: EntryIssueLocatePayload) {
+    if (payload.unitId !== target.unitId || payload.locale !== target.locale || payload.basis !== target.basis) return false;
+    const intent = payload.intent;
+    if (intent.source.purpose === "qa") return diagnosticIntentMatchesTarget(intent, target) && !!qaRun()?.rules.some(rule => ruleIdentity(rule.key) === ruleIdentity(intent.diagnostic.key)
+      && rule.findings.some(finding => finding.code === intent.diagnostic.code));
+    if (!currentPage() || !diagnosticIntentMatchesTarget(intent, target, semanticFacts())) return false;
+    const origin = intent.source.origin;
+    return !!currentPage()?.findings.some(item => item.purpose === "ai-semantic" && item.runId === intent.runId && sameAiOrigin(item.aiOrigin, origin)
+      && ruleIdentity(item.requirement.key) === ruleIdentity(intent.diagnostic.key) && item.finding.code === intent.diagnostic.code);
+  }
+  function locateAvailability(payload: EntryIssueLocatePayload | undefined): CommandAvailability {
+    return payload && onReviewEdit && present() && project.metadata.targetLocales.includes(target.locale) && !flight.current
+      && parentFresh() && cleanLocationInput(payload) && locateCurrent(payload) ? { enabled: true } : unavailable;
+  }
+  async function openEditor(payload?: EntryIssueLocatePayload) {
+    if (payload ? !locateAvailability(payload).enabled : !readAvailability(readPayload("edit")).enabled) return;
+    const witness = proof([read.key, ...(payload?.intent.source.purpose === "ai-semantic" ? [options.key, semanticOptions.key] : [])]);
+    const unchangedInput = inputProof(payload?.intent.diagnostic.location?.field), current = () => witness.current() && unchangedInput() && (!payload || locateCurrent(payload));
+    const origin = document.activeElement instanceof HTMLButtonElement && root.current?.contains(document.activeElement) ? document.activeElement : null;
+    let opened = false;
+    flight.current = true; setWorking(true); setNavigation({ identity: targetIdentity, kind: "loading" });
+    try {
+      if (!current()) { setNavigation({ identity: targetIdentity, kind: "changed" }); return; }
+      if (payload) {
+        const intent = payload.intent;
+        const location = await reviewCommands.diagnosticLocation({ ...context, unitId: target.unitId, locale: target.locale, runId: intent.runId, diagnostic: intent.diagnostic });
+        const text = location.location.field === "source" ? target.sourceText : target.translationText;
+        if (!current() || !diagnosticLocationMatchesTarget(location, intent, target, semanticFacts()) || text === null
+          || !validDiagnosticSelection(text, location.location.range) || !diagnosticTextareaSelection(text, location.location.range)) {
+          if (present()) setNavigation({ identity: targetIdentity, kind: "changed" }); return;
+        }
+        if (onReviewEdit) {
+          if (origin && document.activeElement === origin) origin.blur();
+          opened = await onReviewEdit({ target, diagnostic: { intent, location } }, current);
+        }
+      } else if (onReviewEdit) {
+        if (origin && document.activeElement === origin) origin.blur();
+        opened = await onReviewEdit({ target }, current);
+      } else if (current() && onEdit) { onEdit(); opened = true; }
+      if (present()) setNavigation(opened ? null : { identity: targetIdentity, kind: "changed" });
+    } catch {
+      if (present()) setNavigation({ identity: targetIdentity, kind: "failed" });
+    } finally {
+      witness.dispose(); flight.current = false;
+      if (mounted.current) {
+        setNavigation(before => before?.identity === targetIdentity && before.kind === "loading" ? opened ? null : { identity: targetIdentity, kind: "changed" } : before);
+        if (!opened && origin) focus.current = { scope, identity: targetIdentity, origin };
+        setWorking(false);
+      }
+    }
+  }
   async function write(payload: EntryIssueFindingPayload | EntryIssueWaiverPayload) {
     const allowed = payload.kind === "entry-issue-waiver" ? waiverAvailability(payload) : findingAvailability(payload);
     if (!allowed.enabled) return;
@@ -143,7 +226,7 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
         disposition: payload.disposition, evidence: payload.evidence }, witness.current);
       if (present() && !owner.current().pending) setFeedback({ scope, kind: owner.current().completionVersion !== before ? "saved"
         : owner.current().notice === "error" ? "failed" : "changed" });
-    } finally { witness.dispose(); flight.current = false; if (mounted.current) { if (origin) focus.current = { scope, origin }; setWorking(false); } }
+    } finally { witness.dispose(); flight.current = false; if (mounted.current) { if (origin) focus.current = { scope, identity: targetIdentity, origin }; setWorking(false); } }
   }
   function readPayload(operation: EntryIssuesReadPayload["operation"]): EntryIssuesReadPayload {
     return { kind: "entry-issues-read", unitId: target.unitId, locale: target.locale, basis: target.basis, offset, operation, semanticAttemptId: aiOrigin?.attemptId ?? null };
@@ -151,14 +234,14 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
   function readAvailability(payload: EntryIssuesReadPayload | undefined): CommandAvailability {
     if (!payload || !present() || payload.unitId !== target.unitId || payload.locale !== target.locale || payload.basis !== target.basis || payload.offset !== offset
       || payload.semanticAttemptId !== (aiOrigin?.attemptId ?? null)) return unavailable;
-    return payload.operation === "edit" ? onEdit && parentFresh() ? { enabled: true } : unavailable
+    return payload.operation === "edit" ? (onReviewEdit || onEdit) && !flight.current && parentFresh() ? { enabled: true } : unavailable
       : payload.operation === "semantic" ? aiOrigin && !semantic.isFetching ? { enabled: true } : unavailable
       : !findings.isFetching && (payload.operation === "refresh" || payload.operation === "first" && offset > 0
         || payload.operation === "next" && (currentPage()?.nextOffset ?? offset) > offset) ? { enabled: true } : unavailable;
   }
   function readAction(payload: EntryIssuesReadPayload) {
     if (!readAvailability(payload).enabled) return;
-    if (payload.operation === "edit") onEdit?.();
+    if (payload.operation === "edit") void openEditor();
     else if (payload.operation === "refresh") void findings.refetch();
     else if (payload.operation === "semantic") void semantic.refetch();
     else if (payload.operation === "first") setCursor({ scope, offset: 0 });
@@ -177,6 +260,7 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
       commands.register({ ...metadata, id: "review.entry-issues-page", nameKey: "workbenchV2.entryIssuesMoreHistory", payloadKind: "entry-issues-read", risk: "reads-review", availability: value => value?.operation === "first" || value?.operation === "next" ? readAvailability(value) : unavailable, handler: readAction }),
       commands.register({ ...metadata, id: "review.entry-issues-semantic-refresh", nameKey: "workbenchV2.entryIssuesRetrySemantic", payloadKind: "entry-issues-read", risk: "reads-review", availability: value => value?.operation === "semantic" ? readAvailability(value) : unavailable, handler: readAction }),
       commands.register({ ...metadata, id: "review.entry-issues-edit", nameKey: "workbenchV2.entryIssuesEdit", payloadKind: "entry-issues-read", risk: "reads-review", availability: value => value?.operation === "edit" ? readAvailability(value) : unavailable, handler: readAction }),
+      commands.register({ ...metadata, id: "review.entry-locate-issue", nameKey: "workbenchV2.entryIssuesLocate", payloadKind: "entry-issue-locate", risk: "reads-review", availability: locateAvailability, handler: value => { void openEditor(value); } }),
     ];
     return () => remove.forEach(dispose => dispose());
   });
@@ -196,6 +280,21 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
     return legacy(disposition === "rejected" ? "review.advisoryFindings.rejected" : disposition === "restored" ? "review.advisoryFindings.restored" : "review.advisoryFindings.awaiting");
   }
   function auditDetails(decision: ReviewFindingDecision) { return <>{origin(decision)}{details(decision.requirement, decision.request.runId, decision.basisEvidence.sourceRevisionId)}</>; }
+  function diagnosticDetails(intents: ReviewDiagnosticIntent[], current: boolean, detail: string) {
+    return intents.map(intent => {
+      const diagnostic = intent.diagnostic;
+      const payload: EntryIssueLocatePayload = { kind: "entry-issue-locate", unitId: target.unitId, locale: target.locale, basis: target.basis, intent };
+      return <div key={JSON.stringify([intent.runId, diagnostic])}>
+        {diagnostic.detail && diagnostic.detail !== detail ? <p className={styles.text}><TokenizedText text={diagnostic.detail}/></p> : null}
+        {diagnostic.suggestion ? <p className={styles.text}>{legacy("review.advisorySuggestion", { suggestion: diagnostic.suggestion })}</p> : null}
+        {diagnostic.location ? <details className={styles.evidence}><summary>{legacy("execution.diagnostic")}</summary><p>{legacy("review.diagnosticRange", { field: legacy(diagnostic.location.field === "source" ? "review.source" : "review.translation"),
+          encoding: diagnostic.location.range.encoding, rangeStart: String(diagnostic.location.range.start), rangeEnd: String(diagnostic.location.range.end) })}</p></details> : null}
+        {onReviewEdit && current && diagnostic.location ? <Button size="sm" disabled={!locateAvailability(payload).enabled}
+          onClick={() => commands.dispatch("review.entry-locate-issue", commandScope, payload)}>{legacy(diagnostic.location.field === "source" ? "review.diagnosticNavigation.locateSource" : "review.diagnosticNavigation.locateTranslation")}</Button>
+          : onReviewEdit ? <p className={styles.help}>{t("entryIssuesNoExactLocation")}</p> : null}
+      </div>;
+    });
+  }
   const captured = audit(), required = target.currentCheck?.rules.filter(rule => rule.mandatory).flatMap(rule => rule.findings) ?? [];
   const ready = parentFresh(), qaCurrent = qaRun(), message = feedback?.scope === scope ? feedback : null;
   const button = (operation: EntryIssuesReadPayload["operation"], label: string, id: "review.entry-issues-refresh" | "review.entry-issues-page" | "review.entry-issues-semantic-refresh" | "review.entry-issues-edit") => {
@@ -205,15 +304,18 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
   return <section ref={root} className={styles.section} aria-label={t("entryIssuesTitle")}>
     <h3 className={styles.title}>{t("entryIssuesTitle")}</h3><p className={styles.help}>{t("entryIssuesHelp")}</p><p className={styles.help}>{t("entryIssuesAuditHelp")}</p>
     {!ready ? <Banner tone="warning" role="status">{t("entryIssuesReadChanged")}</Banner> : null}
-    <div className={styles.actions}>{button("refresh", t("entryIssuesRefresh"), "review.entry-issues-refresh")}{onEdit ? button("edit", t("entryIssuesEdit"), "review.entry-issues-edit") : null}</div>
+    <div className={styles.actions}>{button("refresh", t("entryIssuesRefresh"), "review.entry-issues-refresh")}{onReviewEdit || onEdit ? button("edit", t("entryIssuesEdit"), "review.entry-issues-edit") : null}</div>
     <section className={styles.group} aria-label={t("entryIssuesRequired")}><h4>{t("entryIssuesRequired")}</h4>
       {target.currentCheck && !qaCurrent ? <Banner tone="warning" role="status">{t("entryIssuesOutdated")}</Banner> : null}
       {!target.currentCheck ? <p className={styles.help}>{t("entryIssuesNoCheck")}</p> : !required.length ? <p className={styles.help}>{t("entryIssuesNoRequired")}</p> : null}
       {required.map(item => {
+        const run = target.currentCheck, rule = run?.rules.find(rule => rule.mandatory && rule.findings.some(finding => finding.issueId === item.issueId));
+        const diagnostics: ReviewDiagnosticIntent[] = run && rule ? reviewDiagnostics(run, rule, item.code).map(diagnostic => ({ runId: run.runId, source: { purpose: "qa" }, diagnostic })) : [];
         const waiver = target.currentWaivers.find(value => value.issueId === item.issueId && value.grant && value.basis === target.basis);
         const payload: EntryIssueWaiverPayload | null = captured && target.currentCheck ? { ...captured, kind: "entry-issue-waiver", runId: target.currentCheck.runId,
           issueId: item.issueId, expectedWaiverId: waiver?.waiverId ?? null, grant: !waiver } : null;
         return <article className={styles.card} key={item.issueId}><p><strong>{reviewFindingLabel(legacy, item.rule, item.code)}</strong></p><div className={styles.text}><TokenizedText text={item.detail}/></div>
+          {diagnosticDetails(diagnostics, !!qaCurrent, item.detail)}
           {waiver ? <><p>{legacy("review.waived")}</p><p className={styles.text}><TokenizedText text={`${waiver.actor}: ${waiver.reason}`}/></p></> : null}
           {item.waivable || waiver ? <><p className={styles.help}>{t("entryIssuesWaiverHelp")}</p><div className={styles.actions}><Button size="sm" disabled={!payload || !waiverAvailability(payload).enabled}
             onClick={() => { if (payload) commands.dispatch(payload.grant ? "review.entry-grant-waiver" : "review.entry-revoke-waiver", commandScope, payload); }}>{t(waiver ? "entryIssuesRevokeWaiver" : "entryIssuesGrantWaiver")}</Button></div></> : null}
@@ -229,12 +331,22 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
       {aiOrigin && (semantic.error || !semantic.isFetching && !page?.findings.some(item => item.purpose === "ai-semantic" && semanticRun(item))) ? <Banner tone="warning" role="status"><p>{t("entryIssuesSemanticUnavailable")}</p>
         {semantic.error ? <CommandFailureDetails failure={commandFailure(semantic.error)}/> : null}{button("semantic", t("entryIssuesRetrySemantic"), "review.entry-issues-semantic-refresh")}</Banner> : null}
       {page?.findings.map(item => {
+        const semanticOrigin = item.aiOrigin;
+        const qa = item.purpose === "qa" && target.currentCheck?.runId === item.runId ? target.currentCheck : null;
+        const rawSemanticRun = semanticOrigin && semantic.data?.detail.attemptId === semanticOrigin.attemptId
+          ? semantic.data.rows.find(row => row.itemId === semanticOrigin.itemId && row.run?.runId === item.runId)?.run : null;
+        const run = item.purpose === "qa" ? qa : rawSemanticRun;
+        const rule = run?.rules.find(rule => ruleIdentity(rule.key) === ruleIdentity(item.requirement.key));
+        const diagnostics: ReviewDiagnosticIntent[] = qa && rule ? reviewDiagnostics(qa, rule, item.finding.code).map(diagnostic => ({ runId: qa.runId, source: { purpose: "qa" }, diagnostic }))
+          : rawSemanticRun && rule && semanticOrigin ? semanticReviewDiagnostics(rawSemanticRun, rule, item.finding.code).map(diagnostic => ({ runId: rawSemanticRun.runId,
+            source: { purpose: "ai-semantic", origin: semanticOrigin }, diagnostic })) : [];
         const rejected = item.decision?.request.disposition === "rejected";
         const payload = (disposition: EntryIssueFindingPayload["disposition"]): EntryIssueFindingPayload | null => captured ? { ...captured, kind: "entry-issue-finding", purpose: item.purpose,
           runId: item.runId, issueId: item.finding.issueId, expectedDecisionId: item.decision?.decisionId ?? null, disposition, evidence: item } : null;
         const toggle = payload(rejected ? "restored" : "rejected"), repair = payload("repair-requested");
         return <article className={styles.card} key={`${item.purpose}:${item.runId}:${item.finding.issueId}`}><p><strong>{item.purpose === "ai-semantic" ? legacy("semanticReview.title") : reviewRuleLabel(legacy, item.finding.rule)}</strong></p>
           <div className={styles.text}><TokenizedText text={item.finding.detail}/></div>{origin(item)}{details(item.requirement, item.runId, target.sourceRevisionId)}
+          {diagnosticDetails(diagnostics, !!(item.purpose === "qa" ? qaRun() : semanticRun(item)), item.finding.detail)}
           {item.decision ? <><p>{decisionText(item.decision.request.disposition)}</p><p className={styles.text}><TokenizedText text={`${item.decision.request.actor}: ${item.decision.request.reason}`}/></p></> : null}
           <div className={styles.actions}><Button size="sm" disabled={!toggle || !findingAvailability(toggle).enabled} onClick={() => { if (toggle) commands.dispatch(rejected ? "review.entry-restore-finding" : "review.entry-reject-finding", commandScope, toggle); }}>{t(rejected ? "entryIssuesRestore" : "entryIssuesReject")}</Button>
             <Button size="sm" disabled={!repair || !findingAvailability(repair).enabled} onClick={() => { if (repair) commands.dispatch("review.entry-repair-finding", commandScope, repair); }}>{t("entryIssuesRepair")}</Button></div>
@@ -251,6 +363,8 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
       </div></details>
     </section>
     <div ref={result} tabIndex={-1} role="group" aria-label={t("entryIssuesResult")} className={styles.feedback}>
+      {navigation?.identity === targetIdentity ? <Banner tone={navigation.kind === "loading" ? "info" : navigation.kind === "failed" ? "error" : "warning"}
+        role={navigation.kind === "failed" ? "alert" : "status"}>{t(navigation.kind === "loading" ? "entryIssuesOpening" : navigation.kind === "failed" ? "entryIssuesLocationFailed" : "entryIssuesLocationChanged")}</Banner> : null}
       {state.pending ? <Banner tone="warning" role="status">{t(state.pendingUncertain ? "entryIssuesUnknown" : "entryIssuesPending")}</Banner> : null}
       {!state.pending && message ? <Banner tone={message.kind === "saved" ? "success" : message.kind === "failed" ? "error" : "warning"} role={message.kind === "failed" ? "alert" : "status"}>
         {t(message.kind === "saved" ? "entryIssuesSaved" : message.kind === "failed" ? "entryIssuesFailed" : "entryIssuesReadChanged")}

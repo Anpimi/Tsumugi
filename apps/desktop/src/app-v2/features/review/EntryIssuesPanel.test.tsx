@@ -2,13 +2,15 @@ import { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApplicationReadProvider } from "../../../ApplicationReadProvider";
+import { semanticReviewKey } from "../../../aiSemanticReviewQueries";
 import type { AiSemanticReviewView } from "../../../aiSemanticReviewCommands";
+import type { DraftValue } from "../../../draftCommands";
 import { ExecutionTaskProvider, type MutationCoordinator } from "../../../ExecutionTaskSession";
 import { executionContext } from "../../../executionCommands";
 import { i18n } from "../../../i18n";
 import type { ProjectView } from "../../../projectCommands";
 import { ReviewDraftProvider, reviewDraftKey, useReviewDraftSession } from "../../../ReviewDraftSession";
-import type { AdvisoryFinding, ReviewFindingDecision, ReviewFindingView, ReviewFindingWrite, ReviewTarget, Waiver, WaiverWrite } from "../../../reviewCommands";
+import type { AdvisoryFinding, ReviewDiagnosticLocation, ReviewFindingDecision, ReviewFindingView, ReviewFindingWrite, ReviewTarget, Waiver, WaiverWrite } from "../../../reviewCommands";
 import { reviewFindingsKey } from "../../../reviewQueries";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
@@ -16,11 +18,13 @@ import { fixtureIdentity } from "../../../testSupport/executionFixture";
 import { reviewCheckFixture, reviewFindingViewFixture, reviewTargetFixture } from "../../../testSupport/reviewFixture";
 import { coreRuleKeyFixture, pluginRuleKeyFixture } from "../../../testSupport/textReviewFixture";
 import { semanticDiagnosticFixture } from "../../../testSupport/semanticDiagnosticFixture";
+import { reviewDiagnosticFixture } from "../../../testSupport/reviewDiagnosticFixture";
 import { WorkbenchCommands } from "../../../workbenchCommands";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { TranslationDrafts } from "../editor/translationDrafts";
 import EntryIssuesPanel from "./EntryIssuesPanel";
 import type { ReviewOwner } from "./reviewTypes";
+import type { EntryIssuesPanelProps } from "./issuesTypes";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -28,7 +32,8 @@ const project: ProjectView = { sessionToken: "entry-issues", locator: "/syntheti
   metadata: { projectId: fixtureIdentity(9950), displayName: "Synthetic issues", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN"] } };
 const context = executionContext(project), calls = (name: string) => invoke.mock.calls.filter(([command]) => command === name);
 const retained: { reads: SessionReads; drafts: TranslationDrafts; gate: InteractionGate }[] = [];
-const w = (key: "entryIssuesGrantWaiver" | "entryIssuesRevokeWaiver" | "entryIssuesReject" | "entryIssuesRestore" | "entryIssuesRepair" | "entryIssuesUnknown") => i18n.t(`workbenchV2.${key}`);
+const w = (key: "entryIssuesGrantWaiver" | "entryIssuesRevokeWaiver" | "entryIssuesReject" | "entryIssuesRestore" | "entryIssuesRepair" | "entryIssuesUnknown"
+  | "entryIssuesEdit" | "entryIssuesOpening" | "entryIssuesLocationChanged" | "entryIssuesLocationFailed" | "entryIssuesNoExactLocation") => i18n.t(`workbenchV2.${key}`);
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function fixtures() {
   const target = reviewTargetFixture({ basis: "d".repeat(64), translationText: "" });
@@ -46,12 +51,29 @@ function findingReceipt(request: ReviewFindingWrite, target: ReviewTarget, item:
   return { decisionId: fixtureIdentity(9954), request: { ...request, expectedDecisionId: request.expectedDecisionId ?? null },
     requirement: item.requirement, finding: item.finding, purpose: item.purpose, aiOrigin: item.aiOrigin, basisEvidence: target.basisEvidence, createdAt: "2026-10-28T00:00:00Z" };
 }
+function diagnosticFindings(fixture: ReturnType<typeof reviewDiagnosticFixture>): ReviewFindingView {
+  return { ...reviewFindingViewFixture(fixture.target), findings: fixture.rule.mandatory ? [] : [{ purpose: "qa", runId: fixture.run.runId,
+    aiOrigin: null, requirement: fixture.requirement, finding: fixture.finding, decision: null }] };
+}
+const locateLabel = (field: "source" | "translation") => i18n.t(field === "source" ? "review.diagnosticNavigation.locateSource" : "review.diagnosticNavigation.locateTranslation");
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
 afterEach(() => { cleanup(); retained.splice(0).forEach(({ reads, drafts, gate }) => { reads.retire(); drafts.retire(); gate.dispose(); }); });
-async function harness(target: ReviewTarget, initial: ReviewFindingView, semantic: AiSemanticReviewView | null = null) {
+async function harness(target: ReviewTarget, initial: ReviewFindingView, semantic: AiSemanticReviewView | null = null, navigation = false, retainedValue: DraftValue | null = null) {
   const reads = new SessionReads(context), gate = new InteractionGate(), commands = new WorkbenchCommands(), onEdit = vi.fn();
+  const onReviewEdit = vi.fn<NonNullable<EntryIssuesPanelProps["onReviewEdit"]>>(async (_request, proof) => proof());
   gate.setVisibleOwner("entries");
-  const drafts = new TranslationDrafts({ context, reads, ports: { list: async () => ({ items: [], next: null }) } });
+  const draftKey = { projectId: context.projectId, unitId: target.unitId, locale: target.locale };
+  const drafts = new TranslationDrafts({ context, reads, ports: { list: async () => ({ items: retainedValue ? [{ key: draftKey, revision: "1", editSeq: retainedValue.editSeq,
+      sourceRevisionId: retainedValue.basis.sourceRevisionId, hasPending: retainedValue.pending !== null }] : [], next: null }),
+    read: async request => ({ head: { key: request.key, revision: retainedValue ? "1" : "0", writerId: retainedValue ? fixtureIdentity(9989) : null, value: structuredClone(retainedValue) }, current: { kind: "current",
+      basis: { sourceRevisionId: target.sourceRevisionId, selectionId: target.selectionId, revisionId: target.revisionId, text: target.translationText }, sourceText: target.sourceText, nativeKey: target.nativeKey } }),
+    write: async request => {
+      const input = request.write.value;
+      if (input.pending != null || input.merge != null) throw new Error("Only ordinary synthetic input is expected");
+      const value: DraftValue = { text: input.text, editSeq: input.editSeq, pending: null, merge: null, basis: { sourceRevisionId: input.basis.sourceRevisionId,
+        selectionId: input.basis.selectionId ?? null, revisionId: input.basis.revisionId ?? null, text: input.basis.text ?? null } };
+      return { key: request.write.key, revision: String(BigInt(request.write.expectedRevision) + 1n), writerId: request.write.writerId, value };
+    } } });
   await drafts.initialize(); retained.push({ reads, drafts, gate });
   const mutations: MutationCoordinator = { reserveMutation: () => drafts.reserveMutation("retained-for-navigation"), releaseMutation: token => drafts.releaseMutation(token) };
   const projection = { page: initial }; let nextIdentity = 9970;
@@ -63,8 +85,10 @@ async function harness(target: ReviewTarget, initial: ReviewFindingView, semanti
     throw new Error(command);
   });
   let current: ReviewOwner | null = null;
-  const key = ["synthetic-issue-details", target.unitId, target.locale] as const;
+  const keyFor = (value: ReviewTarget) => ["synthetic-issue-details", value.unitId, value.locale] as const;
+  const key = keyFor(target);
   const seed = (value: ReviewTarget) => {
+    const key = keyFor(value);
     reads.client.setQueryData(reads.key(key), { current: value });
     return { key, data: reads.client.getQueryData(reads.key(key)) };
   };
@@ -73,7 +97,7 @@ async function harness(target: ReviewTarget, initial: ReviewFindingView, semanti
     const owner = useReviewDraftSession();
     useLayoutEffect(() => { current = owner; });
     return <EntryIssuesPanel {...presentation} project={project} owner={owner} drafts={drafts} commands={commands} gate={gate}
-      viewId="entries" disabled={false} onEdit={onEdit}/>;
+      viewId="entries" disabled={false} onEdit={onEdit} onReviewEdit={navigation ? onReviewEdit : undefined}/>;
   }
   const ui = () => <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
     <ExecutionTaskProvider project={project} mutations={mutations}><ReviewDraftProvider project={project} mutations={mutations}><Content/></ReviewDraftProvider></ExecutionTaskProvider>
@@ -86,7 +110,7 @@ async function harness(target: ReviewTarget, initial: ReviewFindingView, semanti
     await act(async () => { owner().setActor(actor); owner().editReason(target, reason); });
   }
   function show(value: ReviewTarget, visible = true) { presentation = { target: value, visible, read: seed(value) }; view.rerender(ui()); }
-  return { reads, drafts, gate, commands, owner, audit, view, key, projection, show, onEdit };
+  return { reads, drafts, gate, commands, owner, audit, view, key, projection, show, onEdit, onReviewEdit };
 }
 
 it("mounts read-only, keeps mandatory QA separate, and grants or revokes only its exact current waiver", async () => {
@@ -194,4 +218,152 @@ it("reads the original AI run separately and never offers its suggestion as a ma
   expect(within(article).queryByRole("button", { name: w("entryIssuesGrantWaiver") })).not.toBeInTheDocument();
   expect(calls("create_execution_identity")).toHaveLength(0);
   expect(invoke.mock.calls.every(([command]) => command === "read_review_findings" || command === "read_ai_semantic_review")).toBe(true);
+});
+
+it.each(["source", "translation"] as const)("locates actual QA %s evidence through Host UTF-16 conversion without treating the SDK target as a unit", async field => {
+  const f = reviewDiagnosticFixture("utf8-byte", field, true);
+  f.rule.mandatory = field === "source"; f.requirement.mandatory = field === "source";
+  const h = await harness(f.target, diagnosticFindings(f), null, true), locationRead = deferred<ReviewDiagnosticLocation>();
+  const key = { projectId: context.projectId, unitId: f.target.unitId, locale: f.target.locale };
+  if (field === "source") {
+    await act(async () => { await h.drafts.open(key); expect(h.drafts.edit(key, "Existing draft B é 👩🏽‍💻")).toBe(true); await h.drafts.flush(key); });
+  }
+  const native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => command === "read_review_diagnostic_location" ? locationRead.promise : native(command, args));
+  let editorFocus: Element | null = null, accepted = false;
+  h.onReviewEdit.mockImplementation(async (_request, proof) => {
+    editorFocus = document.activeElement; accepted = proof(); return accepted;
+  });
+  const button = await screen.findByRole("button", { name: locateLabel(field) });
+  await waitFor(() => expect(button).toBeEnabled()); button.focus(); fireEvent.click(button);
+  await waitFor(() => expect(calls("read_review_diagnostic_location")).toHaveLength(1));
+  await h.audit("New reason B", "Reviewer B");
+  expect(f.diagnostic.target).not.toBe(f.target.unitId);
+  expect(calls("read_review_diagnostic_location")[0][1].request).toEqual({ ...context, unitId: f.target.unitId, locale: f.target.locale,
+    runId: f.run.runId, diagnostic: f.diagnostic });
+  expect(button).toBeDisabled();
+  // JSDOM retains disabled-button focus; mirror the browser's focus loss.
+  act(() => {
+    const previous = document.body.getAttribute("tabindex");
+    document.body.tabIndex = -1; document.body.focus();
+    if (previous === null) document.body.removeAttribute("tabindex"); else document.body.setAttribute("tabindex", previous);
+  });
+  await act(async () => { locationRead.resolve(f.location); });
+  await waitFor(() => expect(h.onReviewEdit).toHaveBeenCalledOnce());
+  expect(editorFocus).toBe(document.body); expect(accepted).toBe(true);
+  expect(h.onReviewEdit.mock.calls[0][0]).toEqual({ target: f.target, diagnostic: { intent: { runId: f.run.runId, source: { purpose: "qa" }, diagnostic: f.diagnostic }, location: f.location } });
+  expect(h.owner().current().drafts[reviewDraftKey(f.target)]).toBe("New reason B");
+  if (field === "source") expect(h.drafts.getEntry(key)?.value?.text).toBe("Existing draft B é 👩🏽‍💻");
+  else expect(h.drafts.getEntry(key)).toBeUndefined();
+  expect(h.onEdit).not.toHaveBeenCalled(); expect(calls("create_execution_identity")).toHaveLength(0);
+  expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("run_review_checks")).toHaveLength(0);
+});
+
+it("locates the original semantic run and origin independently from the mechanical QA run", async () => {
+  const f = semanticDiagnosticFixture(), h = await harness(f.target, f.findings, f.view, true), native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => command === "read_review_diagnostic_location" ? Promise.resolve(f.location) : native(command, args));
+  const button = await screen.findByRole("button", { name: locateLabel("translation") });
+  await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button);
+  await waitFor(() => expect(h.onReviewEdit).toHaveBeenCalledOnce());
+  expect(h.onReviewEdit.mock.calls[0][0]).toEqual({ target: f.target, diagnostic: { intent: { runId: f.run.runId, source: f.source, diagnostic: f.diagnostic }, location: f.location } });
+  expect(calls("read_review_diagnostic_location")[0][1].request.runId).toBe(f.run.runId);
+  expect(f.run.runId).not.toBe(f.qa.run.runId); expect(f.target.currentCheck?.runId).toBe(f.qa.run.runId);
+  expect(invoke.mock.calls.every(([command]) => ["read_review_findings", "read_ai_semantic_review", "read_review_diagnostic_location"].includes(command))).toBe(true);
+});
+
+it.each(["target", "hidden", "draft-input"] as const)("rejects a late location after %s changes while preserving entity input", async change => {
+  const f = reviewDiagnosticFixture(), h = await harness(f.target, diagnosticFindings(f), null, true), locationRead = deferred<ReviewDiagnosticLocation>();
+  const native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => command === "read_review_diagnostic_location" ? locationRead.promise : native(command, args));
+  const key = { projectId: context.projectId, unitId: f.target.unitId, locale: f.target.locale };
+  await act(async () => { await h.drafts.open(key); });
+  const button = await screen.findByRole("button", { name: locateLabel("translation") });
+  await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button);
+  await waitFor(() => expect(calls("read_review_diagnostic_location")).toHaveLength(1));
+  act(() => {
+    if (change === "target") h.show({ ...f.target, basis: "changed-current-basis" });
+    else if (change === "hidden") h.show(f.target, false);
+    else { expect(h.drafts.edit(key, "Input B é 👩🏽‍💻")).toBe(true); }
+  });
+  const seq = h.drafts.getEntry(key)?.value?.editSeq;
+  await act(async () => { locationRead.resolve(f.location); });
+  expect(h.onReviewEdit).not.toHaveBeenCalled(); expect(h.onEdit).not.toHaveBeenCalled();
+  expect(h.drafts.getEntry(key)?.value?.editSeq).toBe(seq);
+  expect(h.drafts.getEntry(key)?.value?.text).toBe(change === "draft-input" ? "Input B é 👩🏽‍💻" : f.target.translationText);
+  expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("rejects semantic evidence replaced and restored during a location read rather than trusting a matching final origin", async () => {
+  const f = semanticDiagnosticFixture(), h = await harness(f.target, f.findings, f.view, true), locationRead = deferred<ReviewDiagnosticLocation>();
+  const native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => command === "read_review_diagnostic_location" ? locationRead.promise : native(command, args));
+  const button = await screen.findByRole("button", { name: locateLabel("translation") });
+  await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button);
+  await waitFor(() => expect(calls("read_review_diagnostic_location")).toHaveLength(1));
+  await act(async () => {
+    const key = h.reads.key(semanticReviewKey(f.view.detail.attemptId));
+    h.reads.client.setQueryData(key, { ...structuredClone(f.view), rows: [] });
+    h.reads.client.setQueryData(key, structuredClone(f.view));
+    locationRead.resolve(f.location);
+  });
+  expect(h.onReviewEdit).not.toHaveBeenCalled(); expect(await screen.findByText(w("entryIssuesLocationChanged"))).toBeInTheDocument();
+  expect(calls("create_execution_identity")).toHaveLength(0); expect(calls("run_review_checks")).toHaveLength(0);
+});
+
+it("keeps stale diagnostics readable and uses the guarded ordinary editor callback without guessing an old location", async () => {
+  const f = reviewDiagnosticFixture("utf16", "source"), current = { ...f.target, basis: "new-review-basis" };
+  f.rule.mandatory = true; f.requirement.mandatory = true;
+  const h = await harness(current, reviewFindingViewFixture(current), null, true);
+  if (!f.diagnostic.suggestion) throw new Error("Expected original diagnostic suggestion");
+  await screen.findByText(f.diagnostic.suggestion, { exact: false });
+  expect(screen.queryByRole("button", { name: locateLabel("source") })).not.toBeInTheDocument();
+  const button = screen.getByRole("button", { name: w("entryIssuesEdit") }); await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button); await waitFor(() => expect(h.onReviewEdit).toHaveBeenCalledOnce());
+  expect(h.onReviewEdit.mock.calls[0][0]).toEqual({ target: current }); expect(h.onEdit).not.toHaveBeenCalled();
+  expect(calls("read_review_diagnostic_location")).toHaveLength(0); expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("offers ordinary editing after a location read fails and does not reuse an unverified position", async () => {
+  const f = reviewDiagnosticFixture(), h = await harness(f.target, diagnosticFindings(f), null, true), native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => command === "read_review_diagnostic_location" ? Promise.reject(new Error("Location unavailable")) : native(command, args));
+  const button = await screen.findByRole("button", { name: locateLabel("translation") }); await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button); expect(await screen.findByText(w("entryIssuesLocationFailed"))).toBeInTheDocument();
+  expect(h.onReviewEdit).not.toHaveBeenCalled();
+  const edit = screen.getByRole("button", { name: w("entryIssuesEdit") }); await waitFor(() => expect(edit).toBeEnabled());
+  fireEvent.click(edit); await waitFor(() => expect(h.onReviewEdit).toHaveBeenCalledOnce());
+  expect(h.onReviewEdit.mock.calls[0][0]).toEqual({ target: f.target }); expect(calls("read_review_diagnostic_location")).toHaveLength(1);
+});
+
+it("locates mandatory QA from the exact parent evidence even when the unrelated advisory read fails", async () => {
+  const f = reviewDiagnosticFixture("utf16", "source"); f.rule.mandatory = true; f.requirement.mandatory = true;
+  const h = await harness(f.target, diagnosticFindings(f), null, true), native = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args) => {
+    if (command === "read_review_findings") return Promise.reject(new Error("Advisory read unavailable"));
+    if (command === "read_review_diagnostic_location") return Promise.resolve(f.location);
+    return native(command, args);
+  });
+  await act(async () => { await h.reads.client.refetchQueries({ queryKey: h.reads.key(reviewFindingsKey(f.target.unitId, f.target.locale)), exact: true }); });
+  await screen.findByRole("alert");
+  const button = screen.getByRole("button", { name: locateLabel("source") }); await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button); await waitFor(() => expect(h.onReviewEdit).toHaveBeenCalledOnce());
+  expect(h.onReviewEdit.mock.calls[0][0].diagnostic?.location).toEqual(f.location);
+  expect(calls("read_review_diagnostic_location")).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(0);
+});
+
+it("allows source focus to reveal an unopened retained Host draft B without mistaking the read for new input", async () => {
+  const f = reviewDiagnosticFixture("utf16", "source"); f.rule.mandatory = true; f.requirement.mandatory = true;
+  const value: DraftValue = { basis: { sourceRevisionId: f.target.sourceRevisionId, selectionId: f.target.selectionId, revisionId: f.target.revisionId,
+    text: f.target.translationText }, text: "Host draft B é 👩🏽‍💻", editSeq: "12", pending: null, merge: null };
+  const h = await harness(f.target, diagnosticFindings(f), null, true, value), native = invoke.getMockImplementation()!;
+  const key = { projectId: context.projectId, unitId: f.target.unitId, locale: f.target.locale }, version = h.drafts.inputVersion();
+  expect(h.drafts.getEntry(key)).toBeUndefined();
+  invoke.mockImplementation((command: string, args) => command === "read_review_diagnostic_location" ? Promise.resolve(f.location) : native(command, args));
+  h.onReviewEdit.mockImplementation(async (_request, proof) => {
+    expect(proof()).toBe(true); await h.drafts.open(key);
+    expect(h.drafts.inputVersion()).toBe(version); expect(proof()).toBe(true); return proof();
+  });
+  const button = await screen.findByRole("button", { name: locateLabel("source") }); await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button); await waitFor(() => expect(h.onReviewEdit).toHaveBeenCalledOnce());
+  await waitFor(() => expect(h.drafts.getEntry(key)?.value).toEqual(value));
+  expect(h.onEdit).not.toHaveBeenCalled(); expect(calls("save_translation_revision")).toHaveLength(0); expect(calls("create_execution_identity")).toHaveLength(0);
 });

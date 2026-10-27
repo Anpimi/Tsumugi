@@ -33,7 +33,7 @@ export function diagnosticMatchesTarget(value: ReviewDiagnosticLocation, target:
     && value.runId === target.currentCheck.runId && sameReviewBasis(value.basisEvidence, target.basisEvidence)
     && currentDiagnosticRun(target, target.currentCheck);
 }
-export function diagnosticMatchesEditor(anchor: ReviewDiagnosticAnchor, snapshot: ReviewEditorSnapshot, semantic?: SemanticDiagnosticFacts) {
+export function diagnosticMatchesEditor(anchor: Pick<ReviewDiagnosticAnchor, "diagnostic" | "value" | "sourceText" | "translationText">, snapshot: ReviewEditorSnapshot, semantic?: SemanticDiagnosticFacts) {
   const selection = snapshot.translations.current;
   return diagnosticIntentMatchesTarget(anchor.diagnostic, snapshot.target, semantic)
     && diagnosticLocationMatchesTarget(anchor.value, anchor.diagnostic, snapshot.target, semantic) && snapshot.target.sourceText === anchor.sourceText
@@ -76,7 +76,7 @@ export function diagnosticIntentMatchesTarget(intent: ReviewDiagnosticIntent, ta
 }
 
 export function diagnosticLocationMatchesTarget(value: ReviewDiagnosticLocation, intent: ReviewDiagnosticIntent, target: ReviewTarget, semantic?: SemanticDiagnosticFacts) {
-  return value.runId === intent.runId && value.unitId === target.unitId && value.locale === target.locale && value.basis === target.basis
+  return value.location.field === intent.diagnostic.location?.field && value.runId === intent.runId && value.unitId === target.unitId && value.locale === target.locale && value.basis === target.basis
     && sameReviewBasis(value.basisEvidence, target.basisEvidence)
     && (intent.source.purpose === "qa" ? diagnosticMatchesTarget(value, target) : diagnosticIntentMatchesTarget(intent, target, semantic));
 }

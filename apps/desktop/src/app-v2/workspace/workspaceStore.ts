@@ -1,4 +1,5 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
+import type { EntryReviewNavigation } from "../features/review/navigationTypes";
 import { copyWorkspaceSelection, type WorkspaceSelection } from "./workspaceSelection";
 
 export const viewKinds = ["entries", "knowledge", "runs", "delivery", "decisions", "extensions", "settings"] as const;
@@ -13,6 +14,7 @@ export interface WorkspaceView {
   compareSource: boolean;
   detailTab: "detail" | "context" | "candidates" | "issues" | "history";
   reviewHistoryOffset: number;
+  reviewNavigation: EntryReviewNavigation | null;
   candidateAfterOrdinal: string;
   candidateInitialRevisionId: string | null;
   candidateCompareOpen: boolean;
@@ -77,6 +79,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     compareSource: input.compareSource ?? false,
     detailTab: input.detailTab ?? "detail",
     reviewHistoryOffset: input.reviewHistoryOffset ?? 0,
+    reviewNavigation: input.reviewNavigation ?? null,
     candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
     candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
     candidateCompareOpen: input.candidateCompareOpen ?? false,
@@ -162,6 +165,7 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
       const next = { ...view, ...patch, ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
+        ...(changedTarget || changedScope ? { reviewNavigation: patch.reviewNavigation ?? null } : {}),
         ...(changedTarget ? { reviewHistoryOffset: patch.reviewHistoryOffset ?? 0, candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null, candidateCompareOpen: patch.candidateCompareOpen ?? false, candidateComparisonId: patch.candidateComparisonId ?? null, candidateCompareRefs: Object.freeze([...(patch.candidateCompareRefs ?? [])]) } : {}),
         ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
           queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,

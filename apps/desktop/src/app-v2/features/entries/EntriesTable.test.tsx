@@ -6,6 +6,7 @@ import type { SegmentRow, SegmentSourceComparison } from "../../../segmentComman
 import { InteractionGate } from "../../workspace/interactionGate";
 import { makeWorkspaceView } from "../../workspace/workspaceStore";
 import { TranslationDrafts, type TranslationDraftPorts } from "../editor/translationDrafts";
+import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import EntriesTable, { type EntriesTableHandle, type EntriesTableProps } from "./EntriesTable";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, parameters?: Record<string, unknown>) => {
@@ -138,12 +139,12 @@ it("distinguishes a missing prior unit from real empty source text", () => {
   expect(within(emptyEntry).getAllByText("sourceComparisonEmptyText")).toHaveLength(2);
 });
 
-async function draftOwner(unitId: string) {
+async function draftOwner(unitId: string, sourceText?: string) {
   const heads = new Map<string, DraftHead>();
   const ports: Partial<TranslationDraftPorts> = {
     list: async () => ({ items: [], next: null }),
     read: async ({ key }) => ({ head: heads.get(key.unitId) ?? { key, revision: "0", writerId: null, value: null }, current: {
-      kind: "current", basis: { sourceRevisionId: "revision", selectionId: null, revisionId: null, text: null }, sourceText: `Complete source ${key.unitId}`, nativeKey: `key.${key.unitId}`,
+      kind: "current", basis: { sourceRevisionId: "revision", selectionId: null, revisionId: null, text: null }, sourceText: sourceText ?? `Complete source ${key.unitId}`, nativeKey: `key.${key.unitId}`,
     } }),
     write: async ({ write }) => {
       const head = { key: write.key, revision: (BigInt(heads.get(write.key.unitId)?.revision ?? "0") + 1n).toString(), writerId: write.writerId, value: structuredClone(write.value) as DraftValue };
@@ -156,6 +157,47 @@ async function draftOwner(unitId: string) {
   await drafts.initialize(); await drafts.open({ projectId: "project", unitId, locale: "zh-CN" });
   return drafts;
 }
+
+it("locates the full read-only source independently of source comparison while preserving translation B", async () => {
+  const text = "A\r\n👩🏽‍💻\rB\nZ é", drafts = await draftOwner("unit-0", text), key = { projectId: "project", unitId: "unit-0", locale: "zh-CN" };
+  await act(async () => { drafts.edit(key, "Translation draft B {name}"); await drafts.flush(key); });
+  const value = drafts.getEntry(key)?.value; if (!value) throw new Error("Expected loaded synthetic draft");
+  const focus: EntryDiagnosticFocus = { id: "source-diagnostic-once", unitId: key.unitId, locale: key.locale, sourceText: text, translationText: null,
+    basis: structuredClone(value.basis), editSeq: value.editSeq, location: { field: "source", range: { encoding: "utf16", start: 3, end: 10 } }, status: "pending" };
+  const summary = row(0); summary.content.sourcePreview = "A"; summary.sourceTruncated = true;
+  const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true, entryPageMode: true, compareSource: true }, "entries");
+  const sourceComparison: SegmentSourceComparison = { projectId: "project", locale: "zh-CN", scopeId: "scope", currentSnapshotId: "snapshot", baseSnapshotId: "base", nextAfter: null,
+    rows: [{ unitId: key.unitId, changeKind: "changed", old: { sourceRevisionId: "old", text: "Previous source" }, current: { sourceRevisionId: "revision", text } }] };
+  const located = vi.fn(), edit = vi.spyOn(drafts, "edit"), h = surface({ rows: [summary], drafts, view, sourceComparison, diagnosticFocus: focus, onDiagnosticFocus: located });
+  const source = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "editorDiagnosticSourceLabel:key.unit-0" });
+  expect(source).toHaveAttribute("readonly"); expect(source).toHaveValue("A\n👩🏽‍💻\nB\nZ é"); expect(source).toHaveFocus();
+  expect(source.selectionStart).toBe(2); expect(source.selectionEnd).toBe(9); expect(located.mock.calls).toEqual([[focus.id, true]]);
+  expect(document.querySelector('[data-source-version="previous"]')).toBeNull();
+  const translation = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:key.unit-0" });
+  expect(translation).toHaveValue("Translation draft B {name}"); expect(translation).not.toHaveFocus(); expect(drafts.getEntry(key)?.value?.text).toBe("Translation draft B {name}");
+  expect(text).toContain("\r\n"); const setSource = vi.spyOn(source, "value", "set");
+  h.update({ diagnosticFocus: { ...focus, status: "applied" } });
+  expect(source).toHaveFocus(); expect(source.selectionStart).toBe(2); expect(source.selectionEnd).toBe(9); expect(setSource).not.toHaveBeenCalled();
+  const current = drafts.getEntry(key)?.current; expect(current?.kind === "current" ? current.sourceText : null).toBe(text);
+  act(() => source.setSelectionRange(1, 1)); h.update({ diagnosticFocus: { ...focus, status: "applied" } });
+  expect(screen.getByRole("textbox", { name: "editorDiagnosticSourceLabel:key.unit-0" })).toBe(source);
+  expect(source.selectionStart).toBe(1); expect(source.selectionEnd).toBe(1); expect(located).toHaveBeenCalledTimes(1); expect(edit).not.toHaveBeenCalled(); expect(setSource).not.toHaveBeenCalled();
+});
+
+it("consumes a stale source sequence without selecting it later when the same request is repainted", async () => {
+  const text = "Source 👩🏽‍💻", drafts = await draftOwner("unit-0", text), key = { projectId: "project", unitId: "unit-0", locale: "zh-CN" };
+  const before = drafts.getEntry(key)?.value; if (!before) throw new Error("Expected loaded synthetic draft");
+  const focus: EntryDiagnosticFocus = { id: "stale-source-request", unitId: key.unitId, locale: key.locale, sourceText: text, translationText: null,
+    basis: structuredClone(before.basis), editSeq: before.editSeq, location: { field: "source", range: { encoding: "utf16", start: 0, end: 6 } }, status: "pending" };
+  await act(async () => { drafts.edit(key, "New input B"); await drafts.flush(key); });
+  const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true, entryPageMode: true }, "entries");
+  const located = vi.fn(), h = surface({ rows: [row(0)], drafts, view, diagnosticFocus: focus, onDiagnosticFocus: located });
+  const source = screen.getByRole("textbox", { name: "editorDiagnosticSourceLabel:key.unit-0" });
+  expect(located.mock.calls).toEqual([[focus.id, false]]); expect(source).not.toHaveFocus(); expect(drafts.getEntry(key)?.value?.text).toBe("New input B");
+  const current = drafts.getEntry(key)?.value; if (!current) throw new Error("Expected retained newer input");
+  h.update({ diagnosticFocus: { ...focus, editSeq: current.editSeq } });
+  expect(located).toHaveBeenCalledTimes(1); expect(source).not.toHaveFocus();
+});
 
 it("bounds mounted rows, keeps global list positions, and measures a row after it grows", async () => {
   surface();

@@ -11,7 +11,7 @@ import type { CandidateAuditCapture } from "./CandidateDecisionSession";
 import type { WorkspaceSelection } from "./app-v2/workspace/workspaceSelection";
 import type { ReviewEntryTarget, ReviewEntryDecisionPayload, ReviewEntryBasisPayload, ReviewEntryPendingPayload, RetainedReviewPendingPayload } from "./app-v2/features/review/reviewTypes";
 import type { EntryChecksPreparePayload, EntryChecksRunPayload, EntryChecksConsentPayload, EntryChecksPendingPayload, EntryChecksDiscoveryPayload, EntryChecksRemovePayload, EntryChecksCapture } from "./app-v2/features/review/checksTypes";
-import type { EntryIssueWaiverPayload, EntryIssueFindingPayload, EntryIssuesReadPayload } from "./app-v2/features/review/issuesTypes";
+import type { EntryIssueWaiverPayload, EntryIssueFindingPayload, EntryIssuesReadPayload, EntryIssueLocatePayload } from "./app-v2/features/review/issuesTypes";
 import type { ReviewHistoryCommandPayload } from "./app-v2/features/review/historyTypes";
 import * as reviewValidation from "./generated/review.validators";
 import { validContentSelection } from "./contentSelection";
@@ -48,7 +48,7 @@ type PlainWorkbenchCommandId = "translation.hide-candidate-batch" | "translation
   | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending" | "review.check-pending"
   | "review.open-retained-entry" | "review.discard-retained-inputs"
-  | "review.dismiss-entry-result"
+  | "review.dismiss-entry-result" | "review.entry-return-to-queue"
   | "review.semantic-check-start" | "review.semantic-retry-start"
   | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
@@ -308,6 +308,7 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "review.entry-locate-issue": EntryIssueLocatePayload;
   "review.recover-entry-cancel": RetainedReviewPendingPayload;
   "review.entry-prepare-checks": EntryChecksPreparePayload;
   "review.entry-run-checks": EntryChecksRunPayload;
@@ -652,6 +653,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"entry-issue-waiver", "review.entry-grant-waiver" | "review.entry-revoke-waiver">
   | ResourceCommand<"entry-issue-finding", "review.entry-reject-finding" | "review.entry-restore-finding" | "review.entry-repair-finding">
   | ResourceCommand<"entry-issues-read", "review.entry-issues-refresh" | "review.entry-issues-page" | "review.entry-issues-semantic-refresh" | "review.entry-issues-edit">
+  | ResourceCommand<"entry-issue-locate", "review.entry-locate-issue">
   | ResourceCommand<"entry-review-history", "review.entry-history-refresh" | "review.entry-history-first" | "review.entry-history-next">
   | ResourceCommand<"source-check", "source.prepare-check" | "source.start-check" | "source.finish-check">
   | ResourceCommand<"source-plugin-pending", "source.check-plugin-start" | "source.retry-plugin-request">
@@ -774,6 +776,12 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind === "entry-issue-locate") return payload?.kind === command.payloadKind && validIdentity(payload.unitId) && validIdentity(payload.locale)
+    && validIdentity(payload.basis) && !!payload.intent && validIdentity(payload.intent.runId) && !!payload.intent.diagnostic && !!payload.intent.diagnostic.location
+    && !!payload.intent.source && (payload.intent.source.purpose === "qa" || payload.intent.source.purpose === "ai-semantic" && !!payload.intent.source.origin
+      && typeof payload.intent.source.origin === "object")
+    && reviewValidation.validateRequestDiagnosticLocation({ projectId: command.scope.projectId, sessionToken: command.scope.sessionToken,
+      unitId: payload.unitId, locale: payload.locale, runId: payload.intent.runId, diagnostic: payload.intent.diagnostic }) ? command.availability(payload) : unavailable;
   if (command.payloadKind === "retained-review-pending") {
     if (payload?.kind !== command.payloadKind || !payload.pending) return unavailable;
     const pending = payload.pending;
@@ -1437,6 +1445,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "entry-checks-remove-advisory" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-issue-waiver" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-issue-finding" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-issue-locate" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-issues-read" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-review-history" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "project-metadata-reconcile" && payload?.kind === command.payloadKind) command.handler(payload);

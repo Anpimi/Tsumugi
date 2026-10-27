@@ -3,6 +3,10 @@ import { useTranslation } from "react-i18next";
 import { CheckSquare, ChevronDown, Layers, RefreshCw, Search, X } from "lucide-react";
 import type { ProjectView } from "../../../projectCommands";
 import { isCommandError } from "../../../projectCommands";
+import { sameDraftBasis } from "../../../draftCommands";
+import type { EntryReviewEditorRequest } from "../review/navigationTypes";
+import { readEditorNavigation } from "../review/readEditorNavigation";
+import type { WorkbenchCommands } from "../../../workbenchCommands";
 import type { DraftKey } from "../../../draftCommands";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { sourceCommands } from "../../../sourceCommands";
@@ -22,7 +26,7 @@ import styles from "../../WorkbenchLayout.module.css";
 import local from "./EntriesView.module.css";
 
 type Props = {
-  project: ProjectView; view: WorkspaceView; disabled: boolean;
+  project: ProjectView; view: WorkspaceView; disabled: boolean; commands?: WorkbenchCommands | null;
   patch: (value: Partial<WorkspaceView>) => void;
   navigate: (value: Partial<WorkspaceView>) => Promise<boolean>;
   drafts: TranslationDrafts | null; gate: InteractionGate;
@@ -38,18 +42,21 @@ type Props = {
 export interface EntriesHandle {
   refresh: () => void; focusSearch: () => void;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>;
+  openReviewEditor: (input: EntryReviewEditorRequest, proof: () => boolean, beforeNavigate?: () => void) => Promise<boolean>;
   toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean;
 }
 const noSubscription = () => () => {};
 const noDraftSnapshot = () => null;
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, renderCandidate, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, renderCandidate, commands, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
   const [captured, setCaptured] = useState<RetainedEntryCapture | null>(null);
   const [captureError, setCaptureError] = useState(false), [capturing, setCapturing] = useState(false), [queueEnd, setQueueEnd] = useState(false);
   const request = useRef(0), selectionRequest = useRef(0);
+  const openingReview = useRef(false), reviewSerial = useRef(0), diagnosticTicket = useRef<{ id: string; valid: boolean } | null>(null);
+  const [reviewNotice, setReviewNotice] = useState<"reviewEditorReading" | "reviewEditorChanged" | "reviewEditorFailed" | "reviewEditorReturnBlocked" | null>(null);
   const [selecting, setSelecting] = useState(false), [selectionFailed, setSelectionFailed] = useState(false), [rowFocus, setRowFocus] = useState<string | null>(null);
   const table = useRef<EntriesTableHandle>(null);
   const searchInput = useRef<HTMLInputElement>(null), live = useRef(view), mounted = useRef(false), advanceRevision = useRef(0);
@@ -146,7 +153,67 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     if (!next) { setQueueEnd(true); return; }
     await navigate({ focus: next, editing: true, queueAnchor: rows[index + 1] ? now.queueAnchor : next });
   }
+  async function openReviewEditor(input: EntryReviewEditorRequest, proof: () => boolean, beforeNavigate?: () => void) {
+    if (!drafts || disabled || openingReview.current || !capture || !current || !proof() || input.target.unitId !== view.focus
+      || input.target.locale !== view.locale || !current.rows.some(row => row.content.unitId === input.target.unitId)) return false;
+    const from = live.current, generation = advanceRevision.current, scopeId = capture.scopeId, focusOrigin = document.activeElement, inputVersion = drafts.inputVersion();
+    let invalidated = false;
+    const stop = reads.subscribeChanges(scopes => { if (scopes.some(scope => ["project", "source", "translation", "review", "resources", "execution"].includes(scope))) invalidated = true; });
+    const valid = () => mounted.current && !disabled && !reads.retired && !invalidated && live.current === from
+      && advanceRevision.current === generation && drafts.inputVersion() === inputVersion && document.activeElement === focusOrigin && proof() && project.metadata.targetLocales.includes(input.target.locale);
+    openingReview.current = true; setReviewNotice("reviewEditorReading");
+    try {
+      const snapshot = await readEditorNavigation(reads, input, valid);
+      if (!snapshot || !valid() || snapshot.target.sourceSnapshotId !== capture.snapshotId) { setReviewNotice("reviewEditorChanged"); return false; }
+      const draftKey = { projectId: reads.context.projectId, unitId: input.target.unitId, locale: input.target.locale };
+      const entry = await drafts.open(draftKey);
+      if (!entry || !valid()) { setReviewNotice("reviewEditorChanged"); return false; }
+      const target = snapshot.target, diagnostic = input.diagnostic;
+      const basis = { sourceRevisionId: target.sourceRevisionId, selectionId: target.selectionId, revisionId: target.revisionId, text: target.translationText };
+      if (diagnostic && (!entry.value || entry.current.kind !== "current" || entry.currentFailure || !entry.basisCurrent
+        || !sameDraftBasis(entry.current.basis, basis) || !sameDraftBasis(entry.value.basis, basis) || entry.current.sourceText !== target.sourceText
+        || entry.value.pending || entry.value.merge || entry.busy || diagnostic.location.location.field === "translation" && entry.value.text !== target.translationText)) {
+        setReviewNotice("reviewEditorChanged"); return false;
+      }
+      const origin = from.reviewNavigation?.returnTo ?? { focus: from.focus, locale: from.locale, preset: from.preset, query: from.query, searchInput: from.searchInput,
+        scroll: { ...from.scroll }, selection: copyWorkspaceSelection(from.selection), queueActive: true, queueScopeId: scopeId,
+        queueAnchor: from.queueActive ? from.queueAnchor : current.rows[0]?.content.unitId ?? from.focus,
+        afterOrdinal: from.afterOrdinal, cursor: from.cursor, detailTab: "issues" as const, dock: "details" as const, dockOpen: from.dockOpen };
+      const id = `${from.id}-diagnostic-${++reviewSerial.current}`;
+      const focus = diagnostic && entry.value ? { id, unitId: target.unitId, locale: target.locale, sourceText: target.sourceText,
+        translationText: target.translationText, basis, editSeq: entry.value.editSeq, location: diagnostic.location.location, status: "pending" as const } : null;
+      diagnosticTicket.current = focus ? { id, valid: true } : null;
+      // Closing our own Sheet is the last presentation step before the guarded
+      // route. Its unmount must not revoke the already checked read evidence.
+      beforeNavigate?.();
+      const accepted = await navigate({ editing: true, focusMode: false, queueActive: true, queueScopeId: scopeId,
+        queueAnchor: from.queueActive ? from.queueAnchor : from.focus, reviewNavigation: { returnTo: origin, focus } });
+      if (mounted.current) setReviewNotice(accepted ? null : "reviewEditorReturnBlocked");
+      if (!accepted) diagnosticTicket.current = null;
+      return accepted;
+    } catch { if (mounted.current) setReviewNotice("reviewEditorFailed"); return false; }
+    finally { stop(); openingReview.current = false; }
+  }
+  async function returnReview() {
+    const navigation = live.current.reviewNavigation;
+    if (!navigation || disabled || openingReview.current) return;
+    const accepted = await navigate({ ...navigation.returnTo, editing: false, focusMode: false, reviewNavigation: null });
+    if (mounted.current) { setReviewNotice(accepted ? null : "reviewEditorReturnBlocked"); if (accepted) setRowFocus(navigation.returnTo.focus); }
+  }
+  useLayoutEffect(() => reads.subscribeChanges(scopes => {
+    if (!scopes.some(scope => ["project", "source", "translation", "review", "resources", "execution"].includes(scope)) || !diagnosticTicket.current) return;
+    diagnosticTicket.current.valid = false;
+    const navigation = live.current.reviewNavigation;
+    if (navigation?.focus && navigation.focus.status !== "stale") patch({ reviewNavigation: { ...navigation, focus: { ...navigation.focus, status: "stale" } } });
+  }), [reads]);
+  useLayoutEffect(() => {
+    if (!commands) return;
+    return commands.register({ id: "review.entry-return-to-queue", nameKey: "workbenchV2.reviewEditorReturn", scope: { ...reads.context, area: "translation" },
+      category: "review", binding: null, risk: "changes-view", confirmation: "none", availability: () => ({ enabled: !disabled && !openingReview.current
+        && !!live.current.reviewNavigation && gate.canDispatch({ viewId: view.id, source: "button" }) }), handler: () => { void returnReview(); } });
+  });
   async function exitEditor() {
+    if (view.reviewNavigation) { await returnReview(); return; }
     if (drafts && key && !await drafts.flush(key)) return;
     await navigate({ editing: false, focusMode: false });
   }
@@ -155,7 +222,7 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
       if (mounted.current && live.current.id === view.id && live.current.focus === view.focus && live.current.editing) table.current?.focusEditor();
     });
   }
-  useImperativeHandle(ref, () => ({ refresh: () => { void refresh(); }, focusSearch: () => { if (view.focusMode) void navigate({ focusMode: false }).then(ok => { if (ok) searchInput.current?.focus(); }); else searchInput.current?.focus(); }, confirm, exitEditor, toggleFocus, isEditing, canConfirm }));
+  useImperativeHandle(ref, () => ({ refresh: () => { void refresh(); }, focusSearch: () => { if (view.focusMode) void navigate({ focusMode: false }).then(ok => { if (ok) searchInput.current?.focus(); }); else searchInput.current?.focus(); }, confirm, exitEditor, toggleFocus, isEditing, canConfirm, openReviewEditor }));
   useLayoutEffect(() => {
     if (rowFocus && current?.rows.some(row => row.content.unitId === rowFocus) && !view.editing && view.focus === rowFocus) {
       table.current?.focusRow(rowFocus); setRowFocus(null);
@@ -270,6 +337,10 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
     {selectionFailed ? <Banner tone="error" action={<Button disabled={!current || selecting || disabled} onClick={() => { void chooseMatches(); }}>{t("entrySelectMatches")}</Button>}>{t("entrySelectionFailed")}</Banner> : null}
     {view.focusMode ? <div className={styles.actions}><Button size="sm" onClick={() => { void toggleFocus(); }}>{t("editorTableMode")}</Button></div> : null}
     {searchTooLong ? <Banner id={`entry-search-error-${view.id}`} tone="error">{t("searchTooLong")}</Banner> : null}
+    {reviewNotice ? <Banner tone={reviewNotice === "reviewEditorFailed" ? "error" : "info"} role="status">{t(reviewNotice)}</Banner> : null}
+    {view.reviewNavigation ? <Banner action={<Button size="sm" disabled={!commands || disabled || openingReview.current || !gate.canDispatch({ viewId: view.id, source: "button" })}
+      onClick={() => commands?.dispatch("review.entry-return-to-queue", { ...reads.context, area: "translation" })}>{t("reviewEditorReturn")}</Button>}>
+      {t(view.reviewNavigation.focus?.status === "stale" ? "reviewEditorLocationChanged" : "reviewEditorReturnHelp")}</Banner> : null}
     {queueEnd ? <Banner>{t("queueEnd")}</Banner> : null}
     {view.compareSource && current?.rows.length ? comparison.isError ? <Banner tone="error" role="alert" action={<Button disabled={disabled || comparison.isFetching} onClick={() => { void comparison.refetch(); }}>{t("sourceComparisonRetry")}</Button>}>{t("sourceComparisonFailed")}</Banner>
       : comparison.isPending || comparison.isFetching ? <Banner role="status">{t("sourceComparisonLoading")}</Banner>
@@ -278,6 +349,8 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
       projectId={reads.context.projectId} sourceLocale={project.metadata.sourceLocale} view={view} drafts={drafts} gate={gate} disabled={disabled} dispatch={dispatch} scroll={view.scroll}
       selectedIds={selectionMatches ? selectedIds : []} canSelect={canSelect} onScroll={position => patch({ scroll: position })} onEdit={openEditor}
       sourceComparison={currentComparison} renderCandidate={renderCandidate}
+      diagnosticFocus={view.reviewNavigation?.focus} diagnosticCurrent={() => !!diagnosticTicket.current && diagnosticTicket.current.id === view.reviewNavigation?.focus?.id && diagnosticTicket.current.valid}
+      onDiagnosticFocus={(id, applied) => { const current = live.current.reviewNavigation; if (current?.focus?.id === id && current.focus.status === "pending") patch({ reviewNavigation: { ...current, focus: { ...current.focus, status: applied ? "applied" : "stale" } } }); }}
       onDetails={unitId => { void navigate({ focus: unitId, dock: "details", ...(view.editing ? { queueAnchor: unitId } : {}) }); }}
       onMove={(direction, unitId) => { void moveRow(direction, unitId); }} onSelection={(unitId, selected) => chooseRows([unitId], selected)} footer={footer} />}
   </div>;

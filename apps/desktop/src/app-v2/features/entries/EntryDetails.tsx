@@ -12,6 +12,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ViewPatch, WorkspaceView } from "../../workspace/workspaceStore";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { CandidateOwners } from "../candidates/candidateTypes";
+import type { EntryReviewEditorRequest } from "../review/navigationTypes";
 import type { ReviewOwner } from "../review/reviewTypes";
 import type { ComparisonSession } from "../comparison/ComparisonSession";
 import type { ComparisonView } from "../../../arenaCommands";
@@ -34,10 +35,11 @@ interface Props {
   parentDialogId?: string; comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
   onOpenComparison: (view: ComparisonView) => Promise<boolean>;
   reviewOwner?: ReviewOwner | null;
+  onReviewEdit?: (request: EntryReviewEditorRequest, proof: () => boolean) => Promise<boolean>;
   onPresented: (viewId: string, kind: "candidates" | "protection" | "comparison" | "review", visible: boolean) => void;
 }
 export default function EntryDetails({ project, view, locale, disabled, visible, drafts, owners, commands, gate, patch, onEdit, parentDialogId,
-  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner }: Props) {
+  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner, onReviewEdit }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads(), unitId = view?.focus ?? null;
   const comparisonButton = useRef<HTMLButtonElement>(null), previousComparison = useRef({ viewId: view?.id, unitId, open: view?.candidateCompareOpen });
@@ -102,7 +104,7 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         <EntryChecksPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
           viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
         <EntryIssuesPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
-          viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }} onEdit={() => { void onEdit(unitId, locale); }}/>
+          viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }} onEdit={() => { void onEdit(unitId, locale); }} onReviewEdit={onReviewEdit}/>
       </Suspense> : null}
     </TabsContent>
     {candidatePanel ? <TabsContent value={view.detailTab} className={local.candidates}>
