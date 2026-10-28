@@ -25,7 +25,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 4;
+const FORMAT: i64 = 5;
+const ACTION_FORMAT: i64 = 4;
 const CONVERSATION_FORMAT: i64 = 3;
 const MERGE_FORMAT: i64 = 2;
 const LEGACY_FORMAT: i64 = 1;
@@ -460,7 +461,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -491,8 +492,8 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     Ok(format)
 }
 
-/// Validate the supported old records before adding the new domain. Reads never
-/// call this path; DDL, the requested mutation and format advance share one tx.
+/// Validate supported old records before advancing the format. Reads never call
+/// this path; any DDL, the requested mutation and format advance share one tx.
 fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
     if format == FORMAT { return Ok(()); }
     let mut statement = connection.prepare("SELECT project_id,locale,unit_id,revision,edit_seq,source_revision_id,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM draft_heads ORDER BY project_id,locale,unit_id").map_err(sql)?;
@@ -506,8 +507,8 @@ fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
     }
     drop(statement);
     test_hook("conversation-upgrade-before-ddl", Some(connection));
-    if format == CONVERSATION_FORMAT {
-        conversations::upgrade(connection)?;
+    if format >= CONVERSATION_FORMAT {
+        conversations::upgrade(connection, format)?;
     } else {
         connection.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
     }

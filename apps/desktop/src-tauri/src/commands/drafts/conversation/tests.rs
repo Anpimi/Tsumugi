@@ -92,7 +92,9 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
         value: ConversationDraftValue {
             text: "Composer retained while creating".into(),
             edit_seq: Revision::new(1).unwrap(),
+            message_edit_seq: None,
             pending: Some(pending.clone()),
+            proposal_edits: vec![],
         },
     };
     let written = call(

@@ -724,6 +724,16 @@
           "editSeq": {
             "$ref": "#/definitions/Revision"
           },
+          "messageEditSeq": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pending": {
             "anyOf": [
               {
@@ -733,6 +743,12 @@
                 "type": "null"
               }
             ]
+          },
+          "proposalEdits": {
+            "items": {
+              "$ref": "#/definitions/ConversationProposalDraft"
+            },
+            "type": "array"
           },
           "text": {
             "type": "string"
@@ -883,6 +899,31 @@
             "type": "object"
           }
         ]
+      },
+      "ConversationProposalDraft": {
+        "additionalProperties": false,
+        "description": "Local unfinished input, separate from immutable project proposal revisions.",
+        "properties": {
+          "content": {
+            "$ref": "#/definitions/ConversationPlanningModelOutput"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "proposalId",
+          "expectedRevisionId",
+          "editSeq",
+          "content"
+        ],
+        "type": "object"
       },
       "ConversationProposalRef": {
         "additionalProperties": false,
@@ -3813,6 +3854,16 @@
           "editSeq": {
             "$ref": "#/definitions/Revision"
           },
+          "messageEditSeq": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pending": {
             "anyOf": [
               {
@@ -3822,6 +3873,12 @@
                 "type": "null"
               }
             ]
+          },
+          "proposalEdits": {
+            "items": {
+              "$ref": "#/definitions/ConversationProposalDraft"
+            },
+            "type": "array"
           },
           "text": {
             "type": "string"
@@ -3933,6 +3990,31 @@
             "type": "object"
           }
         ]
+      },
+      "ConversationProposalDraft": {
+        "additionalProperties": false,
+        "description": "Local unfinished input, separate from immutable project proposal revisions.",
+        "properties": {
+          "content": {
+            "$ref": "#/definitions/ConversationPlanningModelOutput"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "proposalId",
+          "expectedRevisionId",
+          "editSeq",
+          "content"
+        ],
+        "type": "object"
       },
       "ConversationProposalRef": {
         "additionalProperties": false,

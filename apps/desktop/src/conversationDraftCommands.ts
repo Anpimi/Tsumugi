@@ -5,7 +5,7 @@ import type { Requests } from "./generated/draft.requests";
 import type { Responses } from "./generated/draft.responses";
 import { validateResponseConversationRead, validateResponseConversationWritten, validateResponseConversationResolved, validateResponseConversationCleared, validateResponseConversationPage } from "./generated/draft.validators";
 
-export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary } from "./generated/draft.responses";
+export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary, ConversationProposalDraft } from "./generated/draft.responses";
 import type { ConversationDraftPending } from "./generated/draft.responses";
 type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
@@ -13,18 +13,32 @@ const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
 export function conversationPendingTarget(pending: ConversationDraftPending) {
   return pending.kind === "proposal-work-plan" ? pending.request.proposal : pending.request;
 }
+export function locallyReplayableConversationRequest(pending: ConversationDraftPending | null | undefined) {
+  return pending?.kind === "create" || pending?.kind === "append" || pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision";
+}
+export function canonicalConversationDraft(value: Requests["conversationWrite"]["write"]["value"]) {
+  const { proposalEdits, messageEditSeq, ...rest } = value;
+  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}) };
+}
 function head(value: Head, key: Head["key"]) {
   const draft = value.value, pending = draft?.pending;
   const target = pending ? conversationPendingTarget(pending) : null;
+  const edits = draft?.proposalEdits ?? [];
+  const messageSeq = draft ? draft.messageEditSeq ?? draft.editSeq : "0";
   return same(value.key, key) && (draft === null ? value.writerId === null : value.writerId !== null && BigInt(value.revision) > 0n
+    && BigInt(messageSeq) <= BigInt(draft.editSeq)
+    && new Set(edits.map(edit => edit.proposalId)).size === edits.length && edits.every(edit => BigInt(edit.editSeq) <= BigInt(draft.editSeq) && edit.content.kind === "proposal"
+      && (pending?.kind !== "proposal-revision" || pending.request.proposalId !== edit.proposalId || pending.submittedSeq !== edit.editSeq
+        || edit.expectedRevisionId === pending.request.expectedRevisionId && same(edit.content, pending.request.content)))
     && (pending == null || target?.projectId === key.projectId && target.conversationId === key.conversationId
       && BigInt(pending.submittedSeq) <= BigInt(draft.editSeq)
       && (pending.kind !== "append" || isConversationMessageText(pending.request.body))
-      && (pending.kind !== "append" || pending.submittedSeq !== draft.editSeq || pending.request.body === draft.text)))
+      && (pending.kind !== "append" || BigInt(pending.submittedSeq) <= BigInt(messageSeq)
+        && (pending.submittedSeq !== messageSeq || pending.request.body === draft.text))))
     && bytes.encode(JSON.stringify(value)).length <= 4 * 1024 * 1024 + 256 * 1024;
 }
 function written(value: Head, write: Requests["conversationWrite"]["write"]) {
-  return head(value, write.key) && value.writerId === write.writerId && same(value.value, { ...write.value, pending: write.value.pending ?? null })
+  return head(value, write.key) && value.writerId === write.writerId && same(value.value, canonicalConversationDraft(write.value))
     && BigInt(value.revision) >= BigInt(write.expectedRevision) && BigInt(value.revision) > 0n;
 }
 /** The application journal preserves input and identities; it never submits the stored action. */

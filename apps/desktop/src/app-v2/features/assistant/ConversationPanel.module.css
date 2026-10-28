@@ -22,3 +22,8 @@
 .preview { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }
 .previewMessage { border-inline-start: var(--border-width) solid var(--color-border-subtle); padding-inline-start: var(--space-3); }
 .planning:focus-visible, .preview:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
+.proposalEditor, .proposalRevision, .proposalFields, .question, .planSummary { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.proposalEditor h3, .proposalRevision h4, .planSummary h4 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.proposalFields { margin: 0; padding: var(--space-4); border: var(--border-width) solid var(--color-border-subtle); }
+.proposalRevision, .proposalEditor { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }
+.proposalEditor:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }

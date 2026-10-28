@@ -68,6 +68,11 @@ fn journal_before_action(
         + 1;
     pending["submittedSeq"] = json!(seq.to_string());
     let mut write = json!({"key":key,"expectedRevision":before["revision"],"writerId":identity(),"value":{"text":"Input retained before the action","editSeq":seq.to_string(),"pending":pending}});
+    if pending["kind"] == "proposal-revision" {
+        write["value"]["messageEditSeq"] = json!(seq.to_string());
+        write["value"]["proposalEdits"] = json!([{"proposalId":pending["request"]["proposalId"],
+            "expectedRevisionId":pending["request"]["expectedRevisionId"],"editSeq":seq.to_string(),"content":pending["request"]["content"]}]);
+    }
     let saved = call(
         window,
         "write_local_conversation_draft",
@@ -77,6 +82,18 @@ fn journal_before_action(
     write["value"]["pending"] = Value::Null;
     write["value"]["editSeq"] = json!((seq + 1).to_string());
     write["value"]["text"] = json!("Newer B retained after the action");
+    if pending["kind"] == "proposal-revision" {
+        write["value"]["messageEditSeq"] = json!((seq + 1).to_string());
+        write["value"]["pending"] = pending.clone();
+        write["value"]["proposalEdits"][0]["editSeq"] = json!((seq + 1).to_string());
+        write["value"]["proposalEdits"][0]["content"]["summary"] = json!("Newer proposal B retained while A saves");
+        let newer = call(window, "write_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"write":write}));
+        write["expectedRevision"] = newer["revision"].clone();
+        write["value"]["pending"] = Value::Null;
+        write["value"]["editSeq"] = json!((seq + 2).to_string());
+        write["value"]["proposalEdits"][0]["editSeq"] = json!((seq + 2).to_string());
+        write["value"]["proposalEdits"][0]["expectedRevisionId"] = pending["request"]["revisionId"].clone();
+    }
     let resolve =
         json!({"sessionToken":project["sessionToken"],"resolve":{"write":write,"pending":pending}});
     assert!(
@@ -96,6 +113,10 @@ fn journal_after_action(
         resolve["resolve"]["write"]["value"]["text"]
     );
     assert!(saved["value"]["pending"].is_null());
+    if resolve["resolve"]["pending"]["kind"] == "proposal-revision" {
+        assert_eq!(saved["value"]["proposalEdits"], resolve["resolve"]["write"]["value"]["proposalEdits"]);
+        assert_eq!(saved["value"]["messageEditSeq"], resolve["resolve"]["write"]["value"]["messageEditSeq"]);
+    }
     assert_eq!(
         call(window, "resolve_local_conversation_draft", resolve.clone()),
         saved

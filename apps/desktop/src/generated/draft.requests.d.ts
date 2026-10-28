@@ -616,8 +616,19 @@ export interface ConversationDraftWrite {
 }
 export interface ConversationDraftValue {
   editSeq: Revision;
+  messageEditSeq?: Revision | null;
   pending?: ConversationDraftPending | null;
+  proposalEdits?: ConversationProposalDraft[];
   text: string;
+}
+/**
+ * Local unfinished input, separate from immutable project proposal revisions.
+ */
+export interface ConversationProposalDraft {
+  content: ConversationPlanningModelOutput;
+  editSeq: Revision;
+  expectedRevisionId: ExecutionId;
+  proposalId: ExecutionId;
 }
 export interface ConversationDraftWriteRequest {
   sessionToken: string;

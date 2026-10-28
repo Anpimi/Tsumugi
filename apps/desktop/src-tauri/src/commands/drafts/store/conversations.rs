@@ -1,5 +1,7 @@
 //! Conversation input uses the same journal file, transaction and shared quotas.
 use super::*;
+use std::collections::BTreeSet;
+use tsumugi_core::ai::conversation_planning::ConversationPlanningModelOutput;
 use tsumugi_core::application::{MAX_CONVERSATION_MESSAGE_BYTES, MAX_CONVERSATION_TITLE_BYTES};
 
 pub(super) const LEGACY_HEAD_SQL: &str = "CREATE TABLE conversation_draft_heads (project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,conversation_id), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))";
@@ -28,6 +30,7 @@ fn validate_pending(
     key: &ConversationDraftKey,
     pending: &ConversationDraftPending,
     seq: Revision,
+    message_seq: Revision,
     text: &str,
 ) -> Result<()> {
     let (project, thread, submitted) = match pending {
@@ -48,7 +51,8 @@ fn validate_pending(
         } => {
             if request.body.trim().is_empty()
                 || request.body.len() > MAX_CONVERSATION_MESSAGE_BYTES
-                || *submitted_seq == seq && request.body != text
+                || *submitted_seq > message_seq
+                || *submitted_seq == message_seq && request.body != text
             {
                 return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-message"));
             }
@@ -93,8 +97,44 @@ fn validate_pending(
     Ok(())
 }
 fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) -> Result<()> {
+    let message_seq = value.message_edit_seq.unwrap_or(value.edit_seq);
+    if message_seq > value.edit_seq {
+        return Err(fail(
+            ErrorCode::InvalidInput,
+            "conversation-drafts-message-sequence",
+        ));
+    }
+    let mut proposals = BTreeSet::new();
+    for draft in &value.proposal_edits {
+        if !proposals.insert(draft.proposal_id)
+            || draft.edit_seq > value.edit_seq
+            || !matches!(
+                draft.content,
+                ConversationPlanningModelOutput::Proposal { .. }
+            )
+        {
+            return Err(fail(
+                ErrorCode::InvalidInput,
+                "conversation-drafts-proposal",
+            ));
+        }
+        if let Some(ConversationDraftPending::ProposalRevision {
+            request,
+            submitted_seq,
+        }) = &value.pending
+            && draft.proposal_id == request.proposal_id
+            && draft.edit_seq == *submitted_seq
+            && (draft.expected_revision_id != request.expected_revision_id
+                || draft.content != request.content)
+        {
+            return Err(fail(
+                ErrorCode::InvalidInput,
+                "conversation-drafts-proposal-pending",
+            ));
+        }
+    }
     if let Some(pending) = &value.pending {
-        validate_pending(key, pending, value.edit_seq, &value.text)?;
+        validate_pending(key, pending, value.edit_seq, message_seq, &value.text)?;
     }
     Ok(())
 }
@@ -174,6 +214,10 @@ fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<Conver
         || seq != value.map(|value| value.edit_seq.get() as i64)
         || pending != i64::from(value.is_some_and(|value| value.pending.is_some()))
         || value.is_some_and(|value| validate_value(key, value).is_err())
+        || format < FORMAT
+            && value.is_some_and(|value| {
+                !value.proposal_edits.is_empty() || value.message_edit_seq.is_some()
+            })
         || format == CONVERSATION_FORMAT
             && value
                 .and_then(|value| value.pending.as_ref())
@@ -207,12 +251,12 @@ fn read_head(
     }
 }
 
-/// Format 3 has no dependent tables. Validate every old head, then rebuild the
-/// payload constraint inside the caller's existing IMMEDIATE transaction.
-pub(super) fn upgrade(c: &Connection) -> Result<()> {
+/// Validate every old head. Only format 3 needs its payload constraint rebuilt;
+/// format 4 already has the same tables and limits as the current format.
+pub(super) fn upgrade(c: &Connection, format: i64) -> Result<()> {
     let mut query = c.prepare("SELECT project_id,conversation_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM conversation_draft_heads ORDER BY project_id,conversation_id").map_err(sql)?;
     let rows = query
-        .query_map([MAX_DRAFT_RECORD_BYTES as i64], |row| {
+        .query_map([record_limit(format) as i64], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -226,9 +270,12 @@ pub(super) fn upgrade(c: &Connection) -> Result<()> {
             project_id: stored_id(&project)?,
             conversation_id: stored_id(&thread)?,
         };
-        decode(&key, row, CONVERSATION_FORMAT)?;
+        decode(&key, row, format)?;
     }
     drop(query);
+    if format == ACTION_FORMAT {
+        return Ok(());
+    }
     c.execute_batch(
         "ALTER TABLE conversation_draft_heads RENAME TO conversation_draft_heads_legacy",
     )
@@ -338,6 +385,10 @@ impl DraftStore {
             &r.write.key,
             &r.pending,
             r.write.value.edit_seq,
+            r.write
+                .value
+                .message_edit_seq
+                .unwrap_or(r.write.value.edit_seq),
             &r.write.value.text,
         )?;
         if r.write.value.pending.is_some() {

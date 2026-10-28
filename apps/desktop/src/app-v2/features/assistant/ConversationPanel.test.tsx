@@ -31,7 +31,7 @@ it.each(["conversation-only", "units"] as const)("reviews %s material and exact 
   invoke.mockImplementation(async (command: string, { request }) => {
     if (command === "list_project_conversations") return { projectId: context.projectId, rows: [thread], nextAfter: null };
     if (command === "read_project_conversation_messages") return { ...key, rows: [message], nextAfter: null };
-    if (command === "read_conversation_planning_attempts") return { ...key, rows: [], nextAfter: null };
+    if (command === "read_conversation_planning_attempts" || command === "read_conversation_proposal_revisions") return { ...key, rows: [], nextAfter: null };
     if (command === "read_model_connections") return connectionFixture([config]);
     if (command === "read_local_conversation_draft") return structuredClone(head);
     if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
@@ -115,7 +115,7 @@ it("shows saved messages and keeps composer input across presentation changes wi
   invoke.mockImplementation(async (command: string, { request }) => {
     if (command === "list_project_conversations") return { projectId: context.projectId, rows: [thread], nextAfter: null };
     if (command === "read_project_conversation_messages") return { ...key, rows: messages, nextAfter: null };
-    if (command === "read_conversation_planning_attempts") return { ...key, rows: [], nextAfter: null };
+    if (command === "read_conversation_planning_attempts" || command === "read_conversation_proposal_revisions") return { ...key, rows: [], nextAfter: null };
     if (command === "read_local_conversation_draft") return structuredClone(head);
     if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
       const write = request.write ?? request.resolve.write;

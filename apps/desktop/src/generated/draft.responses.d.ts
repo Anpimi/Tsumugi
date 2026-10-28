@@ -390,7 +390,9 @@ export interface ConversationDraftKey {
 }
 export interface ConversationDraftValue {
   editSeq: Revision;
+  messageEditSeq?: Revision | null;
   pending: ConversationDraftPending | null;
+  proposalEdits?: ConversationProposalDraft[];
   text: string;
 }
 export interface CreateProjectConversation {
@@ -764,6 +766,15 @@ export interface ConversationProposalRef {
   projectId: ExecutionId;
   proposalId: ExecutionId;
   revisionId: ExecutionId;
+}
+/**
+ * Local unfinished input, separate from immutable project proposal revisions.
+ */
+export interface ConversationProposalDraft {
+  content: ConversationPlanningModelOutput;
+  editSeq: Revision;
+  expectedRevisionId: ExecutionId;
+  proposalId: ExecutionId;
 }
 export interface ConversationDraftPage {
   items: ConversationDraftSummary[];

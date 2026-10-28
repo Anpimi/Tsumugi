@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConversationSession } from "./ConversationSession";
-import type { ConversationDraftHead, ConversationDraftPending } from "../../../conversationDraftCommands";
+import { canonicalConversationDraft, type ConversationDraftHead, type ConversationDraftPending } from "../../../conversationDraftCommands";
 import type { PreparedConversationPlanning, ProjectConversation, ProjectConversationMessage } from "../../../conversationCommands";
 import type { conversationCommands } from "../../../conversationCommands";
 import type { conversationDraftCommands } from "../../../conversationDraftCommands";
 import { validateResponseConversationWritten } from "../../../generated/draft.validators";
 import type { reviewCommands } from "../../../reviewCommands";
 import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
+import { conversationProposalFixture } from "../../../testSupport/conversationProposalFixture";
+import { validateResponseProposal } from "../../../generated/conversations.validators";
+import { isCommandError } from "../../../projectCommands";
 
 const context = { projectId: "10000000-0000-4000-8000-000000000001", sessionToken: "session" };
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -26,7 +29,7 @@ function harness() {
     const previous = heads.get(request.write.key.conversationId);
     const head = { ...structuredClone(request.write), revision: String(BigInt(previous?.revision ?? "0") + 1n) };
     const result: unknown = { key: head.key, revision: head.revision, writerId: head.writerId,
-      value: { editSeq: head.value.editSeq, pending: head.value.pending ?? null, text: head.value.text } };
+      value: canonicalConversationDraft(head.value) };
     if (!validateResponseConversationWritten(result)) throw new Error("Invalid synthetic journal response");
     heads.set(head.key.conversationId, result); return structuredClone(result);
   });
@@ -53,7 +56,10 @@ function harness() {
   const validatePlanning = vi.fn<typeof conversationCommands.validatePlanning>(async (_request, expected) => expected);
   const startPlanning = vi.fn<typeof conversationCommands.startPlanning>(async request => ({ projectId: request.projectId, conversationId: request.conversationId, consent: request.consent, inputDigest: "c".repeat(64) }));
   const captureSelection = vi.fn<typeof reviewCommands.captureScope>();
-  const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection };
+  const captureProposal = vi.fn<typeof conversationCommands.captureProposal>(), reviseProposal = vi.fn<typeof conversationCommands.reviseProposal>();
+  const validateProposal = vi.fn<typeof conversationCommands.validateProposal>(), readPlanning = vi.fn<typeof conversationCommands.readPlanning>();
+  const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
+    captureProposal, reviseProposal, validateProposal, readPlanning };
   const make = () => new ConversationSession(context, recorded, reveal, all);
   const owner = make();
   return { owner, make, ports: all, heads, created, appended, recorded, reveal, current: () => {
@@ -63,6 +69,115 @@ function harness() {
 }
 
 describe("ConversationSession", () => {
+  async function readyProposal() {
+    const h = harness(); await h.owner.initialize(); await h.owner.create();
+    const conversationId = h.current().key.conversationId, fixture = conversationProposalFixture({ projectId: context.projectId, conversationId });
+    h.ports.validateProposal.mockResolvedValue(fixture.revision); h.ports.readPlanning.mockResolvedValue(fixture.run);
+    const revisionReceipt = (request: Parameters<typeof conversationCommands.reviseProposal>[0]) => {
+      const value: unknown = { ...fixture.revision, revisionId: request.revisionId, previousRevisionId: request.expectedRevisionId, revision: "2", ordinal: "2", content: request.content };
+      if (!validateResponseProposal(value)) throw new Error("Invalid synthetic proposal receipt"); return value;
+    };
+    h.ports.reviseProposal.mockImplementation(async request => revisionReceipt(request));
+    h.ports.captureProposal.mockImplementation(async request => ({ ...fixture.revision, proposalId: request.proposalId, revisionId: request.revisionId }));
+    h.owner.beginProposalEdit(fixture.revision); await h.owner.flush();
+    return { ...h, ...fixture, conversationId, revisionReceipt };
+  }
+  it("journals unfinished proposal fields and separate message input across reopening without saving a project revision", async () => {
+    const h = await readyProposal();
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "", questions: [""], unitIds: [] }));
+    h.owner.edit(h.conversationId, "独立的消息输入"); await h.owner.flush();
+    const reopened = h.make(); await reopened.initialize(); await reopened.open(h.conversationId);
+    const value = reopened.getSnapshot().inputs.get(h.conversationId)?.value;
+    expect(value?.text).toBe("独立的消息输入"); expect(value?.proposalEdits?.[0].content).toMatchObject({ summary: "", questions: [""], unitIds: [] });
+    expect(h.ports.reviseProposal).not.toHaveBeenCalled(); expect(h.ports.startPlanning).not.toHaveBeenCalled(); reopened.retire();
+  });
+  it("keeps B, another proposal and message input through A's business and journal acknowledgements", async () => {
+    const h = await readyProposal(), business = deferred<Awaited<ReturnType<typeof conversationCommands.reviseProposal>>>();
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Version A" })); await h.owner.flush();
+    h.ports.reviseProposal.mockReturnValueOnce(business.promise);
+    const originalResolve = h.ports.resolve.getMockImplementation()!, resolvedFrame = deferred<ConversationDraftHead>(), localAck = deferred<ConversationDraftHead>();
+    h.ports.resolve.mockImplementationOnce(async request => { const head = await originalResolve(request); resolvedFrame.resolve(head); return localAck.promise; });
+    const saving = h.owner.saveProposal(h.conversationId, h.revision.proposalId);
+    await vi.waitFor(() => expect(h.ports.reviseProposal).toHaveBeenCalledOnce());
+    const request = h.ports.reviseProposal.mock.calls[0][0];
+    expect(h.heads.get(h.conversationId)?.value?.pending).toMatchObject({ kind: "proposal-revision", request: { content: { summary: "Version A" } } });
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Newer B" }));
+    h.owner.edit(h.conversationId, "Message B");
+    const other = { ...h.revision, proposalId: h.ports.identity(), revisionId: h.ports.identity() }; h.owner.beginProposalEdit(other);
+    business.resolve(h.revisionReceipt(request));
+    const frame = await resolvedFrame.promise;
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Newest B while journal ack waits" }));
+    localAck.resolve(frame); await saving; await h.owner.flush();
+    expect(h.current().value.text).toBe("Message B");
+    expect(h.current().value.proposalEdits?.find(edit => edit.proposalId === h.revision.proposalId)).toMatchObject({ expectedRevisionId: request.revisionId, content: { summary: "Newest B while journal ack waits" } });
+    expect(h.current().value.proposalEdits?.find(edit => edit.proposalId === other.proposalId)?.expectedRevisionId).toBe(other.revisionId);
+    expect(h.heads.get(h.conversationId)?.value).toEqual(h.current().value); expect(h.ports.reviseProposal).toHaveBeenCalledOnce();
+  });
+  it.each(["proposal-only", "message-edited-back"] as const)("settles message A independently of %s changes without dropping proposal input", async kind => {
+    const h = await readyProposal(), response = deferred<ProjectConversationMessage>();
+    h.owner.edit(h.conversationId, "Message A"); await h.owner.flush();
+    const append = h.ports.append.getMockImplementation()!; h.ports.append.mockReturnValueOnce(response.promise);
+    const sending = h.owner.append(h.conversationId); await vi.waitFor(() => expect(h.ports.append).toHaveBeenCalledOnce());
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Proposal B" }));
+    if (kind === "message-edited-back") { h.owner.edit(h.conversationId, "Message B"); h.owner.edit(h.conversationId, "Message A"); }
+    response.resolve(await append(h.ports.append.mock.calls[0][0])); await sending; await h.owner.flush();
+    expect(h.current().value.text).toBe(kind === "proposal-only" ? "" : "Message A");
+    expect(h.current().value.proposalEdits?.[0].content.summary).toBe("Proposal B");
+  });
+  it("does not create a request for stale or newly edited proposal input, and explicitly rebases without replacing it", async () => {
+    const h = await readyProposal(), validation = deferred<Awaited<ReturnType<typeof conversationCommands.validateProposal>>>();
+    h.ports.validateProposal.mockReturnValueOnce(validation.promise);
+    const saving = h.owner.saveProposal(h.conversationId, h.revision.proposalId);
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Newer draft" })); validation.resolve(h.revision); await saving;
+    expect(h.ports.readPlanning).not.toHaveBeenCalled(); expect(h.current().value.pending).toBeNull();
+    await h.owner.flush();
+    h.ports.validateProposal.mockRejectedValueOnce(new Error("The proposal head changed")); await h.owner.saveProposal(h.conversationId, h.revision.proposalId);
+    expect(h.current().proposalFailure?.proposalId).toBe(h.revision.proposalId); expect(h.ports.reviseProposal).not.toHaveBeenCalled();
+    const latest = { ...h.revision, revisionId: h.ports.identity(), revision: "2", ordinal: "2", previousRevisionId: h.revision.revisionId };
+    expect(h.owner.acceptProposalBase(latest, "0")).toBe(false);
+    const edit = h.current().value.proposalEdits![0]; expect(h.owner.acceptProposalBase(latest, edit.editSeq)).toBe(true);
+    expect(h.current().value.proposalEdits?.[0]).toMatchObject({ expectedRevisionId: latest.revisionId, content: { summary: "Newer draft" } });
+  });
+  it("recovers an uncertain original revision after reopening and retains newer edits without replay", async () => {
+    const h = await readyProposal(); h.ports.reviseProposal.mockRejectedValueOnce(new Error("Lost acknowledgement"));
+    await h.owner.saveProposal(h.conversationId, h.revision.proposalId);
+    const pending = h.current().value.pending; if (pending?.kind !== "proposal-revision") throw new Error("Missing revision request");
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Keep newer input" })); await h.owner.flush();
+    const reopened = h.make(); await reopened.initialize(); await reopened.open(h.conversationId); await reopened.retry(h.conversationId);
+    h.ports.recoverProposalRevision.mockResolvedValueOnce({ request: pending.request, outcome: { kind: "recorded", receipt: h.revisionReceipt({ ...pending.request, sessionToken: context.sessionToken }) } });
+    await reopened.check(h.conversationId);
+    expect(reopened.getSnapshot().inputs.get(h.conversationId)?.value.proposalEdits?.[0]).toMatchObject({ expectedRevisionId: pending.request.revisionId, content: { summary: "Keep newer input" } });
+    expect(h.ports.reviseProposal).toHaveBeenCalledOnce(); expect(h.ports.startPlanning).not.toHaveBeenCalled(); reopened.retire();
+  });
+  it("retries a local revision only after explicit original-request recovery allows it", async () => {
+    const h = await readyProposal(); h.ports.reviseProposal.mockRejectedValueOnce(new Error("No acknowledgement"));
+    await h.owner.saveProposal(h.conversationId, h.revision.proposalId);
+    const pending = h.current().value.pending; if (pending?.kind !== "proposal-revision") throw new Error("Missing revision request");
+    await h.owner.retry(h.conversationId); expect(h.ports.reviseProposal).toHaveBeenCalledOnce();
+    h.ports.recoverProposalRevision.mockResolvedValueOnce({ request: pending.request, outcome: { kind: "pending", replay: "explicit-same-request" } });
+    await h.owner.check(h.conversationId); await h.owner.retry(h.conversationId);
+    expect(h.ports.reviseProposal.mock.calls.map(call => call[0])).toEqual([{ sessionToken: context.sessionToken, ...pending.request }, { sessionToken: context.sessionToken, ...pending.request }]);
+    expect(h.current().value.pending).toBeNull();
+  });
+  it("captures a proposal once, preserves drafts, and never sends it before its journal acknowledgement", async () => {
+    const h = await readyProposal(), written = h.ports.write.getMockImplementation()!, hold = deferred<ConversationDraftHead>();
+    h.ports.write.mockImplementationOnce(async request => { const value = await written(request); await hold.promise; return value; });
+    const capture = h.owner.captureProposal(h.run);
+    await vi.waitFor(() => expect(h.current().value.pending?.kind).toBe("proposal-capture"));
+    expect(h.ports.captureProposal).not.toHaveBeenCalled(); hold.resolve(h.heads.get(h.conversationId)!); await capture;
+    await h.owner.captureProposal(h.run); expect(h.ports.captureProposal).toHaveBeenCalledOnce();
+    expect(h.current().value.proposalEdits).toHaveLength(1); expect(h.current().capturedResultIds).toContain(h.run.resultId);
+    expect(h.ports.startPlanning).not.toHaveBeenCalled();
+  });
+  it("lets reduced input replace a journal frame rejected for size but keeps uncertain frames for exact retry", async () => {
+    const h = await readyProposal();
+    const failure = { code: "limit-exceeded", stage: "draft-storage", outcome: "rejected", recoveryRequired: false, reason: "drafts-record-size" };
+    expect(isCommandError(failure)).toBe(true);
+    h.ports.write.mockRejectedValueOnce(failure); h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Too large draft input" }));
+    await vi.waitFor(() => expect(h.current().failure?.kind).toBe("journal"));
+    h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Reduced input" })); await h.owner.retryJournal(h.conversationId);
+    expect(h.current().failure).toBeNull(); expect(h.heads.get(h.conversationId)?.value?.proposalEdits?.[0].content.summary).toBe("Reduced input");
+  });
   async function readyToPlan() {
     const h = harness(); await h.owner.initialize(); await h.owner.create();
     const conversationId = h.current().key.conversationId, messageId = h.ports.identity();

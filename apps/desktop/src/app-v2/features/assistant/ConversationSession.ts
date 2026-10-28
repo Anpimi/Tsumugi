@@ -1,7 +1,7 @@
 import { commandFailure, type CommandFailure } from "../../../CommandFailure";
-import { conversationCommands, isConversationMessageText, type PreparedConversationPlanning } from "../../../conversationCommands";
+import { conversationCommands, isConversationMessageText, type ConversationPlanningRun, type ConversationProposalRevision, type PreparedConversationPlanning } from "../../../conversationCommands";
 import { defaultAiConfig, editedAiConfig, validAiLimits, type AiConfig } from "../../../aiCommands";
-import { conversationDraftCommands, type ConversationDraftHead, type ConversationDraftKey, type ConversationDraftPending, type ConversationDraftSummary, type ConversationDraftValue } from "../../../conversationDraftCommands";
+import { conversationDraftCommands, locallyReplayableConversationRequest, type ConversationDraftHead, type ConversationDraftKey, type ConversationDraftPending, type ConversationDraftSummary, type ConversationDraftValue, type ConversationProposalDraft } from "../../../conversationDraftCommands";
 import type { SessionRequest } from "../../../executionCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
@@ -9,8 +9,10 @@ import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
 import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { checkPlanningSelection, planningSelectionMatchesPreview, planningSelectionScope } from "./planningSelection";
 import { reviewCommands } from "../../../reviewCommands";
+import { validProposalContent, type ProposalContent } from "./proposalDraft";
+import { isCommandError } from "../../../projectCommands";
 
-type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope };
+type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope };
 type JournalWrite = Omit<Parameters<Ports["write"]>[0]["write"], "value"> & { value: ConversationDraftValue };
 type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
   | { kind: "resolve"; request: { sessionToken: string; resolve: { write: JournalWrite; pending: ConversationDraftPending } }; submitted: ConversationDraftPending };
@@ -24,6 +26,9 @@ export interface ConversationInput {
   notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | null;
   failure: { kind: "journal" | "action"; cause: CommandFailure } | null;
   planning: ConversationPlanningInput;
+  proposalEditorId: string | null;
+  proposalFailure: { proposalId: string; cause: CommandFailure } | null;
+  capturedResultIds: readonly string[];
 }
 export interface ConversationPlanningInput {
   open: boolean;
@@ -74,6 +79,8 @@ export class ConversationSession {
       recoverPlanning: conversationCommands.recoverPlanning, recoverProposalCapture: conversationCommands.recoverProposalCapture,
       recoverProposalRevision: conversationCommands.recoverProposalRevision, recoverProposalWorkPlan: conversationCommands.recoverProposalWorkPlan,
       preparePlanning: conversationCommands.preparePlanning, validatePlanning: conversationCommands.validatePlanning, startPlanning: conversationCommands.startPlanning,
+      readPlanning: conversationCommands.readPlanning, captureProposal: conversationCommands.captureProposal,
+      reviseProposal: conversationCommands.reviseProposal, validateProposal: conversationCommands.validateProposal,
       captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
@@ -106,7 +113,8 @@ export class ConversationSession {
     const flight = this.ports.read({ sessionToken: this.context.sessionToken, key }).then(head => {
       if (!this.kernel.live) return false;
       const value = head.value ?? { text: "", editSeq: "0", pending: null };
-      this.records.set(conversationId, { input: { key, head, value, dirty: false, busy: null, outcome: value.pending ? "unknown" : null, notice: null, failure: null, planning: planningInput() }, job: null, writing: null, action: false });
+      this.records.set(conversationId, { input: { key, head, value, dirty: false, busy: null, outcome: value.pending ? "unknown" : null, notice: null, failure: null, planning: planningInput(),
+        proposalEditorId: value.proposalEdits?.[0]?.proposalId ?? null, proposalFailure: null, capturedResultIds: [] }, job: null, writing: null, action: false });
       this.publish(this.state.activeId === conversationId ? { inputFailure: null } : {}); return true;
     }).catch(error => { if (this.kernel.live && this.state.activeId === conversationId) this.publish({ inputFailure: { conversationId, cause: commandFailure(error) } }); return false;
     }).finally(() => { this.opening.delete(conversationId); });
@@ -117,13 +125,13 @@ export class ConversationSession {
     const conversationId = this.ports.identity(), key = { projectId: this.context.projectId, conversationId };
     const pending: ConversationDraftPending = { kind: "create", submittedSeq: "1", request: { ...key, actionId: this.ports.identity(), title: null } };
     const record: RecordState = { input: { key, head: { key, revision: "0", writerId: null, value: null }, value: { text: "", editSeq: "1", pending },
-      dirty: true, busy: null, outcome: null, notice: null, failure: null, planning: planningInput() }, job: null, writing: null, action: false };
+      dirty: true, busy: null, outcome: null, notice: null, failure: null, planning: planningInput(), proposalEditorId: null, proposalFailure: null, capturedResultIds: [] }, job: null, writing: null, action: false };
     this.records.set(conversationId, record); this.changed++; this.publish({ activeId: conversationId });
     await this.submit(record);
   }
   edit(conversationId: string, text: string) {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live || text === record.input.value.text) return;
-    const value = { ...record.input.value, text, editSeq: nextEditSeq(record.input.value.editSeq) };
+    const editSeq = nextEditSeq(record.input.value.editSeq), value = { ...record.input.value, text, editSeq, messageEditSeq: editSeq };
     this.changed++; this.update(record, { value, dirty: true, notice: null });
     if (!record.input.failure && !record.action) void this.persist(record);
   }
@@ -135,8 +143,78 @@ export class ConversationSession {
     const editSeq = nextEditSeq(record.input.value.editSeq);
     const pending: ConversationDraftPending = { kind: "append", submittedSeq: editSeq,
       request: { ...record.input.key, actionId: this.ports.identity(), messageId: this.ports.identity(), body: text } };
-    this.changed++; this.update(record, { value: { text, editSeq, pending }, dirty: true, outcome: null, notice: null, failure: null });
+    this.changed++; this.update(record, { value: { ...record.input.value, text, editSeq, messageEditSeq: editSeq, pending }, dirty: true, outcome: null, notice: null, failure: null });
     await this.submit(record);
+  }
+  beginProposalEdit(revision: ConversationProposalRevision) {
+    const record = this.records.get(revision.conversationId);
+    if (!record || !this.kernel.live || revision.projectId !== this.context.projectId || revision.content.kind !== "proposal") return;
+    const edits = record.input.value.proposalEdits ?? [];
+    if (edits.some(edit => edit.proposalId === revision.proposalId)) { this.update(record, { proposalEditorId: revision.proposalId }); return; }
+    const editSeq = nextEditSeq(record.input.value.editSeq);
+    const edit: ConversationProposalDraft = { proposalId: revision.proposalId, expectedRevisionId: revision.revisionId, editSeq, content: structuredClone(revision.content) };
+    this.changeProposalEdits(record, [...edits, edit], editSeq, revision.proposalId);
+  }
+  showProposalEdit(conversationId: string, proposalId: string) {
+    const record = this.records.get(conversationId);
+    if (record && this.kernel.live && record.input.value.proposalEdits?.some(edit => edit.proposalId === proposalId)) this.update(record, { proposalEditorId: proposalId });
+  }
+  editProposal(conversationId: string, proposalId: string, change: (content: ProposalContent) => ProposalContent) {
+    const record = this.records.get(conversationId), edits = record?.input.value.proposalEdits ?? [], original = edits.find(edit => edit.proposalId === proposalId);
+    if (!record || !this.kernel.live || original?.content.kind !== "proposal") return;
+    const editSeq = nextEditSeq(record.input.value.editSeq), content = change(structuredClone(original.content));
+    this.changeProposalEdits(record, edits.map(edit => edit === original ? { ...edit, editSeq, content } : edit), editSeq, proposalId);
+  }
+  private changeProposalEdits(record: RecordState, edits: ConversationProposalDraft[], editSeq: string, proposalEditorId: string | null) {
+    this.changed++;
+    this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, proposalEdits: edits.length ? edits : undefined }, dirty: true, proposalEditorId, proposalFailure: null, notice: null });
+    if (!record.action && !record.input.failure) void this.persist(record);
+  }
+  discardProposalEdit(conversationId: string, proposalId: string, expectedSeq: string): boolean {
+    const record = this.records.get(conversationId), edits = record?.input.value.proposalEdits ?? [], original = edits.find(edit => edit.proposalId === proposalId);
+    if (!record || !this.kernel.live || record.action || record.input.value.pending || !original || original.editSeq !== expectedSeq) return false;
+    const remaining = edits.filter(edit => edit !== original);
+    this.changeProposalEdits(record, remaining, nextEditSeq(record.input.value.editSeq), remaining[0]?.proposalId ?? null); return true;
+  }
+  acceptProposalBase(revision: ConversationProposalRevision, expectedSeq: string): boolean {
+    const record = this.records.get(revision.conversationId), edits = record?.input.value.proposalEdits ?? [], original = edits.find(edit => edit.proposalId === revision.proposalId);
+    if (!record || !this.kernel.live || record.action || record.input.value.pending || revision.projectId !== this.context.projectId || !original || original.editSeq !== expectedSeq) return false;
+    const editSeq = nextEditSeq(record.input.value.editSeq);
+    this.changeProposalEdits(record, edits.map(edit => edit === original ? { ...edit, expectedRevisionId: revision.revisionId, editSeq } : edit), editSeq, revision.proposalId); return true;
+  }
+  async captureProposal(run: ConversationPlanningRun) {
+    const record = this.records.get(run.preview.conversationId);
+    if (!record || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
+      || run.preview.projectId !== this.context.projectId || run.output?.model.kind !== "proposal" || !run.resultId || record.input.capturedResultIds.includes(run.resultId)) return;
+    const editSeq = nextEditSeq(record.input.value.editSeq), pending: ConversationDraftPending = { kind: "proposal-capture", submittedSeq: editSeq,
+      request: { ...record.input.key, actionId: this.ports.identity(), proposalId: this.ports.identity(), revisionId: this.ports.identity(), attemptId: run.receipt.consent.attemptId, resultId: run.resultId } };
+    this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending }, dirty: true, outcome: null, failure: null, notice: null });
+    await this.submit(record);
+  }
+  async saveProposal(conversationId: string, proposalId: string, current: () => boolean = () => true) {
+    const record = this.records.get(conversationId), original = record?.input.value.proposalEdits?.find(edit => edit.proposalId === proposalId);
+    if (!record || !original || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure || !validProposalContent(original.content) || !current()) return;
+    const live = () => this.kernel.live && current() && record.input.value.proposalEdits?.find(edit => edit.proposalId === proposalId)?.editSeq === original.editSeq;
+    record.action = true; this.update(record, { busy: "check", proposalFailure: null });
+    try {
+      const base = await this.ports.validateProposal({ ...this.context, conversationId, proposalId, revisionId: original.expectedRevisionId });
+      if (!live()) return;
+      const run = await this.ports.readPlanning({ ...this.context, conversationId, attemptId: base.origin.attemptId });
+      if (!live()) return;
+      if (!run || run.resultId !== base.origin.resultId || !validProposalContent(original.content, run)) throw new Error("The proposal material no longer matches");
+      const editSeq = nextEditSeq(record.input.value.editSeq);
+      const pending: ConversationDraftPending = { kind: "proposal-revision", submittedSeq: editSeq, request: { ...record.input.key,
+        actionId: this.ports.identity(), proposalId, revisionId: this.ports.identity(), expectedRevisionId: original.expectedRevisionId, content: structuredClone(original.content) } };
+      this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending,
+        proposalEdits: record.input.value.proposalEdits?.map(edit => edit.proposalId === proposalId ? { ...edit, editSeq } : edit) }, dirty: true, outcome: null, notice: null });
+      await this.performLocal(record);
+    } catch (error) {
+      if (!this.kernel.live) return;
+      if (record.input.value.pending) this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
+      else if (live()) this.update(record, { proposalFailure: { proposalId, cause: commandFailure(error) } });
+    } finally {
+      record.action = false; if (this.kernel.live) { this.update(record, { busy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+    }
   }
   setPlanningOpen(conversationId: string, open: boolean) {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;
@@ -224,7 +302,7 @@ export class ConversationSession {
       const pending: ConversationDraftPending = { kind: "planning", preparationId: prepared.preparationId, submittedSeq: editSeq,
         request: { ...record.input.key, consent } };
       this.changed++;
-      this.update(record, { value: { ...record.input.value, editSeq, pending }, dirty: true, outcome: null, notice: null,
+      this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending }, dirty: true, outcome: null, notice: null,
         planning: { ...record.input.planning, prepared: null, consent: false } });
       if (!await this.persist(record) || !this.kernel.live) return;
       this.update(record, { busy: "submit", failure: null });
@@ -260,7 +338,9 @@ export class ConversationSession {
         ...(job.kind === "resolve" ? { outcome: "recorded" as const, notice: this.recordedNotice(job.submitted) } : {}) });
       return true;
     } catch (error) {
-      record.job = job;
+      // A rejected size/quota check did not write this frame. Retry can use the
+      // user's reduced input; an uncertain acknowledgement still keeps its frame.
+      record.job = job.kind === "write" && isCommandError(error) && error.outcome === "rejected" && error.code === "limit-exceeded" ? null : job;
       this.update(record, { busy: null, failure: { kind: "journal", cause: commandFailure(error) } }); return false;
     }
   }
@@ -286,26 +366,39 @@ export class ConversationSession {
     // The original action is settled. Newer input remains independent of its submitted text.
     if (!await this.persist(record)) return;
     const current = record.input.value;
-    const text = pending.kind === "append" && current.editSeq === pending.submittedSeq ? "" : current.text;
-    const value = { text, editSeq: nextEditSeq(current.editSeq), pending: null };
+    const cleared = pending.kind === "append" && (current.messageEditSeq ?? current.editSeq) === pending.submittedSeq;
+    const text = cleared ? "" : current.text;
+    const editSeq = nextEditSeq(current.editSeq);
+    let edits = current.proposalEdits;
+    if (pending.kind === "proposal-revision") edits = edits?.flatMap(edit => {
+      if (edit.proposalId !== pending.request.proposalId || edit.expectedRevisionId !== pending.request.expectedRevisionId) return [edit];
+      return edit.editSeq === pending.submittedSeq && same(edit.content, pending.request.content) ? [] : [{ ...edit, editSeq, expectedRevisionId: pending.request.revisionId }];
+    });
+    const value: ConversationDraftValue = { ...current, text, editSeq, messageEditSeq: cleared ? editSeq : current.messageEditSeq ?? current.editSeq,
+      pending: null, proposalEdits: edits?.length ? edits : undefined };
     this.changed++; this.update(record, { value: { ...value, pending }, dirty: true });
     const job: JournalJob = { kind: "resolve", submitted: pending, request: { sessionToken: this.context.sessionToken,
       resolve: { write: { key: record.input.key, expectedRevision: record.input.head.revision, writerId: this.writerId, value }, pending } } };
     if (await this.executeJob(record, job) && record.input.dirty) await this.persist(record);
   }
+  private async performLocal(record: RecordState) {
+    if (!await this.persist(record) || !this.kernel.live) return;
+    const pending = record.input.value.pending; if (!pending || !locallyReplayableConversationRequest(pending)) return;
+    this.update(record, { busy: "submit", failure: null });
+    if (pending.kind === "create") await this.ports.create({ sessionToken: this.context.sessionToken, ...pending.request });
+    else if (pending.kind === "append") await this.ports.append({ sessionToken: this.context.sessionToken, ...pending.request });
+    else if (pending.kind === "proposal-capture") await this.ports.captureProposal({ sessionToken: this.context.sessionToken, ...pending.request });
+    else if (pending.kind === "proposal-revision") await this.ports.reviseProposal({ sessionToken: this.context.sessionToken, ...pending.request });
+    if (!this.kernel.live) return;
+    this.recordCaptureAcknowledgement(record, pending);
+    this.onRecorded(); this.update(record, { busy: null, outcome: "recorded" });
+    await this.resolve(record, pending);
+  }
   private async submit(record: RecordState) {
-    const kind = record.input.value.pending?.kind;
-    if (!this.kernel.live || record.action || kind !== "create" && kind !== "append") return;
+    if (!this.kernel.live || record.action || !locallyReplayableConversationRequest(record.input.value.pending)) return;
     record.action = true;
     try {
-      if (!await this.persist(record)) return;
-      const pending = record.input.value.pending; if (!pending) return;
-      this.update(record, { busy: "submit", failure: null });
-      if (pending.kind === "create") await this.ports.create({ sessionToken: this.context.sessionToken, ...pending.request });
-      else if (pending.kind === "append") await this.ports.append({ sessionToken: this.context.sessionToken, ...pending.request });
-      else return;
-      this.onRecorded(); this.update(record, { busy: null, outcome: "recorded" });
-      await this.resolve(record, pending);
+      await this.performLocal(record);
     } catch (error) { this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
     } finally { record.action = false; if (this.kernel.live && record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
   }
@@ -315,15 +408,19 @@ export class ConversationSession {
     record.action = true; this.update(record, { busy: "check", failure: null });
     try {
       const recovery = await this.recover(pending);
+      if (!this.kernel.live) return;
       const outcome = recovery.outcome;
       this.update(record, { busy: null, outcome: outcome.kind === "recorded" ? "recorded" : outcome.kind === "mismatch" ? "mismatch" : outcome.replay === "explicit-same-request" ? "absent" : "blocked" });
-      if (outcome.kind === "recorded") { this.onRecorded(); await this.resolve(record, pending); }
+      if (outcome.kind === "recorded") { this.recordCaptureAcknowledgement(record, pending); this.onRecorded(); await this.resolve(record, pending); }
     } catch (error) { this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
     } finally { record.action = false; }
   }
   async retry(conversationId: string) {
     const record = this.records.get(conversationId);
-    if (record?.input.outcome === "absent" && !record.job && ["create", "append"].includes(record.input.value.pending?.kind ?? "")) await this.submit(record);
+    if (record?.input.outcome === "absent" && !record.job && locallyReplayableConversationRequest(record.input.value.pending)) await this.submit(record);
+  }
+  private recordCaptureAcknowledgement(record: RecordState, pending: ConversationDraftPending) {
+    if (pending.kind === "proposal-capture" && !record.input.capturedResultIds.includes(pending.request.resultId)) this.update(record, { capturedResultIds: [...record.input.capturedResultIds, pending.request.resultId] });
   }
   private recordedNotice(pending: ConversationDraftPending): NonNullable<ConversationInput["notice"]> {
     switch (pending.kind) {

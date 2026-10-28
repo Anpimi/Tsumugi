@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tsumugi_core::{
     MergeBasis, SaveTranslationRevision, SelectTranslationRevision,
+    ai::conversation_planning::ConversationPlanningModelOutput,
     application::{
         AppendProjectConversationMessage, AuthorizeConversationProposalWorkPlan,
         CaptureConversationProposal, CreateProjectConversation, ReadConversationPlanningAction,
@@ -180,7 +181,22 @@ pub enum ConversationDraftPending {
 pub struct ConversationDraftValue {
     pub text: String,
     pub edit_seq: Revision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_edit_seq: Option<Revision>,
     pub pending: Option<ConversationDraftPending>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposal_edits: Vec<ConversationProposalDraft>,
+}
+
+/// Local unfinished input, separate from immutable project proposal revisions.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationProposalDraft {
+    pub proposal_id: ExecutionId,
+    pub expected_revision_id: ExecutionId,
+    pub edit_seq: Revision,
+    pub content: ConversationPlanningModelOutput,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
