@@ -815,7 +815,12 @@ impl ProjectStore {
         let value = super::super::review::read_snapshot(
             self.connection()
                 .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?,
-            |c| recorded_action_read(c, project, &request),
+            |c| {
+                super::conversations::proposals::work_plans::reject_generic_authorization(
+                    c, plan, request.action(),
+                )?;
+                recorded_action_read(c, project, &request)
+            },
         )?;
         if self.is_reconciling() {
             self.reconcile_execution()?;
@@ -1013,71 +1018,13 @@ impl ProjectStore {
         if authorization.plan_digest != plan.digest {
             return Err(err(ErrorCode::ResultMismatch, "work-plan-digest"));
         }
-        let request = Request::Authorize {
-            plan_id: plan.plan_id,
-            request: authorization.clone(),
-        };
         let mut tx = self.execution_write()?;
-        if let Some(receipt) = existing(&tx, &request)? {
-            return Ok(receipt);
-        }
-        if !authorization.confirmed
-            || authorization.plan_digest != plan.digest
-            || plan.authorization_effects().ok().as_ref() != Some(&authorization.effects)
-        {
-            return Err(err(ErrorCode::Unauthorized, "work-plan-consent"));
-        }
-        expiry(authorization.expires_at)?;
-        self.verify_work_plan(plan)?;
-        let exists: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM application_plans WHERE plan_id=?1)",
-                [plan.plan_id.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql)?;
-        if exists {
-            return Err(err(ErrorCode::ResultMismatch, "work-plan-identity"));
-        }
-        let bytes = codec::encode(plan, MAX_INPUT_BYTES)?;
-        let effects = codec::encode(&authorization.effects, 1024)?;
-        tx.execute(
-            "INSERT INTO application_plans VALUES (?1,?2,?3,1,'active',?4,?5,0)",
-            params![
-                plan.plan_id.to_string(),
-                bytes,
-                plan.digest,
-                effects,
-                authorization.expires_at as i64
-            ],
-        )
-        .map_err(sql)?;
-        if let Some(policy) = &plan.options.mcp_term_query {
-            super::super::mcp::check_preview_in(&tx, policy.preview())?;
-            let accepted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mcp_query_actions WHERE action_id=?1)", [policy.preview().request.action_id.to_string()], |r| r.get(0)).map_err(sql)?;
-            if accepted { return Err(err(ErrorCode::DependencyConflict, "mcp-query-already-enqueued")); }
-        }
-        let lease = AutomationLease {
-            plan_id: plan.plan_id,
-            generation: Revision::new(1)?,
-        };
-        let mut input = plan.execution_input()?.clone();
-        input.automation = Some(lease);
-        if plan.options.team_execution.is_some() {
-            input = super::coordination::root_input(plan, lease)?
-                .envelope()
-                .clone();
-        }
-        let receipt = WorkPlanReceipt {
-            cancellation_revision: Revision::new(0)?,
-            action_id: authorization.action_id,
-            lease,
-            state: WorkPlanState::Active,
-            input: Some(input),
-            parent_task: None,
-        };
-        save(&tx, &request, &receipt)?;
-        tx.observer.add_scope(super::super::ChangeScope::Project);
+        super::conversations::proposals::work_plans::reject_generic_authorization(
+            &tx, plan.plan_id, authorization.action_id,
+        )?;
+        let request = Request::Authorize { plan_id: plan.plan_id, request: authorization.clone() };
+        if let Some(receipt) = existing(&tx, &request)? { return Ok(receipt); }
+        let receipt = authorize_in(self, &mut tx, plan, authorization)?;
         super::super::ledger::commit(tx)?;
         Ok(receipt)
     }
@@ -1181,7 +1128,84 @@ impl ProjectStore {
         Ok(receipt)
     }
 }
-fn validate_receipt(
+pub(super) fn authorize_in(
+    store: &ProjectStore,
+    tx: &mut ledger::ExecutionTransaction<'_>,
+    plan: &WorkPlan,
+    authorization: &AuthorizeWorkPlan,
+) -> Result<WorkPlanReceipt, ExecutionError> {
+    plan.validate()?;
+    if authorization.plan_digest != plan.digest {
+        return Err(err(ErrorCode::ResultMismatch, "work-plan-digest"));
+    }
+    let request = Request::Authorize {
+        plan_id: plan.plan_id,
+        request: authorization.clone(),
+    };
+    if let Some(receipt) = existing(tx, &request)? {
+        return Ok(receipt);
+    }
+    if !authorization.confirmed
+        || authorization.plan_digest != plan.digest
+        || plan.authorization_effects().ok().as_ref() != Some(&authorization.effects)
+    {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-consent"));
+    }
+    expiry(authorization.expires_at)?;
+    store.verify_work_plan(plan)?;
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM application_plans WHERE plan_id=?1)",
+            [plan.plan_id.to_string()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if exists {
+        return Err(err(ErrorCode::ResultMismatch, "work-plan-identity"));
+    }
+    let bytes = codec::encode(plan, MAX_INPUT_BYTES)?;
+    let effects = codec::encode(&authorization.effects, 1024)?;
+    tx.execute(
+        "INSERT INTO application_plans VALUES (?1,?2,?3,1,'active',?4,?5,0)",
+        params![
+            plan.plan_id.to_string(),
+            bytes,
+            plan.digest,
+            effects,
+            authorization.expires_at as i64
+        ],
+    )
+    .map_err(sql)?;
+    if let Some(policy) = &plan.options.mcp_term_query {
+        super::super::mcp::check_preview_in(tx, policy.preview())?;
+        let accepted: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM mcp_query_actions WHERE action_id=?1)", [policy.preview().request.action_id.to_string()], |r| r.get(0)).map_err(sql)?;
+        if accepted { return Err(err(ErrorCode::DependencyConflict, "mcp-query-already-enqueued")); }
+    }
+    let lease = AutomationLease {
+        plan_id: plan.plan_id,
+        generation: Revision::new(1)?,
+    };
+    let mut input = plan.execution_input()?.clone();
+    input.automation = Some(lease);
+    if plan.options.team_execution.is_some() {
+        input = super::coordination::root_input(plan, lease)?
+            .envelope()
+            .clone();
+    }
+    let receipt = WorkPlanReceipt {
+        cancellation_revision: Revision::new(0)?,
+        action_id: authorization.action_id,
+        lease,
+        state: WorkPlanState::Active,
+        input: Some(input),
+        parent_task: None,
+    };
+    save(tx, &request, &receipt)?;
+    tx.observer.add_scope(super::super::ChangeScope::Project);
+    Ok(receipt)
+}
+
+pub(super) fn validate_receipt(
     request: &Request,
     receipt: &WorkPlanReceipt,
     stored: &StoredPlan,

@@ -34,7 +34,7 @@ impl Runner for NeverRun {
         panic!("proposal fixture must not dispatch a producer")
     }
 }
-fn model(unit: ExecutionId) -> ConversationPlanningModelOutput {
+pub(super) fn model(unit: ExecutionId) -> ConversationPlanningModelOutput {
     ConversationPlanningModelOutput::Proposal {
         summary: "  Translate these entries 👩🏽‍💻  ".into(),
         unit_ids: vec![unit],
@@ -42,7 +42,7 @@ fn model(unit: ExecutionId) -> ConversationPlanningModelOutput {
         questions: vec![],
     }
 }
-fn completed(
+pub(super) fn completed(
     store: &mut ProjectStore,
     units: &[ExecutionId],
     output: ConversationPlanningModelOutput,
@@ -129,7 +129,7 @@ fn completed(
         result_id: result.envelope().result_id,
     }
 }
-fn revise(
+pub(super) fn revise(
     r: &CaptureConversationProposal,
     expected: ExecutionId,
     unit: ExecutionId,
@@ -152,7 +152,7 @@ fn rows(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::type
             if version == 61 {
                 !name.starts_with("application_conversation")
             } else {
-                name != "application_conversation_proposals"
+                name != "application_conversation_proposals" && name != "application_conversation_work_plans"
             }
         })
         .map(|name| {
@@ -668,7 +668,7 @@ fn proposal_migration_preserves_supported_history_across_abort_boundaries() {
             let path = store.directory().to_path_buf();
             store.close().unwrap();
             let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            c.execute_batch("DROP TABLE application_conversation_proposals")
+            c.execute_batch("DROP TABLE application_conversation_work_plans; DROP TABLE application_conversation_proposals")
                 .unwrap();
             if version == 61 {
                 c.execute_batch("DROP TABLE application_conversation_actions; DROP TABLE application_conversation_messages; DROP TABLE application_conversations;").unwrap();

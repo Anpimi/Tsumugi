@@ -54,7 +54,7 @@ pub(super) fn validate_after_open(
 pub(super) fn validate_after_open_version(
     c: &rusqlite::Connection, inputs: OpenControlValidation<'_>, version: i64,
 ) -> Result<(), ExecutionError> {
-    if version >= 62 { self::conversations::validate_version(c, version >= 63)?; }
+    if version >= 62 { self::conversations::validate_version(c, version)?; }
     control::validate_after_open(c, inputs)?;
     team::validate(c)?;
     coordination::validate(c)

@@ -66,6 +66,7 @@ fn legacy_rows(c: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Valu
 fn make_legacy(path: &std::path::Path) {
     let c = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
     for name in [
+        "application_conversation_work_plans",
         "application_conversation_proposals",
         "application_conversation_actions",
         "application_conversation_messages",

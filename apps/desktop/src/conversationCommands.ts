@@ -2,10 +2,13 @@ import { checkedInvoke } from "./ipc";
 import { sameAiConfig } from "./aiCommands";
 import { sameExecutionIds } from "./executionCommands";
 import { jsonIdentity } from "./pluginToolChoices";
+import { checkPreparedWorkPlan } from "./workPlanCommands";
+import type { PluginToolView } from "./pluginCommands";
 import type { Requests } from "./generated/conversations.requests";
 import type { Responses } from "./generated/conversations.responses";
 import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning, validateResponsePlanningReceipt, validateResponsePlanningRecovery, validateResponsePlanningRun } from "./generated/conversations.validators";
 import { validateResponseProposal, validateResponseProposalPage, validateResponseProposalCaptureRecovery, validateResponseProposalRevisionRecovery } from "./generated/conversations.validators";
+import { validateRequestAuthorizeProposalWorkPlan, validateResponseProposalWorkPlan, validateResponseProposalWorkPlanReceipt, validateResponseProposalWorkPlanRecovery, validateResponseProposalWorkPlanLink, validateResponseProposalWorkPlanPage } from "./generated/conversations.validators";
 
 export type { ProjectConversation, ProjectConversationMessage, ProjectConversationPage, ProjectConversationMessagePage,
   ProjectConversationCreateRecovery, ProjectConversationMessageRecovery } from "./generated/conversations.responses";
@@ -107,8 +110,53 @@ function originalRequest<T extends { sessionToken: string }>(request: T) {
   return original;
 }
 
+function proposalPlanLink(value: Responses["proposalWorkPlanLink"], expected: { projectId: string; conversationId: string; planId?: string }) {
+  return value.projectId === expected.projectId && value.conversationId === expected.conversationId
+    && (expected.planId === undefined || value.planId === expected.planId) && /^[0-9a-f]{64}$/.test(value.planDigest)
+    && BigInt(value.ordinal) > 0n && bounded(value);
+}
+function proposalPlanAcknowledgement(value: Responses["proposalWorkPlanLink"], request: Requests["authorizeProposalWorkPlan"]) {
+  const authorization = request.authorization, reference = authorization.proposal;
+  return reference.projectId === request.projectId && proposalPlanLink(value, reference)
+    && value.proposalId === reference.proposalId && value.revisionId === reference.revisionId
+    && value.actionId === authorization.actionId && value.planId === authorization.planId && value.planDigest === authorization.planDigest;
+}
+
 /** Project conversations, explicit planning permission and original-action history. */
 export const conversationCommands = {
+  prepareProposalWorkPlan: async (input: Requests["prepareProposalWorkPlan"], expected: ConversationProposalRevision, locale: string, expectedTools: readonly PluginToolView[] = []) => {
+    const request = structuredClone(input), revision = structuredClone(expected), tools = structuredClone(expectedTools);
+    if (request.projectId !== request.proposal.projectId || !proposal(revision, request.proposal) || revision.content.kind !== "proposal" || revision.content.questions.length > 0) throw new Error("Invalid proposal work-plan preparation");
+    const value = await checkedInvoke("prepare_conversation_proposal_work_plan", request, validateResponseProposalWorkPlan);
+    if (request.projectId !== request.proposal.projectId || jsonIdentity(value.proposal) !== jsonIdentity(request.proposal)
+      || jsonIdentity(value.plan.options.advisoryChecks) !== jsonIdentity(revision.content.options.advisoryChecks)) throw new Error("Invalid IPC response");
+    checkPreparedWorkPlan(value.plan, { projectId: request.projectId, sessionToken: request.sessionToken, config: request.config,
+      locale, unitIds: revision.content.unitIds, options: revision.content.options, advisoryChecks: request.advisoryChecks,
+      toolSelection: request.toolSelection, maintenance: null }, tools);
+    return value;
+  },
+  authorizeProposalWorkPlan: async (input: Requests["authorizeProposalWorkPlan"]) => {
+    const request = structuredClone(input);
+    if (!validateRequestAuthorizeProposalWorkPlan(request) || request.projectId !== request.authorization.proposal.projectId) throw new Error("Invalid proposal work-plan authorization");
+    return checkedInvoke("authorize_conversation_proposal_work_plan", request,
+      (value): value is Responses["proposalWorkPlanReceipt"] => validateResponseProposalWorkPlanReceipt(value) && proposalPlanAcknowledgement(value.link, request)
+        && value.receipt.actionId === value.link.actionId && value.receipt.lease.planId === value.link.planId
+        && value.receipt.lease.generation === "1" && value.receipt.state === "active" && value.receipt.parentTask === null);
+  },
+  recoverProposalWorkPlan: (input: Requests["recoverProposalWorkPlan"]) => {
+    const request = structuredClone(input);
+    return checkedInvoke("recover_conversation_proposal_work_plan", request,
+      (value): value is Responses["proposalWorkPlanRecovery"] => validateResponseProposalWorkPlanRecovery(value)
+        && request.projectId === request.authorization.proposal.projectId && jsonIdentity(value.request) === jsonIdentity(request.authorization)
+        && (value.outcome.kind === "recorded" ? proposalPlanAcknowledgement(value.outcome.receipt, request)
+          : value.outcome.kind === "mismatch" || value.outcome.replay === "blocked"));
+  },
+  readProposalWorkPlan: (request: Requests["readProposalWorkPlan"]) => checkedInvoke("read_conversation_proposal_work_plan", request,
+    (value): value is Responses["proposalWorkPlanLink"] => validateResponseProposalWorkPlanLink(value) && proposalPlanLink(value, request)),
+  proposalWorkPlans: (request: Requests["proposalWorkPlans"]) => checkedInvoke("read_conversation_proposal_work_plans", request,
+    (value): value is Responses["proposalWorkPlanPage"] => validateResponseProposalWorkPlanPage(value) && value.projectId === request.projectId
+      && value.conversationId === request.conversationId && page(value, request)
+      && new Set(value.rows.map(row => row.planId)).size === value.rows.length && value.rows.every(row => proposalPlanLink(row, request))),
   captureProposal: (request: Requests["captureProposal"]) => checkedInvoke("capture_conversation_proposal", request,
     (value): value is Responses["proposal"] => validateResponseProposal(value) && capturedProposal(value, request)),
   reviseProposal: (request: Requests["reviseProposal"]) => checkedInvoke("revise_conversation_proposal", request,

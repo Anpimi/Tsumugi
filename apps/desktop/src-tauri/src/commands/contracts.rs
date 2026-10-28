@@ -50,6 +50,11 @@ struct ConversationRequests {
     validate_proposal: execution::conversations::proposals::ValidateConversationProposalRequest,
     recover_proposal_capture: execution::conversations::proposals::CaptureConversationProposalRequest,
     recover_proposal_revision: execution::conversations::proposals::ReviseConversationProposalRequest,
+    prepare_proposal_work_plan: execution::conversations::proposals::work_plans::PrepareConversationProposalWorkPlanRequest,
+    authorize_proposal_work_plan: execution::conversations::proposals::work_plans::AuthorizeConversationProposalWorkPlanRequest,
+    recover_proposal_work_plan: execution::conversations::proposals::work_plans::AuthorizeConversationProposalWorkPlanRequest,
+    read_proposal_work_plan: execution::conversations::proposals::work_plans::ReadConversationProposalWorkPlanRequest,
+    proposal_work_plans: execution::conversations::proposals::work_plans::ReadConversationProposalWorkPlansRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -69,6 +74,11 @@ struct ConversationResponses {
     proposal_page: tsumugi_core::application::ConversationProposalPage,
     proposal_capture_recovery: tsumugi_core::application::ConversationProposalCaptureRecovery,
     proposal_revision_recovery: tsumugi_core::application::ConversationProposalRevisionRecovery,
+    proposal_work_plan: execution::conversations::proposals::work_plans::ConversationProposalWorkPlanView,
+    proposal_work_plan_receipt: execution::conversations::proposals::work_plans::ConversationProposalWorkPlanReceiptView,
+    proposal_work_plan_recovery: tsumugi_core::application::ConversationProposalWorkPlanRecovery,
+    proposal_work_plan_link: tsumugi_core::application::ConversationProposalWorkPlanLink,
+    proposal_work_plan_page: tsumugi_core::application::ConversationProposalWorkPlanPage,
     error: CommandError,
 }
 

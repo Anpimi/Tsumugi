@@ -135,6 +135,12 @@ enum Action {
     },
     CaptureProposal { request: CaptureConversationProposal },
     ReviseProposal { request: ReviseConversationProposal },
+    AuthorizeProposalWorkPlan {
+        action_id: ExecutionId,
+        proposal: ConversationProposalRef,
+        plan_id: ExecutionId,
+        request_digest: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -142,6 +148,7 @@ enum Receipt {
     Create { receipt: ProjectConversation },
     Append { receipt: ProjectConversationMessage },
     Proposal { receipt: ConversationProposalRevision },
+    ProposalWorkPlan { receipt: ConversationProposalWorkPlanLink },
 }
 impl Action {
     fn id(&self) -> ExecutionId {
@@ -150,6 +157,7 @@ impl Action {
             Self::Append { request } => request.action_id,
             Self::CaptureProposal { request } => request.action_id,
             Self::ReviseProposal { request } => request.action_id,
+            Self::AuthorizeProposalWorkPlan { action_id, .. } => *action_id,
         }
     }
     fn parent(&self) -> ExecutionId {
@@ -158,6 +166,7 @@ impl Action {
             Self::Append { request } => request.conversation_id,
             Self::CaptureProposal { request } => request.conversation_id,
             Self::ReviseProposal { request } => request.conversation_id,
+            Self::AuthorizeProposalWorkPlan { proposal, .. } => proposal.conversation_id,
         }
     }
     fn project(&self) -> ExecutionId {
@@ -166,6 +175,7 @@ impl Action {
             Self::Append { request } => request.project_id,
             Self::CaptureProposal { request } => request.project_id,
             Self::ReviseProposal { request } => request.project_id,
+            Self::AuthorizeProposalWorkPlan { proposal, .. } => proposal.project_id,
         }
     }
 }
@@ -207,6 +217,10 @@ fn action(
             if receipt == &proposals::revision_in(c, project, request.conversation_id, request.proposal_id, request.revision_id)?
                 && receipt.previous_revision_id == Some(request.expected_revision_id)
                 && receipt.content == request.content => (),
+        (Action::AuthorizeProposalWorkPlan { proposal, plan_id, .. }, Receipt::ProposalWorkPlan { receipt }) => {
+            let (link, saved) = proposals::work_plans::link_in(c, project, proposal.conversation_id, *plan_id)?;
+            if receipt != &link || proposals::work_plans::summary(&saved)? != request { return Err(corrupt()); }
+        }
         _ => return Err(corrupt()),
     }
     Ok(Some((request, receipt)))
@@ -236,9 +250,9 @@ fn record(c: &Connection, request: &Action, receipt: &Receipt) -> Result<(), Exe
     Ok(())
 }
 pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionError> {
-    validate_version(c, true)
+    validate_version(c, crate::persistence::SCHEMA_VERSION)
 }
-pub(in crate::persistence) fn validate_version(c: &Connection, proposals: bool) -> Result<(), ExecutionError> {
+pub(in crate::persistence) fn validate_version(c: &Connection, version: i64) -> Result<(), ExecutionError> {
     let project = ExecutionId::parse(
         &read_metadata_from(c)
             .map_err(|_| corrupt())?
@@ -249,6 +263,7 @@ pub(in crate::persistence) fn validate_version(c: &Connection, proposals: bool) 
     let mut parents = std::collections::BTreeSet::new();
     let mut messages = std::collections::BTreeSet::new();
     let mut revisions = std::collections::BTreeSet::new();
+    let mut links = std::collections::BTreeSet::new();
     let mut q = c
         .prepare("SELECT action_id FROM application_conversation_actions ORDER BY action_id")
         .map_err(sql)?;
@@ -267,10 +282,13 @@ pub(in crate::persistence) fn validate_version(c: &Connection, proposals: bool) 
                 }
             }
             Action::CaptureProposal { request } => {
-                if !proposals || !revisions.insert(request.revision_id) { return Err(corrupt()); }
+                if version < 63 || !revisions.insert(request.revision_id) { return Err(corrupt()); }
             }
             Action::ReviseProposal { request } => {
-                if !proposals || !revisions.insert(request.revision_id) { return Err(corrupt()); }
+                if version < 63 || !revisions.insert(request.revision_id) { return Err(corrupt()); }
+            }
+            Action::AuthorizeProposalWorkPlan { action_id, .. } => {
+                if version < 64 || !links.insert(action_id) { return Err(corrupt()); }
             }
         }
     }
@@ -302,7 +320,8 @@ pub(in crate::persistence) fn validate_version(c: &Connection, proposals: bool) 
             return Err(corrupt());
         }
     }
-    if proposals { self::proposals::validate(c, &revisions)?; }
+    if version >= 63 { self::proposals::validate(c, &revisions)?; }
+    if version >= 64 { self::proposals::work_plans::validate(c, &links)?; }
     Ok(())
 }
 fn page_limit(limit: u32) -> Result<(), ExecutionError> {

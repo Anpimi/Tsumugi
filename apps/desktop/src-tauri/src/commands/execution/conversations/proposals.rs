@@ -1,5 +1,6 @@
 //! Proposal versions preserve suggestions without authorizing their execution.
 use super::*;
+pub(in crate::commands) mod work_plans;
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

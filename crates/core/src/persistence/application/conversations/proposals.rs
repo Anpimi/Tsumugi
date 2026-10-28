@@ -8,12 +8,17 @@ use crate::{
     execution::FixedInput,
 };
 use std::collections::{BTreeMap, BTreeSet};
+pub(in crate::persistence) mod work_plans;
 
 pub(in crate::persistence) fn initialize(c: &Connection) -> rusqlite::Result<()> {
+    initialize_revisions(c)?;
+    work_plans::initialize(c)
+}
+pub(in crate::persistence) fn initialize_revisions(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch("CREATE TABLE application_conversation_proposals (revision_id TEXT PRIMARY KEY NOT NULL, proposal_id TEXT NOT NULL, conversation_id TEXT NOT NULL REFERENCES application_conversations(conversation_id), revision INTEGER NOT NULL CHECK(revision>0), ordinal INTEGER NOT NULL CHECK(ordinal>0), previous_revision_id TEXT UNIQUE REFERENCES application_conversation_proposals(revision_id), record BLOB NOT NULL CHECK(length(record) BETWEEN 1 AND 65536), digest TEXT NOT NULL CHECK(length(digest)=64), UNIQUE(proposal_id,revision), UNIQUE(conversation_id,ordinal))")
 }
 pub(in crate::persistence) fn table_names() -> impl Iterator<Item = String> {
-    ["application_conversation_proposals".to_string()].into_iter()
+    ["application_conversation_proposals".to_string()].into_iter().chain(work_plans::table_names())
 }
 
 struct OriginEvidence {

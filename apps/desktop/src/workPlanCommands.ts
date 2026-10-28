@@ -42,6 +42,75 @@ export function checkedTeamToolHistoryTask(context: Pick<WorkPlanTeamWorkToolsRe
     && witness.request.planId === planId && jsonIdentity(witness.request.work) === jsonIdentity(work) && witness.identity === jsonIdentity(row);
 }
 
+/** Check the shared WorkPlan preview against its captured request and tools. */
+export function checkPreparedWorkPlan(value: WorkPlanView, request: WorkPlanPrepareRequest, tools: readonly PluginToolView[] = []): WorkPlanView {
+  const units = new Set(request.unitIds);
+  const stages = new Map(request.options.stages.map(choice => [choice.stage, choice.mode]));
+  if (jsonIdentity(value.maintenance)!==jsonIdentity(request.maintenance)
+    || value.locale !== request.locale || value.scope.length !== units.size
+    || new Set(value.scope.map(unit => unit.unitId)).size !== units.size
+    || value.scope.some(unit => !units.has(unit.unitId))
+    || value.options.selectionPolicy !== request.options.selectionPolicy
+    || value.options.adoptResources !== request.options.adoptResources
+    || value.options.deliver !== request.options.deliver
+    || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
+    || jsonIdentity(value.options.teamExecution) !== jsonIdentity(request.options.teamExecution)
+    || jsonIdentity(value.options.toolGuidance) !== jsonIdentity(request.options.toolGuidance)
+    || jsonIdentity(value.options.mcpTermQuery) !== jsonIdentity(request.options.mcpTermQuery)
+    || !validMcpDisclosure(value)
+    || !validDiscussionDisclosure(value)
+    || !validTeamExecutionDisclosure(value)
+    || value.options.stages.length !== stages.size
+    || value.options.stages.some(choice => stages.get(choice.stage) !== choice.mode)
+    || value.options.advisoryChecks.length !== request.advisoryChecks.length
+    || Boolean(value.preview) !== Boolean(request.config)
+    || Boolean(value.preview) !== (typeof value.attemptId === "string")
+    || (value.preview && (value.preview.items.length !== value.scope.length
+      || value.preview.items.some(item => !value.scope.some(unit =>
+        unit.unitId === item.unitId && unit.sourceRevisionId === item.sourceRevisionId
+        && unit.sourceSnapshotId === item.sourceSnapshotId && unit.nativeKey === item.nativeKey
+        && item.targetLocale === value.locale))))
+    || (value.preview && (!request.config || !sameAiConfig(value.preview.config, request.config)))) invalidAcknowledgement();
+  const selection = request.toolSelection;
+  if (Boolean(value.tools) !== Boolean(selection)) invalidAcknowledgement();
+  if (selection) {
+    if (!value.tools || value.tools.maxInvocations !== selection.maxInvocations
+      || !validWorkPlanApplicationTools(value.tools.entries)
+      || value.tools.entries.length !== selection.entries.length || tools.length !== selection.entries.length
+      || new Set(value.tools.entries.map(tool => tool.handle)).size !== selection.entries.length
+      || value.tools.entries.some(tool => {
+        const index = selection.entries.findIndex(entry => entry.handle === tool.handle);
+        const entry = selection.entries[index], expected = tools[index];
+        return !entry || !expected || tool.resourceId !== entry.tool.resourceId
+          || tool.target !== entry.target || jsonIdentity(tool.selections) !== jsonIdentity(entry.selections)
+          || expected.environmentDigest !== entry.tool.environmentDigest
+          || expected.binding.capability.provider.packageDigest !== entry.tool.package.packageDigest
+          || jsonIdentity(expected.binding.capability.provider.plugin) !== jsonIdentity(entry.tool.package.plugin)
+          || jsonIdentity(tool.binding) !== jsonIdentity(expected.binding)
+          || jsonIdentity(tool.execution) !== jsonIdentity({ capability: expected.binding.capability,
+            componentScope: expected.componentScope, applicationScope: tool.execution.applicationScope, profile: expected.binding.declaration.profile,
+            environment: expected.environment })
+          || tool.settingsRevision !== expected.settingsRevision
+          || jsonIdentity(tool.packageOrigin) !== jsonIdentity(expected.packageOrigin)
+          || jsonIdentity(tool.runtimeOrigin) !== jsonIdentity(expected.runtimeOrigin);
+      })) invalidAcknowledgement();
+  }
+  value.options.advisoryChecks.forEach((captured, index) => {
+    const requested = request.advisoryChecks[index];
+    const provider = captured.binding.checker.provider;
+    if (captured.declarationResourceId !== requested.resourceId || provider.packageDigest !== requested.package.packageDigest
+      || provider.plugin.publisher !== requested.package.plugin.publisher || provider.plugin.id !== requested.package.plugin.id
+      || provider.plugin.version !== requested.package.plugin.version
+      || JSON.stringify(captured.rules.map(contractIdentity)) !== JSON.stringify(requested.rules.map(contractIdentity))) invalidAcknowledgement();
+    const checker = value.checkers.find(checker => checkerIdentity(checker.checker)
+      === checkerIdentity({ provider, profile: captured.binding.declaration.profile }));
+    if (checker?.kind === "ready" && (checker.plugin.kind !== "advisory-text"
+      || checker.plugin.plugin.environmentDigest !== requested.environmentDigest
+      || checker.plugin.plugin.resourceId !== requested.resourceId)) invalidAcknowledgement();
+  });
+  return value;
+}
+
 function invalidAcknowledgement(): never {
   throw Object.assign(new Error("Invalid work-plan acknowledgement"), {
     outcome: "unknown", reason: "invalid-work-plan-acknowledgement",
@@ -304,71 +373,7 @@ export const workPlanCommands = {
   prepare: async (input: WorkPlanPrepareRequest, expectedTools: readonly PluginToolView[] = []) => {
     const request = structuredClone(input), tools = structuredClone(expectedTools);
     const value = await checkedInvoke("prepare_work_plan", request, validators.validateResponseWorkPlan);
-    const units = new Set(request.unitIds);
-    const stages = new Map(request.options.stages.map(choice => [choice.stage, choice.mode]));
-    if (jsonIdentity(value.maintenance)!==jsonIdentity(request.maintenance)
-      || value.locale !== request.locale || value.scope.length !== units.size
-      || new Set(value.scope.map(unit => unit.unitId)).size !== units.size
-      || value.scope.some(unit => !units.has(unit.unitId))
-      || value.options.selectionPolicy !== request.options.selectionPolicy
-      || value.options.adoptResources !== request.options.adoptResources
-      || value.options.deliver !== request.options.deliver
-      || jsonIdentity(value.options.teamDiscussions) !== jsonIdentity(request.options.teamDiscussions)
-      || jsonIdentity(value.options.teamExecution) !== jsonIdentity(request.options.teamExecution)
-      || jsonIdentity(value.options.toolGuidance) !== jsonIdentity(request.options.toolGuidance)
-      || jsonIdentity(value.options.mcpTermQuery) !== jsonIdentity(request.options.mcpTermQuery)
-      || !validMcpDisclosure(value)
-      || !validDiscussionDisclosure(value)
-      || !validTeamExecutionDisclosure(value)
-      || value.options.stages.length !== stages.size
-      || value.options.stages.some(choice => stages.get(choice.stage) !== choice.mode)
-      || value.options.advisoryChecks.length !== request.advisoryChecks.length
-      || Boolean(value.preview) !== Boolean(request.config)
-      || Boolean(value.preview) !== (typeof value.attemptId === "string")
-      || (value.preview && (value.preview.items.length !== value.scope.length
-        || value.preview.items.some(item => !value.scope.some(unit =>
-          unit.unitId === item.unitId && unit.sourceRevisionId === item.sourceRevisionId
-          && unit.sourceSnapshotId === item.sourceSnapshotId && unit.nativeKey === item.nativeKey
-          && item.targetLocale === value.locale))))
-      || (value.preview && (!request.config || !sameAiConfig(value.preview.config, request.config)))) invalidAcknowledgement();
-    const selection = request.toolSelection;
-    if (Boolean(value.tools) !== Boolean(selection)) invalidAcknowledgement();
-    if (selection) {
-      if (!value.tools || value.tools.maxInvocations !== selection.maxInvocations
-        || !validWorkPlanApplicationTools(value.tools.entries)
-        || value.tools.entries.length !== selection.entries.length || tools.length !== selection.entries.length
-        || new Set(value.tools.entries.map(tool => tool.handle)).size !== selection.entries.length
-        || value.tools.entries.some(tool => {
-          const index = selection.entries.findIndex(entry => entry.handle === tool.handle);
-          const entry = selection.entries[index], expected = tools[index];
-          return !entry || !expected || tool.resourceId !== entry.tool.resourceId
-            || tool.target !== entry.target || jsonIdentity(tool.selections) !== jsonIdentity(entry.selections)
-            || expected.environmentDigest !== entry.tool.environmentDigest
-            || expected.binding.capability.provider.packageDigest !== entry.tool.package.packageDigest
-            || jsonIdentity(expected.binding.capability.provider.plugin) !== jsonIdentity(entry.tool.package.plugin)
-            || jsonIdentity(tool.binding) !== jsonIdentity(expected.binding)
-            || jsonIdentity(tool.execution) !== jsonIdentity({ capability: expected.binding.capability,
-              componentScope: expected.componentScope, applicationScope: tool.execution.applicationScope, profile: expected.binding.declaration.profile,
-              environment: expected.environment })
-            || tool.settingsRevision !== expected.settingsRevision
-            || jsonIdentity(tool.packageOrigin) !== jsonIdentity(expected.packageOrigin)
-            || jsonIdentity(tool.runtimeOrigin) !== jsonIdentity(expected.runtimeOrigin);
-        })) invalidAcknowledgement();
-    }
-    value.options.advisoryChecks.forEach((captured, index) => {
-      const requested = request.advisoryChecks[index];
-      const provider = captured.binding.checker.provider;
-      if (captured.declarationResourceId !== requested.resourceId || provider.packageDigest !== requested.package.packageDigest
-        || provider.plugin.publisher !== requested.package.plugin.publisher || provider.plugin.id !== requested.package.plugin.id
-        || provider.plugin.version !== requested.package.plugin.version
-        || JSON.stringify(captured.rules.map(contractIdentity)) !== JSON.stringify(requested.rules.map(contractIdentity))) invalidAcknowledgement();
-      const checker = value.checkers.find(checker => checkerIdentity(checker.checker)
-        === checkerIdentity({ provider, profile: captured.binding.declaration.profile }));
-      if (checker?.kind === "ready" && (checker.plugin.kind !== "advisory-text"
-        || checker.plugin.plugin.environmentDigest !== requested.environmentDigest
-        || checker.plugin.plugin.resourceId !== requested.resourceId)) invalidAcknowledgement();
-    });
-    return value;
+    return checkPreparedWorkPlan(value, request, tools);
   },
   authorize: async (request: WorkPlanAuthorizeRequest) => {
     if (!validators.validateRequestWorkPlanAuthorize(request)

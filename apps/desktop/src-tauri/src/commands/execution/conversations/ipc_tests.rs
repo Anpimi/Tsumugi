@@ -840,7 +840,7 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
 }
 
 #[test]
-fn conversation_proposal_ipc_preserves_versions_original_actions_and_readonly_reopening() {
+fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_original_owners() {
     let temporary = tempfile::tempdir().unwrap();
     let destination = temporary.path().join("project");
     let app = crate::commands::register_commands(tauri::test::mock_builder())
@@ -1073,19 +1073,249 @@ fn conversation_proposal_ipc_preserves_versions_original_actions_and_readonly_re
     recover["revisionId"] = json!(identity());
     recover["expectedRevisionId"] = second["revisionId"].clone();
     recover["content"]["summary"] = json!("重开后调整这份建议。");
-    assert_eq!(
-        call(&window, "revise_conversation_proposal", recover)["revision"],
-        "3"
-    );
+    let latest = call(&window, "revise_conversation_proposal", recover);
+    assert_eq!(latest["revision"], "3");
     assert!(runtime_absent(&app, &reopened));
     assert_eq!(provider.count(), 1);
     assert_eq!(
         reject(&window, "read_conversation_proposal", read)["code"],
         "session-invalid"
     );
+    let current = proposal_work_plan_flow(&app, &window, &reopened, &latest, unit, &destination);
     call(
         &window,
         "close_project",
-        json!({"sessionToken":reopened["sessionToken"]}),
+        json!({"sessionToken":current["sessionToken"]}),
     );
+}
+
+fn proposal_work_plan_flow(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    project: &Value,
+    revision: &Value,
+    unit: ExecutionId,
+    destination: &std::path::Path,
+) -> Value {
+    let provider = PlanningProvider::with_content(
+        json!({"unitId":unit,"targetLocale":"zh-CN","text":"保留 {{name}} 的候选译文。"}),
+    );
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint: provider.endpoint.clone(),
+        model: "synthetic-translation".into(),
+        credential_env: String::new(),
+        max_requests: 1,
+        ..Default::default()
+    };
+    let reference = json!({"projectId":project["metadata"]["projectId"],"conversationId":revision["conversationId"],"proposalId":revision["proposalId"],"revisionId":revision["revisionId"]});
+    let prepare = in_session(
+        project,
+        json!({"proposal":reference,"config":config,"advisoryChecks":[],"toolSelection":null}),
+    );
+    let old = call(
+        window,
+        "prepare_conversation_proposal_work_plan",
+        prepare.clone(),
+    );
+    assert_eq!(old["proposal"], reference);
+    assert_eq!(old["plan"]["preview"]["config"], json!(config));
+    assert_eq!(provider.count(), 0);
+    let mut edit = revision["content"].clone();
+    edit["summary"] = json!("保留候选，交给人工决定。");
+    let revised = call(
+        window,
+        "revise_conversation_proposal",
+        in_session(
+            project,
+            json!({"actionId":identity(),"conversationId":revision["conversationId"],"proposalId":revision["proposalId"],"revisionId":identity(),"expectedRevisionId":revision["revisionId"],"content":edit}),
+        ),
+    );
+    let expiry = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 60;
+    let old_authorization = json!({"actionId":identity(),"proposal":reference,"planId":old["plan"]["planId"],"planDigest":old["plan"]["digest"],"confirmed":true,"effects":["save-candidate"],"expiresAt":expiry.to_string(),"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]});
+    assert!(
+        !reject(
+            window,
+            "authorize_conversation_proposal_work_plan",
+            in_session(project, json!({"authorization":old_authorization}))
+        )
+        .is_null()
+    );
+    assert_eq!(provider.count(), 0);
+    let mut prepare = prepare;
+    prepare["proposal"]["revisionId"] = revised["revisionId"].clone();
+    let prepared = call(window, "prepare_conversation_proposal_work_plan", prepare);
+    let authorization = json!({"actionId":identity(),"proposal":prepared["proposal"],"planId":prepared["plan"]["planId"],"planDigest":prepared["plan"]["digest"],"confirmed":true,"effects":["save-candidate"],"expiresAt":expiry.to_string(),"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]});
+    let approve = in_session(project, json!({"authorization":authorization}));
+    let generic = in_session(
+        project,
+        json!({"actionId":authorization["actionId"],"planId":authorization["planId"],"digest":authorization["planDigest"],"confirmed":true,"effects":authorization["effects"],"expiresAt":authorization["expiresAt"],"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]}),
+    );
+    assert!(!reject(window, "authorize_work_plan", generic.clone()).is_null());
+    let mut denied = approve.clone();
+    denied["authorization"]["confirmed"] = false.into();
+    assert!(!reject(window, "authorize_conversation_proposal_work_plan", denied).is_null());
+    assert_eq!(provider.count(), 0);
+    let accepted = call(
+        window,
+        "authorize_conversation_proposal_work_plan",
+        approve.clone(),
+    );
+    assert_eq!(accepted["link"]["revisionId"], revised["revisionId"]);
+    assert_eq!(accepted["link"]["planId"], prepared["plan"]["planId"]);
+    assert_eq!(accepted["receipt"]["actionId"], authorization["actionId"]);
+    assert_eq!(
+        call(
+            window,
+            "authorize_conversation_proposal_work_plan",
+            approve.clone()
+        ),
+        accepted
+    );
+    assert_eq!(provider.count(), 0);
+    let page = call(
+        window,
+        "read_conversation_proposal_work_plans",
+        in_session(
+            project,
+            json!({"conversationId":revision["conversationId"],"after":null,"limit":50}),
+        ),
+    );
+    assert_eq!(page["rows"], json!([accepted["link"]]));
+    let attempt = call(
+        window,
+        "start_work_plan",
+        in_session(
+            project,
+            json!({"planId":authorization["planId"],"actionId":authorization["actionId"],"expectedGeneration":accepted["receipt"]["lease"]["generation"]}),
+        ),
+    );
+    assert_eq!(attempt, accepted["receipt"]["attemptId"]);
+    let candidate_read = in_session(
+        project,
+        json!({"locale":"zh-CN","sourceSnapshotId":prepared["plan"]["scope"][0]["sourceSnapshotId"],"scopeId":null,"unitIds":[unit],"state":"available","afterOrdinal":null,"readVersion":null}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let candidates = loop {
+        let candidates = call(
+            window,
+            "read_translation_candidate_slice",
+            candidate_read.clone(),
+        );
+        if candidates["rows"][0]["revisions"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+        {
+            break candidates;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "authorized work did not save its candidate: {candidates}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let candidate = &candidates["rows"][0]["revisions"][0];
+    assert_eq!(candidate["text"], "保留 {{name}} 的候选译文。");
+    assert!(candidates["rows"][0]["target"]["selectionId"].is_null());
+    let effect = call(
+        window,
+        "read_ai_candidate_effect",
+        in_session(
+            project,
+            json!({"unitId":unit,"locale":"zh-CN","revisionId":candidate["revisionId"]}),
+        ),
+    );
+    assert_eq!(effect["planId"], authorization["planId"]);
+    assert_eq!(effect["attemptId"], attempt);
+    assert_eq!(provider.count(), 1);
+    let project_id =
+        ExecutionId::parse(project["metadata"]["projectId"].as_str().unwrap()).unwrap();
+    let idle_deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let token = project["sessionToken"].as_str().unwrap().to_owned();
+        let idle = tauri::async_runtime::block_on(app.state::<AppState>().sessions.run(
+            "proposal-test-original-drain",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(sessions, &token, project_id, CommandStage::ExecutionRead)?;
+                match active.execution.as_ref() {
+                    Some(host) => host.active(&active.store).map(|active| !active),
+                    None => Ok(true),
+                }
+            },
+        ))
+        .unwrap();
+        if idle {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < idle_deadline,
+            "original WorkPlan did not drain after saving its candidate"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    call(
+        window,
+        "close_project",
+        json!({"sessionToken":project["sessionToken"]}),
+    );
+    let reopened = call(window, "open_project", json!({"locator":destination}));
+    let mut repeated = approve;
+    repeated["sessionToken"] = reopened["sessionToken"].clone();
+    assert!(runtime_absent(app, &reopened));
+    assert_eq!(
+        call(
+            window,
+            "authorize_conversation_proposal_work_plan",
+            repeated.clone()
+        ),
+        accepted
+    );
+    assert!(runtime_absent(app, &reopened));
+    let recovered = call(
+        window,
+        "recover_conversation_proposal_work_plan",
+        repeated.clone(),
+    );
+    assert_eq!(recovered["request"], authorization);
+    assert_eq!(
+        recovered["outcome"],
+        json!({"kind":"recorded","receipt":accepted["link"]})
+    );
+    let link = call(
+        window,
+        "read_conversation_proposal_work_plan",
+        in_session(
+            &reopened,
+            json!({"conversationId":revision["conversationId"],"planId":authorization["planId"]}),
+        ),
+    );
+    assert_eq!(link, accepted["link"]);
+    let mut wrong = repeated.clone();
+    wrong["authorization"]["toolExecution"] = true.into();
+    assert_eq!(
+        call(window, "recover_conversation_proposal_work_plan", wrong)["outcome"],
+        json!({"kind":"mismatch"})
+    );
+    let mut missing = repeated;
+    missing["authorization"]["actionId"] = json!(identity());
+    missing["authorization"]["planId"] = json!(identity());
+    assert_eq!(
+        call(
+            window,
+            "recover_conversation_proposal_work_plan",
+            missing.clone()
+        )["outcome"],
+        json!({"kind":"pending","replay":"blocked"})
+    );
+    assert!(!reject(window, "authorize_conversation_proposal_work_plan", missing).is_null());
+    let mut generic = generic;
+    generic["sessionToken"] = reopened["sessionToken"].clone();
+    assert!(!reject(window, "authorize_work_plan", generic).is_null());
+    assert!(runtime_absent(app, &reopened));
+    assert_eq!(provider.count(), 1);
+    reopened
 }

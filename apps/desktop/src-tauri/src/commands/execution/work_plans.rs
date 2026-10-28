@@ -27,9 +27,24 @@ use tsumugi_core::{
 };
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 
+#[derive(Clone)]
+pub(super) enum PreparedWorkPlan {
+    Manual(WorkPlan),
+    Proposal(tsumugi_core::application::PreparedConversationProposalWorkPlan),
+}
+impl PreparedWorkPlan {
+    fn plan(&self) -> &WorkPlan {
+        match self {
+            Self::Manual(plan) => plan,
+            Self::Proposal(prepared) => prepared.plan(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct WorkPlanSession {
-    prepared: Option<WorkPlan>,
+    prepared: Option<PreparedWorkPlan>,
+    preparation_id: Option<ExecutionId>,
     generation: generation::GenerationSession,
     environments: BTreeMap<ExecutionId, (String, Vec<CheckerEnvironment>)>,
     checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
@@ -40,6 +55,8 @@ pub(super) struct WorkPlanSession {
     recovery: Option<recovery::RecoveryPreparation>,
     #[cfg(test)]
     recovery_authorize_probe: Option<generation::CaptureProbe>,
+    #[cfg(test)]
+    preparation_probe: Option<generation::CaptureProbe>,
     #[cfg(test)]
     tool_reply_probes: BTreeMap<ExecutionId, member::ToolReplyProbe>,
     #[cfg(test)]
@@ -65,7 +82,7 @@ impl WorkPlanSession {
         if self
             .prepared
             .as_ref()
-            .is_some_and(|plan| affected.contains(&plan.plan_id))
+            .is_some_and(|prepared| affected.contains(&prepared.plan().plan_id))
         {
             self.prepared = None;
         }
@@ -88,6 +105,7 @@ impl WorkPlanSession {
     pub(super) fn stop(&mut self) {
         self.clear_recovery();
         self.prepared = None;
+        self.preparation_id = None;
         self.generation.stop();
         self.environments.clear();
         self.checker_consents.clear();
@@ -616,16 +634,24 @@ pub async fn prepare_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanPrepareRequest,
 ) -> Result<WorkPlanView, CommandError> {
+    prepare_work_plan_with_proposal(state, request, None).await
+}
+
+pub(super) async fn prepare_work_plan_with_proposal(
+    state: State<'_, AppState>,
+    request: WorkPlanPrepareRequest,
+    proposal: Option<tsumugi_core::application::ConversationProposalRef>,
+) -> Result<WorkPlanView, CommandError> {
     let connection_store = connections::captured_store(&state);
     let initial_connections = connection_store.clone();
-    if !request.options.advisory_checks.is_empty() {
+    if proposal.is_none() && !request.options.advisory_checks.is_empty() {
         return Err(super::review::checkers::stale());
     }
     let plugins = state.plugins.clone();
     let selections = request.advisory_checks.clone();
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let initial = request.clone();
-    let selected_work = lease
+    let (selected_work, preparation_id, _probe) = lease
         .run(
             "prepare_work_plan.advisory_capture",
             CommandStage::ExecutionRead,
@@ -639,7 +665,7 @@ pub async fn prepare_work_plan(
                 let (host, _) = active.execution_parts()?;
                 host.allow_mutation()?;
                 host.work_plans.clear_recovery();
-                host.begin_package_work(
+                let work = host.begin_package_work(
                     initial
                         .advisory_checks
                         .iter()
@@ -648,10 +674,21 @@ pub async fn prepare_work_plan(
                             selection.entries.iter().map(|choice| choice.tool.package.clone())
                         }))
                         .collect(),
-                )
+                )?;
+                let preparation_id = ExecutionId::new();
+                host.work_plans.preparation_id = Some(preparation_id);
+                #[cfg(test)]
+                let probe = host.work_plans.preparation_probe.take();
+                #[cfg(not(test))]
+                let probe = ();
+                Ok((work, preparation_id, probe))
             },
         )
         .await?;
+    #[cfg(test)]
+    if let Some(probe) = _probe {
+        probe.after_successful_capture(0u64.into()).await;
+    }
     let accepted_work = selected_work.clone();
     let selected = request.tool_selection.clone();
     let (advisory, tools) = state
@@ -664,6 +701,9 @@ pub async fn prepare_work_plan(
         })
         .await?;
     let mut initial = request.clone();
+    if proposal.is_some() && initial.options.advisory_checks != advisory {
+        return Err(super::review::checkers::stale());
+    }
     initial.options.advisory_checks = advisory;
     let captured_tools = tools.clone();
     let captured = lease.submit(
@@ -679,6 +719,9 @@ pub async fn prepare_work_plan(
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             selected_work.check()?;
+            if host.work_plans.preparation_id != Some(preparation_id) {
+                return Err(map_read(ExecutionError::new(ErrorCode::DependencyConflict, "work-plan-preparation")));
+            }
             if let Some(config) = &initial.config {
                 connections::verify_configs(
                     initial_connections.as_ref(),
@@ -752,7 +795,7 @@ pub async fn prepare_work_plan(
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
                     work.check()?;
-                    if host.runtime.generation() != generation {
+                    if host.runtime.generation() != generation || host.work_plans.preparation_id != Some(preparation_id) {
                         return Err(map_read(ExecutionError::new(
                             ErrorCode::DependencyConflict,
                             "work-plan-session",
@@ -781,6 +824,10 @@ pub async fn prepare_work_plan(
                     } else {
                         plan
                     };
+                    let prepared = match &proposal {
+                        Some(reference) => PreparedWorkPlan::Proposal(store.capture_conversation_proposal_work_plan(reference, plan.clone()).map_err(map_read)?),
+                        None => PreparedWorkPlan::Manual(plan.clone()),
+                    };
                     let binding_plan = plan.clone();
                     let view = with_plan_environment_revision(&plugins, &plan, checker_revision, || {
                         verify_plan_connections(connection_store.as_ref(), &plan)?;
@@ -796,7 +843,7 @@ pub async fn prepare_work_plan(
                         } else {
                             host.work_plans.environments.remove(&plan.plan_id);
                         }
-                        host.work_plans.prepared = Some(plan.clone());
+                        host.work_plans.prepared = Some(prepared);
                         Ok(view)
                     })?;
                     sessions.mcp_retrieval.bind_plan(
@@ -816,11 +863,20 @@ pub async fn authorize_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanAuthorizeRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
+    authorize_work_plan_with_proposal(state, request, None).await.map(|(receipt, _)| receipt)
+}
+
+pub(super) async fn authorize_work_plan_with_proposal(
+    state: State<'_, AppState>,
+    request: WorkPlanAuthorizeRequest,
+    proposal: Option<tsumugi_core::application::AuthorizeConversationProposalWorkPlan>,
+) -> Result<(WorkPlanReceiptView, Option<tsumugi_core::application::ConversationProposalWorkPlanLink>), CommandError> {
     let connection_store = connections::captured_store(&state);
     let initial_connections = connection_store.clone();
     let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
     let captured_plugins = state.plugins.clone();
     let initial = request.clone();
+    let initial_proposal = proposal.clone();
     let captured = lease.submit(
         "authorize_work_plan.capture",
         CommandStage::ExecutionRecover,
@@ -828,10 +884,33 @@ pub async fn authorize_work_plan(
             let claim = {
                 let active = authorized(sessions, &initial.session_token, initial.project_id,
                     CommandStage::ExecutionRecover)?;
+                if let Some(authorization) = &initial_proposal {
+                    if let Some(link) = active.store.conversation_proposal_work_plan_receipt(authorization).map_err(map_recover)? {
+                        let receipt = active.store.work_plan_receipt(authorization.action_id).map_err(map_recover)?
+                            .ok_or_else(|| map_recover(ExecutionError::new(ErrorCode::CorruptLedger, "conversation-proposal-work-plan-receipt")))?;
+                        return Ok(Err((WorkPlanReceiptView::from(receipt), Some(link))));
+                    }
+                    if active.store.work_plan_receipt(authorization.action_id).map_err(map_recover)?.is_some() {
+                        return Err(map_recover(ExecutionError::new(ErrorCode::ResultMismatch, "conversation-proposal-work-plan-action")));
+                    }
+                    if active.store.is_reconciling() {
+                        return Err(map_recover(ExecutionError::new(ErrorCode::OutcomeUnknown, "conversation-proposal-work-plan-session")));
+                    }
+                    let prepared = active.execution.as_ref().and_then(|host| host.work_plans.prepared.as_ref());
+                    if !matches!(prepared, Some(PreparedWorkPlan::Proposal(prepared))
+                        if prepared.proposal() == &authorization.proposal && prepared.plan().plan_id == initial.plan_id && prepared.plan().digest == initial.digest) {
+                        return Err(map_recover(ExecutionError::new(ErrorCode::DependencyConflict, "conversation-proposal-work-plan-preparation")));
+                    }
+                } else if active.store.is_conversation_proposal_work_plan(initial.project_id, initial.plan_id).map_err(map_recover)?
+                    || active.execution.as_ref().and_then(|host| host.work_plans.prepared.as_ref())
+                        .is_some_and(|prepared| matches!(prepared, PreparedWorkPlan::Proposal(_)) && prepared.plan().plan_id == initial.plan_id) {
+                    return Err(map_recover(ExecutionError::new(ErrorCode::Unauthorized, "conversation-proposal-work-plan-authorization")));
+                }
                 if active.store.work_plan_receipt(initial.action_id).map_err(map_recover)?.is_some() {
                     None
                 } else {
                     active.execution.as_ref().and_then(|host| host.work_plans.prepared.as_ref())
+                        .map(PreparedWorkPlan::plan)
                         .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
                         .cloned()
                 }
@@ -851,6 +930,9 @@ pub async fn authorize_work_plan(
                 .work_plan_receipt(initial.action_id)
                 .map_err(map_recover)?
             {
+                if initial_proposal.is_some() {
+                    return Err(map_recover(ExecutionError::new(ErrorCode::ResultMismatch, "conversation-proposal-work-plan-action")));
+                }
                 if receipt.lease.plan_id != initial.plan_id {
                     return Err(map_recover(ExecutionError::new(
                         ErrorCode::ResultMismatch,
@@ -874,15 +956,24 @@ pub async fn authorize_work_plan(
                     )
                     .map_err(map_recover)?;
                 broker::restore_consent(host, store, &plan, &receipt, &initial, &captured_plugins)?;
-                return Ok(Err(WorkPlanReceiptView::from(receipt)));
+                return Ok(Err((WorkPlanReceiptView::from(receipt), None)));
             }
             let prepared = host
                 .work_plans
                 .prepared
                 .as_ref()
-                .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
+                .filter(|prepared| prepared.plan().plan_id == initial.plan_id && prepared.plan().digest == initial.digest)
                 .cloned();
-            if let Some(plan) = prepared {
+            if let Some(prepared) = prepared {
+                let proposal_prepared = match (&initial_proposal, &prepared) {
+                    (Some(authorization), PreparedWorkPlan::Proposal(prepared)) if prepared.proposal() == &authorization.proposal => {
+                        store.validate_conversation_proposal_work_plan(prepared).map_err(map_recover)?;
+                        Some(prepared.clone())
+                    }
+                    (None, PreparedWorkPlan::Manual(_)) => None,
+                    _ => return Err(map_recover(ExecutionError::new(ErrorCode::Unauthorized, "conversation-proposal-work-plan-preparation"))),
+                };
+                let plan = prepared.plan().clone();
                 verify_plan_connections(initial_connections.as_ref(), &plan)?;
                 broker::require_consent(
                     &plan,
@@ -912,8 +1003,11 @@ pub async fn authorize_work_plan(
                         .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
                         .collect(),
                 )?;
-                Ok(Ok((plan, environments, work, host.runtime.generation())))
+                Ok(Ok((plan, environments, work, host.runtime.generation(), proposal_prepared)))
             } else {
+                if initial_proposal.is_some() {
+                    return Err(map_recover(ExecutionError::new(ErrorCode::DependencyConflict, "conversation-proposal-work-plan-preparation")));
+                }
                 // Read-only replay returns historical authority without recreating local consent.
                 let receipt = store
                     .work_plan_receipt(initial.action_id)
@@ -941,14 +1035,14 @@ pub async fn authorize_work_plan(
                         },
                     )
                     .map_err(map_recover)?;
-                Ok(Err(WorkPlanReceiptView::from(receipt)))
+                Ok(Err((WorkPlanReceiptView::from(receipt), None)))
             }
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, environment, work, generation) = match captured.await? {
+        let (plan, environment, work, generation, proposal_prepared) = match captured.await? {
             Ok(value) => value,
             Err(receipt) => return Ok(receipt),
         };
@@ -959,6 +1053,14 @@ pub async fn authorize_work_plan(
                 "authorize_work_plan.finish",
                 CommandStage::ExecutionRecover,
                 move |sessions| {
+                    if let Some(authorization) = &proposal {
+                        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRecover)?;
+                        if let Some(link) = active.store.conversation_proposal_work_plan_receipt(authorization).map_err(map_recover)? {
+                            let receipt = active.store.work_plan_receipt(authorization.action_id).map_err(map_recover)?
+                                .ok_or_else(|| map_recover(ExecutionError::new(ErrorCode::CorruptLedger, "conversation-proposal-work-plan-receipt")))?;
+                            return Ok((WorkPlanReceiptView::from(receipt), Some(link)));
+                        }
+                    }
                     let accepted = authorized(sessions, &request.session_token, request.project_id,
                         CommandStage::ExecutionRecover)?.store.work_plan_receipt(request.action_id)
                         .map_err(map_recover)?.is_some();
@@ -997,18 +1099,22 @@ pub async fn authorize_work_plan(
                                 .map_err(map_recover)?;
                             bindings.push(checker);
                         }
-                        let receipt = store
-                            .authorize_work_plan(
-                                &plan,
-                                &AuthorizeWorkPlan {
-                                    action_id: request.action_id,
-                                    plan_digest: request.digest,
-                                    confirmed: request.confirmed,
-                                    effects: request.effects,
-                                    expires_at: request.expires_at.get(),
-                                },
-                            )
-                            .map_err(map_recover)?;
+                        let (receipt, link) = match &proposal {
+                            Some(authorization) => {
+                                let prepared = proposal_prepared.as_ref().ok_or_else(|| map_recover(ExecutionError::new(ErrorCode::Unauthorized, "conversation-proposal-work-plan-preparation")))?;
+                                let link = store.authorize_conversation_proposal_work_plan(prepared, authorization).map_err(map_recover)?;
+                                let receipt = store.work_plan_receipt(authorization.action_id).map_err(map_recover)?
+                                    .ok_or_else(|| map_recover(ExecutionError::new(ErrorCode::OutcomeUnknown, "conversation-proposal-work-plan-receipt")))?;
+                                (receipt, Some(link))
+                            }
+                            None => (store.authorize_work_plan(&plan, &AuthorizeWorkPlan {
+                                action_id: request.action_id,
+                                plan_digest: request.digest,
+                                confirmed: request.confirmed,
+                                effects: request.effects,
+                                expires_at: request.expires_at.get(),
+                            }).map_err(map_recover)?, None),
+                        };
                         broker::save_consent(host, store, &plan, &receipt)
                             .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?;
                         if !bindings.is_empty() {
@@ -1032,7 +1138,7 @@ pub async fn authorize_work_plan(
                                 );
                             }
                         }
-                        Ok(receipt.into())
+                        Ok((receipt.into(), link))
                     };
                     with_plan_environment_revision(&plugins, &plan, settings_revision, finish)
                 },
@@ -1643,6 +1749,7 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     mod guidance_tests;
     mod model_connection_admission;
+    mod proposal_preparation;
     mod semantic_review;
     mod settings;
     mod tool_result_reads;

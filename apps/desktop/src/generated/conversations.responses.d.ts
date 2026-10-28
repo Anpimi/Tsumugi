@@ -283,6 +283,195 @@ export type ConversationActionOutcome4 =
   | {
       kind: "mismatch";
     };
+export type WorkPlanCheckerView =
+  | {
+      checker: ReviewCheckerKey;
+      kind: "ready";
+      plugin: ReviewCheckerView;
+    }
+  | {
+      checker: ReviewCheckerKey;
+      error: CommandError;
+      kind: "unavailable";
+    };
+export type ReviewCheckerView =
+  | {
+      kind: "format";
+      plugin: PluginReviewView;
+    }
+  | {
+      kind: "advisory-text";
+      plugin: PluginTextReviewView;
+    };
+export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
+/**
+ * Pinned local decisions are separate from raw SDK facts and the provider projection.
+ */
+export type ProjectFactCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      decisions: ContextFactDecision[];
+      kind: "selected";
+      manual: boolean;
+      scope: SourceContextRequest;
+    };
+/**
+ * Classification for presentation, without interpreting a format's syntax or
+ * normalizing its literal text. Other source-associated information uses Note.
+ */
+export type SourceContextFactKind = "speaker" | "role" | "scene" | "time" | "location" | "note";
+/**
+ * References are observations in captured source, not proof of an inference.
+ * Human project decisions remain in the project's independent revision owner.
+ */
+export type SourceContextFactOrigin =
+  | {
+      kind: "extracted";
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    }
+  | {
+      kind: "inferred";
+      rationale: string;
+      /**
+       * @minItems 1
+       * @maxItems 8
+       */
+      sources:
+        | [SourceReference]
+        | [SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [SourceReference, SourceReference, SourceReference, SourceReference, SourceReference, SourceReference]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ]
+        | [
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference,
+            SourceReference
+          ];
+    };
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type ExtensionHandling = "required" | "preserve" | "optional";
+export type ContentTarget =
+  | {
+      kind: "snapshot";
+    }
+  | {
+      id: string;
+      kind: "unit";
+    }
+  | {
+      id: string;
+      kind: "occurrence";
+    };
+export type ContextFactDisposition =
+  | {
+      kind: "replace";
+      text: string;
+    }
+  | {
+      kind: "reject-inference";
+    }
+  | {
+      kind: "restore";
+    };
+export type SourceContextCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      kind: "selected";
+      value: SelectedSourceContext;
+    };
+export type SourceContextDirection = "before" | "after";
+/**
+ * A pointer only; omitted text and rationale never enter the capture.
+ */
+export type SourceContextOmissionSample =
+  | {
+      blockIndex: number;
+      factIndex: number;
+      kind: "fact";
+      reason: SourceContextOmissionReason;
+    }
+  | {
+      kind: "neighbor";
+      occurrenceId: ExecutionId;
+      reason: SourceContextOmissionReason;
+    };
+export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
+export type ToolQueryPathPart = string | number;
+export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
+export type ConversationActionOutcome5 =
+  | {
+      kind: "recorded";
+      receipt: ConversationProposalWorkPlanLink;
+    }
+  | {
+      kind: "pending";
+      replay: ConversationActionReplay;
+    }
+  | {
+      kind: "mismatch";
+    };
+/**
+ * Requested automatic effects, never a human language-review approval.
+ */
+export type AutomationEffect =
+  | "save-candidate"
+  | "run-checks"
+  | "select-missing"
+  | "replace-captured-selection"
+  | "adopt-resources"
+  | "deliver"
+  | "query-tools"
+  | "publish-discussion"
+  | "dispatch-team-work"
+  | "send-team-message";
 
 export interface Responses {
   conversation: ProjectConversation;
@@ -300,6 +489,11 @@ export interface Responses {
   proposalCaptureRecovery: ConversationProposalCaptureRecovery;
   proposalPage: ConversationProposalPage;
   proposalRevisionRecovery: ConversationProposalRevisionRecovery;
+  proposalWorkPlan: ConversationProposalWorkPlanView;
+  proposalWorkPlanLink: ConversationProposalWorkPlanLink;
+  proposalWorkPlanPage: ConversationProposalWorkPlanPage;
+  proposalWorkPlanReceipt: ConversationProposalWorkPlanReceiptView;
+  proposalWorkPlanRecovery: ConversationProposalWorkPlanRecovery;
 }
 /**
  * Stable identity independent of any WorkPlan. Later associations can refer to
@@ -892,4 +1086,439 @@ export interface ReviseConversationProposal {
   projectId: ExecutionId;
   proposalId: ExecutionId;
   revisionId: ExecutionId;
+}
+export interface ConversationProposalWorkPlanView {
+  plan: WorkPlanView;
+  proposal: ConversationProposalRef;
+}
+export interface WorkPlanView {
+  attemptId: ExecutionId | null;
+  checkers: WorkPlanCheckerView[];
+  digest: string;
+  locale: string;
+  maintenance: MaintenancePlanBasis | null;
+  memberPreviews?: TeamMemberPreviewView[] | null;
+  options: PlanOptions;
+  planId: ExecutionId;
+  preview: AiPreviewView | null;
+  scope: PlanSelectionBasis[];
+  teamDiscussionLimits?: TeamDiscussionLimits | null;
+  teamWorkTimeoutMs?: number | null;
+  tools: WorkPlanTools | null;
+}
+export interface ReviewCheckerKey {
+  profile: ContractRef;
+  provider: ProviderSelectionBinding;
+}
+export interface PluginReviewView {
+  checker: CapabilityBinding;
+  declaration: ReviewDeclaration;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
+}
+export interface PluginTextReviewView {
+  binding: TextReviewBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+export interface MaintenancePlanBasis {
+  assessment: MaintenanceAssessment;
+  choices: MaintenanceChoice[];
+}
+export interface MaintenanceAssessment {
+  after: number;
+  coverage: string;
+  digest: string;
+  limit: number;
+  locale: string;
+  nextOrdinal: number | null;
+  projectId: ExecutionId;
+  rows: MaintenanceRow[];
+  sourceSnapshotId: ExecutionId;
+}
+export interface MaintenanceRow {
+  mappingUnresolved: boolean;
+  nativeKey: string;
+  protection: WorkProtection;
+  reasons: string[];
+  reviewBasis: string;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceText: string;
+  suggested: MaintenanceAction;
+  translationRevisionId: ExecutionId | null;
+  translationText: string | null;
+  unitId: ExecutionId;
+}
+export interface MaintenanceChoice {
+  action: MaintenanceAction;
+  excluded: boolean;
+  unitId: ExecutionId;
+}
+export interface TeamMemberPreviewView {
+  memberId: ExecutionId;
+  preview: AiPreviewView;
+}
+export interface AiPreviewView {
+  config: AiConfig;
+  digest: string;
+  items: AiItemView[];
+  recipe: string;
+}
+export interface AiItemView {
+  context: ContextRevision | null;
+  nativeKey: string;
+  omissions: string[];
+  projectContext: ProjectFactCapture;
+  resourceBaseline: UnsignedDecimal;
+  sourceContext: SourceContextCapture;
+  sourceLocale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  sourceText: string;
+  targetLocale: string;
+  terms: SharedTerm[];
+  unitId: ExecutionId;
+}
+export interface ContextRevision {
+  locale: string;
+  previousRevisionId: ExecutionId | null;
+  reason: string;
+  revisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface ContextFactDecision {
+  request: ContextFactWrite;
+}
+export interface ContextFactWrite {
+  actionId: ExecutionId;
+  actor: string;
+  basis: SourceFactBasis;
+  disposition: ContextFactDisposition;
+  expectedDecisionId: ExecutionId | null;
+  reason: string;
+}
+export interface SourceFactBasis {
+  fact: SelectedSourceFact;
+  scope: SourceContextRequest;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+/**
+ * One whole fact, with the original block target and source references.
+ */
+export interface SelectedSourceFact {
+  blockIndex: number;
+  fact: SourceContextFact;
+  factIndex: number;
+  handling: ExtensionHandling;
+  inRevisionBasis: boolean;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextFact {
+  /**
+   * Unique only inside this block; it is not a project revision or entity ID.
+   */
+  id: string;
+  kind: SourceContextFactKind;
+  origin: SourceContextFactOrigin;
+  text: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SelectedSourceContext {
+  contentRevision: Revision;
+  facts: SelectedSourceFact[];
+  localUnitId: string;
+  neighbors: SourceContextNeighbor[];
+  observations: SourceContextObservations;
+  omissions: SourceContextOmissions;
+  scope: SourceContextRequest;
+  selection: SourceContextSelection;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+export interface SourceContextNeighbor {
+  adjacentTo: SourceContextAdjacency[];
+  occurrence: SourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface SourceContextAdjacency {
+  /**
+   * The neighbor's position relative to this selected occurrence.
+   */
+  direction: SourceContextDirection;
+  occurrenceId: ExecutionId;
+}
+export interface SourceContextOccurrence {
+  localOccurrenceId: string;
+  occurrenceId: ExecutionId;
+  source: SourceReference;
+}
+/**
+ * Missing, explicitly empty and unknown schema observations are distinct.
+ */
+export interface SourceContextObservations {
+  emptyBlocks: number;
+  knownBlocks: number;
+  knownFacts: number;
+  missingBlocks: boolean;
+  neighborOccurrences: number;
+  unknownBlocks: number;
+  unknownRequiredBlocks: number;
+  unknownSamples: UnknownSourceBlockSample[];
+}
+export interface UnknownSourceBlockSample {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextOmissions {
+  byteBudget: number;
+  extracted: number;
+  inferred: number;
+  itemLimit: number;
+  neighbors: number;
+  notSelected: number;
+  samples: SourceContextOmissionSample[];
+}
+export interface SharedTerm {
+  protected: boolean;
+  revisionId: ExecutionId;
+  source: string;
+  target: string;
+}
+export interface PlanSelectionBasis {
+  nativeKey: string;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TeamDiscussionLimits {
+  maxArtifactBytes: number;
+  maxMembers: number;
+  maxPostBytes: number;
+  maxPosts: number;
+  maxRoleVersionsPerMember: number;
+  maxViewBytes: number;
+  maxViewPosts: number;
+}
+export interface WorkPlanTools {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  entries: [WorkPlanToolSpec, ...WorkPlanToolSpec[]];
+  maxInvocations: number;
+}
+/**
+ * Captured by the trusted host from an installed package, never model text.
+ */
+export interface WorkPlanToolSpec {
+  /**
+   * Complete captured callable membership of an Application instance.
+   * Other scopes carry an explicit empty roster; this data grants no lease.
+   *
+   * @maxItems 128
+   */
+  applicationCapabilities: ProcessCapability[];
+  binding: CapabilityToolBinding;
+  execution: PluginExecutionBinding;
+  handle: ExecutionId;
+  packageOrigin: unknown;
+  resourceId: string;
+  runtimeOrigin: unknown;
+  selections: string[];
+  settingsRevision: UnsignedDecimal;
+  target: string;
+}
+/**
+ * One callable declaration in the Host-captured component roster.
+ */
+export interface ProcessCapability {
+  capability: CapabilityDeclaration;
+  contributionId: string;
+}
+/**
+ * A fixed selection, not an execution grant or a trusted model instruction.
+ * Deserialized claims must be rebound against the actual captured package.
+ */
+export interface CapabilityToolBinding {
+  capability: CapabilityBinding;
+  declaration: CapabilityToolDeclaration;
+  resources: ToolResourceBinding[];
+}
+/**
+ * A package-local adapter to one declared, read-only capability. Input/output
+ * contracts, limits and permissions are taken from that capability, rather
+ * than repeated in a model-specific descriptor. A profile is an exact choice.
+ */
+export interface CapabilityToolDeclaration {
+  capabilityId: string;
+  description: string;
+  name: string;
+  profile: ContractRef | null;
+  /**
+   * Optional bounded semantic text-query presentation. It grants no access
+   * beyond the original capability and remains untrusted package data.
+   */
+  query?: ToolQueryDeclaration | null;
+  skill: string | null;
+  supportingResources: string[];
+  title: string;
+}
+export interface ToolQueryDeclaration {
+  inputSchema: ContractRef;
+  inputTemplate: unknown;
+  maxTextBytes: number;
+  output: ToolQueryOutput;
+  outputSchema: ContractRef;
+  /**
+   * Explicit senses or categories. Matching text alone does not select them.
+   */
+  selections: ToolQuerySelection;
+  /**
+   * One explicit target option; no host-side locale or value normalization.
+   */
+  target: ToolQuerySelection;
+  textPath: ToolQueryPathPart[];
+}
+export interface ToolQueryOutput {
+  columns: ToolQueryColumn[];
+  emptyDescription: string;
+  entriesPath: ToolQueryPathPart[];
+  maxEntries: number;
+}
+export interface ToolQueryColumn {
+  label: string;
+  path: ToolQueryPathPart[];
+}
+export interface ToolQuerySelection {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
+}
+export interface ToolQueryOption {
+  description: string;
+  label: string;
+  value: string;
+}
+export interface ToolResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
+}
+/**
+ * A small immutable association. Lease and running state stay in the original ledger.
+ */
+export interface ConversationProposalWorkPlanLink {
+  actionId: ExecutionId;
+  conversationId: ExecutionId;
+  ordinal: Revision;
+  planDigest: string;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface ConversationProposalWorkPlanPage {
+  conversationId: ExecutionId;
+  nextAfter: Revision | null;
+  projectId: ExecutionId;
+  rows: ConversationProposalWorkPlanLink[];
+}
+export interface ConversationProposalWorkPlanReceiptView {
+  link: ConversationProposalWorkPlanLink;
+  receipt: WorkPlanReceiptView;
+}
+export interface WorkPlanReceiptView {
+  actionId: ExecutionId;
+  attemptId: ExecutionId | null;
+  lease: AutomationLease;
+  parentTask: ExecutionId | null;
+  state: WorkPlanState;
+}
+/**
+ * A reference to durable authority. Possessing or editing this reference does
+ * not grant permission; Core checks the stored generation at every boundary.
+ */
+export interface AutomationLease {
+  generation: Revision;
+  planId: ExecutionId;
+}
+export interface ConversationProposalWorkPlanRecovery {
+  outcome: ConversationActionOutcome5;
+  request: AuthorizeConversationProposalWorkPlan;
+}
+export interface AuthorizeConversationProposalWorkPlan {
+  actionId: ExecutionId;
+  applicationToolExecutions: ApplicationScopeBasis[];
+  checkerExecutions: ReviewCheckerKey[];
+  confirmed: boolean;
+  effects: AutomationEffect[];
+  expiresAt: UnsignedDecimal;
+  planDigest: string;
+  planId: ExecutionId;
+  proposal: ConversationProposalRef;
+  toolExecution: boolean;
 }

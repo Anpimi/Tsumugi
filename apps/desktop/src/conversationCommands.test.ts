@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { conversationCommands } from "./conversationCommands";
 import { validateRequestCreate, validateResponseCreateRecovery } from "./generated/conversations.validators";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import workPlanFixture from "../test/fixtures/workPlanCommands.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -285,4 +286,84 @@ it("reads historical versions without requiring live permission and refuses unor
   }
   invoke.mockResolvedValueOnce({ ...proposalFirst, content: { ...proposalFirst.content, summary: "\ufeff" } });
   await expect(conversationCommands.readProposal({ ...context, conversationId: create.conversationId, proposalId: proposalFirst.proposalId, revisionId: null })).resolves.toMatchObject({ content: { summary: "\ufeff" } });
+});
+
+const proposalPlanReference = { projectId: workPlanFixture.requests.prepare.projectId, conversationId: proposalFirst.conversationId,
+  proposalId: proposalFirst.proposalId, revisionId: proposalFirst.revisionId };
+const proposalPlanExpected = { ...proposalFirst, projectId: proposalPlanReference.projectId,
+  content: { ...proposalContent, unitIds: workPlanFixture.requests.prepare.unitIds } };
+const proposalPlanPrepare = { projectId: proposalPlanReference.projectId, sessionToken: context.sessionToken,
+  proposal: proposalPlanReference, config: workPlanFixture.requests.prepare.config, advisoryChecks: [], toolSelection: null };
+const proposalPlanView = { proposal: proposalPlanReference, plan: workPlanFixture.responses.plan };
+const proposalPlanAuthorization = { actionId: workPlanFixture.requests.authorize.actionId, proposal: proposalPlanReference,
+  planId: workPlanFixture.responses.plan.planId, planDigest: workPlanFixture.responses.plan.digest, confirmed: true,
+  effects: ["save-candidate" as const], expiresAt: workPlanFixture.requests.authorize.expiresAt,
+  checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] };
+const proposalPlanApprove = { projectId: proposalPlanReference.projectId, sessionToken: context.sessionToken, authorization: proposalPlanAuthorization };
+const proposalPlanLink = { ...proposalPlanReference, planId: proposalPlanAuthorization.planId, actionId: proposalPlanAuthorization.actionId,
+  planDigest: proposalPlanAuthorization.planDigest, ordinal: "9007199254740993" };
+const proposalPlanReceipt = { link: proposalPlanLink, receipt: workPlanFixture.responses.receipt };
+
+it("prepares and confirms the exact saved proposal through the existing WorkPlan contracts", async () => {
+  invoke.mockResolvedValueOnce(proposalPlanView).mockResolvedValueOnce(proposalPlanReceipt)
+    .mockResolvedValueOnce({ request: proposalPlanAuthorization, outcome: { kind: "recorded", receipt: proposalPlanLink } })
+    .mockResolvedValueOnce(proposalPlanLink).mockResolvedValueOnce({ projectId: proposalPlanReference.projectId, conversationId: proposalFirst.conversationId, rows: [proposalPlanLink], nextAfter: null });
+  await expect(conversationCommands.prepareProposalWorkPlan(proposalPlanPrepare, proposalPlanExpected, "zh-CN")).resolves.toEqual(proposalPlanView);
+  await expect(conversationCommands.authorizeProposalWorkPlan(proposalPlanApprove)).resolves.toEqual(proposalPlanReceipt);
+  await expect(conversationCommands.recoverProposalWorkPlan(proposalPlanApprove)).resolves.toMatchObject({ outcome: { receipt: proposalPlanLink } });
+  await expect(conversationCommands.readProposalWorkPlan({ ...context, projectId: proposalPlanReference.projectId, conversationId: proposalFirst.conversationId, planId: proposalPlanLink.planId })).resolves.toEqual(proposalPlanLink);
+  await expect(conversationCommands.proposalWorkPlans({ ...context, projectId: proposalPlanReference.projectId, conversationId: proposalFirst.conversationId, after: null, limit: 50 })).resolves.toMatchObject({ rows: [proposalPlanLink] });
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual(["prepare_conversation_proposal_work_plan", "authorize_conversation_proposal_work_plan", "recover_conversation_proposal_work_plan", "read_conversation_proposal_work_plan", "read_conversation_proposal_work_plans"]);
+});
+
+it("keeps unresolved questions and mismatched project preparation out of the command path", async () => {
+  await expect(conversationCommands.prepareProposalWorkPlan(proposalPlanPrepare,
+    { ...proposalPlanExpected, content: { ...proposalPlanExpected.content, questions: ["Which entries?"] } }, "zh-CN")).rejects.toThrow("Invalid proposal work-plan preparation");
+  await expect(conversationCommands.prepareProposalWorkPlan({ ...proposalPlanPrepare, projectId: fixtureIdentity(18999) }, proposalPlanExpected, "zh-CN")).rejects.toThrow("Invalid proposal work-plan preparation");
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it.each([
+  { ...proposalPlanView, proposal: { ...proposalPlanReference, revisionId: fixtureIdentity(18999) } },
+  { ...proposalPlanView, plan: { ...proposalPlanView.plan, locale: "ja-JP" } },
+  { ...proposalPlanView, plan: { ...proposalPlanView.plan, preview: { ...proposalPlanView.plan.preview, config: { ...proposalPlanView.plan.preview.config, model: "Changed destination" } } } },
+])("rejects a proposal WorkPlan preview for a changed version, scope or destination %#", async value => {
+  invoke.mockResolvedValueOnce(value);
+  await expect(conversationCommands.prepareProposalWorkPlan(proposalPlanPrepare, proposalPlanExpected, "zh-CN")).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { ...proposalPlanReceipt, link: { ...proposalPlanLink, revisionId: fixtureIdentity(18999) } },
+  { ...proposalPlanReceipt, link: { ...proposalPlanLink, actionId: fixtureIdentity(18999) } },
+  { ...proposalPlanReceipt, link: { ...proposalPlanLink, planDigest: "f".repeat(64) } },
+  { ...proposalPlanReceipt, receipt: { ...proposalPlanReceipt.receipt, lease: { ...proposalPlanReceipt.receipt.lease, planId: fixtureIdentity(18999) } } },
+])("rejects a confirmation acknowledgement for another proposal version or WorkPlan %#", async value => {
+  invoke.mockResolvedValueOnce(value);
+  await expect(conversationCommands.authorizeProposalWorkPlan(proposalPlanApprove)).rejects.toThrow("Invalid IPC response");
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it("matches the complete outer confirmation before accepting recovery and never replays pending", async () => {
+  for (const outcome of [{ kind: "pending", replay: "blocked" }, { kind: "mismatch" }]) {
+    invoke.mockResolvedValueOnce({ request: proposalPlanAuthorization, outcome });
+    await expect(conversationCommands.recoverProposalWorkPlan(proposalPlanApprove)).resolves.toMatchObject({ outcome });
+  }
+  invoke.mockResolvedValueOnce({ request: { ...proposalPlanAuthorization, toolExecution: true }, outcome: { kind: "pending", replay: "blocked" } });
+  await expect(conversationCommands.recoverProposalWorkPlan(proposalPlanApprove)).rejects.toThrow("Invalid IPC response");
+  invoke.mockResolvedValueOnce({ request: proposalPlanAuthorization, outcome: { kind: "pending", replay: "explicit-same-request" } });
+  await expect(conversationCommands.recoverProposalWorkPlan(proposalPlanApprove)).rejects.toThrow("Invalid IPC response");
+  expect(invoke.mock.calls.every(([name]) => name === "recover_conversation_proposal_work_plan")).toBe(true);
+});
+
+it("retains the submitted confirmation when its caller changes input during the response", async () => {
+  let resolve!: (value: unknown) => void;
+  invoke.mockImplementationOnce(() => new Promise(value => { resolve = value; }));
+  const changed = structuredClone(proposalPlanApprove);
+  const pending = conversationCommands.authorizeProposalWorkPlan(changed);
+  changed.authorization.planDigest = "f".repeat(64);
+  changed.authorization.proposal.revisionId = fixtureIdentity(18999);
+  resolve(proposalPlanReceipt);
+  await expect(pending).resolves.toEqual(proposalPlanReceipt);
+  expect(invoke.mock.calls[0][1]).toEqual({ request: proposalPlanApprove });
 });

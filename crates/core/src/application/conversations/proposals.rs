@@ -2,6 +2,8 @@
 use super::{ConversationActionOutcome, ExecutionId, Revision};
 use crate::ai::conversation_planning::ConversationPlanningModelOutput;
 use serde::{Deserialize, Serialize};
+mod work_plans;
+pub use work_plans::*;
 
 fn required_previous<'de, D: serde::Deserializer<'de>>(
     deserializer: D,

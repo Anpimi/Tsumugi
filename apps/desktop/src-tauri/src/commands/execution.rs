@@ -73,6 +73,8 @@ macro_rules! handlers {
         conversations::proposals::capture_conversation_proposal,conversations::proposals::revise_conversation_proposal,
         conversations::proposals::read_conversation_proposal,conversations::proposals::read_conversation_proposal_revisions,conversations::proposals::validate_conversation_proposal,
         conversations::proposals::recover_conversation_proposal_capture,conversations::proposals::recover_conversation_proposal_revision,
+        conversations::proposals::work_plans::prepare_conversation_proposal_work_plan,conversations::proposals::work_plans::authorize_conversation_proposal_work_plan,
+        conversations::proposals::work_plans::recover_conversation_proposal_work_plan,conversations::proposals::work_plans::read_conversation_proposal_work_plan,conversations::proposals::work_plans::read_conversation_proposal_work_plans,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
         crate::commands::plugins::application::stop_application_plugin_instance,

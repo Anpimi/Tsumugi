@@ -8,7 +8,7 @@ Core and desktop IPC can keep project threads and ordered human messages before 
 
 Creating a thread or appending a message uses an action identity bound to the full request. Repeating that request returns its original receipt; changing its contents under the same identity is rejected. The corresponding recovery read returns `recorded`, `pending`, or `mismatch`. `pending` means the result has not been confirmed. Its replay field says whether the same request may be submitted explicitly; it does not schedule a retry or assert that the request never ran. Recovery keeps the original business request across project reopening while using the new session token.
 
-These conversation records store human input. Planning calls use the separate permission and result checks below. Work-plan authorization and the project assistant interface remain separate integrations.
+These conversation records store human input. Planning calls use the separate permission and result checks below. Work-plan execution requires its own authorization; the project assistant interface is not yet available.
 
 ## Preparing planning materials
 
@@ -30,7 +30,15 @@ Core stores immutable proposal revisions, with desktop IPC commands and a fronte
 
 Creating and revising a proposal records the original request and receipt in the same transaction. Repeating the same action returns its original revision, and the original action can be checked after an uncertain response. Creating, revising, or explicitly validating a proposal checks its relevant materials against current project state. Historical revisions remain readable when those materials are stale; reopening history does not restore planning permission.
 
-There is no proposal interface yet, and proposal revisions are not linked to or authorized as a `WorkPlan`. A planning result or proposal cannot start or adopt work.
+## Confirming a proposal as a work plan
+
+Core and desktop IPC provide a path to prepare a `WorkPlan` from an exact proposal revision and explicitly authorize it. The frontend command adapter exposes this path, but there is no assistant or proposal interface yet. Preparing or saving a proposal does not authorize or start work. Planning permission is separate from execution permission.
+
+The prepared plan retains its proposal origin; the generic manual authorization path cannot bypass the proposal confirmation. Confirmation requires the full work-plan preview and records bounded evidence of the complete human confirmation. The original work-plan authorization, the exact revision link, and a small receipt are saved in the same transaction. The existing plan and action records remain the authority for execution permission; the link does not create a separate permission or budget. Authorization rejects an older revision, stale materials, or unresolved questions.
+
+A person can explicitly choose the execution model, budget, and real tools or checkers within the existing work-plan flow. The original Host environment consent checks still apply. Work uses the existing preparation, authorization, runtime, budget, and Provider boundaries. The same revision can be explicitly confirmed as multiple independent work plans, each with its own budget. Once authorized, each plan remains fixed; a later proposal revision does not change it.
+
+Reopening, repeating, or checking an action returns its exact recorded history without recreating a runtime, renewing permission, or replaying work. If no receipt exists and the original prepared plan has been lost, the action remains pending or blocked rather than being reconstructed.
 
 ## Preparing and verifying a work plan
 

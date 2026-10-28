@@ -121,7 +121,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 63;
+pub(crate) const SCHEMA_VERSION: i64 = 64;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -953,7 +953,7 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, SCHEMA_VERSION].contains(&user_version) {
+    if ![61, 62, 63, SCHEMA_VERSION].contains(&user_version) {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -981,7 +981,7 @@ fn validate_existing_connection(
         // This is an additive migration only. The original complete validation
         // and supported storage pragmas run before any DDL can touch the file.
         // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 63.
+        // unit; a crash leaves the original supported schema or complete 64.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -993,7 +993,11 @@ fn validate_existing_connection(
             application::conversations::initialize_messages(&transaction)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         }
-        application::conversations::proposals::initialize(&transaction)
+        if user_version < 63 {
+            application::conversations::proposals::initialize_revisions(&transaction)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        }
+        application::conversations::proposals::work_plans::initialize(&transaction)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         #[cfg(test)]
         migration_crash_hook("conversation-after-ddl");
@@ -1080,6 +1084,10 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     }
     if version == 62 {
         let added: std::collections::BTreeSet<_> = application::conversations::proposals::table_names().collect();
+        expected_tables.retain(|name| !added.contains(name));
+    }
+    if version == 63 {
+        let added: std::collections::BTreeSet<_> = application::conversations::proposals::work_plans::table_names().collect();
         expected_tables.retain(|name| !added.contains(name));
     }
     expected_tables.extend(
