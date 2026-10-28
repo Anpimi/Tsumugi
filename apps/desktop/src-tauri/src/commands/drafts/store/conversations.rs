@@ -90,6 +90,17 @@ fn validate_pending(
                 *submitted_seq,
             )
         }
+        ConversationDraftPending::WorkPlanStart {
+            conversation_id,
+            request,
+            submitted_seq,
+            ..
+        } => (request.project_id, *conversation_id, *submitted_seq),
+        ConversationDraftPending::WorkPlanControl {
+            conversation_id,
+            request,
+            submitted_seq,
+        } => (request.project_id, *conversation_id, *submitted_seq),
     };
     if project != key.project_id || thread != key.conversation_id || submitted > seq {
         return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-pending"));
@@ -214,10 +225,20 @@ fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<Conver
         || seq != value.map(|value| value.edit_seq.get() as i64)
         || pending != i64::from(value.is_some_and(|value| value.pending.is_some()))
         || value.is_some_and(|value| validate_value(key, value).is_err())
-        || format < FORMAT
+        || format < PROPOSAL_FORMAT
             && value.is_some_and(|value| {
                 !value.proposal_edits.is_empty() || value.message_edit_seq.is_some()
             })
+        || format < FORMAT
+            && value
+                .and_then(|value| value.pending.as_ref())
+                .is_some_and(|pending| {
+                    matches!(
+                        pending,
+                        ConversationDraftPending::WorkPlanStart { .. }
+                            | ConversationDraftPending::WorkPlanControl { .. }
+                    )
+                })
         || format == CONVERSATION_FORMAT
             && value
                 .and_then(|value| value.pending.as_ref())
@@ -252,7 +273,7 @@ fn read_head(
 }
 
 /// Validate every old head. Only format 3 needs its payload constraint rebuilt;
-/// format 4 already has the same tables and limits as the current format.
+/// formats 4 and 5 already have the current tables and limits.
 pub(super) fn upgrade(c: &Connection, format: i64) -> Result<()> {
     let mut query = c.prepare("SELECT project_id,conversation_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM conversation_draft_heads ORDER BY project_id,conversation_id").map_err(sql)?;
     let rows = query
@@ -273,7 +294,7 @@ pub(super) fn upgrade(c: &Connection, format: i64) -> Result<()> {
         decode(&key, row, format)?;
     }
     drop(query);
-    if format == ACTION_FORMAT {
+    if format >= ACTION_FORMAT {
         return Ok(());
     }
     c.execute_batch(

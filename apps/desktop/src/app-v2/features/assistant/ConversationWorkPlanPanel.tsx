@@ -23,6 +23,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import { workPlanMinutesValid, type ProposalWorkPlanTools } from "./proposalWorkPlan";
 import styles from "./ConversationWorkPlanPanel.module.css";
+import { ConversationRunPanel } from "./ConversationRunPanel";
 
 interface Props {
   owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
@@ -32,9 +33,7 @@ type PlanPage = Awaited<ReturnType<typeof conversationCommands.proposalWorkPlans
 type PlanLink = PlanPage["rows"][number];
 interface ToolProof { current: () => boolean; dispose: () => void }
 
-function WorkPlanHistoryRecord({ owner, link, visible, canRead }: {
-  owner: ConversationSession; link: PlanLink; visible: boolean; canRead: () => boolean;
-}) {
+function WorkPlanHistoryRecord({ owner, link, visible, canRead, ...runProps }: Props & { link: PlanLink; canRead: () => boolean }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const proposal = useSessionQuery({
     key: ["conversation", link.conversationId, "proposal", link.proposalId, "base", link.revisionId], scopes: ["project"], enabled: visible,
@@ -55,6 +54,7 @@ function WorkPlanHistoryRecord({ owner, link, visible, canRead }: {
       {proposal.data ? <><dt>{t("planHistoryOrigin")}</dt><dd><code>{proposal.data.origin.attemptId}</code></dd>
         <dt>{t("planHistoryResult")}</dt><dd><code>{proposal.data.origin.resultId}</code></dd></> : null}
     </dl></details>
+    <ConversationRunPanel owner={owner} link={link} visible={visible} {...runProps}/>
   </article>;
 }
 
@@ -268,7 +268,8 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
         if (canRead()) void history.refetch();
       }}>{t("retryRead")}</Button>}><p>{t("planHistoryFailed")}</p><CommandFailureDetails failure={commandFailure(history.error)}/></Banner> : null}
       {history.isSuccess && links.length === 0 ? <p>{t("planHistoryEmpty")}</p> : null}
-      {links.map(link => <WorkPlanHistoryRecord key={link.planId} owner={owner} link={link} visible={visible} canRead={canRead}/>)}
+      {links.map(link => <WorkPlanHistoryRecord key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
+        gate={gate} viewId={viewId} parentDialogId={parentDialogId} canRead={canRead}/>)}
       {history.hasNextPage ? <div className={styles.actions}><Button size="sm" pending={history.isFetchingNextPage} disabled={!visible || disabled || history.isFetching}
         onClick={() => { if (canRead()) void history.fetchNextPage(); }}>{t("planHistoryMore")}</Button></div> : null}
     </section>

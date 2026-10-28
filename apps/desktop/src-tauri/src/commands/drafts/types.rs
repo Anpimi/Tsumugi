@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use tsumugi_core::{
-    MergeBasis, SaveTranslationRevision, SelectTranslationRevision,
+    MergeBasis, ReviewCheckerKey, SaveTranslationRevision, SelectTranslationRevision,
     ai::conversation_planning::ConversationPlanningModelOutput,
     application::{
         AppendProjectConversationMessage, AuthorizeConversationProposalWorkPlan,
         CaptureConversationProposal, CreateProjectConversation, ReadConversationPlanningAction,
-        ReviseConversationProposal,
+        ReviseConversationProposal, WorkPlanCommand,
     },
-    execution::{ExecutionId, Revision},
+    execution::{ApplicationScopeBasis, ExecutionId, Revision, UnsignedDecimal},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -173,6 +173,44 @@ pub enum ConversationDraftPending {
         request: AuthorizeConversationProposalWorkPlan,
         submitted_seq: Revision,
     },
+    WorkPlanStart {
+        conversation_id: ExecutionId,
+        request: WorkPlanStartOriginal,
+        expected_attempt_id: ExecutionId,
+        submitted_seq: Revision,
+    },
+    WorkPlanControl {
+        conversation_id: ExecutionId,
+        request: WorkPlanControlOriginal,
+        submitted_seq: Revision,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanStartOriginal {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub expected_generation: Revision,
+}
+
+/// Host consent inputs are retained for identity, never restored as permission.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanControlOriginal {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub expected_generation: Revision,
+    pub command: WorkPlanCommand,
+    pub confirmed: bool,
+    pub checker_executions: Vec<ReviewCheckerKey>,
+    pub tool_execution: bool,
+    pub application_tool_executions: Vec<ApplicationScopeBasis>,
+    pub expires_at: Option<UnsignedDecimal>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

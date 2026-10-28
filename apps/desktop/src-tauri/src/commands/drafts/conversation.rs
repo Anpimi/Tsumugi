@@ -193,6 +193,77 @@ pub async fn resolve_local_conversation_draft(
                             .map_err(map_error)?
                             .is_some()
                     }
+                    ConversationDraftPending::WorkPlanStart {
+                        conversation_id,
+                        request,
+                        expected_attempt_id,
+                        ..
+                    } if request.project_id == key.project_id
+                        && *conversation_id == key.conversation_id =>
+                    {
+                        active
+                            .store
+                            .read_conversation_proposal_work_plan(
+                                key.project_id,
+                                key.conversation_id,
+                                request.plan_id,
+                            )
+                            .map_err(map_error)?;
+                        match active
+                            .store
+                            .work_plan_start_action_read(
+                                request.project_id,
+                                request.plan_id,
+                                request.action_id,
+                                request.expected_generation,
+                            )
+                            .map_err(map_error)?
+                        {
+                            Some(receipt) if receipt.attempt_id == *expected_attempt_id => true,
+                            Some(_) => {
+                                return Err(map_error(ExecutionError::new(
+                                    ErrorCode::ResultMismatch,
+                                    "conversation-drafts-work-plan-start",
+                                )));
+                            }
+                            None => false,
+                        }
+                    }
+                    ConversationDraftPending::WorkPlanControl {
+                        conversation_id,
+                        request,
+                        ..
+                    } if request.project_id == key.project_id
+                        && *conversation_id == key.conversation_id =>
+                    {
+                        active
+                            .store
+                            .read_conversation_proposal_work_plan(
+                                key.project_id,
+                                key.conversation_id,
+                                request.plan_id,
+                            )
+                            .map_err(map_error)?;
+                        // Core records this transition projection. Host checker and tool
+                        // inputs stay in the local journal and never reinstall consent.
+                        active
+                            .store
+                            .work_plan_control_action_read(
+                                request.project_id,
+                                &tsumugi_core::application::ControlWorkPlan {
+                                    action_id: request.action_id,
+                                    plan_id: request.plan_id,
+                                    expected_generation: request.expected_generation,
+                                    command: request.command,
+                                    confirmed: request.confirmed,
+                                    expires_at: request
+                                        .expires_at
+                                        .map(tsumugi_core::execution::UnsignedDecimal::get),
+                                },
+                            )
+                            .map_err(map_error)?
+                            .is_some()
+                    }
                     _ => {
                         return Err(map_error(ExecutionError::new(
                             ErrorCode::InvalidInput,

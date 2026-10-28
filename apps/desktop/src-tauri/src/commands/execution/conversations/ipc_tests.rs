@@ -53,7 +53,8 @@ fn journal_before_action(
     } else {
         &pending["request"]
     };
-    let key = json!({"projectId":source["projectId"],"conversationId":source["conversationId"]});
+    let conversation = pending.get("conversationId").unwrap_or(&source["conversationId"]);
+    let key = json!({"projectId":source["projectId"],"conversationId":conversation});
     let before = call(
         window,
         "read_local_conversation_draft",
@@ -1338,6 +1339,9 @@ fn proposal_work_plan_flow(
         ),
     );
     assert_eq!(page["rows"], json!([accepted["link"]]));
+    let start_original = json!({"projectId":project["metadata"]["projectId"],"planId":authorization["planId"],"actionId":authorization["actionId"],"expectedGeneration":accepted["receipt"]["lease"]["generation"]});
+    let start_journal = journal_before_action(window, project, json!({"kind":"work-plan-start","conversationId":revision["conversationId"],"request":start_original,"expectedAttemptId":accepted["receipt"]["attemptId"]}));
+    assert_eq!(reject(window, "resolve_local_conversation_draft", start_journal.clone())["code"], "outcome-unknown");
     let attempt = call(
         window,
         "start_work_plan",
@@ -1347,6 +1351,14 @@ fn proposal_work_plan_flow(
         ),
     );
     assert_eq!(attempt, accepted["receipt"]["attemptId"]);
+    let mut wrong_attempt = start_journal.clone();
+    wrong_attempt["resolve"]["pending"]["expectedAttemptId"] = json!(identity());
+    assert_eq!(reject(window, "resolve_local_conversation_draft", wrong_attempt)["code"], "result-mismatch");
+    let mut wrong_thread = start_journal.clone();
+    let foreign_thread = identity();
+    wrong_thread["resolve"]["pending"]["conversationId"] = json!(foreign_thread);
+    wrong_thread["resolve"]["write"]["key"]["conversationId"] = json!(foreign_thread);
+    assert!(!reject(window, "resolve_local_conversation_draft", wrong_thread).is_null());
     let candidate_read = in_session(
         project,
         json!({"locale":"zh-CN","sourceSnapshotId":prepared["plan"]["scope"][0]["sourceSnapshotId"],"scopeId":null,"unitIds":[unit],"state":"available","afterOrdinal":null,"readVersion":null}),
@@ -1421,10 +1433,24 @@ fn proposal_work_plan_flow(
     assert!(runtime_absent(app, &reopened));
     let mut recovered_journal = authorization_journal;
     recovered_journal["sessionToken"] = reopened["sessionToken"].clone();
-    assert_eq!(
-        journal_after_action(window, &recovered_journal),
-        journal_receipt
-    );
+    assert!(!reject(window, "resolve_local_conversation_draft", recovered_journal).is_null(), "an old resolved journal frame cannot overwrite the newer start frame");
+    assert!(journal_receipt["value"]["pending"].is_null());
+    let mut recovered_start = start_journal;
+    recovered_start["sessionToken"] = reopened["sessionToken"].clone();
+    journal_after_action(window, &recovered_start);
+    assert!(runtime_absent(app, &reopened));
+    let plan_id = serde_json::from_value(authorization["planId"].clone()).unwrap();
+    let generation = app.state::<AppState>().sessions.with(move |sessions| {
+        sessions.active.as_ref().unwrap().store.work_plan_status(plan_id).unwrap().lease.generation
+    });
+    let control_original = json!({"projectId":project["metadata"]["projectId"],"planId":authorization["planId"],"actionId":identity(),"expectedGeneration":generation,"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":null});
+    let control_journal = journal_before_action(window, &reopened, json!({"kind":"work-plan-control","conversationId":revision["conversationId"],"request":control_original}));
+    let controlled = call(window, "control_work_plan", in_session(&reopened, control_original.clone()));
+    assert_eq!(controlled["state"], "paused");
+    let mut changed_host_input = control_journal.clone();
+    changed_host_input["resolve"]["pending"]["request"]["toolExecution"] = json!(true);
+    assert!(!reject(window, "resolve_local_conversation_draft", changed_host_input).is_null(), "the Core projection does not replace the journal's exact Host input identity");
+    journal_after_action(window, &control_journal);
     assert!(runtime_absent(app, &reopened));
     assert_eq!(
         call(

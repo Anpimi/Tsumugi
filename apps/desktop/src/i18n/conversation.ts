@@ -1,7 +1,9 @@
 import { conversationWorkPlansEn, conversationWorkPlansZh } from "./conversationWorkPlans";
+import { conversationRunsEn, conversationRunsZh } from "./conversationRuns";
 
 export const conversationEn = {
   ...conversationWorkPlansEn,
+  ...conversationRunsEn,
   lead: "Localization lead", loading: "Loading conversations…", unavailable: "Conversations could not be opened",
   refresh: "Refresh conversations", newThread: "New conversation", chooseThread: "Conversation", chooseThreadPlaceholder: "Choose a conversation",
   threadNumber: "Conversation {{number}}", untitled: "Untitled conversation", retainedInput: "Conversation with local input {{number}}",
@@ -69,6 +71,7 @@ export const conversationEn = {
 
 export const conversationZh: typeof conversationEn = {
   ...conversationWorkPlansZh,
+  ...conversationRunsZh,
   lead: "本地化负责人", loading: "正在读取对话…", unavailable: "对话没能打开",
   refresh: "刷新对话", newThread: "新对话", chooseThread: "对话", chooseThreadPlaceholder: "选择一个对话",
   threadNumber: "对话 {{number}}", untitled: "未命名对话", retainedInput: "有本机草稿的对话 {{number}}",

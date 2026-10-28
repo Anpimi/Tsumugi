@@ -11,7 +11,8 @@ type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
 const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
 export function conversationPendingTarget(pending: ConversationDraftPending) {
-  return pending.kind === "proposal-work-plan" ? pending.request.proposal : pending.request;
+  return pending.kind === "proposal-work-plan" ? pending.request.proposal
+    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" ? { projectId: pending.request.projectId, conversationId: pending.conversationId } : pending.request;
 }
 export function locallyReplayableConversationRequest(pending: ConversationDraftPending | null | undefined) {
   return pending?.kind === "create" || pending?.kind === "append" || pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision";

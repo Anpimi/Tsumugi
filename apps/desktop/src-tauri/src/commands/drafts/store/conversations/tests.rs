@@ -379,6 +379,289 @@ fn format_four(store: &DraftStore) {
         .unwrap();
 }
 
+fn running_pending(write: &ConversationDraftWrite, control: bool) -> ConversationDraftPending {
+    if control {
+        ConversationDraftPending::WorkPlanControl {
+            conversation_id: write.key.conversation_id,
+            request: WorkPlanControlOriginal {
+                project_id: write.key.project_id,
+                plan_id: ExecutionId::new(),
+                action_id: ExecutionId::new(),
+                expected_generation: rev(1),
+                command: tsumugi_core::application::WorkPlanCommand::Continue,
+                confirmed: true,
+                checker_executions: vec![],
+                tool_execution: true,
+                application_tool_executions: vec![tsumugi_core::execution::ApplicationScopeBasis {
+                    instance_id: ExecutionId::new(),
+                    activation_generation: 1,
+                }],
+                expires_at: Some(tsumugi_core::execution::UnsignedDecimal::from(42u64)),
+            },
+            submitted_seq: write.value.edit_seq,
+        }
+    } else {
+        ConversationDraftPending::WorkPlanStart {
+            conversation_id: write.key.conversation_id,
+            request: WorkPlanStartOriginal {
+                project_id: write.key.project_id,
+                plan_id: ExecutionId::new(),
+                action_id: ExecutionId::new(),
+                expected_generation: rev(1),
+            },
+            expected_attempt_id: ExecutionId::new(),
+            submitted_seq: write.value.edit_seq,
+        }
+    }
+}
+
+#[test]
+fn running_original_requests_keep_scope_sticky_identity_and_newer_inputs() {
+    for control in [false, true] {
+        let (_directory, store, mut write) = setup();
+        write.value.message_edit_seq = Some(rev(1));
+        write.value.proposal_edits = vec![proposal_draft(1)];
+        write.value.pending = Some(running_pending(&write, control));
+        let mut wrong = write.clone();
+        match wrong.value.pending.as_mut().unwrap() {
+            ConversationDraftPending::WorkPlanStart {
+                conversation_id, ..
+            }
+            | ConversationDraftPending::WorkPlanControl {
+                conversation_id, ..
+            } => *conversation_id = ExecutionId::new(),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            store.write_conversation(&wrong).unwrap_err().stage,
+            "conversation-drafts-pending"
+        );
+        wrong = write.clone();
+        match wrong.value.pending.as_mut().unwrap() {
+            ConversationDraftPending::WorkPlanStart { submitted_seq, .. }
+            | ConversationDraftPending::WorkPlanControl { submitted_seq, .. } => {
+                *submitted_seq = rev(2)
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            store.write_conversation(&wrong).unwrap_err().stage,
+            "conversation-drafts-pending"
+        );
+        let mut json = serde_json::to_value(&write).unwrap();
+        json["value"]["pending"]["request"]["sessionToken"] = serde_json::json!("not-storable");
+        assert!(serde_json::from_value::<ConversationDraftWrite>(json).is_err());
+        let mut json = serde_json::to_value(&write).unwrap();
+        json["value"]["pending"]["permit"] = serde_json::json!("not-storable");
+        assert!(serde_json::from_value::<ConversationDraftWrite>(json).is_err());
+        let first = store.write_conversation(&write).unwrap();
+        assert_eq!(store.write_conversation(&write).unwrap(), first);
+        assert_eq!(
+            DraftStore::at(store.directory.clone())
+                .unwrap()
+                .read_conversation(&write.key)
+                .unwrap(),
+            first
+        );
+        let original = write.value.pending.clone().unwrap();
+        let mut newer = write.clone();
+        newer.expected_revision = first.revision;
+        newer.value.edit_seq = rev(2);
+        newer.value.message_edit_seq = Some(rev(2));
+        newer.value.text = "Newer message B while the original run action is pending".into();
+        let second = store.write_conversation(&newer).unwrap();
+        newer.expected_revision = second.revision;
+        newer.value.edit_seq = rev(3);
+        let mut replaced = newer.clone();
+        replaced.value.pending = Some(running_pending(&replaced, control));
+        assert_eq!(
+            store.write_conversation(&replaced).unwrap_err().stage,
+            "drafts-pending"
+        );
+        newer.value.pending = None;
+        assert_eq!(
+            store.write_conversation(&newer).unwrap_err().stage,
+            "drafts-pending"
+        );
+        assert_eq!(
+            store
+                .clear_conversation(&ConversationDraftClear {
+                    key: write.key.clone(),
+                    expected_revision: second.revision
+                })
+                .unwrap_err()
+                .stage,
+            "drafts-pending"
+        );
+        let resolve = ConversationDraftResolve {
+            write: newer,
+            pending: original,
+        };
+        let settled = store.resolve_conversation(&resolve).unwrap();
+        assert_eq!(settled.value, Some(resolve.write.value.clone()));
+        assert_eq!(store.resolve_conversation(&resolve).unwrap(), settled);
+        assert_eq!(
+            store.write_conversation(&write).unwrap_err().stage,
+            "drafts-revision"
+        );
+    }
+}
+
+#[test]
+fn formats_four_and_five_read_without_writes_and_upgrade_without_rewriting_heads() {
+    for format in [ACTION_FORMAT, PROPOSAL_FORMAT] {
+        let (_directory, store, mut write) = setup();
+        if format == PROPOSAL_FORMAT {
+            write.value.proposal_edits = vec![proposal_draft(1)];
+            write.value.message_edit_seq = Some(rev(1));
+            write.value.pending = Some(revision_pending(&write));
+        } else {
+            write.value.pending = Some(pending(&write));
+        }
+        let first = store.write_conversation(&write).unwrap();
+        let translation = translation(write.key.project_id);
+        let translated = store.write(&translation).unwrap();
+        let path = store.directory.join(DATABASE);
+        let c = Connection::open(&path).unwrap();
+        c.pragma_update(None, "user_version", format).unwrap();
+        let payloads = || {
+            c.prepare("SELECT payload FROM conversation_draft_heads UNION ALL SELECT payload FROM draft_heads").unwrap().query_map([], |row| row.get::<_, Vec<u8>>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let roots = || {
+            c.prepare("SELECT name,rootpage FROM sqlite_master WHERE type='table' ORDER BY name")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        let original = payloads();
+        let root_pages = roots();
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(store.read_conversation(&write.key).unwrap(), first);
+        assert_eq!(
+            store
+                .list_conversations(write.key.project_id, None, 50)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        assert_eq!(store.read(&translation.key).unwrap(), translated);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        let mut invalid = write.clone();
+        invalid.expected_revision = rev(9);
+        assert!(store.write_conversation(&invalid).is_err());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(store.write_conversation(&write).unwrap(), first);
+        assert_eq!(payloads(), original);
+        assert_eq!(roots(), root_pages);
+        assert_eq!(
+            c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            FORMAT
+        );
+    }
+}
+
+#[test]
+fn format_five_upgrade_abort_keeps_complete_original_or_committed_records() {
+    for stage in [
+        "conversation-upgrade-before-ddl",
+        "conversation-upgrade-after-ddl",
+        "write-before-commit",
+        "write-after-commit",
+    ] {
+        let (directory, store, mut write) = setup();
+        write.value.proposal_edits = vec![proposal_draft(1)];
+        write.value.message_edit_seq = Some(rev(1));
+        write.value.pending = Some(revision_pending(&write));
+        let conversation = store.write_conversation(&write).unwrap();
+        let old = translation(write.key.project_id);
+        let first = store.write(&old).unwrap();
+        Connection::open(store.directory.join(DATABASE))
+            .unwrap()
+            .pragma_update(None, "user_version", PROPOSAL_FORMAT)
+            .unwrap();
+        let mut next = old.clone();
+        next.expected_revision = first.revision;
+        next.value.edit_seq = rev(2);
+        next.value.text = "Translation alongside retained proposal input".into();
+        super::super::tests::crash_child(directory.path(), &store, &next, stage);
+        assert_eq!(store.read_conversation(&write.key).unwrap(), conversation);
+        assert_eq!(
+            store.read(&old.key).unwrap().value,
+            if stage == "write-after-commit" {
+                Some(next.value)
+            } else {
+                first.value
+            }
+        );
+        assert_eq!(
+            Connection::open(store.directory.join(DATABASE))
+                .unwrap()
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            if stage == "write-after-commit" {
+                FORMAT
+            } else {
+                PROPOSAL_FORMAT
+            }
+        );
+    }
+}
+
+#[test]
+fn older_formats_reject_running_requests_without_rewriting_the_journal() {
+    for format in [CONVERSATION_FORMAT, ACTION_FORMAT, PROPOSAL_FORMAT] {
+        for control in [false, true] {
+            let (_directory, store, mut write) = setup();
+            let mut head = store.write_conversation(&write).unwrap();
+            if format == CONVERSATION_FORMAT {
+                format_three(&store);
+            }
+            let path = store.directory.join(DATABASE);
+            let c = Connection::open(&path).unwrap();
+            c.pragma_update(None, "user_version", format).unwrap();
+            head.value.as_mut().unwrap().pending = Some(running_pending(&write, control));
+            c.execute(
+                "UPDATE conversation_draft_heads SET payload=?1,has_pending=1",
+                [serde_json::to_vec(&head).unwrap()],
+            )
+            .unwrap();
+            drop(c);
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(
+                store.read_conversation(&write.key).unwrap_err().code,
+                ErrorCode::CorruptLedger
+            );
+            assert_eq!(
+                store
+                    .list_conversations(write.key.project_id, None, 50)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::CorruptLedger
+            );
+            assert_eq!(
+                store
+                    .write(&translation(write.key.project_id))
+                    .unwrap_err()
+                    .code,
+                ErrorCode::CorruptLedger
+            );
+            write.expected_revision = rev(1);
+            write.value.edit_seq = rev(2);
+            assert_eq!(
+                store.write_conversation(&write).unwrap_err().code,
+                ErrorCode::CorruptLedger
+            );
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+    }
+}
+
 fn proposal_draft(seq: u64) -> ConversationProposalDraft {
     ConversationProposalDraft {
         proposal_id: ExecutionId::new(),

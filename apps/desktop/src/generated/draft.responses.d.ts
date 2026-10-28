@@ -57,6 +57,19 @@ export type ConversationDraftPending =
       kind: "proposal-work-plan";
       request: AuthorizeConversationProposalWorkPlan;
       submittedSeq: Revision;
+    }
+  | {
+      conversationId: ExecutionId;
+      expectedAttemptId: ExecutionId;
+      kind: "work-plan-start";
+      request: WorkPlanStartOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      conversationId: ExecutionId;
+      kind: "work-plan-control";
+      request: WorkPlanControlOriginal;
+      submittedSeq: Revision;
     };
 export type UnsignedDecimal = string;
 export type ConversationPlanningModelOutput =
@@ -180,6 +193,7 @@ export type AutomationEffect =
   | "publish-discussion"
   | "dispatch-team-work"
   | "send-team-message";
+export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -766,6 +780,27 @@ export interface ConversationProposalRef {
   projectId: ExecutionId;
   proposalId: ExecutionId;
   revisionId: ExecutionId;
+}
+export interface WorkPlanStartOriginal {
+  actionId: ExecutionId;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+}
+/**
+ * Host consent inputs are retained for identity, never restored as permission.
+ */
+export interface WorkPlanControlOriginal {
+  actionId: ExecutionId;
+  applicationToolExecutions: ApplicationScopeBasis[];
+  checkerExecutions: ReviewCheckerKey[];
+  command: WorkPlanCommand;
+  confirmed: boolean;
+  expectedGeneration: Revision;
+  expiresAt: UnsignedDecimal | null;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  toolExecution: boolean;
 }
 /**
  * Local unfinished input, separate from immutable project proposal revisions.

@@ -16,4 +16,5 @@ export const SelectionPolicyValues = ["candidates-only","missing-only","replace-
 export const StageModeValues = ["manual","assisted","skipped"] as const;
 export const TeamWorkKindValues = ["translation","review","evidence"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;
+export const WorkPlanCommandValues = ["pause","stop","take-over","continue"] as const;
 export const WorkStageValues = ["understanding","resources","generation","checks","delivery"] as const;

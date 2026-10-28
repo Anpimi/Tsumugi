@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { conversationDraftCommands, type ConversationDraftPending, type ConversationProposalDraft } from "./conversationDraftCommands";
+import { conversationDraftCommands, locallyReplayableConversationRequest, type ConversationDraftPending, type ConversationProposalDraft } from "./conversationDraftCommands";
 import { conversationCommands, isConversationMessageText } from "./conversationCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 
@@ -16,6 +16,20 @@ const proposalEdit = (proposalId = fixtureIdentity(930), editSeq = "2"): Convers
 const proposalPending = (draft: ConversationProposalDraft): Extract<ConversationDraftPending, { kind: "proposal-revision" }> => ({
   kind: "proposal-revision", submittedSeq: draft.editSeq,
   request: { ...key, actionId: fixtureIdentity(932), revisionId: fixtureIdentity(933), proposalId: draft.proposalId, expectedRevisionId: draft.expectedRevisionId, content: structuredClone(draft.content) },
+});
+type RunPending = Extract<ConversationDraftPending, { kind: "work-plan-start" | "work-plan-control" }>;
+const runningPending = (kind: RunPending["kind"]): RunPending => {
+  const request = { projectId: key.projectId, planId: fixtureIdentity(940), actionId: fixtureIdentity(941), expectedGeneration: "0" };
+  return kind === "work-plan-start"
+    ? { kind, conversationId: key.conversationId, request, expectedAttemptId: fixtureIdentity(942), submittedSeq: "1" }
+    : { kind, conversationId: key.conversationId, submittedSeq: "1", request: { ...request, command: "continue", confirmed: true,
+      checkerExecutions: [{ profile: { id: "example.text-review", schemaVersion: 1, behaviorVersion: 1 },
+        provider: { plugin: { publisher: "example", id: "text-review", version: "0.1.0" }, packageDigest: "c".repeat(64), componentId: "worker", contributionId: "text-review-check" } }],
+      toolExecution: true, applicationToolExecutions: [{ instanceId: fixtureIdentity(943), activationGeneration: 1 }, { instanceId: fixtureIdentity(944), activationGeneration: 2 }], expiresAt: "42" } };
+};
+const runningValue = (original: RunPending) => ({
+  text: "  Newer message B\n🙂  ", editSeq: "3", messageEditSeq: "2", pending: original,
+  proposalEdits: [proposalEdit(fixtureIdentity(945), "2"), proposalEdit(fixtureIdentity(946), "3")],
 });
 beforeEach(() => { invoke.mockReset(); });
 
@@ -136,6 +150,125 @@ describe("conversation journal command boundary", () => {
     }
     invoke.mockResolvedValueOnce({ ...head(), value });
     expect((await conversationDraftCommands.write({ sessionToken, write: { ...write, value } })).value).toEqual(value);
+  });
+
+  describe.each(["work-plan-start", "work-plan-control"] as const)("%s original request", kind => {
+    it("reads the token-free request with its outer conversation identity and retains newer message and proposal input", async () => {
+      const value = runningValue(runningPending(kind));
+      invoke.mockResolvedValueOnce({ ...head(), value });
+      expect((await conversationDraftCommands.read({ sessionToken, key })).value).toEqual(value);
+      expect(invoke.mock.calls).toEqual([["read_local_conversation_draft", { request: { sessionToken, key } }]]);
+    });
+
+    it("freezes the complete original request and input before accepting an exact write acknowledgement", async () => {
+      const value = runningValue(runningPending(kind));
+      const request = { sessionToken, write: { ...write, value: structuredClone(value) } };
+      const response = { ...head(), value: structuredClone(value) };
+      let answer!: (value: unknown) => void; invoke.mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+      const result = conversationDraftCommands.write(request);
+      request.write.value.pending.request.actionId = fixtureIdentity(947);
+      request.write.value.pending.request.expectedGeneration = "1";
+      request.write.value.text = "Message C entered while writing";
+      request.write.value.proposalEdits[0].content.summary = "Newer proposal C";
+      if (request.write.value.pending.kind === "work-plan-start") request.write.value.pending.expectedAttemptId = fixtureIdentity(948);
+      else {
+        request.write.value.pending.request.checkerExecutions[0].provider.packageDigest = "d".repeat(64);
+        request.write.value.pending.request.applicationToolExecutions[0].activationGeneration = 3;
+        request.write.value.pending.request.toolExecution = false;
+        request.write.value.pending.request.expiresAt = "43";
+      }
+      answer(response);
+      expect((await result).value).toEqual(value);
+      expect(invoke.mock.calls).toEqual([["write_local_conversation_draft", { request: { sessionToken, write: { ...write, value } } }]]);
+    });
+
+    it("freezes resolution input and accepts only an acknowledgement preserving newer input with pending cleared", async () => {
+      const original = runningPending(kind), value = { ...runningValue(original), pending: null };
+      const input = { sessionToken, resolve: { write: { ...write, value: structuredClone(value) }, pending: structuredClone(original) } };
+      const response = { ...head(), value: structuredClone(value) };
+      let answer!: (value: unknown) => void; invoke.mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+      const result = conversationDraftCommands.resolve(input);
+      input.resolve.pending.request.actionId = fixtureIdentity(947);
+      input.resolve.write.value.text = "Message C entered while resolving";
+      input.resolve.write.value.proposalEdits[0].content.summary = "Newer proposal C";
+      if (input.resolve.pending.kind === "work-plan-start") input.resolve.pending.expectedAttemptId = fixtureIdentity(948);
+      else {
+        input.resolve.pending.request.checkerExecutions[0].profile.behaviorVersion = 2;
+        input.resolve.pending.request.applicationToolExecutions[0].activationGeneration = 3;
+      }
+      answer(response);
+      expect((await result).value).toEqual(value);
+      expect(invoke.mock.calls[0]).toEqual(["resolve_local_conversation_draft", { request: { sessionToken, resolve: { write: { ...write, value }, pending: original } } }]);
+      for (const bad of [{ ...value, text: "" }, { ...value, proposalEdits: [] }, { ...value, pending: original }]) {
+        invoke.mockResolvedValueOnce({ ...head(), value: bad });
+        await expect(conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value }, pending: original } })).rejects.toThrow();
+      }
+    });
+
+    it("rejects wrong scope, future pending sequences, embedded tokens and unknown wire fields", async () => {
+      const original = runningPending(kind), value = runningValue(original);
+      const badPending: unknown[] = [{ ...original, conversationId: fixtureIdentity(949) },
+        { ...original, request: { ...original.request, projectId: fixtureIdentity(950) } },
+        { ...original, submittedSeq: "4" }, { ...original, conversationId: undefined },
+        { ...original, request: { ...original.request, sessionToken: "not-storable" } },
+        { ...original, request: { ...original.request, conversationId: key.conversationId } },
+        { ...original, permit: "not-storable" }];
+      if (original.kind === "work-plan-start") badPending.push({ ...original, expectedAttemptId: undefined });
+      for (const bad of badPending) {
+        invoke.mockResolvedValueOnce({ ...head(), value: { ...value, pending: bad } });
+        await expect(conversationDraftCommands.read({ sessionToken, key })).rejects.toThrow();
+      }
+    });
+
+    it("rejects write acknowledgements changing scope, action, generation, attempt or Host consent inputs", async () => {
+      const original = runningPending(kind), value = runningValue(original);
+      const changed = [{ ...original, conversationId: fixtureIdentity(949) },
+        { ...original, request: { ...original.request, projectId: fixtureIdentity(950) } },
+        { ...original, request: { ...original.request, actionId: fixtureIdentity(947) } },
+        { ...original, request: { ...original.request, planId: fixtureIdentity(951) } },
+        { ...original, request: { ...original.request, expectedGeneration: "1" } },
+        ...(original.kind === "work-plan-start" ? [{ ...original, expectedAttemptId: fixtureIdentity(948) }] : [
+          { ...original, request: { ...original.request, checkerExecutions: [] } },
+          { ...original, request: { ...original.request, checkerExecutions: [{ ...original.request.checkerExecutions[0], profile: { ...original.request.checkerExecutions[0].profile, behaviorVersion: 2 } }] } },
+          { ...original, request: { ...original.request, toolExecution: false } },
+          { ...original, request: { ...original.request, applicationToolExecutions: [] } },
+          { ...original, request: { ...original.request, applicationToolExecutions: [...original.request.applicationToolExecutions].reverse() } },
+          { ...original, request: { ...original.request, applicationToolExecutions: [{ ...original.request.applicationToolExecutions[0], activationGeneration: 3 }, original.request.applicationToolExecutions[1]] } },
+          { ...original, request: { ...original.request, expiresAt: "43" } },
+          { ...original, request: { ...original.request, command: "pause" } },
+          { ...original, request: { ...original.request, confirmed: false } },
+        ])];
+      for (const bad of changed) {
+        invoke.mockResolvedValueOnce({ ...head(), value: { ...value, pending: bad } });
+        await expect(conversationDraftCommands.write({ sessionToken, write: { ...write, value } })).rejects.toThrow();
+      }
+    });
+
+    it("keeps journal structure separate from execution eligibility and never admits static local replay", async () => {
+      const original = runningPending(kind);
+      expect(original.request.expectedGeneration).toBe("0");
+      expect(locallyReplayableConversationRequest(original)).toBe(false);
+      if (original.kind === "work-plan-control") {
+        for (const command of ["pause", "stop", "take-over", "continue"] as const) {
+          const unconfirmed = { ...original, request: { ...original.request, command, confirmed: false, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], expiresAt: null } };
+          const value = runningValue(unconfirmed);
+          invoke.mockResolvedValueOnce({ ...head(), value });
+          expect((await conversationDraftCommands.read({ sessionToken, key })).value).toEqual(value);
+          expect(locallyReplayableConversationRequest(unconfirmed)).toBe(false);
+        }
+      }
+    });
+  });
+
+  it("requires the complete Host control request in journal responses without restoring execution authority", async () => {
+    const original = runningPending("work-plan-control");
+    if (original.kind !== "work-plan-control") throw new Error("Control fixture required");
+    const value = runningValue(original);
+    for (const field of ["checkerExecutions", "toolExecution", "applicationToolExecutions", "expiresAt"] as const) {
+      const incomplete = Object.fromEntries(Object.entries(original.request).filter(([name]) => name !== field));
+      invoke.mockResolvedValueOnce({ ...head(), value: { ...value, pending: { ...original, request: incomplete } } });
+      await expect(conversationDraftCommands.read({ sessionToken, key })).rejects.toThrow();
+    }
   });
 
   it("rejects mismatched or unordered planning discovery pages without querying details or replaying", async () => {

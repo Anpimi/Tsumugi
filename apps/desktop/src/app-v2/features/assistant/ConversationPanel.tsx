@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { conversationCommands, isConversationMessageText } from "../../../conversationCommands";
@@ -15,6 +15,7 @@ import { ConversationPlanningPanel } from "./ConversationPlanningPanel";
 import { ConversationProposals } from "./ConversationProposals";
 import { ConversationWorkPlanPanel } from "./ConversationWorkPlanPanel";
 import { locallyReplayableConversationRequest } from "../../../conversationDraftCommands";
+import { isRunPending } from "./conversationRun";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
@@ -103,9 +104,13 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
   state.summaries.forEach((summary, index) => { if (!known.has(summary.key.conversationId)) known.set(summary.key.conversationId, t("retainedInput", { number: index + 1 })); });
   for (const [id] of state.inputs) if (!known.has(id)) known.set(id, t("untitled"));
   const blocked = disabled || state.retired;
+  const presentation = useRef({ visible, blocked, activeId, viewId, parentDialogId });
+  useLayoutEffect(() => { presentation.current = { visible, blocked, activeId, viewId, parentDialogId }; });
+  useLayoutEffect(() => () => { presentation.current.visible = false; }, []);
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
   const pending = input?.value.pending;
-  const replayable = locallyReplayableConversationRequest(pending);
+  const runPending = isRunPending(pending);
+  const replayable = locallyReplayableConversationRequest(pending) || !!activeId && owner.canRetryRun(activeId);
   const exists = pending?.kind !== "create" || input?.outcome === "recorded";
   useEffect(() => () => gate.releaseOwner("conversation-composer"), [gate]);
   useEffect(() => { if (!visible) { composing.current = false; gate.releaseOwner("conversation-composer"); } }, [gate, visible]);
@@ -133,10 +138,19 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
         <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
       {pending && !input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
-        <p>{t(input.outcome === "blocked" ? "absentBlocked" : input.outcome === "absent" ? replayable ? "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : "pending")}</p>
+        <p>{t(input.outcome === "blocked" ? runPending ? "runBlocked" : "absentBlocked" : input.outcome === "absent" ? replayable ? runPending ? "runAbsent" : "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : runPending ? "runPending" : "pending")}</p>
         <CommandFailureDetails failure={input.failure?.cause ?? null}/>
         <div className={local.actions}><Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.check(activeId!)}>{t("check")}</Button>
-          {input.outcome === "absent" && replayable ? <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retry(activeId!)}>{t("retryOriginal")}</Button> : null}</div>
+          {input.outcome === "absent" && replayable ? <Button size="sm" disabled={blocked || !!input.busy} onClick={() => {
+            const conversationId = activeId!;
+            const current = () => {
+              const live = presentation.current;
+              return live.visible && !live.blocked && live.activeId === conversationId &&
+                live.viewId === viewId && live.parentDialogId === parentDialogId &&
+                gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+            };
+            if (current()) void owner.retry(conversationId, current);
+          }}>{t(runPending ? "runRetryOriginal" : "retryOriginal")}</Button> : null}</div>
       </Banner> : null}
       <Field label={t("message")} error={byteLength > 8192 ? t("messageTooLong") : undefined} description={t("localOnly")}>
         <TextArea ref={composer} rows={3} value={input.value.text} readOnly={blocked} placeholder={t("placeholder")}
@@ -149,7 +163,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
             event.preventDefault(); event.stopPropagation(); if (!blocked) void owner.append(activeId!);
           }}/>
       </Field>
-      <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? pending?.kind === "planning" ? "askStarting" : pending?.kind === "proposal-work-plan" ? "planConfirming" : pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision" ? "proposalSaving" : "savingMessage" : input.busy === "check" ? pending ? "checking" : "proposalChecking" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</span>
+      <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? runPending ? "runSending" : pending?.kind === "planning" ? "askStarting" : pending?.kind === "proposal-work-plan" ? "planConfirming" : pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision" ? "proposalSaving" : "savingMessage" : input.busy === "check" ? input.runBusy ? "runChecking" : pending ? "checking" : "proposalChecking" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</span>
         <Button variant="secondary" size="sm" disabled={blocked || !!input.busy || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
           onClick={() => void owner.append(activeId!)}>{t("saveMessage")}</Button></div>
     </div> : null}
