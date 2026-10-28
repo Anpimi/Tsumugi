@@ -3,11 +3,18 @@ use super::ProjectConversationMessage;
 use crate::{
     ai::{AiConfig, AiPreview},
     application::WorkProtection,
-    execution::ExecutionId,
+    execution::{ErrorCode, ExecutionError, ExecutionId, FixedInput, codec},
 };
 use serde::{Deserialize, Serialize};
+use std::{
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 
-pub const CONVERSATION_PLANNING_PREVIEW_VERSION: u32 = 1;
+pub const CONVERSATION_PLANNING_PREVIEW_VERSION: u32 = 2;
 pub const MAX_CONVERSATION_PLANNING_MESSAGES: usize = 16;
 pub const MAX_CONVERSATION_PLANNING_PREVIEW_BYTES: usize = 256 * 1024;
 
@@ -118,4 +125,153 @@ impl CapturedConversationPlanning {
     pub fn preview(&self) -> &ConversationPlanningPreview {
         &self.preview
     }
+    pub fn preview_digest(&self) -> Result<String, ExecutionError> {
+        Ok(codec::digest(&codec::encode(
+            &self.preview,
+            MAX_CONVERSATION_PLANNING_PREVIEW_BYTES,
+        )?))
+    }
+}
+
+/// The trusted human command confirms one exact preview and one finite request.
+/// The action identity is also the attempt identity in the original ledger.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationPlanningConsent {
+    pub action_id: ExecutionId,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub preview_digest: String,
+    pub expires_at_ms: crate::execution::UnsignedDecimal,
+    pub share_messages: bool,
+    pub share_units: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct PreparedConversationPlanning {
+    pub(crate) capture: CapturedConversationPlanning,
+    pub(crate) consent: ConversationPlanningConsent,
+    pub(crate) input: FixedInput,
+    pub(crate) permit: ConversationPlanningPermit,
+}
+impl PreparedConversationPlanning {
+    pub fn input(&self) -> &FixedInput {
+        &self.input
+    }
+    pub fn preview(&self) -> &ConversationPlanningPreview {
+        self.capture.preview()
+    }
+    pub fn consent(&self) -> &ConversationPlanningConsent {
+        &self.consent
+    }
+}
+
+/// Session-local authority, never reconstructed from descriptive fixed bytes.
+#[derive(Clone, Debug)]
+pub struct ConversationPlanningPermit {
+    pub(crate) capture: CapturedConversationPlanning,
+    pub(crate) input: FixedInput,
+    pub(crate) deadline: Instant,
+    pub(crate) expires_at_ms: u64,
+    pub(crate) active: Arc<AtomicBool>,
+    pub(crate) store_live: Arc<AtomicBool>,
+    pub(crate) store_unknown: Arc<AtomicBool>,
+    pub(crate) authority_revision: Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) issued_revision: u64,
+    pub(crate) runtime: Arc<OnceLock<(ExecutionId, Arc<AtomicBool>)>>,
+}
+impl ConversationPlanningPermit {
+    pub(crate) fn check_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
+        let wall = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|value| u64::try_from(value.as_millis()).ok());
+        if !self.active.load(Ordering::Acquire)
+            || !self.store_live.load(Ordering::Acquire)
+            || self.store_unknown.load(Ordering::Acquire)
+            || self.authority_revision.load(Ordering::Acquire) != self.issued_revision
+            || Instant::now() >= self.deadline
+            || wall.is_none_or(|now| now >= self.expires_at_ms)
+            || self
+                .runtime
+                .get()
+                .is_some_and(|(_, live)| !live.load(Ordering::Acquire))
+        {
+            self.revoke();
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "conversation-planning-permit",
+            ));
+        }
+        if input.bytes() != self.input.bytes() {
+            return Err(ExecutionError::new(
+                ErrorCode::ResultMismatch,
+                "conversation-planning-permit",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn check_dispatch(&self, input: &FixedInput) -> Result<(), ExecutionError> {
+        self.check_input(input)?;
+        if self.runtime.get().is_none() {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "conversation-planning-runtime",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn bind_runtime(
+        &self,
+        generation: ExecutionId,
+        live: &Arc<AtomicBool>,
+    ) -> Result<(), ExecutionError> {
+        self.check_input(&self.input)?;
+        let (original, original_live) = self.runtime.get_or_init(|| (generation, live.clone()));
+        if *original != generation
+            || !Arc::ptr_eq(original_live, live)
+            || !live.load(Ordering::Acquire)
+        {
+            self.revoke();
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "conversation-planning-runtime",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn revoke(&self) {
+        self.active.store(false, Ordering::Release);
+    }
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReadConversationPlanningAction {
+    pub project_id: ExecutionId,
+    pub conversation_id: ExecutionId,
+    pub consent: ConversationPlanningConsent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationPlanningReceipt {
+    pub project_id: ExecutionId,
+    pub conversation_id: ExecutionId,
+    pub consent: ConversationPlanningConsent,
+    pub input_digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationPlanningRecovery {
+    pub request: ReadConversationPlanningAction,
+    pub outcome: super::ConversationActionOutcome<ConversationPlanningReceipt>,
 }

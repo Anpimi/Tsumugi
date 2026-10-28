@@ -7,8 +7,11 @@ export declare function validateRequestList(value: unknown): value is Requests["
 export declare function validateRequestMessages(value: unknown): value is Requests["messages"];
 export declare function validateRequestPreparePlanning(value: unknown): value is Requests["preparePlanning"];
 export declare function validateRequestRead(value: unknown): value is Requests["read"];
+export declare function validateRequestReadPlanning(value: unknown): value is Requests["readPlanning"];
 export declare function validateRequestRecoverCreate(value: unknown): value is Requests["recoverCreate"];
 export declare function validateRequestRecoverMessage(value: unknown): value is Requests["recoverMessage"];
+export declare function validateRequestRecoverPlanning(value: unknown): value is Requests["recoverPlanning"];
+export declare function validateRequestStartPlanning(value: unknown): value is Requests["startPlanning"];
 export declare function validateRequestValidatePlanning(value: unknown): value is Requests["validatePlanning"];
 export declare function validateResponseConversation(value: unknown): value is Responses["conversation"];
 export declare function validateResponseCreateRecovery(value: unknown): value is Responses["createRecovery"];
@@ -18,3 +21,6 @@ export declare function validateResponseMessagePage(value: unknown): value is Re
 export declare function validateResponseMessageRecovery(value: unknown): value is Responses["messageRecovery"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponsePlanning(value: unknown): value is Responses["planning"];
+export declare function validateResponsePlanningReceipt(value: unknown): value is Responses["planningReceipt"];
+export declare function validateResponsePlanningRecovery(value: unknown): value is Responses["planningRecovery"];
+export declare function validateResponsePlanningRun(value: unknown): value is Responses["planningRun"];

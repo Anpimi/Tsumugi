@@ -22,6 +22,7 @@ pub struct DispatchRequest {
     pub(crate) provider: Option<crate::ai::provider::BudgetPort>,
     pub(crate) plugin_permit: Option<PluginPermit>,
     pub(crate) service_origin: Option<Arc<plugin_authority::ServiceOriginGuard>>,
+    pub(crate) planning_permit: Option<crate::application::ConversationPlanningPermit>,
     pub(crate) original_deadline: Option<DispatchDeadline>,
     pub input: FixedInput,
     pub item_id: ExecutionId,
@@ -44,14 +45,33 @@ impl DispatchRequest {
     /// The original dispatch limit, never reconstructed by an outcome query.
     pub fn deadline(&self) -> Option<std::time::Instant> {
         self.original_deadline.as_ref().map(|value| {
-            self.service_origin
+            let deadline = self
+                .service_origin
                 .as_ref()
-                .map_or(value.instant, |origin| value.instant.min(origin.deadline))
+                .map_or(value.instant, |origin| value.instant.min(origin.deadline));
+            self.planning_permit
+                .as_ref()
+                .map_or(deadline, |permit| deadline.min(permit.deadline()))
         })
     }
     /// Check the original caller immediately before dispatch or a service use.
     /// This reads the original live guard; it cannot renew or restore authority.
     pub fn check_service_dispatch(&self) -> Result<(), ExecutionError> {
+        if self.input.envelope().operation == crate::ai::conversation_planning::OPERATION
+            || self.input.envelope().capability_id == crate::ai::conversation_planning::CAPABILITY
+        {
+            self.planning_permit
+                .as_ref()
+                .ok_or_else(|| {
+                    ExecutionError::new(ErrorCode::Unauthorized, "conversation-planning-permit")
+                })?
+                .check_dispatch(&self.input)?;
+        } else if self.planning_permit.is_some() {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "conversation-planning-permit",
+            ));
+        }
         if self
             .service_origin
             .as_ref()

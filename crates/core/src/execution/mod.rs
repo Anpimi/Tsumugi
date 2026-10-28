@@ -477,6 +477,7 @@ impl InputEnvelope {
                     | crate::ai::team::OPERATION
                     | crate::ai::arena::OPERATION
                     | crate::ai::semantic_review::OPERATION
+                    | crate::ai::conversation_planning::OPERATION
                     | crate::application::MCP_TERM_QUERY_OPERATION
             ) {
                 600_000

@@ -370,6 +370,7 @@ fn controlled_runner_can_return_late_without_adopting_or_accessing_storage() {
         provider: None,
         plugin_permit: None,
         service_origin: None,
+        planning_permit: None,
         original_deadline: None,
         item_id: fixed.envelope().items[0].item_id,
         input: fixed.clone(),

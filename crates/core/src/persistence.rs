@@ -379,6 +379,8 @@ struct PendingChange {
 #[derive(Debug)]
 pub struct ProjectStore {
     mcp_query_liveness: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    conversation_planning_permits: std::collections::BTreeMap<crate::execution::ExecutionId, crate::application::ConversationPlanningPermit>,
+    planning_authority_revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
     directory: PathBuf,
     connection: Option<Connection>,
     lock: Option<File>,
@@ -426,6 +428,8 @@ impl ProjectStore {
 
         Ok(Self {
             mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            conversation_planning_permits: Default::default(),
+            planning_authority_revision: Default::default(),
             directory,
             connection: Some(connection),
             lock: Some(lock),
@@ -481,6 +485,8 @@ impl ProjectStore {
 
         Ok(Self {
             mcp_query_liveness: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            conversation_planning_permits: Default::default(),
+            planning_authority_revision: Default::default(),
             directory,
             connection: Some(connection),
             lock: Some(lock),

@@ -141,6 +141,7 @@ struct Worker {
 /// transactions. Workers cannot retain the store after the session closes.
 pub struct ExecutionRuntime {
     mcp_permits: BTreeMap<ExecutionId, crate::application::McpTermQueryPermit>,
+    planning_live: Arc<std::sync::atomic::AtomicBool>,
     generation: ExecutionId,
     initial_sequence: Revision,
     runners: BTreeMap<RunnerKey, RunnerEntry>,
@@ -159,8 +160,10 @@ impl ExecutionRuntime {
     pub fn new(store: &ProjectStore) -> Result<Self, ExecutionError> {
         let generation = ExecutionId::new();
         let plugin_epoch = store.begin_plugin_epoch(generation)?;
+        store.revoke_conversation_planning(None);
         Ok(Self {
             mcp_permits: BTreeMap::new(),
+            planning_live: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             generation,
             plugin_epoch,
             validators: BTreeMap::new(),
@@ -579,6 +582,39 @@ impl ExecutionRuntime {
             .insert(prepared.input().envelope().attempt_id, permit.clone());
         store.enqueue_mcp_term_query(prepared, permit)
     }
+    /// A durable replay reads the original action before consulting live
+    /// authority. It never schedules or installs another session permit.
+    pub fn submit_conversation_planning(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedConversationPlanning,
+    ) -> Result<crate::application::ConversationPlanningReceipt, ExecutionError> {
+        let request = crate::application::ReadConversationPlanningAction {
+            project_id: prepared.preview().project_id,
+            conversation_id: prepared.preview().conversation_id,
+            consent: prepared.consent().clone(),
+        };
+        if let Some(receipt) = store.conversation_planning_receipt(&request)? {
+            let original = store.execution_input(prepared.input().envelope().attempt_id)?;
+            if original.bytes() != prepared.input().bytes() {
+                return Err(ExecutionError::new(ErrorCode::ResultMismatch, "conversation-planning-action"));
+            }
+            return Ok(receipt);
+        }
+        store.check_prepared_conversation_planning(prepared)?;
+        let policy = self.submission_policy(store, prepared.input(), None)?;
+        if policy != RecoveryPolicy::ExternalUnknown {
+            return Err(ExecutionError::new(ErrorCode::Unauthorized, "conversation-planning-recovery-policy"));
+        }
+        prepared.permit.bind_runtime(self.generation, &self.planning_live)?;
+        if let Err(error) = store.enqueue_conversation_planning(prepared) {
+            prepared.permit.revoke();
+            return Err(error);
+        }
+        store.conversation_planning_receipt(&request)
+            .map_err(|mut error| { error.code = ErrorCode::OutcomeUnknown; error })?
+            .ok_or_else(|| ExecutionError::new(ErrorCode::OutcomeUnknown, "conversation-planning-receipt"))
+    }
     /// Admit the fixed leaf only through its original model-dispatch witness.
     pub fn submit_member_mcp_term_query(
         &mut self,
@@ -877,6 +913,11 @@ impl ExecutionRuntime {
         {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
+        let original = store.execution_input(action.source_attempt_id)?;
+        if original.envelope().operation == crate::ai::conversation_planning::OPERATION
+            || original.envelope().capability_id == crate::ai::conversation_planning::CAPABILITY {
+            return Err(ExecutionError::new(ErrorCode::Unauthorized, "conversation-planning-recovery"));
+        }
         let plan = store.execution_recovery(action.source_attempt_id, false)?;
         let unit = plan
             .units
@@ -1014,6 +1055,7 @@ impl ExecutionRuntime {
             if let Err(error) = store
                 .check_work_plan_input(&worker.request.input)
                 .and_then(|_| store.check_plugin_input(&worker.request.input))
+                .and_then(|_| store.check_conversation_planning_input(&worker.request.input))
             {
                 if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
                     if worker.cancellation_started.is_none()
@@ -1434,10 +1476,12 @@ impl ExecutionRuntime {
         }))
     }
     pub fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        self.planning_live.store(false, std::sync::atomic::Ordering::Release);
         for permit in self.mcp_permits.values() {
             permit.revoke();
         }
         store.check_plugin_epoch_owner(&self.plugin_epoch)?;
+        store.revoke_conversation_planning(None);
         self.plugin_epoch.revoke();
         self.accepting = false;
         for entry in self.runners.values() {
@@ -1504,6 +1548,7 @@ impl ExecutionRuntime {
         let generation = ExecutionId::new();
         self.plugin_epoch = store.rotate_plugin_epoch(&self.plugin_epoch, generation)?;
         self.generation = generation;
+        self.planning_live = Arc::new(std::sync::atomic::AtomicBool::new(true));
         self.package_controls.clear();
         for entry in self.runners.values_mut() {
             entry.queries = Arc::default();
@@ -1516,6 +1561,7 @@ impl ExecutionRuntime {
 }
 impl Drop for ExecutionRuntime {
     fn drop(&mut self) {
+        self.planning_live.store(false, std::sync::atomic::Ordering::Release);
         for permit in self.mcp_permits.values() {
             permit.revoke();
         }

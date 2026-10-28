@@ -69,6 +69,7 @@ macro_rules! handlers {
         conversations::append_project_conversation_message,conversations::recover_project_conversation_create,
         conversations::recover_project_conversation_message,
         conversations::planning::prepare_conversation_planning,conversations::planning::validate_conversation_planning,
+        conversations::planning::start_conversation_planning,conversations::planning::recover_conversation_planning,conversations::planning::read_conversation_planning,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
         crate::commands::plugins::application::stop_application_plugin_instance,
@@ -355,6 +356,10 @@ impl ExecutionHost {
             tsumugi_core::ai::team::OPERATION.into(),
             Arc::new(tsumugi_core::TeamTranslationAdoptionHandler),
         );
+        host.runtime.register_with_policy(
+            Arc::new(tsumugi_core::ai::conversation_planning::ConversationPlanningRunner::with_service(provider_service.clone())),
+            tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+        ).map_err(map_read)?;
         host.runtime
             .register_with_policy(
                 Arc::new(tsumugi_core::ai::semantic_review::AiSemanticReviewRunner::with_service(

@@ -106,8 +106,8 @@ const planningRequest = { ...context, conversationId: create.conversationId, sel
 function planningView() {
   const system = "Synthetic planning instructions";
   const input = JSON.stringify({ purpose: "conversation-planning", scope: { kind: "conversation-only" }, messages: [{ author: "human", body: append.body }], units: [] });
-  return { preparationId: fixtureIdentity(18000), preview: {
-    version: 1, projectId: context.projectId, conversationId: create.conversationId, config: planningConfig,
+  return { preparationId: fixtureIdentity(18000), previewDigest: "d".repeat(64), preview: {
+    version: 2, projectId: context.projectId, conversationId: create.conversationId, config: planningConfig,
     scope: planningRequest.scope, selectedMessages: [message], units: [], system, input,
     byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
     brief: { messages: 1, units: 0, sourceTexts: 0, terms: 0, manualContexts: 0, manualContextFacts: 0, sourceContextFacts: 0, sourceContextNeighbors: 0 },
@@ -150,4 +150,66 @@ it("keeps an old planning capture distinct from a replacement or refreshed previ
   invoke.mockRejectedValueOnce(unavailable);
   await expect(conversationCommands.validatePlanning(request, captured)).rejects.toBe(unavailable);
   expect(invoke).toHaveBeenCalledTimes(3);
+});
+
+const planningConsent = { actionId: fixtureIdentity(18100), attemptId: fixtureIdentity(18100), taskId: fixtureIdentity(18101), previewDigest: "d".repeat(64), expiresAtMs: "1893456000000", shareMessages: true, shareUnits: false };
+const planningStart = { ...context, preparationId: fixtureIdentity(18000), conversationId: create.conversationId, consent: planningConsent };
+const planningReceipt = { projectId: context.projectId, conversationId: create.conversationId, consent: planningConsent, inputDigest: "c".repeat(64) };
+function planningRunView() {
+  const resultId = fixtureIdentity(18102);
+  const scope = { kind: "project-conversation", id: create.conversationId, locale: null };
+  const unknownTokens = { tokens: "0", unknownRequests: 1 };
+  return {
+    receipt: planningReceipt, preview: planningView().preview,
+    detail: { attemptId: planningConsent.attemptId, taskId: planningConsent.taskId, operation: "conversation-planning", nextOffset: null,
+      progress: { total: 1, queued: 0, running: 0, succeeded: 1, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
+      items: [{ scope, resultId, status: { itemId: planningConsent.actionId, execution: "succeeded", validation: "valid", adoption: "unapplied", cancellationRequested: false, retrySafe: false, diagnostic: null } }],
+      recovery: { attemptId: planningConsent.attemptId, units: [{ unitId: planningConsent.actionId, itemIds: [planningConsent.actionId], scopes: [scope], remainingItemIds: [], resultIds: [resultId], actions: [], receiptId: null, blockedReason: "conversation-planning-read-only" }] },
+    },
+    budget: { limit: 1, dispatched: 1, legacyHeld: 0, unresolved: 0, usageUnknown: 0, promptTokens: "7", completionTokens: "3", cacheRead: unknownTokens, cacheWrite: unknownTokens, reasoning: unknownTokens },
+    resultId, output: { model: { kind: "reply", summary: "先确认要处理哪些条目。", questions: [] }, usage: { promptTokens: "7", completionTokens: "3", cacheReadTokens: null, cacheWriteTokens: null, reasoningTokens: null }, requests: 1, usageIncomplete: false },
+  };
+}
+
+it("binds planning starts and recovery to the complete original consent without retrying", async () => {
+  const recover = { ...context, conversationId: create.conversationId, consent: planningConsent };
+  const original = { projectId: context.projectId, conversationId: create.conversationId, consent: planningConsent };
+  invoke.mockResolvedValueOnce(planningReceipt);
+  await expect(conversationCommands.startPlanning(planningStart)).resolves.toEqual(planningReceipt);
+  for (const outcome of [{ kind: "recorded", receipt: planningReceipt }, { kind: "pending", replay: "blocked" }, { kind: "mismatch" }]) {
+    invoke.mockResolvedValueOnce({ request: original, outcome });
+    await expect(conversationCommands.recoverPlanning(recover)).resolves.toEqual({ request: original, outcome });
+  }
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual(["start_conversation_planning", "recover_conversation_planning", "recover_conversation_planning", "recover_conversation_planning"]);
+  expect(invoke.mock.calls[0][1]).toEqual({ request: planningStart });
+  invoke.mockResolvedValueOnce({ ...planningReceipt, consent: { ...planningConsent, expiresAtMs: "1893456000001" } });
+  await expect(conversationCommands.startPlanning(planningStart)).rejects.toThrow("Invalid IPC response");
+  invoke.mockResolvedValueOnce({ request: original, outcome: { kind: "pending", replay: "explicit-same-request" } });
+  await expect(conversationCommands.recoverPlanning(recover)).rejects.toThrow("Invalid IPC response");
+  invoke.mockResolvedValueOnce({ request: { ...original, consent: { ...planningConsent, taskId: fixtureIdentity(18900) } }, outcome: { kind: "recorded", receipt: planningReceipt } });
+  await expect(conversationCommands.recoverPlanning(recover)).rejects.toThrow("Invalid IPC response");
+});
+
+it("reads typed planning history with its original task, result and one-request budget", async () => {
+  const read = { ...context, conversationId: create.conversationId, attemptId: planningConsent.attemptId };
+  const view = planningRunView();
+  invoke.mockResolvedValueOnce(view).mockResolvedValueOnce(null);
+  await expect(conversationCommands.readPlanning(read)).resolves.toEqual(view);
+  await expect(conversationCommands.readPlanning(read)).resolves.toBeNull();
+  expect(invoke.mock.calls.every(([name]) => name === "read_conversation_planning")).toBe(true);
+  expect(invoke).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, receipt: { ...value.receipt, conversationId: fixtureIdentity(18900) } }),
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, receipt: { ...value.receipt, consent: { ...value.receipt.consent, attemptId: fixtureIdentity(18900) } } }),
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, detail: { ...value.detail, taskId: fixtureIdentity(18900) } }),
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, resultId: fixtureIdentity(18900) }),
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, budget: { ...value.budget, limit: 2 } }),
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, output: { ...value.output, requests: 2 } }),
+  (value: ReturnType<typeof planningRunView>) => ({ ...value, output: { ...value.output, model: { kind: "proposal", summary: "Wrong scope", unitIds: [fixtureIdentity(18900)], options: { stages: [{ stage: "generation", mode: "assisted" }], selectionPolicy: "candidates-only", advisoryChecks: [], adoptResources: false, deliver: false }, questions: [] } } }),
+])("rejects planning history for another request or an executable scope %#", async change => {
+  invoke.mockResolvedValueOnce(change(planningRunView()));
+  await expect(conversationCommands.readPlanning({ ...context, conversationId: create.conversationId, attemptId: planningConsent.attemptId })).rejects.toThrow("Invalid IPC response");
+  expect(invoke).toHaveBeenCalledOnce();
 });

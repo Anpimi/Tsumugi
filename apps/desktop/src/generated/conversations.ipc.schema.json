@@ -165,6 +165,43 @@
         ],
         "type": "object"
       },
+      "ConversationPlanningConsent": {
+        "additionalProperties": false,
+        "description": "The trusted human command confirms one exact preview and one finite request.\nThe action identity is also the attempt identity in the original ledger.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "previewDigest": {
+            "type": "string"
+          },
+          "shareMessages": {
+            "type": "boolean"
+          },
+          "shareUnits": {
+            "type": "boolean"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "taskId",
+          "attemptId",
+          "previewDigest",
+          "expiresAtMs",
+          "shareMessages",
+          "shareUnits"
+        ],
+        "type": "object"
+      },
       "ConversationPlanningScope": {
         "oneOf": [
           {
@@ -334,6 +371,30 @@
         ],
         "type": "object"
       },
+      "ReadConversationPlanningRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "conversationId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
       "ReadProjectConversationMessagesRequest": {
         "additionalProperties": false,
         "properties": {
@@ -391,6 +452,30 @@
         ],
         "type": "object"
       },
+      "RecoverConversationPlanningRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "$ref": "#/definitions/ConversationPlanningConsent"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "conversationId",
+          "consent"
+        ],
+        "type": "object"
+      },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
         "type": "string"
@@ -426,6 +511,34 @@
           "neighbors",
           "maxBytes",
           "maxItems"
+        ],
+        "type": "object"
+      },
+      "StartConversationPlanningRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "$ref": "#/definitions/ConversationPlanningConsent"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "preparationId",
+          "conversationId",
+          "consent"
         ],
         "type": "object"
       },
@@ -473,11 +586,20 @@
       "read": {
         "$ref": "#/definitions/ReadProjectConversationRequest"
       },
+      "readPlanning": {
+        "$ref": "#/definitions/ReadConversationPlanningRequest"
+      },
       "recoverCreate": {
         "$ref": "#/definitions/CreateProjectConversationRequest"
       },
       "recoverMessage": {
         "$ref": "#/definitions/AppendProjectConversationMessageRequest"
+      },
+      "recoverPlanning": {
+        "$ref": "#/definitions/RecoverConversationPlanningRequest"
+      },
+      "startPlanning": {
+        "$ref": "#/definitions/StartConversationPlanningRequest"
       },
       "validatePlanning": {
         "$ref": "#/definitions/ValidateConversationPlanningRequest"
@@ -492,7 +614,10 @@
       "recoverCreate",
       "recoverMessage",
       "preparePlanning",
-      "validatePlanning"
+      "validatePlanning",
+      "startPlanning",
+      "recoverPlanning",
+      "readPlanning"
     ],
     "title": "Requests",
     "type": "object",
@@ -502,6 +627,50 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AdoptionState": {
+        "enum": [
+          "unapplied",
+          "committed",
+          "conflict",
+          "rejected"
+        ],
+        "type": "string"
+      },
+      "AdvisoryReviewCheck": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.",
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "declarationResourceId": {
+            "type": "string"
+          },
+          "execution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "binding",
+          "execution",
+          "declarationResourceId",
+          "resourcePins",
+          "rules"
+        ],
+        "type": "object"
+      },
       "AiConfig": {
         "additionalProperties": false,
         "properties": {
@@ -613,6 +782,55 @@
         ],
         "type": "object"
       },
+      "AiUsageView": {
+        "additionalProperties": false,
+        "properties": {
+          "cacheReadTokens": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cacheWriteTokens": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completionTokens": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "promptTokens": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "reasoningTokens": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "promptTokens",
+          "completionTokens",
+          "cacheReadTokens",
+          "cacheWriteTokens",
+          "reasoningTokens"
+        ],
+        "type": "object"
+      },
       "AppendProjectConversationMessage": {
         "additionalProperties": false,
         "properties": {
@@ -638,6 +856,167 @@
           "conversationId",
           "messageId",
           "body"
+        ],
+        "type": "object"
+      },
+      "ApplicationScopeBasis": {
+        "additionalProperties": false,
+        "description": "Identity allocated by the application instance owner before consent. This\npersisted fact never recreates the owner's session-local execution lease.",
+        "properties": {
+          "activationGeneration": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "instanceId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "instanceId",
+          "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "AttemptDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/definitions/ItemView"
+            },
+            "type": "array"
+          },
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "operation": {
+            "type": "string"
+          },
+          "progress": {
+            "$ref": "#/definitions/Progress"
+          },
+          "recovery": {
+            "$ref": "#/definitions/RecoveryPlan"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "taskId",
+          "operation",
+          "progress",
+          "items",
+          "recovery",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
         ],
         "type": "object"
       },
@@ -763,6 +1142,14 @@
           "execution-recover",
           "execution-adopt",
           "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
         ],
         "type": "string"
       },
@@ -1176,6 +1563,31 @@
         ],
         "type": "object"
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "ConversationActionOutcome": {
         "oneOf": [
           {
@@ -1239,6 +1651,58 @@
               },
               "receipt": {
                 "$ref": "#/definitions/ProjectConversationMessage"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The original action has no confirmed receipt. Replay is an explicit\nsame-request operation, never a statement that work cannot have happened.",
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              },
+              "replay": {
+                "$ref": "#/definitions/ConversationActionReplay"
+              }
+            },
+            "required": [
+              "kind",
+              "replay"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mismatch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationActionOutcome3": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/ConversationPlanningReceipt"
               }
             },
             "required": [
@@ -1358,6 +1822,140 @@
         ],
         "type": "object"
       },
+      "ConversationPlanningConsent": {
+        "additionalProperties": false,
+        "description": "The trusted human command confirms one exact preview and one finite request.\nThe action identity is also the attempt identity in the original ledger.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "previewDigest": {
+            "type": "string"
+          },
+          "shareMessages": {
+            "type": "boolean"
+          },
+          "shareUnits": {
+            "type": "boolean"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "taskId",
+          "attemptId",
+          "previewDigest",
+          "expiresAtMs",
+          "shareMessages",
+          "shareUnits"
+        ],
+        "type": "object"
+      },
+      "ConversationPlanningModelOutput": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "reply",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "proposal",
+                "type": "string"
+              },
+              "options": {
+                "$ref": "#/definitions/PlanOptions"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "unitIds": {
+                "items": {
+                  "$ref": "#/definitions/ExecutionId"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "unitIds",
+              "options",
+              "questions"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationPlanningOutputView": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "$ref": "#/definitions/ConversationPlanningModelOutput"
+          },
+          "requests": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AiUsageView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usageIncomplete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model",
+          "usage",
+          "requests",
+          "usageIncomplete"
+        ],
+        "type": "object"
+      },
       "ConversationPlanningPreview": {
         "additionalProperties": false,
         "properties": {
@@ -1420,6 +2018,46 @@
           "input",
           "byteLength",
           "brief"
+        ],
+        "type": "object"
+      },
+      "ConversationPlanningReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "$ref": "#/definitions/ConversationPlanningConsent"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "consent",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "ConversationPlanningRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/ConversationActionOutcome3"
+          },
+          "request": {
+            "$ref": "#/definitions/ReadConversationPlanningAction"
+          }
+        },
+        "required": [
+          "request",
+          "outcome"
         ],
         "type": "object"
       },
@@ -1530,6 +2168,59 @@
         ],
         "type": "object"
       },
+      "ConversationPlanningView": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ProviderBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "detail": {
+            "$ref": "#/definitions/AttemptDetail"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationPlanningOutputView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview": {
+            "$ref": "#/definitions/ConversationPlanningPreview"
+          },
+          "receipt": {
+            "$ref": "#/definitions/ConversationPlanningReceipt"
+          },
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "receipt",
+          "preview",
+          "detail",
+          "budget",
+          "resultId",
+          "output"
+        ],
+        "type": "object"
+      },
       "CreateProjectConversation": {
         "additionalProperties": false,
         "properties": {
@@ -1557,9 +2248,321 @@
         ],
         "type": "object"
       },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExecutionState": {
+        "enum": [
+          "queued",
+          "dispatched",
+          "succeeded",
+          "failed",
+          "cancelled-before-dispatch",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "ItemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/AdoptionState"
+          },
+          "cancellationRequested": {
+            "type": "boolean"
+          },
+          "diagnostic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "execution": {
+            "$ref": "#/definitions/ExecutionState"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "retrySafe": {
+            "type": "boolean"
+          },
+          "validation": {
+            "$ref": "#/definitions/ValidationState"
+          }
+        },
+        "required": [
+          "itemId",
+          "execution",
+          "validation",
+          "adoption",
+          "cancellationRequested",
+          "retrySafe",
+          "diagnostic"
+        ],
+        "type": "object"
+      },
+      "ItemView": {
+        "additionalProperties": false,
+        "description": "Read-only execution projection shared by human and bounded consumers.",
+        "properties": {
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "$ref": "#/definitions/Scope"
+          },
+          "status": {
+            "$ref": "#/definitions/ItemStatus"
+          }
+        },
+        "required": [
+          "status",
+          "scope",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryArguments": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "sourceLocale",
+          "targetLocale"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "unitId",
+          "locale",
+          "sourceLocale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryPolicy": {
+        "description": "Explicit model sharing of one original, human-previewed terminology query.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "preview": {
+                "$ref": "#/definitions/McpTermQueryPreview"
+              },
+              "profile": {
+                "const": "fixed-term-query-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "preview"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "McpTermQueryPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "$ref": "#/definitions/McpTermQueryArguments"
+          },
+          "basis": {
+            "$ref": "#/definitions/McpTermQueryBasis"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "request": {
+            "$ref": "#/definitions/McpTermQueryRequest"
+          },
+          "toolDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "request",
+          "basis",
+          "arguments",
+          "toolDigest",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "McpTermQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "tool": {
+            "$ref": "#/definitions/McpTermTool"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "taskId",
+          "attemptId",
+          "unitId",
+          "locale",
+          "query",
+          "expiresAtMs",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "McpTermTool": {
+        "additionalProperties": false,
+        "properties": {
+          "credentialEnv": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discoveryExpiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "discoveryGeneration": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "discoveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "outputSchema": true,
+          "profileVersion": {
+            "type": "string"
+          },
+          "protocolVersion": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "discoveryId",
+          "discoveryGeneration",
+          "discoveryExpiresAtMs",
+          "endpoint",
+          "credentialEnv",
+          "serverName",
+          "serverVersion",
+          "protocolVersion",
+          "toolName",
+          "description",
+          "profileVersion",
+          "inputSchema",
+          "outputSchema"
+        ],
+        "type": "object"
       },
       "ModelConnectionReference": {
         "additionalProperties": false,
@@ -1586,6 +2589,326 @@
         ],
         "type": "object"
       },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PlanOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "adoptResources": {
+            "type": "boolean"
+          },
+          "advisoryChecks": {
+            "items": {
+              "$ref": "#/definitions/AdvisoryReviewCheck"
+            },
+            "type": "array"
+          },
+          "deliver": {
+            "type": "boolean"
+          },
+          "mcpTermQuery": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/McpTermQueryPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent keeps the original MCP preparation exclusively human-controlled."
+          },
+          "selectionPolicy": {
+            "$ref": "#/definitions/SelectionPolicy"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/definitions/StageChoice"
+            },
+            "type": "array"
+          },
+          "teamDiscussions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamDiscussionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit consent for bounded, same-plan published discussions."
+          },
+          "teamExecution": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamExecutionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "toolGuidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ToolGuidancePolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent means that tool guidance is available only to the human reader."
+          }
+        },
+        "required": [
+          "stages",
+          "selectionPolicy",
+          "advisoryChecks",
+          "adoptResources",
+          "deliver"
+        ],
+        "type": "object"
+      },
+      "PluginExecutionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationScope": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ApplicationScopeBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "componentScope": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ComponentScope"
+              }
+            ],
+            "description": "Captured from the selected component, never inferred from a result."
+          },
+          "environment": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+              }
+            ],
+            "description": "Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "capability",
+          "componentScope",
+          "applicationScope",
+          "profile",
+          "environment"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
       "PreparedConversationPlanning": {
         "additionalProperties": false,
         "properties": {
@@ -1594,11 +2917,79 @@
           },
           "preview": {
             "$ref": "#/definitions/ConversationPlanningPreview"
+          },
+          "previewDigest": {
+            "type": "string"
           }
         },
         "required": [
           "preparationId",
+          "previewDigest",
           "preview"
+        ],
+        "type": "object"
+      },
+      "Progress": {
+        "additionalProperties": false,
+        "properties": {
+          "adopted": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cancelled": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "failed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "queued": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "running": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "succeeded": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unknown": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "unknown",
+          "adopted"
         ],
         "type": "object"
       },
@@ -1758,6 +3149,116 @@
         ],
         "type": "object"
       },
+      "ProviderBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "cacheRead": {
+            "$ref": "#/definitions/ReportedTokenTotal"
+          },
+          "cacheWrite": {
+            "$ref": "#/definitions/ReportedTokenTotal"
+          },
+          "completionTokens": {
+            "pattern": "^(0|[1-9][0-9]{0,21})$",
+            "type": "string"
+          },
+          "dispatched": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "legacyHeld": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "promptTokens": {
+            "pattern": "^(0|[1-9][0-9]{0,21})$",
+            "type": "string"
+          },
+          "reasoning": {
+            "$ref": "#/definitions/ReportedTokenTotal"
+          },
+          "unresolved": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usageUnknown": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "dispatched",
+          "legacyHeld",
+          "unresolved",
+          "usageUnknown",
+          "promptTokens",
+          "completionTokens",
+          "cacheRead",
+          "cacheWrite",
+          "reasoning"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "ReadConversationPlanningAction": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "$ref": "#/definitions/ConversationPlanningConsent"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "consent"
+        ],
+        "type": "object"
+      },
       "RecoveryAction": {
         "enum": [
           "resume-undispatched",
@@ -1778,8 +3279,246 @@
         ],
         "type": "string"
       },
+      "RecoveryPlan": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/definitions/RecoveryUnit"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "attemptId",
+          "units"
+        ],
+        "type": "object"
+      },
+      "RecoveryUnit": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "blockedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "receiptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remainingItemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/definitions/Scope"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "itemIds",
+          "scopes",
+          "remainingItemIds",
+          "resultIds",
+          "actions",
+          "blockedReason",
+          "receiptId"
+        ],
+        "type": "object"
+      },
+      "ReportedTokenTotal": {
+        "additionalProperties": false,
+        "properties": {
+          "tokens": {
+            "description": "Sum of the reliably reported portion; unknown requests are not zeros.",
+            "pattern": "^(0|[1-9][0-9]{0,21})$",
+            "type": "string"
+          },
+          "unknownRequests": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tokens",
+          "unknownRequests"
+        ],
+        "type": "object"
+      },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux",
+          "windows"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
+      },
+      "Scope": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "SelectionPolicy": {
+        "enum": [
+          "candidates-only",
+          "missing-only",
+          "replace-captured-selection"
+        ],
         "type": "string"
       },
       "SourceContextSelection": {
@@ -1816,8 +3555,338 @@
         ],
         "type": "object"
       },
+      "StageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/definitions/StageMode"
+          },
+          "stage": {
+            "$ref": "#/definitions/WorkStage"
+          }
+        },
+        "required": [
+          "stage",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "StageMode": {
+        "enum": [
+          "manual",
+          "assisted",
+          "skipped"
+        ],
+        "type": "string"
+      },
+      "TeamDiscussionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-2",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamExecutionLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxActivations": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxConcurrency": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxNoProgress": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxActivations",
+          "maxConcurrency",
+          "maxNoProgress"
+        ],
+        "type": "object"
+      },
+      "TeamExecutionMember": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "$ref": "#/definitions/AiConfig"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/definitions/TeamWorkKind"
+            },
+            "type": "array"
+          },
+          "memberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "role": {
+            "type": "string"
+          },
+          "roleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandles": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberId",
+          "roleVersionId",
+          "displayName",
+          "role",
+          "config",
+          "unitIds",
+          "toolHandles",
+          "kinds"
+        ],
+        "type": "object"
+      },
+      "TeamExecutionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "initialMemberId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "initialUnitId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "limits": {
+                "$ref": "#/definitions/TeamExecutionLimits"
+              },
+              "members": {
+                "items": {
+                  "$ref": "#/definitions/TeamExecutionMember"
+                },
+                "type": "array"
+              },
+              "profile": {
+                "const": "bounded-team-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile",
+              "initialMemberId",
+              "initialUnitId",
+              "members",
+              "limits"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamWorkKind": {
+        "enum": [
+          "translation",
+          "review",
+          "evidence"
+        ],
+        "type": "string"
+      },
+      "TextReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/TextReviewDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "TextReviewDeclaration": {
+        "additionalProperties": false,
+        "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/TextReviewDisposition"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/TextReviewRuleDeclaration"
+            },
+            "type": "array"
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "disposition",
+          "supportingResources",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "TextReviewDisposition": {
+        "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+        "enum": [
+          "advisory"
+        ],
+        "type": "string"
+      },
+      "TextReviewResourceBinding": {
+        "additionalProperties": false,
+        "description": "A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourcePin": {
+        "additionalProperties": false,
+        "description": "Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "TextReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation",
+          "title",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ToolGuidancePolicy": {
+        "description": "Explicit model sharing of guidance declared by the captured tools.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "declared-tools-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
+      "ValidationState": {
+        "enum": [
+          "absent",
+          "pending",
+          "valid",
+          "invalid"
+        ],
         "type": "string"
       },
       "WorkProtection": {
@@ -1843,6 +3912,16 @@
           "protected"
         ],
         "type": "object"
+      },
+      "WorkStage": {
+        "enum": [
+          "understanding",
+          "resources",
+          "generation",
+          "checks",
+          "delivery"
+        ],
+        "type": "string"
       }
     },
     "properties": {
@@ -1869,6 +3948,22 @@
       },
       "planning": {
         "$ref": "#/definitions/PreparedConversationPlanning"
+      },
+      "planningReceipt": {
+        "$ref": "#/definitions/ConversationPlanningReceipt"
+      },
+      "planningRecovery": {
+        "$ref": "#/definitions/ConversationPlanningRecovery"
+      },
+      "planningRun": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ConversationPlanningView"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
@@ -1879,6 +3974,9 @@
       "createRecovery",
       "messageRecovery",
       "planning",
+      "planningReceipt",
+      "planningRecovery",
+      "planningRun",
       "error"
     ],
     "title": "Responses",

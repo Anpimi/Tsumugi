@@ -108,12 +108,20 @@ pub(super) fn validate_for_open(
     })
 }
 
+fn is_conversation_planning(input: &FixedInput) -> bool {
+    input.envelope().operation == crate::ai::conversation_planning::OPERATION
+        || input.envelope().capability_id == crate::ai::conversation_planning::CAPABILITY
+}
+
 fn validate_attempt_input(
     connection: &Connection,
     input: &FixedInput,
     load_result: impl FnMut(ExecutionId) -> Result<FixedResult, ExecutionError>,
 ) -> Result<(), ExecutionError> {
     let _ = read_attempt_with_results(connection, input, false, load_result)?;
+    if is_conversation_planning(input) {
+        crate::ai::conversation_planning::settings(input)?;
+    }
     if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
         || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY
     {
@@ -1066,6 +1074,10 @@ fn read_attempt_with_results(
                     if validation == ValidationState::Valid && requires_semantic_check(input) {
                         validate_plugin_link(connection, input, &output, true)?;
                     }
+                    if validation == ValidationState::Valid
+                        && input.envelope().operation == crate::ai::conversation_planning::OPERATION {
+                        crate::ai::conversation_planning::validate_output(input, &output)?;
+                    }
                 }
                 _ => validation = ValidationState::Invalid,
             }
@@ -1870,6 +1882,31 @@ impl ProjectStore {
                     entry.result_ids.push(id);
                 }
             }
+            // Planning results are read through their conversation action. They
+            // cannot become an executable retry or a generic domain mutation.
+            if is_conversation_planning(&input) {
+                let reason = if statuses
+                    .iter()
+                    .any(|item| item.execution == ExecutionState::Dispatched)
+                {
+                    "still-running"
+                } else if statuses
+                    .iter()
+                    .any(|item| item.execution == ExecutionState::Unknown)
+                {
+                    "outcome-unknown"
+                } else if statuses
+                    .iter()
+                    .any(|item| item.validation == ValidationState::Invalid)
+                {
+                    "output-invalid"
+                } else {
+                    "conversation-planning-read-only"
+                };
+                entry.blocked_reason = Some(reason.into());
+                units.push(entry);
+                continue;
+            }
             let receipt: Option<String> = connection
                 .query_row(
                     "SELECT action_id FROM adoption_receipts WHERE attempt_id=?1 AND unit_id=?2",
@@ -2003,6 +2040,9 @@ impl ProjectStore {
         item_ids: &[ExecutionId],
     ) -> Result<FixedInput, ExecutionError> {
         let input = self.execution_input(attempt)?;
+        if is_conversation_planning(&input) {
+            return Err(error(ErrorCode::Unauthorized, "conversation-planning-recovery"));
+        }
         let plan = self.execution_recovery(attempt, false)?;
         let selected: std::collections::BTreeSet<_> = item_ids.iter().copied().collect();
         if selected.is_empty() || selected.len() != item_ids.len() {
@@ -2143,6 +2183,7 @@ impl ProjectStore {
             provider: None,
             plugin_permit,
             service_origin: None,
+            planning_permit: None,
             original_deadline: None,
             input,
             item_id: item,
@@ -2194,6 +2235,15 @@ impl ProjectStore {
     }
 
     pub fn reconcile_execution(&self) -> Result<(), ExecutionError> {
+        if self.is_reconciling() {
+            // Reconciliation verifies history. Clearing the shared unknown flag
+            // must never revive a planning permit that no worker observed yet.
+            // The revision also invalidates a sealed permission not yet enqueued.
+            self.planning_authority_revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            for permit in self.conversation_planning_permits.values() {
+                permit.revoke();
+            }
+        }
         let connection = self.execution_connection()?;
         if !connection.is_autocommit() {
             return Err(error(ErrorCode::OutcomeUnknown, "reconcile"));
@@ -2228,6 +2278,7 @@ impl ProjectStore {
     ) -> Result<(), ExecutionError> {
         self.enqueue_execution_with_authority(
             input, policy, parent, None, None, None, None, None, None,
+            None,
         )
     }
 
@@ -2244,6 +2295,7 @@ impl ProjectStore {
             None,
             None,
             Some(prepared),
+            None,
             None,
             None,
             None,
@@ -2273,6 +2325,7 @@ impl ProjectStore {
             None,
             None,
             Some(prepared),
+            None,
         )
     }
 
@@ -2295,6 +2348,7 @@ impl ProjectStore {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -2309,6 +2363,7 @@ impl ProjectStore {
             Some(prepared.parent_task()),
             None,
             Some(prepared),
+            None,
             None,
             None,
             None,
@@ -2335,6 +2390,7 @@ impl ProjectStore {
             None,
             Some(prepared),
             None,
+            None,
         )
     }
 
@@ -2358,6 +2414,7 @@ impl ProjectStore {
             Some((prepared, permit, None)),
             None,
             None,
+            None,
         )
     }
 
@@ -2369,7 +2426,24 @@ impl ProjectStore {
         self.enqueue_execution_with_authority(
             sealed.prepared().input(), RecoveryPolicy::ExternalUnknown, None, None,
             None, None, Some((sealed.prepared(), sealed.permit(), Some(sealed))), None, None,
+            None,
         )
+    }
+
+    pub(crate) fn enqueue_conversation_planning(
+        &mut self,
+        prepared: &crate::application::PreparedConversationPlanning,
+    ) -> Result<(), ExecutionError> {
+        self.check_prepared_conversation_planning(prepared)?;
+        self.enqueue_execution_with_authority(
+            prepared.input(), RecoveryPolicy::ExternalUnknown, None, None, None,
+            None, None, None, None, Some(prepared),
+        )?;
+        self.install_conversation_planning(prepared).map_err(|mut error| {
+            prepared.permit.revoke();
+            error.code = ErrorCode::OutcomeUnknown;
+            error
+        })
     }
 
     fn enqueue_execution_with_authority(
@@ -2392,7 +2466,21 @@ impl ProjectStore {
         )>,
         service_tool: Option<&crate::application::PreparedWorkPlanServiceTool>,
         team_work: Option<&crate::application::PreparedTeamWork>,
+        planning: Option<&crate::application::PreparedConversationPlanning>,
     ) -> Result<(), ExecutionError> {
+        if (input.envelope().operation == crate::ai::conversation_planning::OPERATION
+            || input.envelope().capability_id == crate::ai::conversation_planning::CAPABILITY)
+            && planning.is_none() {
+            return Err(error(ErrorCode::Unauthorized, "conversation-planning-admission"));
+        }
+        if let Some(prepared) = planning {
+            if parent.is_some() || tool.is_some() || service.is_some() || agent.is_some()
+                || mcp.is_some() || service_tool.is_some() || team_work.is_some()
+                || policy != RecoveryPolicy::ExternalUnknown || prepared.input().bytes() != input.bytes() {
+                return Err(error(ErrorCode::Unauthorized, "conversation-planning-admission"));
+            }
+            self.check_prepared_conversation_planning(prepared)?;
+        }
         if (input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION
             || input.envelope().capability_id == crate::application::MCP_TERM_QUERY_CAPABILITY)
             && mcp.is_none()
@@ -2418,6 +2506,9 @@ impl ProjectStore {
         let prepared_input = input_storage::PreparedInput::capture(input)?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
+        if let Some(prepared) = planning {
+            self.check_prepared_conversation_planning(prepared)?;
+        }
         if let Some((prepared, permit, member)) = mcp {
             if agent.is_some()
                 || service.is_some()
@@ -2662,6 +2753,9 @@ impl ProjectStore {
             return Err(error(ErrorCode::ResultMismatch, "action-identity"));
         }
         let original = load_input(&tx, action.source_attempt_id)?;
+        if is_conversation_planning(&original) || is_conversation_planning(input) {
+            return Err(error(ErrorCode::Unauthorized, "conversation-planning-recovery"));
+        }
         let request_digest = action.request_digest(&original)?;
         let metadata = super::read_metadata_from(&tx)
             .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
@@ -3060,6 +3154,14 @@ impl ProjectStore {
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        let planning_permit = match self.conversation_planning_permit(&input) {
+            Ok(permit) => permit,
+            Err(failure) => {
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='planning-authority' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+        };
         let plugin_permit = match super::plugin_execution::check_input_in(&tx, &input, &authority) {
             Ok(permit) => permit,
             Err(failure)
@@ -3132,7 +3234,7 @@ impl ProjectStore {
         #[cfg(test)]
         crash_hook("after-dispatch-intent");
         let timeout = std::time::Duration::from_millis(input.envelope().limits.timeout_ms.into());
-        let original_deadline = crate::execution::DispatchDeadline {
+        let mut original_deadline = crate::execution::DispatchDeadline {
             instant: started
                 .checked_add(timeout)
                 .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
@@ -3140,10 +3242,15 @@ impl ProjectStore {
                 .checked_add(input.envelope().limits.timeout_ms.into())
                 .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
         };
+        if let Some(permit) = &planning_permit {
+            original_deadline.instant = original_deadline.instant.min(permit.deadline());
+            original_deadline.expires_at_ms = original_deadline.expires_at_ms.min(permit.expires_at_ms);
+        }
         Ok(DispatchRequest {
             provider: None,
             plugin_permit,
             service_origin: authority.service_origin(attempt)?,
+            planning_permit,
             original_deadline: Some(original_deadline),
             input,
             item_id: item,
@@ -3175,6 +3282,9 @@ impl ProjectStore {
             } else {
                 Err(error(ErrorCode::ResultMismatch, "result-identity"))
             };
+        }
+        if envelope.outcome == ExecutionState::Succeeded {
+            self.check_conversation_planning_input(&input)?;
         }
         let permit = super::plugin_execution::check_input_in(&tx, &input, &authority)?;
         if let Some(evidence) = &envelope.plugin {
@@ -3287,6 +3397,13 @@ impl ProjectStore {
         }
         if input.envelope().operation == crate::application::MCP_TERM_QUERY_OPERATION {
             if let Err(failure) = super::mcp::validate_query_output(&input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+        }
+        if input.envelope().operation == crate::ai::conversation_planning::OPERATION {
+            if let Err(failure) = crate::ai::conversation_planning::validate_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);
@@ -3634,6 +3751,16 @@ impl ProjectStore {
         task: ExecutionId,
         request: ExecutionId,
     ) -> Result<Revision, ExecutionError> {
+        let prior_owner: Option<String> = self.execution_connection()?.query_row(
+            "SELECT task_id FROM execution_cancellations WHERE request_id=?1",
+            [request.to_string()], |row| row.get(0),
+        ).optional().map_err(sql_error)?;
+        if prior_owner.is_some_and(|owner| owner != task.to_string()) {
+            return Err(error(ErrorCode::ResultMismatch, "cancel-identity"));
+        }
+        // Revoke before the durable write: an unknown cancellation commit cannot
+        // leave a worker authorized to issue another physical request.
+        self.revoke_conversation_planning(Some(task));
         let authority = self.plugin_authority.clone();
         let mut tx = self.execution_write()?;
         let existing: Option<(String, i64)> = tx
@@ -3841,6 +3968,9 @@ impl ProjectStore {
             return Err(error(ErrorCode::ResultMismatch, "action-identity"));
         }
         let input = load_input_cached(&tx, attempt)?;
+        if is_conversation_planning(&input) {
+            return Err(error(ErrorCode::Unauthorized, "conversation-planning-adoption"));
+        }
         result_ids.sort();
         let existing: Option<Vec<u8>> = tx
             .query_row(
@@ -4111,6 +4241,9 @@ fn capture_adoption_in(
     authority: &crate::execution::plugin_authority::PluginAuthority,
 ) -> Result<AdoptionCapture, ExecutionError> {
     let input = load_input_cached(connection, action.attempt_id)?;
+    if is_conversation_planning(&input) {
+        return Err(error(ErrorCode::Unauthorized, "conversation-planning-adoption"));
+    }
     let digest = action.request_digest(&input)?;
     let persisted: (Vec<u8>, String) = connection
             .query_row(

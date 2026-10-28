@@ -554,3 +554,282 @@ fn conversation_planning_ipc_keeps_one_readonly_capture_in_its_original_session(
         json!({"sessionToken":reopened["sessionToken"]}),
     );
 }
+
+struct PlanningProvider {
+    endpoint: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    requests: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl PlanningProvider {
+    fn new() -> Self {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            sync::{
+                Arc, Mutex,
+                atomic::{AtomicBool, Ordering},
+            },
+            time::{Duration, Instant},
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!(
+            "http://{}/v1/chat/completions",
+            listener.local_addr().unwrap()
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let records = requests.clone();
+        let worker = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !stopping.load(Ordering::Acquire) {
+                assert!(Instant::now() < deadline, "planning provider did not stop");
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(2));
+                        continue;
+                    }
+                    Err(e) => panic!("planning provider accept: {e}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0u8; 4096];
+                let header = loop {
+                    let length = stream.read(&mut buffer).unwrap();
+                    assert!(length > 0);
+                    bytes.extend_from_slice(&buffer[..length]);
+                    assert!(bytes.len() <= 96 * 1024);
+                    if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                        break end + 4;
+                    }
+                };
+                let headers = std::str::from_utf8(&bytes[..header]).unwrap();
+                assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"));
+                assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':')
+                            .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+                            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                    })
+                    .unwrap();
+                assert!(length <= 64 * 1024);
+                while bytes.len() < header + length {
+                    let n = stream.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&buffer[..n]);
+                    assert!(bytes.len() <= 96 * 1024);
+                }
+                let value = serde_json::from_slice(&bytes[header..header + length]).unwrap();
+                {
+                    let mut all = records.lock().unwrap();
+                    assert!(all.is_empty(), "unexpected repeated planning request");
+                    all.push(value);
+                }
+                let response=json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":json!({"kind":"reply","summary":"先确认要处理哪些条目。","questions":[]}).to_string()}}],"usage":{"prompt_tokens":7,"completion_tokens":3}}).to_string();
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
+            }
+        });
+        Self {
+            endpoint,
+            stop,
+            requests,
+            worker: Some(worker),
+        }
+    }
+    fn count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+}
+impl Drop for PlanningProvider {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            if std::thread::panicking() {
+                let _ = worker.join();
+            } else {
+                worker.join().unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history() {
+    let provider = PlanningProvider::new();
+    let temporary = tempfile::tempdir().unwrap();
+    let destination = temporary.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({"destination":destination,"displayName":"Planning permission IPC","sourceLocale":"en","targetLocales":["zh-CN"]}),
+    );
+    let thread = call(
+        &window,
+        "create_project_conversation",
+        in_session(
+            &project,
+            json!({"actionId":identity(),"conversationId":identity(),"title":null}),
+        ),
+    );
+    let message = call(
+        &window,
+        "append_project_conversation_message",
+        in_session(
+            &project,
+            json!({"actionId":identity(),"conversationId":thread["conversationId"],"messageId":identity(),"body":"  先解释 é 👩🏽‍💻\r\n保留 {{name}}  "}),
+        ),
+    );
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint: provider.endpoint.clone(),
+        model: "synthetic-planner".into(),
+        credential_env: String::new(),
+        max_requests: 1,
+        ..Default::default()
+    };
+    let prepared = call(
+        &window,
+        "prepare_conversation_planning",
+        in_session(
+            &project,
+            json!({"conversationId":thread["conversationId"],"selectedMessageIds":[message["messageId"]],"scope":{"kind":"conversation-only"},"config":config}),
+        ),
+    );
+    assert_eq!(prepared["preview"]["version"], 2);
+    assert!(runtime_absent(&app, &project));
+    assert_eq!(provider.count(), 0);
+    let action = identity();
+    let task = identity();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        + 60_000;
+    let consent = json!({"actionId":action,"attemptId":action,"taskId":task,"previewDigest":prepared["previewDigest"],"expiresAtMs":expires.to_string(),"shareMessages":true,"shareUnits":false});
+    let start = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"preparationId":prepared["preparationId"],"consent":consent}),
+    );
+    let recovery = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"consent":consent}),
+    );
+    assert_eq!(
+        call(&window, "recover_conversation_planning", recovery.clone())["outcome"],
+        json!({"kind":"pending","replay":"blocked"})
+    );
+    let mut bad = start.clone();
+    bad["consent"]["shareMessages"] = false.into();
+    assert!(!reject(&window, "start_conversation_planning", bad).is_null());
+    let mut bad = start.clone();
+    bad["consent"]["previewDigest"] = json!("0".repeat(64));
+    assert!(!reject(&window, "start_conversation_planning", bad).is_null());
+    assert_eq!(provider.count(), 0);
+    assert!(runtime_absent(&app, &project));
+    let receipt = call(&window, "start_conversation_planning", start.clone());
+    assert_eq!(receipt["consent"], consent);
+    assert_eq!(
+        call(&window, "start_conversation_planning", start.clone()),
+        receipt
+    );
+    let read = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"attemptId":action}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let view = loop {
+        let view = call(&window, "read_conversation_planning", read.clone());
+        if view["output"].is_object() {
+            break view;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "planning IPC did not finish: {view}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(view["receipt"], receipt);
+    assert_eq!(view["detail"]["progress"]["succeeded"], 1);
+    assert_eq!(view["detail"]["recovery"]["units"][0]["actions"], json!([]));
+    assert_eq!(view["output"]["model"]["summary"], "先确认要处理哪些条目。");
+    assert_eq!(view["output"]["usage"]["promptTokens"], "7");
+    assert_eq!(view["budget"]["limit"], 1);
+    assert_eq!(view["budget"]["dispatched"], 1);
+    assert_eq!(provider.count(), 1);
+    {
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(
+            requests[0]["messages"][0]["content"],
+            prepared["preview"]["system"]
+        );
+        assert_eq!(
+            requests[0]["messages"][1]["content"],
+            prepared["preview"]["input"]
+        );
+        assert!(requests[0].get("material").is_none());
+    }
+    assert_eq!(
+        call(&window, "recover_conversation_planning", recovery.clone())["outcome"],
+        json!({"kind":"recorded","receipt":receipt})
+    );
+    let mut bad = recovery.clone();
+    bad["consent"]["shareUnits"] = true.into();
+    assert_eq!(
+        call(&window, "recover_conversation_planning", bad)["outcome"],
+        json!({"kind":"mismatch"})
+    );
+    let mut bad = read.clone();
+    bad["conversationId"] = json!(identity());
+    assert!(!reject(&window, "read_conversation_planning", bad).is_null());
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":project["sessionToken"]}),
+    );
+    let reopened = call(&window, "open_project", json!({"locator":destination}));
+    let history = call(
+        &window,
+        "read_conversation_planning",
+        in_session(
+            &reopened,
+            json!({"conversationId":thread["conversationId"],"attemptId":action}),
+        ),
+    );
+    assert_eq!(history["receipt"], receipt);
+    assert_eq!(history["output"], view["output"]);
+    assert!(runtime_absent(&app, &reopened));
+    let mut repeat = start;
+    repeat["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(
+        call(&window, "start_conversation_planning", repeat),
+        receipt
+    );
+    assert!(runtime_absent(&app, &reopened));
+    assert_eq!(provider.count(), 1);
+    assert_eq!(
+        reject(&window, "read_conversation_planning", read)["code"],
+        "session-invalid"
+    );
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":reopened["sessionToken"]}),
+    );
+}

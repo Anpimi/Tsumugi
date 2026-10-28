@@ -2362,6 +2362,7 @@ fn complete_projection_cache_rechecks_current_coverage_bytes_and_dispatch() {
                     provider: None,
                     plugin_permit: None,
                     service_origin: None,
+                    planning_permit: None,
                     original_deadline: None,
                 },
                 Cancellation::default(),

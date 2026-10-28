@@ -35,6 +35,11 @@ fn validate_request_capture(input: &FixedInput, item: ExecutionId, capture: &Pro
             let prompt = ai::semantic_review::request_body(&settings.config, &settings.rules, &item)?;
             (settings.config, Some(prompt))
         }
+        ai::conversation_planning::OPERATION => {
+            let settings = ai::conversation_planning::settings(input)?;
+            let prompt = ai::conversation_planning::request_body(input, item)?;
+            (settings.config, Some(prompt))
+        }
         _ => return Err(error(ErrorCode::Unauthorized, "member-dispatch")),
     };
     capture.validate(&config)?;
@@ -569,6 +574,8 @@ impl ProjectStore {
         &mut self, request: &DispatchRequest, id: ExecutionId, limit: u32,
         capture: Option<&ProviderRequestCapture>,
     ) -> Result<(), ExecutionError> {
+        request.check_service_dispatch()?;
+        self.check_conversation_planning_input(&request.input)?;
         let captured = if let Some(capture) = capture {
             validate_request_capture(&request.input, request.item_id, capture)?;
             Some(codec::encode(capture, 131072)?)

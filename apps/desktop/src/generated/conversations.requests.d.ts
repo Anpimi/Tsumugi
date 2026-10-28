@@ -20,8 +20,11 @@ export interface Requests {
   messages: ReadProjectConversationMessagesRequest;
   preparePlanning: PrepareConversationPlanningRequest;
   read: ReadProjectConversationRequest;
+  readPlanning: ReadConversationPlanningRequest;
   recoverCreate: CreateProjectConversationRequest;
   recoverMessage: AppendProjectConversationMessageRequest;
+  recoverPlanning: RecoverConversationPlanningRequest;
+  startPlanning: StartConversationPlanningRequest;
   validatePlanning: ValidateConversationPlanningRequest;
 }
 export interface AppendProjectConversationMessageRequest {
@@ -108,6 +111,38 @@ export interface SourceContextSelection {
 }
 export interface ReadProjectConversationRequest {
   conversationId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ReadConversationPlanningRequest {
+  attemptId: ExecutionId;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface RecoverConversationPlanningRequest {
+  consent: ConversationPlanningConsent;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+/**
+ * The trusted human command confirms one exact preview and one finite request.
+ * The action identity is also the attempt identity in the original ledger.
+ */
+export interface ConversationPlanningConsent {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  previewDigest: string;
+  shareMessages: boolean;
+  shareUnits: boolean;
+  taskId: ExecutionId;
+}
+export interface StartConversationPlanningRequest {
+  consent: ConversationPlanningConsent;
+  conversationId: ExecutionId;
+  preparationId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
 }

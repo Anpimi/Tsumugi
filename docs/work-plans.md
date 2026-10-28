@@ -8,7 +8,7 @@ Core and desktop IPC can keep project threads and ordered human messages before 
 
 Creating a thread or appending a message uses an action identity bound to the full request. Repeating that request returns its original receipt; changing its contents under the same identity is rejected. The corresponding recovery read returns `recorded`, `pending`, or `mismatch`. `pending` means the result has not been confirmed. Its replay field says whether the same request may be submitted explicitly; it does not schedule a retry or assert that the request never ran. Recovery keeps the original business request across project reopening while using the new session token.
 
-These records store human input. Planning requests, plan proposals, model sharing, and execution still need their own permission and result checks. The project assistant interface is a separate integration from this storage and IPC support.
+These conversation records store human input. Planning calls use the separate permission and result checks below. Work-plan authorization and the project assistant interface remain separate integrations.
 
 ## Preparing planning materials
 
@@ -16,7 +16,15 @@ Conversation planning can capture 1–16 explicitly selected human messages, wit
 
 Preparation is local and read-only. It does not authorize or send a model request. Planning settings allow one request, no automatic retries, and one concurrent request; an oversized input is refused intact. The Host retains one opaque capture in the current project session. A successful replacement gets a new identity, and a failed preparation keeps the previous capture. Validation compares the original related facts without refreshing that capture; unrelated edits and unselected new messages do not change its materials. Closing or reopening the project discards this local preparation.
 
-Finite model permission, structured proposals, and conversion to an authorized work plan remain separate steps.
+## Permitting one planning call
+
+A planning start confirms the original preview digest, exact sharing scope, one request, and an expiry of at most 120 seconds within the configured timeout. Its action identity equals its attempt identity; task identity and expiry are fixed before submission. Timestamps use decimal strings over IPC. The Store issues an opaque, session-bound permission, and the original execution transaction records consent and enqueue together. Serialized input and preview data cannot grant permission by themselves.
+
+The existing runtime, Provider service and request budget enforce this permission before dispatch and physical requests. Cancellation, uncertain writes, expiry, stopping, runtime replacement or reopening end its authority. Receipt reads and recovery check the original request; they never renew permission or replay it. A pending recovery remains unresolved, and ordinary task retry, query, resume and adoption actions are unavailable for this operation. Usage and unresolved requests stay in the original ledger.
+
+Planning results are typed replies or plan suggestions. Suggestions must stay within the captured entries and language and preserve human protection. Invalid scope, unsupported effects, extra fields and malformed output are refused without automatic repair or a second model request. The original fixed input also retains local provenance; the Provider receives only the disclosed system and input text. History remains readable after the permission ends.
+
+Persisted proposal revisions, explicit authorization of a resulting work plan, and the assistant interface still need their own integration. A planning result cannot start or adopt work.
 
 ## Preparing and verifying a work plan
 

@@ -4,7 +4,7 @@ import { sameExecutionIds } from "./executionCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import type { Requests } from "./generated/conversations.requests";
 import type { Responses } from "./generated/conversations.responses";
-import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning } from "./generated/conversations.validators";
+import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning, validateResponsePlanningReceipt, validateResponsePlanningRecovery, validateResponsePlanningRun } from "./generated/conversations.validators";
 
 export type { ProjectConversation, ProjectConversationMessage, ProjectConversationPage, ProjectConversationMessagePage,
   ProjectConversationCreateRecovery, ProjectConversationMessageRecovery } from "./generated/conversations.responses";
@@ -12,6 +12,9 @@ export type ConversationCreateRequest = Requests["create"];
 export type ConversationAppendRequest = Requests["append"];
 export type ConversationPlanningRequest = Requests["preparePlanning"];
 export type PreparedConversationPlanning = Responses["planning"];
+export type ConversationPlanningConsent = Requests["startPlanning"]["consent"];
+export type ConversationPlanningReceipt = Responses["planningReceipt"];
+export type ConversationPlanningRun = NonNullable<Responses["planningRun"]>;
 const bytes = new TextEncoder();
 const bounded = (value: unknown) => bytes.encode(JSON.stringify(value)).length <= 256 * 1024;
 function conversation(value: Responses["conversation"], projectId: string, conversationId?: string) {
@@ -33,9 +36,8 @@ function page<T extends { ordinal: string }>(value: { rows: T[]; nextAfter: stri
     && (value.nextAfter === null || value.rows.length > 0 && value.nextAfter === value.rows.at(-1)?.ordinal) && bounded(value);
 }
 
-function planning(value: Responses["planning"], request: Requests["preparePlanning"]) {
-  const preview = value.preview;
-  return preview.version === 1 && preview.projectId === request.projectId && preview.conversationId === request.conversationId
+function planningPreview(preview: Responses["planning"]["preview"], request: Requests["preparePlanning"]) {
+  return preview.version === 2 && preview.projectId === request.projectId && preview.conversationId === request.conversationId
     && sameAiConfig(preview.config, request.config) && jsonIdentity(preview.scope) === jsonIdentity(request.scope)
     && preview.selectedMessages.length >= 1 && preview.selectedMessages.length <= 16
     && sameExecutionIds(preview.selectedMessages.map(item => item.messageId), request.selectedMessageIds)
@@ -50,10 +52,46 @@ function planning(value: Responses["planning"], request: Requests["preparePlanni
     && bounded(preview);
 }
 
-/** Human messages are local records. These commands never authorize a model or start a task. */
+function planningReceipt(value: Responses["planningReceipt"], request: { projectId: string; conversationId: string; consent: Requests["startPlanning"]["consent"] }) {
+  return value.projectId === request.projectId && value.conversationId === request.conversationId
+    && jsonIdentity(value.consent) === jsonIdentity(request.consent) && value.consent.actionId === value.consent.attemptId
+    && /^[0-9a-f]{64}$/.test(value.inputDigest) && /^[0-9a-f]{64}$/.test(value.consent.previewDigest)
+    && BigInt(value.consent.expiresAtMs) > 0n && value.consent.shareMessages;
+}
+function planningRun(value: NonNullable<Responses["planningRun"]>, request: Requests["readPlanning"]) {
+  const { receipt, preview, detail, budget } = value;
+  const item = detail.items[0];
+  const model = value.output?.model;
+  if (model?.kind === "proposal" && (preview.scope.kind !== "units" || model.unitIds.length === 0
+    || new Set(model.unitIds).size !== model.unitIds.length || model.unitIds.some(id => !preview.units.some(unit => unit.unitId === id)))) return false;
+  return planningReceipt(receipt, { ...request, consent: receipt.consent }) && receipt.consent.attemptId === request.attemptId
+    && receipt.consent.shareUnits === (preview.scope.kind === "units")
+    && planningPreview(preview, { ...request, config: preview.config, scope: preview.scope, selectedMessageIds: preview.selectedMessages.map(message => message.messageId) })
+    && detail.attemptId === request.attemptId && detail.taskId === receipt.consent.taskId && detail.operation === "conversation-planning"
+    && detail.progress.total === 1 && detail.items.length === 1 && !!item && item.status.itemId === receipt.consent.actionId
+    && item.scope.kind === "project-conversation" && item.scope.id === request.conversationId
+    && (item.scope.locale ?? null) === (preview.scope.kind === "units" ? preview.scope.locale : null)
+    && item.resultId === value.resultId && detail.recovery.attemptId === request.attemptId
+    && detail.recovery.units.every(unit => unit.actions.length === 0) && budget !== null && budget.limit === 1 && budget.dispatched <= 1
+    && (value.output === null || value.resultId !== null && item.status.execution === "succeeded" && item.status.validation === "valid"
+      && value.output.requests === 1 && (value.output.usage !== null || value.output.usageIncomplete))
+    && bounded(value);
+}
+
+/** Project conversations, explicit planning permission and original-action history. */
 export const conversationCommands = {
+  startPlanning: (request: Requests["startPlanning"]) => checkedInvoke("start_conversation_planning", request,
+    (value): value is Responses["planningReceipt"] => validateResponsePlanningReceipt(value) && planningReceipt(value, request)),
+  recoverPlanning: (request: Requests["recoverPlanning"]) => checkedInvoke("recover_conversation_planning", request,
+    (value): value is Responses["planningRecovery"] => validateResponsePlanningRecovery(value)
+      && value.request.projectId === request.projectId && value.request.conversationId === request.conversationId
+      && jsonIdentity(value.request.consent) === jsonIdentity(request.consent)
+      && (value.outcome.kind === "recorded" ? planningReceipt(value.outcome.receipt, request)
+        : value.outcome.kind === "mismatch" || value.outcome.replay === "blocked")),
+  readPlanning: (request: Requests["readPlanning"]) => checkedInvoke("read_conversation_planning", request,
+    (value): value is Responses["planningRun"] => validateResponsePlanningRun(value) && (value === null || planningRun(value, request))),
   preparePlanning: (request: Requests["preparePlanning"]) => checkedInvoke("prepare_conversation_planning", request,
-    (value): value is Responses["planning"] => validateResponsePlanning(value) && planning(value, request)),
+    (value): value is Responses["planning"] => validateResponsePlanning(value) && /^[0-9a-f]{64}$/.test(value.previewDigest) && planningPreview(value.preview, request)),
   validatePlanning: (request: Requests["validatePlanning"], expected: Responses["planning"]) => checkedInvoke("validate_conversation_planning", request,
     (value): value is Responses["planning"] => validateResponsePlanning(value) && value.preparationId === request.preparationId
       && expected.preparationId === request.preparationId && expected.preview.projectId === request.projectId

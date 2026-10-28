@@ -484,6 +484,7 @@ mod tests {
                     provider: None,
                     plugin_permit: None,
                     service_origin: None,
+                    planning_permit: None,
                     original_deadline: None,
                     input: input.clone(),
                     item_id: item.item_id,

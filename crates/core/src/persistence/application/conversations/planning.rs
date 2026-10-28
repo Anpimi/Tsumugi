@@ -1,10 +1,14 @@
-//! Consistent, bounded captures for future explicitly authorized planning.
+//! Bounded planning captures and explicit permission in the original execution ledger.
 use super::*;
 use crate::{
     ai::{AiPreview, conversation_planning},
     application::WorkProtection,
 };
 use std::collections::BTreeSet;
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::{Duration, Instant},
+};
 
 fn preview_in(
     store: &ProjectStore,
@@ -143,6 +147,262 @@ fn preview_in(
 }
 
 impl ProjectStore {
+    /// Prepare authority locally. Only the original enqueue transaction records
+    /// this human action; this value alone has no scheduled or durable effect.
+    pub fn authorize_conversation_planning(
+        &self,
+        capture: &CapturedConversationPlanning,
+        consent: &ConversationPlanningConsent,
+    ) -> Result<PreparedConversationPlanning, ExecutionError> {
+        self.validate_conversation_planning(capture)?;
+        if consent.action_id != consent.attempt_id
+            || !consent.share_messages
+            || consent.share_units
+                != matches!(
+                    &capture.preview.scope,
+                    ConversationPlanningScope::Units { .. }
+                )
+            || consent.preview_digest != capture.preview_digest()?
+        {
+            return Err(fail(
+                ErrorCode::Unauthorized,
+                "conversation-planning-consent",
+            ));
+        }
+        let wall = crate::execution::plugin_authority::plugin_now_ms()?;
+        let remaining = consent
+            .expires_at_ms
+            .get()
+            .checked_sub(wall)
+            .filter(|remaining| {
+                *remaining > 0
+                    && *remaining
+                        <= u64::from(capture.preview.config.timeout_seconds.min(120)) * 1000
+            })
+            .ok_or_else(|| fail(ErrorCode::Unauthorized, "conversation-planning-expiry"))?;
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(remaining))
+            .ok_or_else(|| fail(ErrorCode::InvalidInput, "conversation-planning-expiry"))?;
+        let input = conversation_planning::fixed_input(capture, consent)?;
+        let permit = ConversationPlanningPermit {
+            capture: capture.clone(),
+            input: input.clone(),
+            deadline,
+            expires_at_ms: consent.expires_at_ms.get(),
+            active: Arc::new(AtomicBool::new(true)),
+            store_live: self.mcp_query_liveness.clone(),
+            store_unknown: self.execution_unknown.clone(),
+            authority_revision: self.planning_authority_revision.clone(),
+            issued_revision: self
+                .planning_authority_revision
+                .load(std::sync::atomic::Ordering::Acquire),
+            runtime: Arc::default(),
+        };
+        Ok(PreparedConversationPlanning {
+            capture: capture.clone(),
+            consent: consent.clone(),
+            input,
+            permit,
+        })
+    }
+
+    pub(crate) fn check_prepared_conversation_planning(
+        &self,
+        prepared: &PreparedConversationPlanning,
+    ) -> Result<(), ExecutionError> {
+        if !self
+            .conversation_planning_permits
+            .contains_key(&prepared.input.envelope().attempt_id)
+            && self
+                .conversation_planning_permits
+                .values()
+                .filter(|permit| permit.check_input(&permit.input).is_ok())
+                .count()
+                >= 128
+        {
+            return Err(fail(
+                ErrorCode::LimitExceeded,
+                "conversation-planning-permits",
+            ));
+        }
+        self.validate_conversation_planning(&prepared.capture)?;
+        prepared.permit.check_input(prepared.input())?;
+        if prepared.input.bytes()
+            != conversation_planning::fixed_input(&prepared.capture, &prepared.consent)?.bytes()
+            || prepared.permit.capture.epoch != prepared.capture.epoch
+        {
+            return Err(fail(
+                ErrorCode::Unauthorized,
+                "conversation-planning-preparation",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn install_conversation_planning(
+        &mut self,
+        prepared: &PreparedConversationPlanning,
+    ) -> Result<(), ExecutionError> {
+        self.conversation_planning_permits
+            .retain(|_, permit| permit.check_input(&permit.input).is_ok());
+        if self.conversation_planning_permits.len() >= 128 {
+            return Err(fail(
+                ErrorCode::LimitExceeded,
+                "conversation-planning-permits",
+            ));
+        }
+        prepared.permit.check_dispatch(prepared.input())?;
+        self.conversation_planning_permits.insert(
+            prepared.input.envelope().attempt_id,
+            prepared.permit.clone(),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn check_conversation_planning_input(
+        &self,
+        input: &crate::execution::FixedInput,
+    ) -> Result<(), ExecutionError> {
+        if input.envelope().operation != conversation_planning::OPERATION
+            && input.envelope().capability_id != conversation_planning::CAPABILITY
+        {
+            return Ok(());
+        }
+        let permit = self
+            .conversation_planning_permits
+            .get(&input.envelope().attempt_id)
+            .ok_or_else(|| fail(ErrorCode::Unauthorized, "conversation-planning-permit"))?;
+        let checked = permit
+            .check_dispatch(input)
+            .and_then(|_| self.validate_conversation_planning(&permit.capture));
+        if checked.is_err() {
+            permit.revoke();
+        }
+        checked.map_err(|mut error| {
+            if error.code == ErrorCode::DependencyConflict {
+                error.code = ErrorCode::Unauthorized;
+            }
+            error
+        })
+    }
+
+    pub(crate) fn conversation_planning_permit(
+        &self,
+        input: &crate::execution::FixedInput,
+    ) -> Result<Option<ConversationPlanningPermit>, ExecutionError> {
+        if input.envelope().operation != conversation_planning::OPERATION
+            && input.envelope().capability_id != conversation_planning::CAPABILITY
+        {
+            return Ok(None);
+        }
+        self.check_conversation_planning_input(input)?;
+        Ok(self
+            .conversation_planning_permits
+            .get(&input.envelope().attempt_id)
+            .cloned())
+    }
+
+    pub(crate) fn revoke_conversation_planning(&self, task: Option<ExecutionId>) {
+        for permit in self
+            .conversation_planning_permits
+            .values()
+            .filter(|permit| task.is_none_or(|task| permit.input.envelope().task_id == task))
+        {
+            permit.revoke();
+        }
+    }
+
+    /// Read only the original immutable input. No live permit is installed and
+    /// current source edits do not rewrite or invalidate historical evidence.
+    pub fn conversation_planning_receipt(
+        &self,
+        request: &ReadConversationPlanningAction,
+    ) -> Result<Option<ConversationPlanningReceipt>, ExecutionError> {
+        if request.consent.action_id != request.consent.attempt_id
+            || !request.consent.share_messages
+            || request.consent.expires_at_ms.get() == 0
+            || tsumugi_plugin_sdk::validate_package_digest(&request.consent.preview_digest).is_err()
+        {
+            return Err(fail(
+                ErrorCode::InvalidInput,
+                "conversation-planning-action",
+            ));
+        }
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "conversation-planning-action"))?;
+        read_snapshot(c, |c| {
+            owned(c, request.project_id)?;
+            conversation(c, request.project_id, request.conversation_id)?;
+            let Some(input) = self.execution_input_if_present(request.consent.attempt_id)? else {
+                return Ok(None);
+            };
+            if input.envelope().operation != conversation_planning::OPERATION
+                || input.envelope().capability_id != conversation_planning::CAPABILITY
+            {
+                return Err(fail(
+                    ErrorCode::ResultMismatch,
+                    "conversation-planning-action",
+                ));
+            }
+            let settings = conversation_planning::settings(&input)?;
+            let preview: ConversationPlanningPreview =
+                serde_json::from_value(input.envelope().items[0].payload.clone())
+                    .map_err(|_| fail(ErrorCode::CorruptLedger, "conversation-planning-action"))?;
+            if input.envelope().project_id != request.project_id
+                || preview.conversation_id != request.conversation_id
+                || settings.consent != request.consent
+            {
+                return Err(fail(
+                    ErrorCode::ResultMismatch,
+                    "conversation-planning-action",
+                ));
+            }
+            if self.execution_recovery_policy(request.consent.attempt_id)?
+                != crate::execution::RecoveryPolicy::ExternalUnknown
+            {
+                return Err(fail(
+                    ErrorCode::CorruptLedger,
+                    "conversation-planning-action",
+                ));
+            }
+            Ok(Some(ConversationPlanningReceipt {
+                project_id: request.project_id,
+                conversation_id: request.conversation_id,
+                consent: request.consent.clone(),
+                input_digest: input.digest().into(),
+            }))
+        })
+    }
+
+    pub fn recover_conversation_planning(
+        &self,
+        request: &ReadConversationPlanningAction,
+    ) -> Result<ConversationPlanningRecovery, ExecutionError> {
+        let outcome = match self.conversation_planning_receipt(request) {
+            Ok(Some(receipt)) => {
+                crate::application::ConversationActionOutcome::Recorded { receipt }
+            }
+            Ok(None) => crate::application::ConversationActionOutcome::Pending {
+                replay: crate::application::ConversationActionReplay::Blocked,
+            },
+            Err(error) if error.code == ErrorCode::ResultMismatch => {
+                return Ok(ConversationPlanningRecovery {
+                    request: request.clone(),
+                    outcome: crate::application::ConversationActionOutcome::Mismatch {},
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        if self.is_reconciling() {
+            self.reconcile_execution()?;
+        }
+        Ok(ConversationPlanningRecovery {
+            request: request.clone(),
+            outcome,
+        })
+    }
+
     /// Capture exactly the caller's selected messages and content, with no
     /// execution, permission, identity allocation or persistent mutation.
     pub fn prepare_conversation_planning(
