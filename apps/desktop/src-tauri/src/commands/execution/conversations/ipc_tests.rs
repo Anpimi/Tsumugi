@@ -395,3 +395,162 @@ fn conversation_ipc_pages_complete_messages_within_the_encoded_byte_limit() {
         json!({ "sessionToken": project["sessionToken"] }),
     );
 }
+
+fn planning_clock(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    project: &Value,
+) -> (String, u64, u64) {
+    let token = project["sessionToken"].as_str().unwrap().to_owned();
+    let id = ExecutionId::parse(project["metadata"]["projectId"].as_str().unwrap()).unwrap();
+    tauri::async_runtime::block_on(app.state::<AppState>().sessions.run(
+        "planning-test-clock",
+        CommandStage::ExecutionRead,
+        move |sessions| {
+            let active = authorized(sessions, &token, id, CommandStage::ExecutionRead)?;
+            let changes = active.store.changes_since(Revision::new(0).unwrap());
+            Ok((
+                changes.epoch,
+                changes.sequence.get(),
+                changes.progress_sequence.get(),
+            ))
+        },
+    ))
+    .unwrap()
+}
+
+#[test]
+fn conversation_planning_ipc_keeps_one_readonly_capture_in_its_original_session() {
+    let temporary = tempfile::tempdir().unwrap();
+    let destination = temporary.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({"destination": destination, "displayName":"Planning IPC", "sourceLocale":"en", "targetLocales":["zh-CN"]}),
+    );
+    let thread = call(
+        &window,
+        "create_project_conversation",
+        in_session(
+            &project,
+            json!({"actionId":identity(),"conversationId":identity(),"title":null}),
+        ),
+    );
+    let body = "  先解释 e\u{301} 👩🏽‍💻\r\n保留 {{name}}  ";
+    let message = call(
+        &window,
+        "append_project_conversation_message",
+        in_session(
+            &project,
+            json!({"actionId":identity(),"conversationId":thread["conversationId"],"messageId":identity(),"body":body}),
+        ),
+    );
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+        model: "synthetic-planning".into(),
+        credential_env: String::new(),
+        max_requests: 1,
+        ..Default::default()
+    };
+    let preparation = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"selectedMessageIds":[message["messageId"]],"scope":{"kind":"conversation-only"},"config":config}),
+    );
+    let before_changes = planning_clock(&app, &project);
+    let before_bytes = std::fs::read(destination.join("project.sqlite3")).unwrap();
+    let prepared = call(
+        &window,
+        "prepare_conversation_planning",
+        preparation.clone(),
+    );
+    assert_eq!(prepared["preview"]["selectedMessages"], json!([message]));
+    assert_eq!(prepared["preview"]["brief"]["messages"], 1);
+    assert_eq!(prepared["preview"]["brief"]["units"], 0);
+    assert_eq!(prepared["preview"]["units"], json!([]));
+    let input: Value =
+        serde_json::from_str(prepared["preview"]["input"].as_str().unwrap()).unwrap();
+    assert_eq!(input["messages"], json!([{"author":"human","body":body}]));
+    assert!(input.get("config").is_none());
+    let validation = in_session(&project, json!({"preparationId":prepared["preparationId"]}));
+    assert_eq!(
+        call(
+            &window,
+            "validate_conversation_planning",
+            validation.clone()
+        ),
+        prepared
+    );
+    let mut wrong = validation.clone();
+    wrong["preparationId"] = json!(identity());
+    assert!(!reject(&window, "validate_conversation_planning", wrong).is_null());
+    let mut wrong = preparation.clone();
+    wrong["projectId"] = json!(identity());
+    assert_eq!(
+        reject(&window, "prepare_conversation_planning", wrong)["code"],
+        "session-invalid"
+    );
+    let mut wrong = preparation.clone();
+    wrong["config"]["maxRequests"] = json!(2);
+    assert!(!reject(&window, "prepare_conversation_planning", wrong).is_null());
+    // A failed B preparation does not discard the already prepared A.
+    assert_eq!(
+        call(
+            &window,
+            "validate_conversation_planning",
+            validation.clone()
+        ),
+        prepared
+    );
+    let mut spoofed = validation.clone();
+    spoofed["preview"] = prepared["preview"].clone();
+    assert!(!reject(&window, "validate_conversation_planning", spoofed).is_null());
+    assert_eq!(
+        std::fs::read(destination.join("project.sqlite3")).unwrap(),
+        before_bytes
+    );
+    assert_eq!(planning_clock(&app, &project), before_changes);
+    assert!(runtime_absent(&app, &project));
+
+    // Replacing a local capture gives B a new identity; A is never refreshed.
+    let mut next = preparation;
+    next["config"]["model"] = json!("another-synthetic-model");
+    let second = call(&window, "prepare_conversation_planning", next);
+    assert_ne!(second["preparationId"], prepared["preparationId"]);
+    assert!(
+        !reject(
+            &window,
+            "validate_conversation_planning",
+            validation.clone()
+        )
+        .is_null()
+    );
+    assert_eq!(
+        second["preview"]["config"]["model"],
+        "another-synthetic-model"
+    );
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":project["sessionToken"]}),
+    );
+    let reopened = call(&window, "open_project", json!({"locator":destination}));
+    let mut old = in_session(&reopened, json!({"preparationId":second["preparationId"]}));
+    assert!(!reject(&window, "validate_conversation_planning", old.clone()).is_null());
+    old["sessionToken"] = project["sessionToken"].clone();
+    assert_eq!(
+        reject(&window, "validate_conversation_planning", old)["code"],
+        "session-invalid"
+    );
+    assert!(runtime_absent(&app, &reopened));
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":reopened["sessionToken"]}),
+    );
+}

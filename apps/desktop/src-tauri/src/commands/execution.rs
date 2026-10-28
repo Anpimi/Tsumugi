@@ -68,6 +68,7 @@ macro_rules! handlers {
         conversations::read_project_conversation,conversations::read_project_conversation_messages,
         conversations::append_project_conversation_message,conversations::recover_project_conversation_create,
         conversations::recover_project_conversation_message,
+        conversations::planning::prepare_conversation_planning,conversations::planning::validate_conversation_planning,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
         crate::commands::plugins::application::stop_application_plugin_instance,

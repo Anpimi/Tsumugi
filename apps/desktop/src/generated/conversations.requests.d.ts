@@ -2,15 +2,27 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+export type UnsignedDecimal = string;
+export type ConversationPlanningScope =
+  | {
+      kind: "conversation-only";
+    }
+  | {
+      kind: "units";
+      locale: string;
+      unitIds: ExecutionId[];
+    };
 
 export interface Requests {
   append: AppendProjectConversationMessageRequest;
   create: CreateProjectConversationRequest;
   list: ListProjectConversationsRequest;
   messages: ReadProjectConversationMessagesRequest;
+  preparePlanning: PrepareConversationPlanningRequest;
   read: ReadProjectConversationRequest;
   recoverCreate: CreateProjectConversationRequest;
   recoverMessage: AppendProjectConversationMessageRequest;
+  validatePlanning: ValidateConversationPlanningRequest;
 }
 export interface AppendProjectConversationMessageRequest {
   actionId: ExecutionId;
@@ -40,8 +52,67 @@ export interface ReadProjectConversationMessagesRequest {
   projectId: ExecutionId;
   sessionToken: string;
 }
+export interface PrepareConversationPlanningRequest {
+  config: AiConfig;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  scope: ConversationPlanningScope;
+  selectedMessageIds: ExecutionId[];
+  sessionToken: string;
+}
+export interface AiConfig {
+  chatgptAccount?: ExecutionId | null;
+  concurrency: number;
+  /**
+   * Captured non-secret profile identity. Accepted execution keeps this
+   * provenance and the original defaults; it never resolves mutable settings.
+   */
+  connectionProfile?: ModelConnectionReference | null;
+  /**
+   * Immutable project provenance, independent of current defaults or consent.
+   */
+  contextStrategy: ContextStrategyReference | null;
+  credentialEnv: string;
+  endpoint: string;
+  maxItems: number;
+  maxOutputTokens: number;
+  maxRequests: number;
+  maxRetries: number;
+  model: string;
+  shareContext: boolean;
+  shareTerms: boolean;
+  sourceContext: SourceContextSelection;
+  timeoutSeconds: number;
+  tokenField: string;
+}
+/**
+ * A persistent data identity, never a credential, execution grant or consent.
+ */
+export interface ModelConnectionReference {
+  digest: string;
+  profileId: ExecutionId;
+  revision: UnsignedDecimal;
+  storeId: ExecutionId;
+}
+export interface ContextStrategyReference {
+  candidateId: ExecutionId;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface SourceContextSelection {
+  extracted: boolean;
+  inferred: boolean;
+  maxBytes: number;
+  maxItems: number;
+  neighbors: boolean;
+}
 export interface ReadProjectConversationRequest {
   conversationId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ValidateConversationPlanningRequest {
+  preparationId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
 }

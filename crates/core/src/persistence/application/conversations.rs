@@ -6,6 +6,7 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+mod planning;
 
 const MAX_RECORD: usize = 64 * 1024;
 const TABLES: &[(&str, &str)] = &[

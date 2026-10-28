@@ -1,12 +1,17 @@
 import { checkedInvoke } from "./ipc";
+import { sameAiConfig } from "./aiCommands";
+import { sameExecutionIds } from "./executionCommands";
+import { jsonIdentity } from "./pluginToolChoices";
 import type { Requests } from "./generated/conversations.requests";
 import type { Responses } from "./generated/conversations.responses";
-import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery } from "./generated/conversations.validators";
+import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning } from "./generated/conversations.validators";
 
 export type { ProjectConversation, ProjectConversationMessage, ProjectConversationPage, ProjectConversationMessagePage,
   ProjectConversationCreateRecovery, ProjectConversationMessageRecovery } from "./generated/conversations.responses";
 export type ConversationCreateRequest = Requests["create"];
 export type ConversationAppendRequest = Requests["append"];
+export type ConversationPlanningRequest = Requests["preparePlanning"];
+export type PreparedConversationPlanning = Responses["planning"];
 const bytes = new TextEncoder();
 const bounded = (value: unknown) => bytes.encode(JSON.stringify(value)).length <= 256 * 1024;
 function conversation(value: Responses["conversation"], projectId: string, conversationId?: string) {
@@ -28,8 +33,31 @@ function page<T extends { ordinal: string }>(value: { rows: T[]; nextAfter: stri
     && (value.nextAfter === null || value.rows.length > 0 && value.nextAfter === value.rows.at(-1)?.ordinal) && bounded(value);
 }
 
+function planning(value: Responses["planning"], request: Requests["preparePlanning"]) {
+  const preview = value.preview;
+  return preview.version === 1 && preview.projectId === request.projectId && preview.conversationId === request.conversationId
+    && sameAiConfig(preview.config, request.config) && jsonIdentity(preview.scope) === jsonIdentity(request.scope)
+    && preview.selectedMessages.length >= 1 && preview.selectedMessages.length <= 16
+    && sameExecutionIds(preview.selectedMessages.map(item => item.messageId), request.selectedMessageIds)
+    && preview.selectedMessages.every((item, index) => message(item, request.projectId, request.conversationId)
+      && (index === 0 || BigInt(item.ordinal) > BigInt(preview.selectedMessages[index - 1].ordinal)))
+    && (request.scope.kind === "conversation-only" ? preview.units.length === 0 : preview.units.length === request.scope.unitIds.length
+      && preview.units.every((unit, index) => unit.unitId === (request.scope.kind === "units" ? request.scope.unitIds[index] : undefined)
+        && unit.protection.unitId === unit.unitId && unit.protection.locale === (request.scope.kind === "units" ? request.scope.locale : undefined)))
+    && preview.brief.messages === preview.selectedMessages.length && preview.brief.units === preview.units.length
+    && preview.brief.sourceTexts === preview.units.length && preview.system.length > 0 && preview.input.length > 0
+    && preview.byteLength <= 32768 && preview.byteLength === bytes.encode(JSON.stringify({ system: preview.system, input: preview.input })).length
+    && bounded(preview);
+}
+
 /** Human messages are local records. These commands never authorize a model or start a task. */
 export const conversationCommands = {
+  preparePlanning: (request: Requests["preparePlanning"]) => checkedInvoke("prepare_conversation_planning", request,
+    (value): value is Responses["planning"] => validateResponsePlanning(value) && planning(value, request)),
+  validatePlanning: (request: Requests["validatePlanning"], expected: Responses["planning"]) => checkedInvoke("validate_conversation_planning", request,
+    (value): value is Responses["planning"] => validateResponsePlanning(value) && value.preparationId === request.preparationId
+      && expected.preparationId === request.preparationId && expected.preview.projectId === request.projectId
+      && jsonIdentity(value) === jsonIdentity(expected)),
   create: (request: Requests["create"]) => checkedInvoke("create_project_conversation", request,
     (value): value is Responses["conversation"] => validateResponseConversation(value) && created(value, request)),
   list: (request: Requests["list"]) => checkedInvoke("list_project_conversations", request,

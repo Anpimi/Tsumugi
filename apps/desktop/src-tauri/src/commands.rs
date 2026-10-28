@@ -471,6 +471,7 @@ struct ActiveSession {
     store: ProjectStore,
     receipt: Option<ReconciliationReceipt>,
     execution: Option<execution::ExecutionHost>,
+    conversation_planning: Option<execution::conversations::PlanningPreparation>,
 }
 
 struct ReconciliationReceipt {
@@ -596,6 +597,7 @@ impl SessionManager {
             locator,
             store,
             execution: None,
+            conversation_planning: None,
             receipt: None,
         });
         Ok(view)
@@ -627,6 +629,7 @@ impl SessionManager {
             locator,
             store,
             execution: None,
+            conversation_planning: None,
             receipt: None,
         };
         // A fresh host cannot inherit an earlier process's running authority.
@@ -668,6 +671,7 @@ impl SessionManager {
                 locator: recovery.locator.clone(),
                 store,
                 execution: None,
+                conversation_planning: None,
                 receipt: Some(ReconciliationReceipt {
                     basis: recovery.previous.metadata_revision(),
                     metadata,
@@ -888,6 +892,7 @@ impl SessionManager {
                         locator: new_locator,
                         store: new_store,
                         execution: None,
+                        conversation_planning: None,
                         receipt: None,
                     });
                     self.directory_recovery = None;
@@ -912,6 +917,7 @@ impl SessionManager {
             locator: new_locator,
             store: new_store,
             execution: None,
+            conversation_planning: None,
             receipt: Some(ReconciliationReceipt {
                 basis: expected_revision,
                 metadata: change.metadata().clone(),

@@ -139,6 +139,16 @@ export type ConversationActionOutcome2 =
   | {
       kind: "mismatch";
     };
+export type UnsignedDecimal = string;
+export type ConversationPlanningScope =
+  | {
+      kind: "conversation-only";
+    }
+  | {
+      kind: "units";
+      locale: string;
+      unitIds: ExecutionId[];
+    };
 
 export interface Responses {
   conversation: ProjectConversation;
@@ -148,6 +158,7 @@ export interface Responses {
   messagePage: ProjectConversationMessagePage;
   messageRecovery: ProjectConversationMessageRecovery;
   page: ProjectConversationPage;
+  planning: PreparedConversationPlanning;
 }
 /**
  * Stable identity independent of any WorkPlan. Later associations can refer to
@@ -212,4 +223,104 @@ export interface ProjectConversationPage {
   nextAfter: Revision | null;
   projectId: ExecutionId;
   rows: ProjectConversation[];
+}
+export interface PreparedConversationPlanning {
+  preparationId: ExecutionId;
+  preview: ConversationPlanningPreview;
+}
+export interface ConversationPlanningPreview {
+  brief: ConversationPlanningBrief;
+  /**
+   * UTF-8 bytes of JSON {"system": system, "input": input}, including escaping.
+   */
+  byteLength: number;
+  config: AiConfig;
+  conversationId: ExecutionId;
+  input: string;
+  projectId: ExecutionId;
+  scope: ConversationPlanningScope;
+  selectedMessages: ProjectConversationMessage[];
+  system: string;
+  units: ConversationPlanningUnitBasis[];
+  version: number;
+}
+/**
+ * Counts are derived from the exact JSON input, including repeated per-unit
+ * resource projections, rather than from requested sharing toggles.
+ */
+export interface ConversationPlanningBrief {
+  manualContextFacts: number;
+  manualContexts: number;
+  messages: number;
+  sourceContextFacts: number;
+  sourceContextNeighbors: number;
+  sourceTexts: number;
+  terms: number;
+  units: number;
+}
+export interface AiConfig {
+  chatgptAccount?: ExecutionId | null;
+  concurrency: number;
+  /**
+   * Captured non-secret profile identity. Accepted execution keeps this
+   * provenance and the original defaults; it never resolves mutable settings.
+   */
+  connectionProfile?: ModelConnectionReference | null;
+  /**
+   * Immutable project provenance, independent of current defaults or consent.
+   */
+  contextStrategy: ContextStrategyReference | null;
+  credentialEnv: string;
+  endpoint: string;
+  maxItems: number;
+  maxOutputTokens: number;
+  maxRequests: number;
+  maxRetries: number;
+  model: string;
+  shareContext: boolean;
+  shareTerms: boolean;
+  sourceContext: SourceContextSelection;
+  timeoutSeconds: number;
+  tokenField: string;
+}
+/**
+ * A persistent data identity, never a credential, execution grant or consent.
+ */
+export interface ModelConnectionReference {
+  digest: string;
+  profileId: ExecutionId;
+  revision: UnsignedDecimal;
+  storeId: ExecutionId;
+}
+export interface ContextStrategyReference {
+  candidateId: ExecutionId;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface SourceContextSelection {
+  extracted: boolean;
+  inferred: boolean;
+  maxBytes: number;
+  maxItems: number;
+  neighbors: boolean;
+}
+/**
+ * Local current facts needed before a later proposal can become actionable.
+ * These identities are shown to the caller and are never copied into the prompt.
+ */
+export interface ConversationPlanningUnitBasis {
+  protection: WorkProtection;
+  selectionId: ExecutionId | null;
+  sharedContextRevisionId: ExecutionId | null;
+  sharedTermRevisionIds: ExecutionId[];
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  translationRevisionId: ExecutionId | null;
+  unitId: ExecutionId;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
 }

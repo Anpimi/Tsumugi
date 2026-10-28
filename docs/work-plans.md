@@ -10,6 +10,14 @@ Creating a thread or appending a message uses an action identity bound to the fu
 
 These records store human input. Planning requests, plan proposals, model sharing, and execution still need their own permission and result checks. The project assistant interface is a separate integration from this storage and IPC support.
 
+## Preparing planning materials
+
+Conversation planning can capture 1–16 explicitly selected human messages, with either no content scope or a fixed set of real entries and one target language. The preview shows the selected messages, current source and selection references, protection state, model destination, exact planning input, and counts of the text and resources actually included. It reuses the existing sharing settings; choosing conversation-only includes no entries or resources.
+
+Preparation is local and read-only. It does not authorize or send a model request. Planning settings allow one request, no automatic retries, and one concurrent request; an oversized input is refused intact. The Host retains one opaque capture in the current project session. A successful replacement gets a new identity, and a failed preparation keeps the previous capture. Validation compares the original related facts without refreshing that capture; unrelated edits and unselected new messages do not change its materials. Closing or reopening the project discards this local preparation.
+
+Finite model permission, structured proposals, and conversion to an authorized work plan remain separate steps.
+
 ## Preparing and verifying a work plan
 
 ### Plan preparation (`ProjectStore::prepare_work_plan`)

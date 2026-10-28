@@ -38,6 +38,8 @@ struct ConversationRequests {
     append: execution::conversations::AppendProjectConversationMessageRequest,
     recover_create: execution::conversations::CreateProjectConversationRequest,
     recover_message: execution::conversations::AppendProjectConversationMessageRequest,
+    prepare_planning: execution::conversations::PrepareConversationPlanningRequest,
+    validate_planning: execution::conversations::ValidateConversationPlanningRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -49,6 +51,7 @@ struct ConversationResponses {
     message_page: tsumugi_core::application::ProjectConversationMessagePage,
     create_recovery: tsumugi_core::application::ProjectConversationCreateRecovery,
     message_recovery: tsumugi_core::application::ProjectConversationMessageRecovery,
+    planning: execution::conversations::PreparedConversationPlanning,
     error: CommandError,
 }
 

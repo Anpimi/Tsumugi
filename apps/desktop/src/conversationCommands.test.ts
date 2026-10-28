@@ -95,3 +95,59 @@ it("retains read failures instead of translating them into absent messages or pe
   await expect(conversationCommands.recoverMessage(append)).rejects.toBe(failure);
   expect(invoke).toHaveBeenCalledTimes(2);
 });
+
+const planningConfig = {
+  endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "synthetic-planning", credentialEnv: "",
+  tokenField: "max_tokens", maxItems: 20, concurrency: 1, maxRequests: 1, maxOutputTokens: 2000,
+  maxRetries: 0, timeoutSeconds: 60, shareTerms: false, shareContext: false, contextStrategy: null,
+  sourceContext: { extracted: false, inferred: false, neighbors: false, maxBytes: 16384, maxItems: 128 },
+};
+const planningRequest = { ...context, conversationId: create.conversationId, selectedMessageIds: [message.messageId], scope: { kind: "conversation-only" as const }, config: planningConfig };
+function planningView() {
+  const system = "Synthetic planning instructions";
+  const input = JSON.stringify({ purpose: "conversation-planning", scope: { kind: "conversation-only" }, messages: [{ author: "human", body: append.body }], units: [] });
+  return { preparationId: fixtureIdentity(18000), preview: {
+    version: 1, projectId: context.projectId, conversationId: create.conversationId, config: planningConfig,
+    scope: planningRequest.scope, selectedMessages: [message], units: [], system, input,
+    byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
+    brief: { messages: 1, units: 0, sourceTexts: 0, terms: 0, manualContexts: 0, manualContextFacts: 0, sourceContextFacts: 0, sourceContextNeighbors: 0 },
+  } };
+}
+
+it("prepares the exact selected planning materials and validates the unchanged original capture", async () => {
+  const prepared = planningView();
+  invoke.mockResolvedValueOnce(prepared).mockResolvedValueOnce(prepared);
+  const captured = await conversationCommands.preparePlanning(planningRequest);
+  await expect(conversationCommands.validatePlanning({ ...context, preparationId: captured.preparationId }, captured)).resolves.toEqual(prepared);
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual(["prepare_conversation_planning", "validate_conversation_planning"]);
+  expect(invoke.mock.calls[0][1]).toEqual({ request: planningRequest });
+  expect(invoke.mock.calls[1][1]).toEqual({ request: { ...context, preparationId: captured.preparationId } });
+});
+
+it.each([
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, projectId: fixtureIdentity(18900) } }),
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, conversationId: fixtureIdentity(18900) } }),
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, config: { ...value.preview.config, model: "Changed destination" } } }),
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, selectedMessages: [{ ...message, messageId: fixtureIdentity(18900) }] } }),
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, byteLength: value.preview.byteLength + 1 } }),
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, brief: { ...value.preview.brief, messages: 2 } } }),
+  (value: ReturnType<typeof planningView>) => ({ ...value, preview: { ...value.preview, scope: { kind: "units", locale: "zh-CN", unitIds: [fixtureIdentity(18900)] } } }),
+])("rejects a planning preview for different materials or limits %#", async change => {
+  invoke.mockResolvedValueOnce(change(planningView()));
+  await expect(conversationCommands.preparePlanning(planningRequest)).rejects.toThrow("Invalid IPC response");
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it("keeps an old planning capture distinct from a replacement or refreshed preview", async () => {
+  const prepared = planningView();
+  const captured = { ...prepared, preview: { ...prepared.preview, selectedMessages: [{ ...message, author: "human" as const }] } };
+  const request = { ...context, preparationId: prepared.preparationId };
+  invoke.mockResolvedValueOnce({ ...prepared, preparationId: fixtureIdentity(18900) });
+  await expect(conversationCommands.validatePlanning(request, captured)).rejects.toThrow("Invalid IPC response");
+  invoke.mockResolvedValueOnce({ ...prepared, preview: { ...prepared.preview, input: "A replacement input" } });
+  await expect(conversationCommands.validatePlanning(request, captured)).rejects.toThrow("Invalid IPC response");
+  const unavailable = Object.assign(new Error("Original capture unavailable"), { code: "session-invalid" });
+  invoke.mockRejectedValueOnce(unavailable);
+  await expect(conversationCommands.validatePlanning(request, captured)).rejects.toBe(unavailable);
+  expect(invoke).toHaveBeenCalledTimes(3);
+});

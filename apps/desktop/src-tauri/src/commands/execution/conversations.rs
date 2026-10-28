@@ -1,6 +1,17 @@
 //! Local human conversation commands do not create a model or execution scope.
 use super::*;
 use tsumugi_core::application::conversations::*;
+pub(in crate::commands) mod planning;
+#[cfg(feature = "wire-schema")]
+pub(in crate::commands) use planning::{
+    PrepareConversationPlanningRequest, PreparedConversationPlanning,
+    ValidateConversationPlanningRequest,
+};
+
+pub(in crate::commands) struct PlanningPreparation {
+    preparation_id: ExecutionId,
+    capture: CapturedConversationPlanning,
+}
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

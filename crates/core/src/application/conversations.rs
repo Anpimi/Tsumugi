@@ -1,6 +1,8 @@
 //! Project-local human conversation records. Messages do not authorize execution.
 use crate::execution::{ExecutionId, Revision};
 use serde::{Deserialize, Serialize};
+mod planning;
+pub use planning::*;
 
 /// Match the existing human-readable team member name bound.
 pub const MAX_CONVERSATION_TITLE_BYTES: usize = 128;

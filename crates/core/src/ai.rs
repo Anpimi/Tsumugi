@@ -13,6 +13,7 @@ pub mod provider;
 
 pub mod arena;
 pub mod semantic_review;
+pub mod conversation_planning;
 
 pub const OPERATION: &str = "ai-translation";
 pub const CAPABILITY: &str = "openai-compatible.translation";
