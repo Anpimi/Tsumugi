@@ -437,6 +437,94 @@
         ],
         "type": "string"
       },
+      "ContentScope": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
+      "ContextResourceKind": {
+        "enum": [
+          "character",
+          "style",
+          "background"
+        ],
+        "type": "string"
+      },
+      "ContextResourceScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "project",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file-group",
+                "type": "string"
+              },
+              "logicalPaths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "namespace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "namespace",
+              "logicalPaths"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ContextStrategyReference": {
         "additionalProperties": false,
         "properties": {
@@ -479,6 +567,123 @@
           "id",
           "schemaVersion",
           "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeAdoption": {
+        "additionalProperties": false,
+        "properties": {
+          "comparisonBasis": {
+            "type": "string"
+          },
+          "confirmWiderScope": {
+            "type": "boolean"
+          },
+          "contextId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subjectId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "sourceBasis",
+          "name",
+          "text",
+          "comparisonBasis",
+          "confirmWiderScope"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeDecisionKind": {
+        "enum": [
+          "adopt",
+          "keep",
+          "reject"
+        ],
+        "type": "string"
+      },
+      "ConversationKnowledgeDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/DecideConversationKnowledgeProposal"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "text",
+          "unitIds"
         ],
         "type": "object"
       },
@@ -579,8 +784,45 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "$ref": "#/definitions/ConversationKnowledgeEntry"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "knowledge-proposal",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "entries",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
+      },
+      "ConversationPlanningPurpose": {
+        "enum": [
+          "knowledge"
+        ],
+        "type": "string"
       },
       "ConversationPlanningScope": {
         "oneOf": [
@@ -676,6 +918,51 @@
           "actionId",
           "conversationId",
           "title"
+        ],
+        "type": "object"
+      },
+      "DecideConversationKnowledgeProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "adoption": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationKnowledgeAdoption"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "$ref": "#/definitions/ConversationKnowledgeDecisionKind"
+          },
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "proposal",
+          "entryIndex",
+          "decision",
+          "actor",
+          "reason"
         ],
         "type": "object"
       },
@@ -1357,6 +1644,49 @@
         ],
         "type": "object"
       },
+      "PrepareConversationKnowledgeAdoption": {
+        "additionalProperties": false,
+        "properties": {
+          "contextId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "subjectId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "proposal",
+          "entryIndex",
+          "scope"
+        ],
+        "type": "object"
+      },
       "PrepareConversationPlanningRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1368,6 +1698,16 @@
           },
           "projectId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "purpose": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationPlanningPurpose"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "scope": {
             "$ref": "#/definitions/ConversationPlanningScope"
@@ -1439,6 +1779,26 @@
         ],
         "type": "object"
       },
+      "PreviewConversationKnowledgeAdoptionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "adoption": {
+            "$ref": "#/definitions/PrepareConversationKnowledgeAdoption"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "adoption"
+        ],
+        "type": "object"
+      },
       "ProviderSelectionBinding": {
         "additionalProperties": false,
         "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
@@ -1461,6 +1821,33 @@
           "componentId",
           "contributionId",
           "packageDigest"
+        ],
+        "type": "object"
+      },
+      "ReadConversationKnowledgeDecisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "proposal",
+          "entryIndex"
         ],
         "type": "object"
       },
@@ -2412,6 +2799,21 @@
       "create": {
         "$ref": "#/definitions/CreateProjectConversationRequest"
       },
+      "knowledgeAdoption": {
+        "$ref": "#/definitions/PreviewConversationKnowledgeAdoptionRequest"
+      },
+      "knowledgeDecision": {
+        "$ref": "#/definitions/ConversationKnowledgeDecisionRequest"
+      },
+      "knowledgeDecisionAction": {
+        "$ref": "#/definitions/ConversationKnowledgeDecisionRequest"
+      },
+      "knowledgeDecisionRead": {
+        "$ref": "#/definitions/ReadConversationKnowledgeDecisionRequest"
+      },
+      "knowledgeDecisionRecovery": {
+        "$ref": "#/definitions/ConversationKnowledgeDecisionRequest"
+      },
       "list": {
         "$ref": "#/definitions/ListProjectConversationsRequest"
       },
@@ -2497,6 +2899,11 @@
       "validateProposal",
       "recoverProposalCapture",
       "recoverProposalRevision",
+      "knowledgeAdoption",
+      "knowledgeDecision",
+      "knowledgeDecisionRead",
+      "knowledgeDecisionAction",
+      "knowledgeDecisionRecovery",
       "prepareProposalWorkPlan",
       "authorizeProposalWorkPlan",
       "recoverProposalWorkPlan",
@@ -3948,6 +4355,29 @@
         ],
         "type": "string"
       },
+      "ContextResourceProposalOrigin": {
+        "additionalProperties": false,
+        "properties": {
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "modelOrigin": {
+            "$ref": "#/definitions/ConversationProposalOrigin"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          }
+        },
+        "required": [
+          "proposal",
+          "entryIndex",
+          "modelOrigin"
+        ],
+        "type": "object"
+      },
       "ContextResourceResolutionEntry": {
         "additionalProperties": false,
         "properties": {
@@ -4004,6 +4434,16 @@
           },
           "projectId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalOrigin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceProposalOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reason": {
             "type": "string"
@@ -4418,6 +4858,58 @@
                 "type": "string"
               },
               "receipt": {
+                "$ref": "#/definitions/ConversationKnowledgeDecision"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The original action has no confirmed receipt. Replay is an explicit\nsame-request operation, never a statement that work cannot have happened.",
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              },
+              "replay": {
+                "$ref": "#/definitions/ConversationActionReplay"
+              }
+            },
+            "required": [
+              "kind",
+              "replay"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "mismatch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationActionOutcome6": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
                 "$ref": "#/definitions/ConversationProposalWorkPlanLink"
               }
             },
@@ -4472,6 +4964,227 @@
           "human"
         ],
         "type": "string"
+      },
+      "ConversationKnowledgeAdoption": {
+        "additionalProperties": false,
+        "properties": {
+          "comparisonBasis": {
+            "type": "string"
+          },
+          "confirmWiderScope": {
+            "type": "boolean"
+          },
+          "contextId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subjectId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contextId",
+          "expectedRevisionId",
+          "scope",
+          "sourceBasis",
+          "name",
+          "text",
+          "comparisonBasis",
+          "confirmWiderScope"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeAdoptionPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "entry": {
+            "$ref": "#/definitions/ConversationKnowledgeEntry"
+          },
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          },
+          "requiresWiderConfirmation": {
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "proposal",
+          "entryIndex",
+          "entry",
+          "current",
+          "scope",
+          "sourceBasis",
+          "basis",
+          "requiresWiderConfirmation"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "decision": {
+            "$ref": "#/definitions/ConversationKnowledgeDecisionKind"
+          },
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "actionId",
+          "proposal",
+          "entryIndex",
+          "decision",
+          "actor",
+          "reason",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeDecisionKind": {
+        "enum": [
+          "adopt",
+          "keep",
+          "reject"
+        ],
+        "type": "string"
+      },
+      "ConversationKnowledgeDecisionRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/ConversationActionOutcome5"
+          },
+          "request": {
+            "$ref": "#/definitions/DecideConversationKnowledgeProposal"
+          }
+        },
+        "required": [
+          "request",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "ConversationKnowledgeEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "text",
+          "unitIds"
+        ],
+        "type": "object"
       },
       "ConversationPlanningAttempt": {
         "additionalProperties": false,
@@ -4690,6 +5403,37 @@
               "questions"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "$ref": "#/definitions/ConversationKnowledgeEntry"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "knowledge-proposal",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "entries",
+              "questions"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -4752,6 +5496,16 @@
           "projectId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "purpose": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationPlanningPurpose"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scope": {
             "$ref": "#/definitions/ConversationPlanningScope"
           },
@@ -4791,6 +5545,12 @@
           "brief"
         ],
         "type": "object"
+      },
+      "ConversationPlanningPurpose": {
+        "enum": [
+          "knowledge"
+        ],
+        "type": "string"
       },
       "ConversationPlanningReceipt": {
         "additionalProperties": false,
@@ -5262,7 +6022,7 @@
         "additionalProperties": false,
         "properties": {
           "outcome": {
-            "$ref": "#/definitions/ConversationActionOutcome5"
+            "$ref": "#/definitions/ConversationActionOutcome6"
           },
           "request": {
             "$ref": "#/definitions/AuthorizeConversationProposalWorkPlan"
@@ -5314,6 +6074,52 @@
           "actionId",
           "conversationId",
           "title"
+        ],
+        "type": "object"
+      },
+      "DecideConversationKnowledgeProposal": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "adoption": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationKnowledgeAdoption"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "$ref": "#/definitions/ConversationKnowledgeDecisionKind"
+          },
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "proposal",
+          "entryIndex",
+          "decision",
+          "actor",
+          "reason",
+          "adoption"
         ],
         "type": "object"
       },
@@ -8733,6 +9539,35 @@
       "error": {
         "$ref": "#/definitions/CommandError"
       },
+      "knowledgeAdoption": {
+        "$ref": "#/definitions/ConversationKnowledgeAdoptionPreview"
+      },
+      "knowledgeDecision": {
+        "$ref": "#/definitions/ConversationKnowledgeDecision"
+      },
+      "knowledgeDecisionAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ConversationKnowledgeDecision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "knowledgeDecisionRead": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ConversationKnowledgeDecision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "knowledgeDecisionRecovery": {
+        "$ref": "#/definitions/ConversationKnowledgeDecisionRecovery"
+      },
       "message": {
         "$ref": "#/definitions/ProjectConversationMessage"
       },
@@ -8811,6 +9646,11 @@
       "proposalPage",
       "proposalCaptureRecovery",
       "proposalRevisionRecovery",
+      "knowledgeAdoption",
+      "knowledgeDecision",
+      "knowledgeDecisionRead",
+      "knowledgeDecisionAction",
+      "knowledgeDecisionRecovery",
       "proposalWorkPlan",
       "proposalWorkPlanReceipt",
       "proposalWorkPlanRecovery",

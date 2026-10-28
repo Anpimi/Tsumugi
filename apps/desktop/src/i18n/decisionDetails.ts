@@ -1,6 +1,14 @@
 export const decisionDetailsEn = {
+  decisionsKnowledgeProposalTitle: "Knowledge to review",
+  decisionsKnowledgeProposalHelp: "Review an exact saved proposal item, choose its destination and scope, then adopt, keep or reject it.",
+  decisionsKnowledgeProposalOpen: "Review knowledge proposal",
+  decisionDetailsKnowledgeHelp: "This is a knowledge proposal item from the saved version shown below. Reading it changes no project knowledge.",
+  decisionDetailsKnowledgeVersion: "Proposal version {{version}} · item {{number}}",
+  decisionDetailsKnowledgeSummary: "Proposal summary",
+  decisionDetailsKnowledgeEvidence: "Based on {{count, number}} original entries",
   decisionDetailsContent: "Original record contents",
   decisionDetailsTitles: {
+    "review-knowledge-proposal": "Knowledge proposal review",
     "compare-source-mapping": "Source matches before import", "clarify-conversation-proposal": "Proposal questions",
     "review-resource": "Knowledge proposal", "resolve-source-mapping": "Source mapping", "inspect-execution": "Execution record",
     "inspect-delivery": "Delivery blockers", "inspect-delivery-outcome": "Recorded delivery result", "compare-candidate": "Translation candidate",
@@ -63,8 +71,16 @@ export const decisionDetailsEn = {
 };
 
 export const decisionDetailsZh: typeof decisionDetailsEn = {
+  decisionsKnowledgeProposalTitle: "待核对的知识提议",
+  decisionsKnowledgeProposalHelp: "查看这项提议，选好要保存到的资料和适用范围，再决定采用、保留还是拒绝。",
+  decisionsKnowledgeProposalOpen: "核对知识提议",
+  decisionDetailsKnowledgeHelp: "这里保留了这项提议的正文和依据，可以进入核对页面继续处理。",
+  decisionDetailsKnowledgeVersion: "提议版本 {{version}} · 第 {{number}} 项",
+  decisionDetailsKnowledgeSummary: "提议说明",
+  decisionDetailsKnowledgeEvidence: "依据 {{count, number}} 个原条目",
   decisionDetailsContent: "原记录内容",
   decisionDetailsTitles: {
+    "review-knowledge-proposal": "知识提议审定",
     "compare-source-mapping": "导入前的源文对应", "clarify-conversation-proposal": "提议中的问题",
     "review-resource": "知识提议", "resolve-source-mapping": "源内容对应关系", "inspect-execution": "执行记录",
     "inspect-delivery": "交付阻塞原因", "inspect-delivery-outcome": "已记录的交付结果", "compare-candidate": "译文候选",

@@ -739,6 +739,30 @@
           }
         ]
       },
+      "ConversationProposalRef": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "proposalId",
+          "revisionId"
+        ],
+        "type": "object"
+      },
       "DecisionAction": {
         "description": "These are original read/navigation locators, never permission to mutate.",
         "oneOf": [
@@ -921,6 +945,30 @@
               "conversationId",
               "proposalId",
               "revisionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entryIndex": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "review-knowledge-proposal",
+                "type": "string"
+              },
+              "proposal": {
+                "$ref": "#/definitions/ConversationProposalRef"
+              }
+            },
+            "required": [
+              "kind",
+              "proposal",
+              "entryIndex"
             ],
             "type": "object"
           },

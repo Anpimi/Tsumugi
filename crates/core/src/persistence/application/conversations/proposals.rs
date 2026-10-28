@@ -9,6 +9,7 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(in crate::persistence) mod work_plans;
+pub(in crate::persistence) mod knowledge;
 
 pub(in crate::persistence) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     initialize_revisions(c)?;
@@ -56,7 +57,7 @@ fn origin_in(
     let output = conversation_planning::validate_output(&input, &result)?;
     if !matches!(
         output.model,
-        ConversationPlanningModelOutput::Proposal { .. }
+        ConversationPlanningModelOutput::Proposal { .. }|ConversationPlanningModelOutput::KnowledgeProposal { .. }
     ) {
         return Err(fail(
             ErrorCode::InvalidInput,
@@ -82,7 +83,7 @@ fn content(
     value: &ConversationPlanningModelOutput,
     preview: &ConversationPlanningPreview,
 ) -> Result<(), ExecutionError> {
-    if !matches!(value, ConversationPlanningModelOutput::Proposal { .. }) {
+    if !matches!(value, ConversationPlanningModelOutput::Proposal { .. }|ConversationPlanningModelOutput::KnowledgeProposal { .. }) {
         return Err(fail(
             ErrorCode::InvalidInput,
             "conversation-proposal-content",
@@ -286,7 +287,9 @@ impl ProjectStore {
             ));
         }
         let evidence = capture_evidence(&tx, r)?;
-        planning::validate_material_in(self, &tx, &evidence.preview, &evidence.material)?;
+        if !matches!(evidence.model,ConversationPlanningModelOutput::KnowledgeProposal{..}) {
+            planning::validate_material_in(self, &tx, &evidence.preview, &evidence.material)?;
+        }
         let receipt = ConversationProposalRevision {
             project_id: r.project_id,
             conversation_id: r.conversation_id,
@@ -341,7 +344,9 @@ impl ProjectStore {
             prior.origin.result_id,
         )?;
         content(&r.content, &evidence.preview)?;
-        planning::validate_material_in(self, &tx, &evidence.preview, &evidence.material)?;
+        if !matches!(evidence.model,ConversationPlanningModelOutput::KnowledgeProposal{..}) {
+            planning::validate_material_in(self, &tx, &evidence.preview, &evidence.material)?;
+        }
         let next = prior
             .revision
             .get()
@@ -477,7 +482,11 @@ impl ProjectStore {
                     value.origin.attempt_id,
                     value.origin.result_id,
                 )?;
-                planning::validate_material_in(self, c, &evidence.preview, &evidence.material)?;
+                if matches!(value.content,ConversationPlanningModelOutput::KnowledgeProposal{..}) {
+                    knowledge::source_current(c,&evidence)?;
+                } else {
+                    planning::validate_material_in(self, c, &evidence.preview, &evidence.material)?;
+                }
                 Ok(value)
             },
         )

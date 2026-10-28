@@ -16,6 +16,8 @@ mod context_facts;
 mod context_resources;
 pub use context_resources::*;
 pub(super) use context_resources::capture_in as capture_context_resources_in;
+pub(in crate::persistence) use context_resources::save_in as save_context_resource_in;
+pub(in crate::persistence) use context_resources::{revision_in as context_resource_revision_in,current_in as current_context_resource_in,check_scope as check_context_resource_scope};
 mod correction;
 pub(crate) mod mcp;
 pub(crate) mod strategy;

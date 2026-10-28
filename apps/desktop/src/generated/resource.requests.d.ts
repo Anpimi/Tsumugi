@@ -112,6 +112,10 @@ export type ContextResourceAction =
   | {
       kind: "withdraw";
       request: WithdrawContextResource;
+    }
+  | {
+      kind: "proposal-adoption";
+      request: ContextResourceProposalAction;
     };
 export type ContextResourceScope =
   | {
@@ -356,6 +360,17 @@ export interface WithdrawContextResource {
   expectedRevisionId: ExecutionId;
   projectId: ExecutionId;
   reason: string;
+}
+export interface ContextResourceProposalAction {
+  actionId: ExecutionId;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
 }
 export interface ContextResourceResolveRequest {
   projectId: ExecutionId;

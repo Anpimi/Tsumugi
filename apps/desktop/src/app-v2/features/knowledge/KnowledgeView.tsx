@@ -18,14 +18,17 @@ import { knowledgeCurrentKey, knowledgeTermsKey, useKnowledgeCurrent, useKnowled
 import TermScopePicker from "./TermScopePicker";
 import TermProposalPanel from "./TermProposalPanel";
 import ContextResourcesView from "./ContextResourcesView";
+import KnowledgeProposalPanel, { type KnowledgeReviewTarget } from "./KnowledgeProposalPanel";
 import styles from "./Knowledge.module.css";
 
 export interface KnowledgeViewProps {
   project: ProjectView; owner: KnowledgeOwner; view: WorkspaceView; disabled: boolean;
   gate: InteractionGate; current: (dialogId?: string) => boolean; patch: (patch: ViewPatch) => void;
   onDetails: () => void;
+  reviewTarget?: KnowledgeReviewTarget | null;
+  onReviewOpened?: () => void;
 }
-export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails }: KnowledgeViewProps) {
+export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened }: KnowledgeViewProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   const { selectedTerm, termDraft, aliasInput, locale, pending, busyMutation, notice, failure } = owner.state;
   const sourceInput = useRef<HTMLInputElement>(null), focusTicket = useRef<{ termId: string | null; origin: HTMLElement | null } | null>(null);
@@ -39,6 +42,8 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
   const inputOwner = `knowledge-term-${view.id}`;
   useEffect(() => () => gate.releaseOwner(inputOwner), [gate, inputOwner]);
   const kind: KnowledgeKind = knowledgeKinds.find(kind => kind === view.preset) ?? "terms";
+  const reviewDraft = owner.state.knowledgeActiveKey ? owner.state.knowledgeDrafts[owner.state.knowledgeActiveKey] : null;
+  const showReview = !!reviewTarget || !!reviewDraft && reviewDraft.locale === view.locale && reviewDraft.entry.kind === contextKindForKnowledge(kind);
   const session = executionContext(project), reads = useSessionReads();
   const localeAvailable = project.metadata.targetLocales.includes(locale), localeMatches = locale === view.locale;
   const active = kind === "terms" && localeAvailable;
@@ -120,11 +125,14 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
     <section className={styles.body} aria-label={t(`kinds.${kind}`)} onFocusCapture={() => gate.setInputOwner(view.id, inputOwner)}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.setInputOwner(view.id, null); }}
       onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
+      {Object.values(owner.state.knowledgeDrafts).length ? <nav className={styles.toolbar} aria-label={t("reviewDrafts")}>{Object.values(owner.state.knowledgeDrafts).map(draft => <Button key={draft.key} aria-current={showReview && reviewDraft?.key === draft.key ? "page" : undefined}
+        onClick={() => { if (current()) { owner.knowledgeProposals.activate(draft.key); patch({ locale: draft.locale, preset: draft.entry.kind === "character" ? "characters" : draft.entry.kind }); } }}>{draft.name || draft.entry.name}</Button>)}</nav> : null}
+      {showReview ? <KnowledgeProposalPanel project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} target={reviewTarget} onOpened={onReviewOpened}/> : null}
       {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <EmptyState title={t("kinds.memory")} description={t("unavailable.memory")}/> : <>
         <div className={styles.toolbar}><h1>{t("kinds.terms")}</h1><Button disabled={disabled || blocked || dirty || !localeMatches || !source.data?.currentSnapshot} onClick={newTerm}><Plus/>{t("newTerm")}</Button><Button disabled={terms.isFetching} onClick={() => void terms.refetch()}>{t("refresh")}</Button></div>
         {!localeMatches ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ locale }); }}>{t("returnToLanguage", { locale })}</Button>}>{t("retainedLanguage", { locale })}</Banner> : null}
         {!localeAvailable ? <Banner tone="warning">{t("localeUnavailable", { locale })}</Banner> : null}
-        {failure && !owner.state.typedLastActionKey ? <Banner tone="error">{t("saveFailed")}<CommandFailureDetails failure={failure}/></Banner> : null}
+        {failure && !owner.state.typedLastActionKey && !owner.state.knowledgeLastActionKey ? <Banner tone="error">{t("saveFailed")}<CommandFailureDetails failure={failure}/></Banner> : null}
         {selectedTerm && currentTerm.error ? <Banner tone="warning" action={<Button onClick={() => void currentTerm.refetch()}>{t("refresh")}</Button>}>{t("currentFailed")}</Banner> : null}
         {notice === "saved" || notice === "savedNewer" || notice === "decisionSaved" ? <Banner tone="success" role="status">{t(notice === "savedNewer" && dirty ? "savedNewer" : notice === "decisionSaved" ? "decisionSaved" : "saved")}</Banner> : null}
         {pending?.kind === "term" ? <Banner tone="warning" role="status" action={<div className={styles.actions}>
@@ -143,7 +151,7 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
           <TermProposalPanel project={project} owner={owner} disabled={disabled} gate={gate} viewId={view.id} current={current}/>
         </div>
       </>}
-      {kind !== "terms" && (dirty || pending && pending.kind !== "typed-context") ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ preset: "terms" }); }}>{t("backToDraft")}</Button>}>{t("draftKept")}</Banner> : null}
+      {kind !== "terms" && (dirty || pending && pending.kind !== "typed-context" && pending.kind !== "knowledge-decision") ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ preset: "terms" }); }}>{t("backToDraft")}</Button>}>{t("draftKept")}</Banner> : null}
     </section>
   </div>;
 }

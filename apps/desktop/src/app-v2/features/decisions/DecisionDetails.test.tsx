@@ -11,9 +11,34 @@ import { SessionReads } from "../../../sessionReads";
 import { sourceCommands } from "../../../sourceCommands";
 import DecisionDetails from "./DecisionDetails";
 import { decisionTargetKey } from "./decisionTargetReads";
+import { conversationCommands } from "../../../conversationCommands";
+import { resourceCommands } from "../../../resourceCommands";
+import { knowledgeProposalFixture } from "../../../testSupport/conversationProposalFixture";
+import { fixtureIdentity } from "../../../testSupport/executionFixture";
 
 let reads: SessionReads | undefined;
 afterEach(() => { cleanup(); reads?.retire(); vi.restoreAllMocks(); });
+
+it.each(["en-US", "zh-CN"])("reads the exact knowledge item without an external glossary capture and opens its review destination (%s)", async locale => {
+  await i18n.changeLanguage(locale);
+  const fixture = knowledgeProposalFixture({ projectId: wire.session.projectId, conversationId: fixtureIdentity(60220) });
+  const reference = { projectId: fixture.revision.projectId, conversationId: fixture.revision.conversationId, proposalId: fixture.revision.proposalId, revisionId: fixture.revision.revisionId };
+  const context = { projectId: reference.projectId, sessionToken: "synthetic-knowledge-details" };
+  const proposal = vi.spyOn(conversationCommands, "readProposal").mockResolvedValue(fixture.revision);
+  vi.spyOn(conversationCommands, "readKnowledgeDecision").mockResolvedValue(null);
+  const external = vi.spyOn(resourceCommands, "preview").mockRejectedValue(new Error("An external glossary must not be read for knowledge proposals"));
+  const item: DecisionItem = { decisionId: "resource-proposal:synthetic-knowledge", source: "resource-proposal", state: "pending", basis: "c".repeat(64), locale: "zh-CN", evidence: null, sourceActionId: null,
+    targets: [{ kind: "conversation-proposal", conversationId: reference.conversationId, proposalId: reference.proposalId }], targetsComplete: true,
+    action: { kind: "review-knowledge-proposal", proposal: reference, entryIndex: 0 } };
+  const navigate = vi.fn(async (_item: DecisionItem, _current: () => boolean) => true);
+  reads = new SessionReads(context);
+  render(<SessionReadProvider context={context} reads={reads} bridge={false}><DecisionDetails item={item} disabled={false} current={() => true} onBack={vi.fn()} onOpenEntry={vi.fn(async () => false)} onNavigate={navigate}/></SessionReadProvider>);
+  expect(await screen.findByRole("heading", { name: "Mara" })).toBeVisible(); expect(screen.getByText("Keep a calm tone.")).toBeVisible();
+  expect(screen.getByText(i18n.t("workbenchV2.decisionDetailsKnowledgeVersion", { version: "1", number: 1 }))).toBeVisible();
+  const open = screen.getByRole("button", { name: i18n.t("workbenchV2.decisionsKnowledgeProposalOpen") }); await waitFor(() => expect(open).toBeEnabled());
+  await userEvent.setup().click(open); expect(navigate).toHaveBeenCalledOnce(); expect(navigate.mock.calls[0][0]).toBe(item); expect(navigate.mock.calls[0][1]()).toBe(true);
+  expect(proposal).toHaveBeenCalledWith({ ...context, ...reference }); expect(external).not.toHaveBeenCalled();
+});
 
 it.each(["en-US", "zh-CN"])("pages the original source comparison and keeps uncertain matches separate from ordinary preview rows (%s)", async locale => {
   await i18n.changeLanguage(locale);

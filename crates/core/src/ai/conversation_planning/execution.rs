@@ -27,6 +27,11 @@ pub enum ConversationPlanningModelOutput {
         options: PlanOptions,
         questions: Vec<String>,
     },
+    KnowledgeProposal {
+        summary: String,
+        entries: Vec<crate::application::ConversationKnowledgeEntry>,
+        questions: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -80,9 +85,9 @@ pub(crate) fn fixed_input(
         plugin: None,
         operation: OPERATION.into(),
         capability_id: CAPABILITY.into(),
-        capability_version: "1".into(),
+        capability_version: profile(preview.purpose).0.into(),
         settings: serde_json::to_value(Settings {
-            recipe: RECIPE.into(),
+            recipe: profile(preview.purpose).1.into(),
             config: preview.config.clone(),
             consent: consent.clone(),
             material: capture.ai_preview.clone(),
@@ -105,7 +110,7 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
     let e = input.envelope();
     if e.operation != OPERATION
         || e.capability_id != CAPABILITY
-        || e.capability_version != "1"
+        || !matches!(e.capability_version.as_str(), "1" | "2")
         || e.plugin.is_some()
         || e.automation.is_some()
         || e.previous_attempt_id.is_some()
@@ -129,7 +134,8 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
         ConversationPlanningScope::ConversationOnly {} => None,
         ConversationPlanningScope::Units { locale, .. } => Some(locale.as_str()),
     };
-    if settings.recipe != RECIPE
+    if settings.recipe != profile(preview.purpose).1
+        || e.capability_version != profile(preview.purpose).0
         || settings.config != preview.config
         || settings.config.max_requests != 1
         || settings.config.max_retries != 0
@@ -192,7 +198,8 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
                     ));
                 }
             }
-            let (input, byte_length, brief) = super::prompt(
+            let (input, byte_length, brief) = super::prompt_for(
+                preview.purpose,
                 &settings.config,
                 &preview.scope,
                 &preview.selected_messages,
@@ -246,8 +253,13 @@ pub fn consent_from_input(
 
 fn validate_preview(preview: &ConversationPlanningPreview) -> Result<(), ExecutionError> {
     let invalid = || error(ErrorCode::InvalidInput, "conversation-planning-material");
-    if preview.version != CONVERSATION_PLANNING_PREVIEW_VERSION
-        || preview.system != SYSTEM
+    if preview.version != profile(preview.purpose).3
+        || preview.system != profile(preview.purpose).2
+        || preview.purpose.is_some()
+            && matches!(
+                preview.scope,
+                ConversationPlanningScope::ConversationOnly {}
+            )
         || preview.selected_messages.is_empty()
         || preview.selected_messages.len() > MAX_CONVERSATION_PLANNING_MESSAGES
         || preview
@@ -313,7 +325,12 @@ fn validate_preview(preview: &ConversationPlanningPreview) -> Result<(), Executi
             json!({"kind":"units","targetLocale":locale})
         }
     };
-    if projected["purpose"] != "conversation-planning"
+    if projected["purpose"]
+        != if preview.purpose.is_some() {
+            "knowledge-proposal"
+        } else {
+            "conversation-planning"
+        }
         || projected["scope"] != expected_scope
         || projected["messages"] != expected_messages
         || preview.byte_length as usize
@@ -365,6 +382,9 @@ pub(crate) fn validate_model(
             unit_ids,
             options,
         } => {
+            if preview.purpose.is_some() {
+                return Err(invalid());
+            }
             let ConversationPlanningScope::Units {
                 unit_ids: allowed, ..
             } = &preview.scope
@@ -384,6 +404,92 @@ pub(crate) fn validate_model(
                 .iter()
                 .any(|unit| unit.protection.protected && unit_ids.contains(&unit.unit_id))
                 && options.selection_policy != crate::application::SelectionPolicy::CandidatesOnly
+            {
+                return Err(invalid());
+            }
+            (summary, questions)
+        }
+        ConversationPlanningModelOutput::KnowledgeProposal {
+            summary,
+            entries,
+            questions,
+        } => {
+            if preview.purpose != Some(ConversationPlanningPurpose::Knowledge) {
+                return Err(invalid());
+            }
+            validate_proposal_draft_content(model).map_err(|_| invalid())?;
+            // Reserve space for the immutable proposal identity and provenance
+            // inside its existing 64 KiB record, rather than truncating later.
+            codec::encode(model, 60 * 1024).map_err(|_| invalid())?;
+            let ConversationPlanningScope::Units {
+                unit_ids: allowed, ..
+            } = &preview.scope
+            else {
+                return Err(invalid());
+            };
+            if entries
+                .iter()
+                .any(|e| e.unit_ids.iter().any(|id| !allowed.contains(id)))
+            {
+                return Err(invalid());
+            }
+            (summary, questions)
+        }
+    };
+    if summary.trim().is_empty()
+        || summary.len() > 8192
+        || questions.len() > 8
+        || questions
+            .iter()
+            .any(|q| q.trim().is_empty() || q.len() > 2048)
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Structural draft validation never grants a scope or replaces the checked
+/// model/result/proposal owner validation against its original frozen input.
+pub fn validate_proposal_draft_content(
+    value: &ConversationPlanningModelOutput,
+) -> Result<(), ExecutionError> {
+    let invalid = || error(ErrorCode::InvalidInput, "conversation-proposal-draft");
+    codec::encode(value, 65536).map_err(|_| invalid())?;
+    let (summary, questions) = match value {
+        ConversationPlanningModelOutput::Reply { .. } => return Err(invalid()),
+        ConversationPlanningModelOutput::Proposal {
+            summary,
+            questions,
+            unit_ids,
+            options,
+        } => {
+            if unit_ids.is_empty()
+                || unit_ids.len() > 100
+                || unit_ids.iter().collect::<BTreeSet<_>>().len() != unit_ids.len()
+            {
+                return Err(invalid());
+            }
+            options.authorization_effects().map_err(|_| invalid())?;
+            (summary, questions)
+        }
+        ConversationPlanningModelOutput::KnowledgeProposal {
+            summary,
+            questions,
+            entries,
+        } => {
+            if entries.is_empty()
+                || entries.len() > 16
+                || entries.iter().any(|e| {
+                    e.name.trim().is_empty()
+                        || e.name.len() > 512
+                        || e.text.trim().is_empty()
+                        || e.text.len() > 16384
+                        || e.name.contains('\0')
+                        || e.text.contains('\0')
+                        || e.unit_ids.is_empty()
+                        || e.unit_ids.len() > 100
+                        || e.unit_ids.iter().collect::<BTreeSet<_>>().len() != e.unit_ids.len()
+                })
             {
                 return Err(invalid());
             }
@@ -447,10 +553,20 @@ fn validate_usage(
 
 pub struct ConversationPlanningRunner {
     service: Arc<super::super::provider::ProviderService>,
+    version: &'static str,
 }
 impl ConversationPlanningRunner {
     pub fn with_service(service: Arc<super::super::provider::ProviderService>) -> Self {
-        Self { service }
+        Self {
+            service,
+            version: "1",
+        }
+    }
+    pub fn with_knowledge_service(service: Arc<super::super::provider::ProviderService>) -> Self {
+        Self {
+            service,
+            version: "2",
+        }
     }
 }
 impl Runner for ConversationPlanningRunner {
@@ -458,7 +574,7 @@ impl Runner for ConversationPlanningRunner {
         CAPABILITY
     }
     fn capability_version(&self) -> &str {
-        "1"
+        self.version
     }
     fn run(
         &self,

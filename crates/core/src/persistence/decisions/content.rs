@@ -153,6 +153,37 @@ fn resource_proposals(store: &ProjectStore, c: &Connection, project: ExecutionId
     Ok(SourceProjection { items, complete })
 }
 
+fn knowledge_proposals(store:&ProjectStore,c:&Connection,project:ExecutionId,locale:&str)->Result<SourceProjection,ExecutionError> {
+    let mut q=c.prepare("SELECT p.conversation_id,p.proposal_id,p.revision_id FROM application_conversation_proposals p WHERE NOT EXISTS(SELECT 1 FROM application_conversation_proposals n WHERE n.proposal_id=p.proposal_id AND n.revision>p.revision) ORDER BY p.proposal_id LIMIT ?1").map_err(super::super::ledger::sql_error)?;
+    let heads=q.query_map([(SOURCE_LIMIT+1) as i64],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).map_err(super::super::ledger::sql_error)?.collect::<Result<Vec<_>,_>>().map_err(super::super::ledger::sql_error)?;
+    let mut complete=heads.len()<=SOURCE_LIMIT;let mut items=Vec::new();
+    for (thread,proposal,revision) in heads.into_iter().take(SOURCE_LIMIT) {
+        let reference=crate::application::ConversationProposalRef{project_id:project,conversation_id:identity(thread)?,proposal_id:identity(proposal)?,revision_id:identity(revision)?};
+        let value=store.read_conversation_proposal(project,reference.conversation_id,reference.proposal_id,Some(reference.revision_id))?;
+        let crate::ai::conversation_planning::ConversationPlanningModelOutput::KnowledgeProposal{entries,questions,..}=&value.content else{continue};
+        if !questions.is_empty(){continue;}
+        let preview=crate::ai::conversation_planning::preview_from_input(&super::super::ledger::load_input(c,value.origin.attempt_id)?)?;
+        if !matches!(&preview.scope,crate::application::ConversationPlanningScope::Units{locale:target,..} if target==locale){continue;}
+        let state=match store.validate_conversation_proposal(project,reference.conversation_id,reference.proposal_id,reference.revision_id){Ok(_)=>DecisionState::Pending,Err(e) if e.code==ErrorCode::DependencyConflict=>DecisionState::Stale,Err(e)=>return Err(e)};
+        for (index,entry) in entries.iter().enumerate() {
+            if store.read_conversation_knowledge_decision(&reference,index as u32)?.is_some(){continue;}
+            if items.len()==SOURCE_LIMIT{complete=false;break;}
+            let mut targets=vec![DecisionTarget::Conversation{conversation_id:reference.conversation_id},DecisionTarget::ConversationProposal{conversation_id:reference.conversation_id,proposal_id:reference.proposal_id}];
+            targets.extend(entry.unit_ids.iter().take(16).map(|id|DecisionTarget::Entry{unit_id:*id}));
+            items.push(DecisionItem{decision_id:format!("resource-proposal:knowledge:{}:{index}:{locale}",reference.revision_id),source:DecisionSource::ResourceProposal,state,locale:Some(locale.into()),targets,targets_complete:entry.unit_ids.len()<=16,basis:basis(&(&reference,index,entry,&value.origin,state))?,source_action_id:None,action:DecisionAction::ReviewKnowledgeProposal{proposal:reference.clone(),entry_index:index as u32},evidence:None});
+        }
+    }
+    Ok(SourceProjection{items,complete})
+}
+
+fn all_resource_proposals(store:&ProjectStore,c:&Connection,project:ExecutionId,locale:&str)->Result<SourceProjection,ExecutionError>{
+    let mut original=resource_proposals(store,c,project,locale)?;
+    let knowledge=knowledge_proposals(store,c,project,locale)?;
+    let available=SOURCE_LIMIT.saturating_sub(original.items.len());
+    original.complete&=knowledge.complete&&knowledge.items.len()<=available;
+    original.items.extend(knowledge.items.into_iter().take(available));Ok(original)
+}
+
 fn finding_identity(unit: ExecutionId, locale: &str, purpose: crate::ai::semantic_review::ReviewRunPurpose, issue: &str) -> String {
     let purpose = match purpose {
         crate::ai::semantic_review::ReviewRunPurpose::Qa => "qa",
@@ -242,7 +273,7 @@ pub(super) fn project(store: &ProjectStore, c: &Connection, project: ExecutionId
     }
     match source {
         DecisionSource::TranslationCandidate => candidates(c, project, locale),
-        DecisionSource::ResourceProposal => resource_proposals(store, c, project, locale),
+        DecisionSource::ResourceProposal => all_resource_proposals(store, c, project, locale),
         DecisionSource::HumanReview => human_review(c, project, locale),
         DecisionSource::ReviewFinding => review_findings(store, c, project, locale),
         _ => Err(failure(ErrorCode::InvalidInput, "decision-content-source")),

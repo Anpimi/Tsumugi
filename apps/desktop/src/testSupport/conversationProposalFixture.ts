@@ -29,3 +29,20 @@ export function conversationProposalFixture(context: { projectId: string; conver
     origin: { attemptId, resultId, inputDigest: "b".repeat(64), resultDigest: "c".repeat(64) }, content };
   return { run, revision, unitIds };
 }
+
+/** Knowledge purpose uses its own v3 material while retaining the original runner. */
+export function knowledgeProposalFixture(context: { projectId: string; conversationId: string }) {
+  const fixture = conversationProposalFixture(context);
+  const content: ConversationProposalRevision["content"] = { kind: "knowledge-proposal", summary: "Character knowledge from the original entries", questions: [],
+    entries: [{ kind: "character", name: "Mara", text: "Keep a calm tone.", unitIds: [fixture.unitIds[0]] }] };
+  fixture.revision.content = content;
+  if (!fixture.run.output) throw new Error("A synthetic knowledge model result is required");
+  fixture.run.output.model = structuredClone(content);
+  const preview = fixture.run.preview;
+  preview.version = 3; preview.purpose = "knowledge"; preview.system = "Synthetic knowledge planning instructions";
+  preview.input = JSON.stringify({ purpose: "knowledge-proposal", scope: preview.scope,
+    messages: preview.selectedMessages.map(message => ({ author: message.author, body: message.body })),
+    units: fixture.unitIds.map((unitId, index) => ({ unitId, nativeKey: `dialogue.${index + 1}`, sourceText: index ? "Leave before dawn." : "Hello, {name}!" })) });
+  preview.byteLength = new TextEncoder().encode(JSON.stringify({ system: preview.system, input: preview.input })).length;
+  return fixture;
+}

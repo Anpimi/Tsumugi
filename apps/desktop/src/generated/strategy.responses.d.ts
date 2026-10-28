@@ -608,6 +608,7 @@ export interface ContextResourceRevision {
   name: string;
   previousRevisionId: ExecutionId | null;
   projectId: ExecutionId;
+  proposalOrigin?: ContextResourceProposalOrigin | null;
   reason: string;
   revisionId: ExecutionId;
   scope: ContextResourceScope;
@@ -615,6 +616,23 @@ export interface ContextResourceRevision {
   subjectId: ExecutionId;
   text: string;
   withdrawn: boolean;
+}
+export interface ContextResourceProposalOrigin {
+  entryIndex: number;
+  modelOrigin: ConversationProposalOrigin;
+  proposal: ConversationProposalRef;
+}
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
 }
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;

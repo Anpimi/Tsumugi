@@ -14,7 +14,7 @@ import { DecisionNavigationChanged, resolveDecisionNavigation, type DecisionNavi
 const ctx = { projectId: id(60000), sessionToken: "synthetic-decision-session" };
 function ports(overrides: Partial<DecisionNavigationPorts> = {}): DecisionNavigationPorts {
   const unexpected = vi.fn(async () => { throw new Error("Unexpected reader"); });
-  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, proposal: unexpected, ...overrides };
+  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, proposal: unexpected, knowledgeDecision: unexpected, ...overrides };
 }
 function item(action: DecisionItem["action"], targets: DecisionItem["targets"], locale: string | null = "zh-CN"): DecisionItem {
   const source = action.kind === "compare-candidate" ? "translation-candidate" : action.kind === "review-translation" ? "human-review"
@@ -50,6 +50,20 @@ it("opens the exact proposal group only while that original revision remains the
   let current = true;
   await expect(resolveDecisionNavigation(ctx, row, () => current, ports({ proposal: async () => { current = false; return original; } })))
     .rejects.toBeInstanceOf(DecisionNavigationChanged);
+});
+
+it("opens only the exact undecided knowledge item and rejects a changed head or recorded decision", async () => {
+  const fixture = conversationProposalFixture({ projectId: ctx.projectId, conversationId: id(60210) }), original = fixture.revision;
+  original.content = { kind: "knowledge-proposal", summary: "Character knowledge", questions: [], entries: [{ kind: "character", name: "Mara", text: "Keep the original voice", unitIds: [fixture.unitIds[0]] }] };
+  const reference = { projectId: ctx.projectId, conversationId: original.conversationId, proposalId: original.proposalId, revisionId: original.revisionId };
+  const row: DecisionItem = { ...item({ kind: "review-knowledge-proposal", proposal: reference, entryIndex: 0 }, [{ kind: "conversation-proposal", conversationId: original.conversationId, proposalId: original.proposalId }]),
+    source: "resource-proposal", decisionId: "resource-proposal:synthetic-knowledge" };
+  const proposal = vi.fn<DecisionNavigationPorts["proposal"]>(async () => original), knowledgeDecision = vi.fn<DecisionNavigationPorts["knowledgeDecision"]>(async () => null);
+  expect(await resolveDecisionNavigation(ctx, row, () => true, ports({ proposal, knowledgeDecision }))).toEqual({ kind: "knowledge-proposal", proposal: reference, entryIndex: 0 });
+  proposal.mockResolvedValueOnce(original).mockResolvedValueOnce({ ...original, revisionId: id(60211) });
+  await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ proposal, knowledgeDecision }))).rejects.toBeInstanceOf(DecisionNavigationChanged);
+  knowledgeDecision.mockResolvedValueOnce({ actionId: id(60212), proposal: reference, entryIndex: 0, decision: "keep", actor: "Human reviewer", reason: "Keep current resources", resource: null });
+  await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ proposal, knowledgeDecision }))).rejects.toBeInstanceOf(DecisionNavigationChanged);
 });
 function translationLocal() {
   const key = { projectId: ctx.projectId, unitId: id(60001), locale: "zh-CN" };

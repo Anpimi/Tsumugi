@@ -17,13 +17,13 @@ use std::{
     time::Duration,
 };
 
-struct NeverRun;
+struct NeverRun(&'static str);
 impl Runner for NeverRun {
     fn capability_id(&self) -> &str {
         conversation_planning::CAPABILITY
     }
     fn capability_version(&self) -> &str {
-        "1"
+        self.0
     }
     fn run(
         &self,
@@ -48,6 +48,9 @@ pub(super) fn completed(
     output: ConversationPlanningModelOutput,
     validated: bool,
 ) -> CaptureConversationProposal {
+    completed_profile(store,units,output,validated,None)
+}
+pub(super) fn completed_profile(store:&mut ProjectStore,units:&[ExecutionId],output:ConversationPlanningModelOutput,validated:bool,purpose:Option<ConversationPlanningPurpose>)->CaptureConversationProposal {
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let thread = ExecutionId::new();
     store
@@ -70,6 +73,7 @@ pub(super) fn completed(
         .unwrap();
     let capture = store
         .prepare_conversation_planning(&PrepareConversationPlanning {
+            purpose,
             project_id: project,
             conversation_id: thread,
             selected_message_ids: vec![message],
@@ -103,14 +107,14 @@ pub(super) fn completed(
         )
         .unwrap();
     let mut runtime = ExecutionRuntime::new(store).unwrap();
-    runtime.register(Arc::new(NeverRun)).unwrap();
+    runtime.register(Arc::new(NeverRun(conversation_planning::profile(purpose).0))).unwrap();
     runtime
         .submit_conversation_planning(store, &prepared)
         .unwrap();
     let dispatch = store.dispatch_execution_item(attempt, attempt).unwrap();
     let result=FixedResult::capture(ResultEnvelope {
         project_id:project,attempt_id:attempt,item_id:attempt,result_id:ExecutionId::new(),supersedes:None,
-        dispatch_token:dispatch.dispatch_token,capability_id:conversation_planning::CAPABILITY.into(),capability_version:"1".into(),plugin:None,
+        dispatch_token:dispatch.dispatch_token,capability_id:conversation_planning::CAPABILITY.into(),capability_version:conversation_planning::profile(purpose).0.into(),plugin:None,
         outcome:ExecutionState::Succeeded,output:Some(serde_json::json!({"model":output,"usage":null,"requests":1,"usageIncomplete":true})),diagnostic:None,
     },prepared.input(),dispatch.dispatch_token).unwrap();
     store.save_execution_result(&result).unwrap();

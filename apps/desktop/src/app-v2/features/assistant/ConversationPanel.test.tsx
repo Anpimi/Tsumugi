@@ -23,7 +23,7 @@ beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("zh-CN");
 const recoveryResources: { owner: ConversationSession; reads: SessionReads; gate: InteractionGate }[] = [];
 afterEach(() => { cleanup(); recoveryResources.splice(0).forEach(({ owner, reads, gate }) => { owner.retire(); reads.retire(); gate.dispose(); }); });
 
-it.each(["conversation-only", "units"] as const)("reviews %s material and exact limits before one request, clears changed consent, and blocks IME and other dialogs", async mode => {
+it.each(["conversation-only", "units", "knowledge"] as const)("reviews %s material and exact limits before one request, clears changed consent, and blocks IME and other dialogs", async mode => {
   let head: ConversationDraftHead = { key, revision: "0", writerId: null, value: null };
   const message = { ...key, messageId: fixtureIdentity(902), body: "  请先解释这条消息，不要改译文。\n", author: "human", ordinal: "1" };
   const config = { ...defaultAiConfig, endpoint: "http://127.0.0.1:11434/v1/chat/completions", model: "模拟助理", credentialEnv: "",
@@ -43,8 +43,8 @@ it.each(["conversation-only", "units"] as const)("reviews %s material and exact 
       const system = "Synthetic instructions";
       const units = request.scope.kind === "units" ? request.scope.unitIds.map((unitId: string) => ({ unitId, sourceLocale: "en", targetLocale: request.scope.locale,
         nativeKey: "greeting", sourceText: "Hello {name}", terms: request.config.shareTerms ? [{ source: "Hello", target: "你好", protected: false }] : [], context: null, humanProtected: true })) : [];
-      const input = JSON.stringify({ messages: [message.body], units });
-      prepared = { preparationId: fixtureIdentity(915), previewDigest: "b".repeat(64), preview: { version: 2, ...key, config: request.config,
+      const input = JSON.stringify({ ...(request.purpose ? { purpose: "knowledge-proposal" } : {}), messages: [message.body], units });
+      prepared = { preparationId: fixtureIdentity(915), previewDigest: "b".repeat(64), preview: { version: request.purpose === "knowledge" ? 3 : 2, ...key, config: request.config, ...(request.purpose ? { purpose: request.purpose } : {}),
         scope: request.scope, selectedMessages: [message], units: units.map((unit: { unitId: string; terms: unknown[] }) => ({ unitId: unit.unitId, sourceSnapshotId: fixtureIdentity(920), sourceRevisionId: fixtureIdentity(921), selectionId: fixtureIdentity(922), translationRevisionId: fixtureIdentity(923),
           protection: { unitId: unit.unitId, locale: request.scope.locale, revision: "1", protected: true }, sharedTermRevisionIds: unit.terms.length ? [fixtureIdentity(924)] : [], sharedContextRevisionId: null })),
         system, input, byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
@@ -69,20 +69,22 @@ it.each(["conversation-only", "units"] as const)("reviews %s material and exact 
   await screen.findByText("请先解释这条消息，不要改译文。");
   expect(invoke.mock.calls.some(([command]) => command === "prepare_conversation_planning" || command === "start_conversation_planning")).toBe(false);
   fireEvent.click(screen.getByRole("button", { name: "询问助理" }));
-  if (mode === "units") {
+  expect(screen.getByRole("radio", { name: i18n.t("conversation.askPurposeKnowledge") })).toBeDisabled();
+  if (mode !== "conversation-only") {
     fireEvent.click(screen.getByRole("button", { name: "带入当前选择（1）" }));
     expect(screen.getByText("已固定 1 个条目 → zh-CN。之后改筛选不会改变这个范围。")).toBeInTheDocument();
     rendered.rerender(tree({ kind: "ids", locale: "ja-JP", sourceSnapshotId: fixtureIdentity(926), unitIds: [fixtureIdentity(927)] }));
     expect(screen.getByText("已固定 1 个条目 → zh-CN。之后改筛选不会改变这个范围。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("checkbox", { name: i18n.t("ai.shareTerms") }));
   }
+  if (mode === "knowledge") fireEvent.click(screen.getByRole("radio", { name: "整理知识提议" }));
   expect(screen.getByRole("button", { name: "核对发送内容" })).toBeDisabled();
   fireEvent.click(screen.getByRole("checkbox", { name: "发送第 1 条消息" }));
   await screen.findByRole("option", { name: "Synthetic 模拟助理 · 模拟助理" });
   fireEvent.change(screen.getByRole("combobox", { name: i18n.t("connections.choose") }), { target: { value: config.connectionProfile.profileId } });
   fireEvent.click(screen.getByRole("button", { name: "核对发送内容" }));
   const preview = await screen.findByRole("region", { name: "核对这次请求" });
-  if (mode === "units") {
+  if (mode !== "conversation-only") {
     expect(within(preview).getByText("这次会分享 1 条消息和 1 个条目的原文，目标语言为 zh-CN。")).toBeInTheDocument();
     expect(within(preview).getByText("当前选用的译文不在发送内容里。")).toBeInTheDocument();
     fireEvent.click(within(preview).getByRole("button", { name: "查看完整请求" }));
@@ -92,6 +94,13 @@ it.each(["conversation-only", "units"] as const)("reviews %s material and exact 
   } else expect(within(preview).getByText("只分享这 1 条消息，不带项目条目或资源。")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "发送一次" })).toBeDisabled();
   const consent = within(preview).getByRole("checkbox"); fireEvent.click(consent);
+  if (mode === "knowledge") {
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.prepared?.preview.purpose).toBe("knowledge");
+    fireEvent.click(screen.getByRole("radio", { name: i18n.t("conversation.askPurposePlanning") }));
+    expect(screen.queryByRole("region", { name: "核对这次请求" })).not.toBeInTheDocument();
+    expect(owner.getSnapshot().inputs.get(conversationId)?.planning.consent).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: i18n.t("conversation.askPurposeKnowledge") }));
+  }
   fireEvent.change(screen.getByRole("spinbutton", { name: i18n.t("ai.maxOutputTokens") }), { target: { value: "1500" } });
   expect(screen.queryByRole("region", { name: "核对这次请求" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "核对发送内容" }));
@@ -105,7 +114,7 @@ it.each(["conversation-only", "units"] as const)("reviews %s material and exact 
   fireEvent.click(send);
   await screen.findByText("规划请求已记录，可以在这个对话里查看结果。");
   const starts = invoke.mock.calls.filter(([command]) => command === "start_conversation_planning"); expect(starts).toHaveLength(1);
-  expect(starts[0][1].request.consent).toMatchObject({ shareMessages: true, shareUnits: mode === "units" });
+  expect(starts[0][1].request.consent).toMatchObject({ shareMessages: true, shareUnits: mode !== "conversation-only" });
   expect(head.value?.pending).toBeNull();
   owner.retire(); reads.retire();
 });

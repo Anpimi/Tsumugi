@@ -39,7 +39,7 @@ function relatedLocalActions(page: DecisionPage, request: DecisionPageRequest): 
     });
 }
 
-function relatedItem(item: DecisionItem): boolean {
+function relatedItem(item: DecisionItem, projectId: string): boolean {
   if (!item.decisionId.startsWith(`${item.source}:`) || item.basis.length !== 64 || item.targets.length === 0) return false;
   const action = item.action;
   switch (action.kind) {
@@ -55,6 +55,14 @@ function relatedItem(item: DecisionItem): boolean {
     case "review-resource":
       return item.source === "resource-proposal" && item.evidence === null
         && item.targets.some(target => target.kind === "resource" && target.captureId === action.captureId && target.entryId === action.entryId);
+    case "review-knowledge-proposal":
+      return item.source === "resource-proposal" && item.evidence === null && item.sourceActionId === null
+        && item.locale !== null && ["pending", "stale"].includes(item.state) && action.proposal.projectId === projectId
+        && action.entryIndex < 16
+        && item.targets.some(target => target.kind === "conversation" && target.conversationId === action.proposal.conversationId)
+        && item.targets.some(target => target.kind === "conversation-proposal"
+          && target.conversationId === action.proposal.conversationId && target.proposalId === action.proposal.proposalId)
+        && item.targets.every(target => ["conversation", "conversation-proposal", "entry"].includes(target.kind));
     case "resolve-source-mapping":
       return item.source === "source-mapping" && item.evidence === null
         && item.targets.some(target => target.kind === "source-occurrence" && target.snapshotId === action.snapshotId && target.occurrenceId === action.occurrenceId);
@@ -124,7 +132,7 @@ function relatedPage(page: DecisionPage, request: DecisionPageRequest): boolean 
     && page.knownCount === page.coverage.reduce((sum, source) => sum + source.knownCount, 0)
     && page.total === (complete ? page.knownCount : null)
     && relatedLocalActions(page, request)
-    && page.items.every((item, index) => sources.includes(item.source) && relatedItem(item)
+    && page.items.every((item, index) => sources.includes(item.source) && relatedItem(item, page.projectId)
       && (request.query.locale == null || item.locale === null || item.locale === request.query.locale)
       && (index === 0 ? !request.cursor || item.decisionId > request.cursor.afterId : item.decisionId > page.items[index - 1]!.decisionId))
     && page.coverage.every(source => page.items.filter(item => item.source === source.source).length <= source.knownCount)

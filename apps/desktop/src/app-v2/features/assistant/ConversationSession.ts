@@ -10,7 +10,7 @@ import { DecisionActivityMemo, type DecisionClientAction } from "../../workspace
 import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { checkPlanningSelection, planningSelectionMatchesPreview, planningSelectionScope } from "./planningSelection";
 import { reviewCommands } from "../../../reviewCommands";
-import { validProposalContent, type ProposalContent } from "./proposalDraft";
+import { editableProposal, validProposalContent, type ProposalContent } from "./proposalDraft";
 import { isCommandError } from "../../../projectCommands";
 import { emptyExecutionConsent, workPlanInput, workPlanMinutesValid, type ConversationWorkPlanInput, type ProposalWorkPlanTools, type ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
 import type { WorkPlanExecutionConsent } from "../../../WorkPlanExecutionReview";
@@ -53,6 +53,7 @@ export interface ConversationPlanningInput {
   config: AiConfig;
   messageIds: readonly string[];
   selection: WorkspaceSelection | null;
+  purpose: NonNullable<PreparedConversationPlanning["preview"]["purpose"]> | null;
   prepared: PreparedConversationPlanning | null;
   consent: boolean;
   busy: "prepare" | "start" | null;
@@ -64,7 +65,7 @@ function planningConfig(config: AiConfig, selection: WorkspaceSelection | null):
 }
 function planningInput(): ConversationPlanningInput {
   return { open: false, sequence: 0, config: planningConfig(structuredClone(defaultAiConfig), null),
-    messageIds: [], selection: null, prepared: null, consent: false, busy: null, failure: null };
+    messageIds: [], selection: null, purpose: null, prepared: null, consent: false, busy: null, failure: null };
 }
 export interface ConversationSessionSnapshot {
   hydration: "idle" | "loading" | "ready" | "failed";
@@ -187,7 +188,7 @@ export class ConversationSession {
   }
   beginProposalEdit(revision: ConversationProposalRevision) {
     const record = this.records.get(revision.conversationId);
-    if (!record || !this.kernel.live || revision.projectId !== this.context.projectId || revision.content.kind !== "proposal") return;
+    if (!record || !this.kernel.live || revision.projectId !== this.context.projectId || !editableProposal(revision.content)) return;
     const edits = record.input.value.proposalEdits ?? [];
     if (edits.some(edit => edit.proposalId === revision.proposalId)) { this.update(record, { proposalEditorId: revision.proposalId }); return; }
     const editSeq = nextEditSeq(record.input.value.editSeq);
@@ -200,8 +201,9 @@ export class ConversationSession {
   }
   editProposal(conversationId: string, proposalId: string, change: (content: ProposalContent) => ProposalContent) {
     const record = this.records.get(conversationId), edits = record?.input.value.proposalEdits ?? [], original = edits.find(edit => edit.proposalId === proposalId);
-    if (!record || !this.kernel.live || original?.content.kind !== "proposal") return;
+    if (!record || !this.kernel.live || !original || !editableProposal(original.content)) return;
     const editSeq = nextEditSeq(record.input.value.editSeq), content = change(structuredClone(original.content));
+    if (content.kind !== original.content.kind) return;
     this.changeProposalEdits(record, edits.map(edit => edit === original ? { ...edit, editSeq, content } : edit), editSeq, proposalId);
   }
   private changeProposalEdits(record: RecordState, edits: ConversationProposalDraft[], editSeq: string, proposalEditorId: string | null) {
@@ -217,14 +219,14 @@ export class ConversationSession {
   }
   acceptProposalBase(revision: ConversationProposalRevision, expectedSeq: string): boolean {
     const record = this.records.get(revision.conversationId), edits = record?.input.value.proposalEdits ?? [], original = edits.find(edit => edit.proposalId === revision.proposalId);
-    if (!record || !this.kernel.live || record.action || record.input.value.pending || revision.projectId !== this.context.projectId || !original || original.editSeq !== expectedSeq) return false;
+    if (!record || !this.kernel.live || record.action || record.input.value.pending || revision.projectId !== this.context.projectId || !original || original.editSeq !== expectedSeq || revision.content.kind !== original.content.kind) return false;
     const editSeq = nextEditSeq(record.input.value.editSeq);
     this.changeProposalEdits(record, edits.map(edit => edit === original ? { ...edit, expectedRevisionId: revision.revisionId, editSeq } : edit), editSeq, revision.proposalId); return true;
   }
   async captureProposal(run: ConversationPlanningRun) {
     const record = this.records.get(run.preview.conversationId);
     if (!record || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
-      || run.preview.projectId !== this.context.projectId || run.output?.model.kind !== "proposal" || !run.resultId || record.input.capturedResultIds.includes(run.resultId)) return;
+      || run.preview.projectId !== this.context.projectId || !run.output || !editableProposal(run.output.model) || !run.resultId || record.input.capturedResultIds.includes(run.resultId)) return;
     const editSeq = nextEditSeq(record.input.value.editSeq), pending: ConversationDraftPending = { kind: "proposal-capture", submittedSeq: editSeq,
       request: { ...record.input.key, actionId: this.ports.identity(), proposalId: this.ports.identity(), revisionId: this.ports.identity(), attemptId: run.receipt.consent.attemptId, resultId: run.resultId } };
     this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending }, dirty: true, outcome: null, failure: null, notice: null });
@@ -599,6 +601,11 @@ export class ConversationSession {
     const config = planningConfig(edited, record.input.planning.selection);
     this.editPlanning(record, { config });
   }
+  setPlanningPurpose(conversationId: string, purpose: ConversationPlanningInput["purpose"]) {
+    const record = this.records.get(conversationId);
+    if (!record || !this.kernel.live || purpose === record.input.planning.purpose || purpose === "knowledge" && workspaceSelectionIds(record.input.planning.selection).length === 0) return false;
+    this.editPlanning(record, { purpose }); return true;
+  }
   invalidatePlanning(conversationId: string) {
     const record = this.records.get(conversationId);
     if (record && this.kernel.live && (record.input.planning.prepared || record.input.planning.consent || record.input.planning.busy === "prepare")) this.editPlanning(record, {});
@@ -611,7 +618,8 @@ export class ConversationSession {
     const { planning, value, busy, failure } = record.input;
     return this.kernel.live && !record.action && !busy && !value.pending && !failure
       && planning.messageIds.length > 0 && planning.messageIds.length <= 16 && validAiLimits(planning.config)
-      && !!planning.config.endpoint.trim() && !!planning.config.model.trim();
+      && !!planning.config.endpoint.trim() && !!planning.config.model.trim()
+      && (planning.purpose !== "knowledge" || workspaceSelectionIds(planning.selection).length > 0);
   }
   async preparePlanning(conversationId: string, current: () => boolean = () => true) {
     const record = this.records.get(conversationId); if (!record || !this.canPrepare(record) || !current()) return;
@@ -625,10 +633,10 @@ export class ConversationSession {
       if (!live()) return;
       failureKind = "request";
       const prepared = await this.ports.preparePlanning({ ...this.context, conversationId, config: structuredClone(before.config),
-        selectedMessageIds: [...before.messageIds], scope });
+        selectedMessageIds: [...before.messageIds], scope, ...(before.purpose ? { purpose: before.purpose } : {}) });
       if (!live()) return;
       failureKind = "selection";
-      if (!planningSelectionMatchesPreview(before.selection, prepared)) throw new Error("The planning source selection has changed");
+      if (!planningSelectionMatchesPreview(before.selection, prepared) || (prepared.preview.purpose ?? null) !== before.purpose) throw new Error("The planning source selection or purpose has changed");
       await checkPlanningSelection(this.context, before.selection, live, this.ports.captureSelection);
       if (!live()) return;
       // Host retains one capture. Another thread's earlier preview cannot remain confirmable.
@@ -736,8 +744,10 @@ export class ConversationSession {
     while (this.kernel.live && record.input.dirty) if (!await this.executeJob(record, this.writeJob(record))) return false;
     return !record.input.dirty;
   }
-  private persist(record: RecordState): Promise<boolean> {
-    if (record.writing) return record.writing;
+  private async persist(record: RecordState): Promise<boolean> {
+    // A new pending request can arrive after the active flush's last dirty
+    // check. Its completed flight does not prove that newer input is saved.
+    while (record.writing) if (!await record.writing) return false;
     return this.queueJournal(record, () => this.flushRecord(record));
   }
   async retryJournal(conversationId: string) {

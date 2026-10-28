@@ -46,7 +46,8 @@ import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
 import type { ConversationSession } from "./features/assistant/ConversationSession";
 import type { ConversationRecoveryTarget } from "./features/assistant/ConversationPanel";
-import type { ConversationProposalTarget } from "./features/assistant/conversationNavigation";
+import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, OpenKnowledgeProposal } from "./features/assistant/conversationNavigation";
+import type { KnowledgeReviewTarget } from "./features/knowledge/KnowledgeProposalPanel";
 import type { DecisionItem } from "../decisionCommands";
 import { contextKindForKnowledge, type KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
 import { knowledgeBlocked, knowledgeHasDraft, knowledgeRecovery } from "./features/knowledge/knowledgeState";
@@ -292,6 +293,7 @@ function WorkspaceShell() {
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
   const lifecycleState = useProjectLifecycle(lifecycle);
+  const [knowledgeReview, setKnowledgeReview] = useState<KnowledgeReviewTarget | null>(null);
   useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
@@ -573,6 +575,7 @@ function WorkspaceShell() {
         intent.release(); revealConversationProposal({ conversationId: destination.conversationId, proposalId: destination.proposalId,
           revisionId: destination.revisionId, focus: focusRetained() }); return true;
       }
+      if (destination.kind === "knowledge-proposal") return await openKnowledgeTarget(destination.proposal, destination.entryIndex, current, intent.release);
       if (destination.kind === "details") return false;
       intent.release();
       const accepted = await runtime.navigation.open({ kind: "entries", locale: destination.locale, focus: destination.unitId,
@@ -696,6 +699,7 @@ function WorkspaceShell() {
     const recovery = knowledgeRecovery(knowledgeOwner);
     const locale = restoreDraft ? recovery.locale ?? activeLocale : activeLocale;
     if (restoreDraft && recovery.key) knowledgeOwner?.contextResources.activate(recovery.key);
+    if (restoreDraft && recovery.proposalKey) knowledgeOwner?.knowledgeProposals.activate(recovery.proposalKey);
     if (existing && !newView) {
       if (restoreDraft) await runtime.navigation.update(existing.id, { locale, preset: recovery.preset });
       else await runtime.navigation.activate(existing.id);
@@ -703,16 +707,34 @@ function WorkspaceShell() {
     else await runtime.navigation.open({ kind: "knowledge", locale, preset: restoreDraft ? recovery.preset : "terms" });
   }
   const openKnowledgeDraft = () => openKnowledge(false, true);
+  async function openKnowledgeTarget(proposal: ConversationKnowledgeProposalRef, entryIndex: number | null, current: () => boolean, beforeNavigate?: () => void) {
+    const origin = document.activeElement;
+    const navigationCurrent = () => current() && (document.activeElement === origin || document.activeElement === document.body);
+    const { resolveKnowledgeReview } = await import("./features/knowledge/knowledgeProposalNavigation");
+    if (!navigationCurrent() || disabled || session.reads.retired || proposal.projectId !== session.project.metadata.projectId) return false;
+    const resolved = await resolveKnowledgeReview(executionContext(session.project), proposal, entryIndex, navigationCurrent);
+    if (!navigationCurrent()) return false;
+    beforeNavigate?.(); if (narrow && drawer) closeDrawer(); requestKnowledge();
+    const state = store.getState(), existing = state.viewOrder.map(id => state.views[id]).find(item => item.kind === "knowledge");
+    const accepted = existing ? await runtime.navigation.update(existing.id, { locale: resolved.locale, preset: resolved.preset })
+      : await runtime.navigation.open({ kind: "knowledge", locale: resolved.locale, preset: resolved.preset });
+    if (accepted) setKnowledgeReview(resolved.target);
+    return accepted;
+  }
+  const openKnowledgeProposal: OpenKnowledgeProposal = async (proposal, current) => {
+    if (!current() || disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined })) return false;
+    return await openKnowledgeTarget(proposal, null, current);
+  };
   function panel() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? contextKindForKnowledge(view.preset) ? <ContextResourceDetails project={session.project} owner={knowledgeOwner} disabled={disabled} gate={gate} preset={view.preset} locale={view.locale}
-        visible={view.dock === "details" && (!narrow || drawer)} current={dialogId => knowledgeCurrent(dialogId ?? (narrow && drawer ? "workspace-dock" : undefined))}/> : <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
+        visible={view.dock === "details" && (!narrow || drawer)} current={dialogId => knowledgeCurrent(dialogId ?? (narrow && drawer ? "workspace-dock" : undefined))} onOpenProposal={openKnowledgeProposal}/> : <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
         visible={view.dock === "details" && (!narrow || drawer)} current={() => knowledgeCurrent(narrow && drawer ? "workspace-dock" : undefined)}/> : <LoadingState label={t("knowledge.readingTerms")}/> : <EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
@@ -807,7 +829,7 @@ function WorkspaceShell() {
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}/>
           </Suspense></FeatureBoundary> : view.kind === "knowledge" ? <FeatureBoundary key="knowledge-presentation" fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")}/>}><Suspense fallback={<LoadingState label={t("knowledge.readingTerms")}/>}>
             {knowledgeOwner ? <KnowledgeView project={session.project} owner={knowledgeOwner} view={view} disabled={disabled} gate={gate} current={knowledgeCurrent}
-              patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }}/>
+              patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }} reviewTarget={knowledgeReview?.proposal.projectId === session.project.metadata.projectId ? knowledgeReview : null} onReviewOpened={() => setKnowledgeReview(null)}/>
               : <LoadingState label={t("knowledge.readingTerms")}/>}
           </Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
         </main></SplitPanel>

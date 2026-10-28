@@ -75,12 +75,15 @@ pub struct WithdrawContextResource {
 pub enum ContextResourceAction {
     Save(SaveContextResource),
     Withdraw(WithdrawContextResource),
+    ProposalAdoption(crate::application::ContextResourceProposalAction),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ContextResourceRevision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal_origin: Option<crate::application::ContextResourceProposalOrigin>,
     pub revision_id: ExecutionId,
     pub context_id: ExecutionId,
     pub subject_id: ExecutionId,
@@ -189,12 +192,14 @@ impl ContextResourceAction {
         match self {
             Self::Save(r) => r.project_id,
             Self::Withdraw(r) => r.project_id,
+            Self::ProposalAdoption(r) => r.proposal.project_id,
         }
     }
     fn action(&self) -> ExecutionId {
         match self {
             Self::Save(r) => r.action_id,
             Self::Withdraw(r) => r.action_id,
+            Self::ProposalAdoption(r) => r.action_id,
         }
     }
 }
@@ -291,6 +296,11 @@ fn read_revision(
                 && r.actor == v.actor
                 && r.reason == v.reason
                 && v.withdrawn => {}
+        ContextResourceAction::ProposalAdoption(r)
+            if !v.withdrawn
+                && v.proposal_origin.as_ref().is_some_and(|o| {
+                    o.proposal == r.proposal && o.entry_index == r.entry_index
+                }) => {}
         _ => {
             return Err(failure(
                 ErrorCode::CorruptLedger,
@@ -352,7 +362,7 @@ fn by_action(
     }
     Ok(Some(value))
 }
-fn check_scope(
+pub(in crate::persistence) fn check_scope(
     c: &Connection,
     project: ExecutionId,
     scope: &ContextResourceScope,
@@ -379,6 +389,19 @@ fn check_scope(
         }
     }
     Ok(())
+}
+pub(in crate::persistence) fn revision_in(
+    c: &Connection,
+    revision: ExecutionId,
+) -> Result<Option<ContextResourceRevision>, ExecutionError> {
+    Ok(read_revision(c, revision)?.map(|v| v.receipt))
+}
+pub(in crate::persistence) fn current_in(
+    c: &Connection,
+    project: ExecutionId,
+    context: ExecutionId,
+) -> Result<Option<ContextResourceRevision>, ExecutionError> {
+    current(c, project, context)
 }
 fn file_present(c: &Connection, namespace: &str, path: &str) -> Result<bool, ExecutionError> {
     c.query_row("SELECT EXISTS(SELECT 1 FROM source_files f JOIN source_snapshots n ON n.set_id=f.set_id JOIN content_scope s ON s.current_snapshot=n.snapshot_id WHERE f.logical_path=?2 AND EXISTS(SELECT 1 FROM source_occurrences o WHERE o.snapshot_id=n.snapshot_id AND o.namespace=?1))",params![namespace,path],|r|r.get(0)).map_err(sql)
@@ -416,6 +439,91 @@ fn append(
     Ok(value)
 }
 
+pub(in crate::persistence) fn save_in(
+    c: &Connection,
+    request: &SaveContextResource,
+    action: ContextResourceAction,
+    origin: Option<crate::application::ContextResourceProposalOrigin>,
+) -> Result<ContextResourceRevision, ExecutionError> {
+    let tx = c;
+    checked_fields(
+        &request.name,
+        &request.text,
+        &request.actor,
+        &request.reason,
+    )?;
+    check_project(&tx, request.project_id, &request.locale)?;
+    let basis = super::super::content::scope(&tx)?;
+    if basis.current_snapshot.is_none() || basis != request.source_basis {
+        return Err(failure(
+            ErrorCode::DependencyConflict,
+            "context-resource-source",
+        ));
+    }
+    check_scope(&tx, request.project_id, &request.scope)?;
+    let prior = request
+        .context_id
+        .map(|context| current(&tx, request.project_id, context))
+        .transpose()?
+        .flatten();
+    if request.context_id.is_some() && prior.is_none()
+        || prior.as_ref().map(|v| v.revision_id) != request.expected_revision_id
+    {
+        return Err(failure(
+            ErrorCode::DependencyConflict,
+            "context-resource-current",
+        ));
+    }
+    let context_id = request.context_id.unwrap_or_else(ExecutionId::new);
+    let subject_id = prior
+        .as_ref()
+        .map(|v| v.subject_id)
+        .or(request.subject_id)
+        .unwrap_or(context_id);
+    if prior.as_ref().is_some_and(|p| {
+        p.kind != request.kind
+            || p.locale != request.locale
+            || request.subject_id.is_some_and(|s| s != p.subject_id)
+    }) {
+        return Err(failure(
+            ErrorCode::DependencyConflict,
+            "context-resource-identity",
+        ));
+    }
+    if subject_id != context_id {
+        let subject = current(&tx, request.project_id, subject_id)?
+            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "context-resource-subject"))?;
+        if subject.subject_id != subject_id
+            || subject.kind != request.kind
+            || subject.locale != request.locale
+        {
+            return Err(failure(
+                ErrorCode::DependencyConflict,
+                "context-resource-subject",
+            ));
+        }
+    }
+    let revision = ContextResourceRevision {
+        proposal_origin: origin.or_else(|| prior.as_ref().and_then(|v| v.proposal_origin.clone())),
+        revision_id: ExecutionId::new(),
+        context_id,
+        subject_id,
+        project_id: request.project_id,
+        kind: request.kind,
+        locale: request.locale.clone(),
+        scope: request.scope.clone(),
+        name: request.name.clone(),
+        text: request.text.clone(),
+        source_basis: request.source_basis.clone(),
+        withdrawn: false,
+        actor: request.actor.clone(),
+        reason: request.reason.clone(),
+        action_id: request.action_id,
+        previous_revision_id: request.expected_revision_id,
+    };
+    append(&tx, action, revision, prior.as_ref())
+}
+
 impl ProjectStore {
     pub fn save_context_resource(
         &mut self,
@@ -447,82 +555,7 @@ impl ProjectStore {
                 "context-resource-session",
             ));
         }
-        checked_fields(
-            &request.name,
-            &request.text,
-            &request.actor,
-            &request.reason,
-        )?;
-        check_project(&tx, request.project_id, &request.locale)?;
-        let basis = super::super::content::scope(&tx)?;
-        if basis.current_snapshot.is_none() || basis != request.source_basis {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "context-resource-source",
-            ));
-        }
-        check_scope(&tx, request.project_id, &request.scope)?;
-        let prior = request
-            .context_id
-            .map(|context| current(&tx, request.project_id, context))
-            .transpose()?
-            .flatten();
-        if request.context_id.is_some() && prior.is_none()
-            || prior.as_ref().map(|v| v.revision_id) != request.expected_revision_id
-        {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "context-resource-current",
-            ));
-        }
-        let context_id = request.context_id.unwrap_or_else(ExecutionId::new);
-        let subject_id = prior
-            .as_ref()
-            .map(|v| v.subject_id)
-            .or(request.subject_id)
-            .unwrap_or(context_id);
-        if prior.as_ref().is_some_and(|p| {
-            p.kind != request.kind
-                || p.locale != request.locale
-                || request.subject_id.is_some_and(|s| s != p.subject_id)
-        }) {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "context-resource-identity",
-            ));
-        }
-        if subject_id != context_id {
-            let subject = current(&tx, request.project_id, subject_id)?.ok_or_else(|| {
-                failure(ErrorCode::DependencyConflict, "context-resource-subject")
-            })?;
-            if subject.subject_id != subject_id
-                || subject.kind != request.kind
-                || subject.locale != request.locale
-            {
-                return Err(failure(
-                    ErrorCode::DependencyConflict,
-                    "context-resource-subject",
-                ));
-            }
-        }
-        let revision = ContextResourceRevision {
-            revision_id: ExecutionId::new(),
-            context_id,
-            subject_id,
-            project_id: request.project_id,
-            kind: request.kind,
-            locale: request.locale.clone(),
-            scope: request.scope.clone(),
-            name: request.name.clone(),
-            text: request.text.clone(),
-            source_basis: request.source_basis.clone(),
-            withdrawn: false,
-            actor: request.actor.clone(),
-            reason: request.reason.clone(),
-            action_id: request.action_id,
-            previous_revision_id: request.expected_revision_id,
-        };
-        let value = append(&tx, action, revision, prior.as_ref())?;
+        let value = save_in(&tx, request, action, None)?;
         observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "context-resource-commit")
@@ -610,6 +643,12 @@ impl ProjectStore {
             }
             ContextResourceAction::Withdraw(r) => {
                 checked_fields("withdrawal", "withdrawal", &r.actor, &r.reason)?
+            }
+            ContextResourceAction::ProposalAdoption(_) => {
+                return Err(failure(
+                    ErrorCode::Unauthorized,
+                    "context-resource-conversation-recovery-required",
+                ));
             }
         }
         codec::encode(request, MAX_RECORD)?;
@@ -1000,6 +1039,9 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         let value = read_revision(c, id(raw)?)?
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "context-resource-record"))?;
         let v = value.receipt;
+        if v.proposal_origin.is_some() {
+            super::super::application::conversations::proposals::knowledge::validate_context_origin(c,&v)?;
+        }
         check_action_project(c, v.project_id)?;
         let snapshot = v
             .source_basis
@@ -1049,6 +1091,9 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             )?
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "context-resource-withdraw"))?
             .receipt;
+            if prior.proposal_origin != v.proposal_origin {
+                return Err(failure(ErrorCode::CorruptLedger, "context-resource-origin"));
+            }
             if (prior.scope, prior.name, prior.text, prior.source_basis)
                 != (
                     v.scope.clone(),
@@ -1061,6 +1106,17 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                     ErrorCode::CorruptLedger,
                     "context-resource-withdraw",
                 ));
+            }
+        }
+        if matches!(value.request, ContextResourceAction::Save(_)) {
+            let prior_origin = v
+                .previous_revision_id
+                .map(|id| read_revision(c, id))
+                .transpose()?
+                .flatten()
+                .and_then(|v| v.receipt.proposal_origin);
+            if v.proposal_origin != prior_origin {
+                return Err(failure(ErrorCode::CorruptLedger, "context-resource-origin"));
             }
         }
         last.insert(v.context_id, v.revision_id);
@@ -1216,7 +1272,9 @@ mod tests {
         store
             .execution_unknown
             .store(true, std::sync::atomic::Ordering::Release);
-        let authority = store.planning_authority_revision.load(std::sync::atomic::Ordering::Acquire);
+        let authority = store
+            .planning_authority_revision
+            .load(std::sync::atomic::Ordering::Acquire);
         let before = store
             .changes_since(crate::execution::Revision::new(0).unwrap())
             .sequence;
@@ -1229,7 +1287,12 @@ mod tests {
             saved
         );
         assert!(store.is_reconciling());
-        assert_eq!(store.planning_authority_revision.load(std::sync::atomic::Ordering::Acquire),authority);
+        assert_eq!(
+            store
+                .planning_authority_revision
+                .load(std::sync::atomic::Ordering::Acquire),
+            authority
+        );
         assert_eq!(store.save_context_resource(&request).unwrap(), saved);
         assert!(store.is_reconciling());
         let mut mismatched = request.clone();
@@ -1240,22 +1303,51 @@ mod tests {
                 .is_err()
         );
         assert!(store.is_reconciling());
-        let absent=ContextResourceAction::Save(SaveContextResource{action_id:ExecutionId::new(),..request.clone()});
-        assert!(store.context_resource_action(project,absent.action()).unwrap().is_none());
+        let absent = ContextResourceAction::Save(SaveContextResource {
+            action_id: ExecutionId::new(),
+            ..request.clone()
+        });
+        assert!(
+            store
+                .context_resource_action(project, absent.action())
+                .unwrap()
+                .is_none()
+        );
         assert!(store.is_reconciling());
-        assert_eq!(store.planning_authority_revision.load(std::sync::atomic::Ordering::Acquire),authority);
+        assert_eq!(
+            store
+                .planning_authority_revision
+                .load(std::sync::atomic::Ordering::Acquire),
+            authority
+        );
         let recovered = store
             .recover_context_resource_action(&ContextResourceAction::Save(request))
             .unwrap();
         assert_eq!(recovered.status, ContextResourceRecoveryStatus::Recorded);
         assert_eq!(recovered.receipt, Some(saved));
         assert!(!store.is_reconciling());
-        assert!(store.planning_authority_revision.load(std::sync::atomic::Ordering::Acquire)>authority);
-        store.execution_unknown.store(true,std::sync::atomic::Ordering::Release);
-        let retriable=store.recover_context_resource_action(&absent).unwrap();
-        assert_eq!(retriable.status,ContextResourceRecoveryStatus::RetryAllowed);
-        assert!(retriable.receipt.is_none());assert!(!store.is_reconciling());
-        assert!(store.context_resource_action(project,absent.action()).unwrap().is_none());
+        assert!(
+            store
+                .planning_authority_revision
+                .load(std::sync::atomic::Ordering::Acquire)
+                > authority
+        );
+        store
+            .execution_unknown
+            .store(true, std::sync::atomic::Ordering::Release);
+        let retriable = store.recover_context_resource_action(&absent).unwrap();
+        assert_eq!(
+            retriable.status,
+            ContextResourceRecoveryStatus::RetryAllowed
+        );
+        assert!(retriable.receipt.is_none());
+        assert!(!store.is_reconciling());
+        assert!(
+            store
+                .context_resource_action(project, absent.action())
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(store.changes_since(before).sequence, before);
     }
 

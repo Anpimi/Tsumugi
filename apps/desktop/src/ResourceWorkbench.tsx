@@ -285,7 +285,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
   function contextPayload(): ResourceContextCommandPayload | null { const value = owner.current(); return value.selectedUnit?.unitId && value.selectedUnit.sourceRevisionId ? { kind: "resource-context", unitId: value.selectedUnit.unitId, locale: value.locale,
     sourceRevisionId: value.selectedUnit.sourceRevisionId, expectedRevisionId: value.contextRevision?.revisionId ?? null, editSeq: value.contextSeq } : null; }
   function capturePayload(capture: GlossaryCapture): ResourceCaptureCommandPayload { return { kind: "resource-capture", captureId: capture.captureId, digest: capture.digest, locale: capture.targetLocale }; }
-  function pendingPayload(): ResourcePendingCommandPayload | null { const value = owner.current().pending; return value && value.kind !== "typed-context" ? { kind: "resource-pending", pendingKind: value.kind, actionId: value.request.actionId } : null; }
+  function pendingPayload(): ResourcePendingCommandPayload | null { const value = owner.current().pending; return value && value.kind !== "typed-context" && value.kind !== "knowledge-decision" ? { kind: "resource-pending", pendingKind: value.kind, actionId: value.request.actionId } : null; }
   function termAvailability(input?: ResourceTermCommandPayload) {
     const allowed = common("terms"); if (!allowed.enabled) return allowed;
     const value = owner.current();

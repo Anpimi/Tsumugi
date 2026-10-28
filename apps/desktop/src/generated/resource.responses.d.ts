@@ -144,6 +144,10 @@ export type ContextResourceAction =
   | {
       kind: "withdraw";
       request: WithdrawContextResource;
+    }
+  | {
+      kind: "proposal-adoption";
+      request: ContextResourceProposalAction;
     };
 export type ContextResourceRecoveryStatus = "recorded" | "retry-allowed";
 export type TermOrigin = "manual" | "external";
@@ -342,6 +346,7 @@ export interface ContextResourceRevision {
   name: string;
   previousRevisionId: ExecutionId | null;
   projectId: ExecutionId;
+  proposalOrigin?: ContextResourceProposalOrigin | null;
   reason: string;
   revisionId: ExecutionId;
   scope: ContextResourceScope;
@@ -349,6 +354,23 @@ export interface ContextResourceRevision {
   subjectId: ExecutionId;
   text: string;
   withdrawn: boolean;
+}
+export interface ContextResourceProposalOrigin {
+  entryIndex: number;
+  modelOrigin: ConversationProposalOrigin;
+  proposal: ConversationProposalRef;
+}
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
 }
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;
@@ -495,6 +517,11 @@ export interface WithdrawContextResource {
   expectedRevisionId: ExecutionId;
   projectId: ExecutionId;
   reason: string;
+}
+export interface ContextResourceProposalAction {
+  actionId: ExecutionId;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
 }
 export interface ContextResourcePage {
   basis: string;

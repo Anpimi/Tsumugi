@@ -1486,6 +1486,29 @@
         ],
         "type": "string"
       },
+      "ContextResourceProposalOrigin": {
+        "additionalProperties": false,
+        "properties": {
+          "entryIndex": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "modelOrigin": {
+            "$ref": "#/definitions/ConversationProposalOrigin"
+          },
+          "proposal": {
+            "$ref": "#/definitions/ConversationProposalRef"
+          }
+        },
+        "required": [
+          "proposal",
+          "entryIndex",
+          "modelOrigin"
+        ],
+        "type": "object"
+      },
       "ContextResourceResolutionEntry": {
         "additionalProperties": false,
         "properties": {
@@ -1542,6 +1565,16 @@
           },
           "projectId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalOrigin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceProposalOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reason": {
             "type": "string"
@@ -1735,6 +1768,54 @@
           "id",
           "schemaVersion",
           "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "ConversationProposalOrigin": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "resultId",
+          "inputDigest",
+          "resultDigest"
+        ],
+        "type": "object"
+      },
+      "ConversationProposalRef": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "proposalId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "proposalId",
+          "revisionId"
         ],
         "type": "object"
       },

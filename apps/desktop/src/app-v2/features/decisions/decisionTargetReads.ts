@@ -6,9 +6,12 @@ import { releaseCommands } from "../../../releaseCommands";
 import { resourceCommands, type ResourcePreview, type ResourcePreviewRow, type TermRevision } from "../../../resourceCommands";
 import { reviewCommands, type Eligibility, type EligibilityLocale } from "../../../reviewCommands";
 import { sourceCommands, type ContentPage, type ContentRow, type LineageEvidence, type SourceChangePage } from "../../../sourceCommands";
+import { conversationCommands, type ConversationKnowledgeDecision, type ConversationKnowledgeEntry, type ConversationProposalRevision } from "../../../conversationCommands";
+import { jsonIdentity } from "../../../pluginToolChoices";
 
 export type DecisionTargetDetails =
   | { kind: "resource"; preview: ResourcePreview; proposal: { kind: "row"; row: ResourcePreviewRow } | { kind: "removed"; term: TermRevision } }
+  | { kind: "knowledge"; revision: ConversationProposalRevision; entry: ConversationKnowledgeEntry; entryIndex: number; decision: ConversationKnowledgeDecision | null }
   | { kind: "mapping"; page: ContentPage; row: ContentRow; lineage: LineageEvidence[] }
   | { kind: "source-comparison"; page: SourceChangePage }
   | { kind: "execution"; detail: AttemptDetail; item: ItemView; output: ExecutionOutputView | null }
@@ -25,6 +28,8 @@ export interface DecisionTargetReadPorts {
   output: typeof executionCommands.output;
   eligibility: typeof reviewCommands.eligibility;
   deliveryRecord: typeof releaseCommands.deliveryRecord;
+  proposal: typeof conversationCommands.readProposal;
+  knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
 }
 const ports: DecisionTargetReadPorts = {
   preview: request => resourceCommands.preview(request), historyContent: request => sourceCommands.historyContent(request),
@@ -32,6 +37,7 @@ const ports: DecisionTargetReadPorts = {
   compare: request => sourceCommands.compare(request),
   output: request => executionCommands.output(request), eligibility: request => reviewCommands.eligibility(request),
   deliveryRecord: request => releaseCommands.deliveryRecord(request),
+  proposal: request => conversationCommands.readProposal(request), knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
 };
 
 export class DecisionTargetReadError extends Error {
@@ -49,9 +55,21 @@ export async function readDecisionTarget(context: SessionRequest, item: Decision
 ): Promise<DecisionTargetDetails> {
   const fixed = structuredClone({ context, item }), ctx = fixed.context, action = fixed.item.action;
   function present() { if (!current()) throw new DecisionTargetReadError("changed"); }
-  function match(condition: boolean) { if (!condition) throw new DecisionTargetReadError("mismatch"); }
+  function match(condition: boolean): asserts condition { if (!condition) throw new DecisionTargetReadError("mismatch"); }
   present();
   switch (action.kind) {
+    case "review-knowledge-proposal": {
+      match(action.proposal.projectId === ctx.projectId && Number.isInteger(action.entryIndex) && action.entryIndex >= 0
+        && fixed.item.targets.some(target => target.kind === "conversation-proposal" && target.conversationId === action.proposal.conversationId && target.proposalId === action.proposal.proposalId));
+      const revision = await commands.proposal({ ...ctx, ...action.proposal }); present();
+      match(revision.projectId === ctx.projectId && revision.conversationId === action.proposal.conversationId && revision.proposalId === action.proposal.proposalId
+        && revision.revisionId === action.proposal.revisionId && revision.content.kind === "knowledge-proposal");
+      const entry = revision.content.entries[action.entryIndex];
+      if (!entry) throw new DecisionTargetReadError("missing");
+      const decision = await commands.knowledgeDecision({ ...ctx, proposal: action.proposal, entryIndex: action.entryIndex }); present();
+      match(decision === null || jsonIdentity(decision.proposal) === jsonIdentity(action.proposal) && decision.entryIndex === action.entryIndex);
+      return { kind: "knowledge", revision, entry, entryIndex: action.entryIndex, decision };
+    }
     case "compare-source-mapping": {
       match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "source-result"
         && target.attemptId === action.attemptId && target.resultId === action.resultId));

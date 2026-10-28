@@ -834,7 +834,7 @@ pub(super) fn send_outcome<T: Serialize>(
             supersedes: None,
             dispatch_token: request.dispatch_token,
             capability_id: request.input.envelope().capability_id.clone(),
-            capability_version: "1".into(),
+            capability_version: request.input.envelope().capability_version.clone(),
             outcome: state,
             output,
             diagnostic,

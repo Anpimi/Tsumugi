@@ -136,6 +136,7 @@ enum Action {
     },
     CaptureProposal { request: CaptureConversationProposal },
     ReviseProposal { request: ReviseConversationProposal },
+    DecideKnowledgeProposal { request: DecideConversationKnowledgeProposal },
     AuthorizeProposalWorkPlan {
         action_id: ExecutionId,
         proposal: ConversationProposalRef,
@@ -149,6 +150,7 @@ enum Receipt {
     Create { receipt: ProjectConversation },
     Append { receipt: ProjectConversationMessage },
     Proposal { receipt: ConversationProposalRevision },
+    KnowledgeDecision { receipt: ConversationKnowledgeDecision },
     ProposalWorkPlan { receipt: ConversationProposalWorkPlanLink },
 }
 impl Action {
@@ -158,6 +160,7 @@ impl Action {
             Self::Append { request } => request.action_id,
             Self::CaptureProposal { request } => request.action_id,
             Self::ReviseProposal { request } => request.action_id,
+            Self::DecideKnowledgeProposal {request} => request.action_id,
             Self::AuthorizeProposalWorkPlan { action_id, .. } => *action_id,
         }
     }
@@ -167,6 +170,7 @@ impl Action {
             Self::Append { request } => request.conversation_id,
             Self::CaptureProposal { request } => request.conversation_id,
             Self::ReviseProposal { request } => request.conversation_id,
+            Self::DecideKnowledgeProposal {request} => request.proposal.conversation_id,
             Self::AuthorizeProposalWorkPlan { proposal, .. } => proposal.conversation_id,
         }
     }
@@ -176,6 +180,7 @@ impl Action {
             Self::Append { request } => request.project_id,
             Self::CaptureProposal { request } => request.project_id,
             Self::ReviseProposal { request } => request.project_id,
+            Self::DecideKnowledgeProposal {request} => request.proposal.project_id,
             Self::AuthorizeProposalWorkPlan { proposal, .. } => proposal.project_id,
         }
     }
@@ -222,6 +227,9 @@ fn action(
             let (link, saved) = proposals::work_plans::link_in(c, project, proposal.conversation_id, *plan_id)?;
             if receipt != &link || proposals::work_plans::summary(&saved)? != request { return Err(corrupt()); }
         }
+        (Action::DecideKnowledgeProposal{request},Receipt::KnowledgeDecision{receipt}) => {
+            proposals::knowledge::validate_receipt(c,request,receipt)?;
+        }
         _ => return Err(corrupt()),
     }
     Ok(Some((request, receipt)))
@@ -265,6 +273,7 @@ pub(in crate::persistence) fn validate_version(c: &Connection, version: i64) -> 
     let mut messages = std::collections::BTreeSet::new();
     let mut revisions = std::collections::BTreeSet::new();
     let mut links = std::collections::BTreeSet::new();
+    let mut knowledge = std::collections::BTreeSet::new();
     let mut q = c
         .prepare("SELECT action_id FROM application_conversation_actions ORDER BY action_id")
         .map_err(sql)?;
@@ -290,6 +299,9 @@ pub(in crate::persistence) fn validate_version(c: &Connection, version: i64) -> 
             }
             Action::AuthorizeProposalWorkPlan { action_id, .. } => {
                 if version < 64 || !links.insert(action_id) { return Err(corrupt()); }
+            }
+            Action::DecideKnowledgeProposal{request} => {
+                if version<67||!knowledge.insert((request.proposal.revision_id,request.entry_index)){return Err(corrupt());}
             }
         }
     }

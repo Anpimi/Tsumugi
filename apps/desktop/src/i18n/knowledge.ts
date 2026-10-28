@@ -1,6 +1,8 @@
 import { contextKnowledgeEn, contextKnowledgeZh } from "./contextKnowledge";
+import { knowledgeProposalEn, knowledgeProposalZh } from "./knowledgeProposal";
 export const knowledgeEn = {
   ...contextKnowledgeEn,
+  ...knowledgeProposalEn,
   "categories": "Knowledge categories",
   "newTerm": "New term",
   "sourceTerm": "Source term",
@@ -149,6 +151,7 @@ export const knowledgeEn = {
 
 export const knowledgeZh = {
   ...contextKnowledgeZh,
+  ...knowledgeProposalZh,
   "categories": "知识分类",
   "newTerm": "新增术语",
   "sourceTerm": "源术语",

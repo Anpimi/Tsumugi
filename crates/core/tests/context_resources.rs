@@ -767,7 +767,7 @@ fn schema_65_upgrade_preserves_notes_captures_actions_and_change_rowids() {
     assert_eq!(
         c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        66
+        67
     );
     let after: (i64, String) = c
         .query_row(

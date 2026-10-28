@@ -21,7 +21,8 @@ fn planning_authority(store: &ProjectStore, project: ExecutionId) -> PreparedCon
     let message_id = ExecutionId::new();
     store.append_project_conversation_message(&AppendProjectConversationMessage { project_id: project,
         action_id: ExecutionId::new(), conversation_id, message_id, body: "Synthetic local question".into() }).unwrap();
-    let capture = store.prepare_conversation_planning(&PrepareConversationPlanning { project_id: project,
+    let capture = store.prepare_conversation_planning(&PrepareConversationPlanning {
+            purpose: None, project_id: project,
         conversation_id, selected_message_ids: vec![message_id], scope: ConversationPlanningScope::ConversationOnly {},
         config: crate::ai::AiConfig { endpoint: "https://example.invalid/v1/chat/completions".into(),
             model: "synthetic-observation".into(), credential_env: String::new(), max_requests: 1,

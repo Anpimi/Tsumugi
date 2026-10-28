@@ -1,5 +1,5 @@
 import { conversationDraftCommands, conversationPendingTarget } from "../../../conversationDraftCommands";
-import { conversationCommands } from "../../../conversationCommands";
+import { conversationCommands, type ConversationProposalRef } from "../../../conversationCommands";
 import { draftCommands, sameDraftKey, type DraftKey } from "../../../draftCommands";
 import type { SessionRequest } from "../../../executionCommands";
 import type { DecisionItem } from "../../../decisionCommands";
@@ -14,6 +14,7 @@ export type DecisionNavigation =
   | { kind: "translation-request"; key: DraftKey }
   | { kind: "conversation-request"; conversationId: string; slot: "primary" | "revocation"; actionId: string }
   | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
+  | { kind: "knowledge-proposal"; proposal: ConversationProposalRef; entryIndex: number }
   | { kind: "details" };
 
 export interface DecisionNavigationPorts {
@@ -23,6 +24,7 @@ export interface DecisionNavigationPorts {
   draft: typeof draftCommands.read;
   conversationDraft: typeof conversationDraftCommands.read;
   proposal: typeof conversationCommands.readProposal;
+  knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
 }
 const ports: DecisionNavigationPorts = {
   revision: request => translationCommands.revision(request),
@@ -31,6 +33,7 @@ const ports: DecisionNavigationPorts = {
   draft: request => draftCommands.read(request),
   conversationDraft: request => conversationDraftCommands.read(request),
   proposal: request => conversationCommands.readProposal(request),
+  knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
 };
 
 export class DecisionNavigationChanged extends Error {
@@ -67,12 +70,24 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
       const exact = await commands.proposal({ ...request, revisionId: action.revisionId });
       present();
       match(exact.projectId === ctx.projectId && exact.conversationId === action.conversationId && exact.proposalId === action.proposalId
-        && exact.revisionId === action.revisionId && exact.content.kind === "proposal" && exact.content.questions.length > 0);
+        && exact.revisionId === action.revisionId && (exact.content.kind === "proposal" || exact.content.kind === "knowledge-proposal") && exact.content.questions.length > 0);
       const latest = await commands.proposal({ ...request, revisionId: null });
       present();
       match(latest.projectId === ctx.projectId && latest.conversationId === action.conversationId && latest.proposalId === action.proposalId
         && latest.revisionId === exact.revisionId);
       return { kind: "conversation-proposal", conversationId: action.conversationId, proposalId: action.proposalId, revisionId: action.revisionId };
+    }
+    case "review-knowledge-proposal": {
+      const reference = action.proposal;
+      match(reference.projectId === ctx.projectId && Number.isInteger(action.entryIndex) && action.entryIndex >= 0 && fixed.item.targets.some(target => target.kind === "conversation-proposal"
+        && target.conversationId === reference.conversationId && target.proposalId === reference.proposalId));
+      const exact = await commands.proposal({ ...ctx, ...reference }); present();
+      match(exact.projectId === ctx.projectId && exact.conversationId === reference.conversationId && exact.proposalId === reference.proposalId && exact.revisionId === reference.revisionId
+        && exact.content.kind === "knowledge-proposal" && !!exact.content.entries[action.entryIndex] && exact.content.questions.length === 0);
+      const latest = await commands.proposal({ ...ctx, ...reference, revisionId: null }); present();
+      match(latest.revisionId === exact.revisionId);
+      const decision = await commands.knowledgeDecision({ ...ctx, proposal: reference, entryIndex: action.entryIndex }); present(); match(decision === null);
+      return { kind: "knowledge-proposal", proposal: reference, entryIndex: action.entryIndex };
     }
     case "compare-candidate": {
       const locale = entry(action.unitId);

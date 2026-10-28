@@ -4,6 +4,91 @@ use crate::application::{
     StageMode, WorkProtection, WorkStage,
 };
 
+#[test]
+fn knowledge_profile_is_explicit_and_never_reinterprets_old_inputs_or_targets() {
+    let (mut capture, mut consent) = fixture(true, false);
+    let old = fixed_input(&capture, &consent).unwrap();
+    let old_bytes = old.bytes().to_vec();
+    let old_preview = capture.preview.clone();
+    assert!(
+        serde_json::to_value(&old_preview)
+            .unwrap()
+            .get("purpose")
+            .is_none()
+    );
+    capture.request.purpose = Some(ConversationPlanningPurpose::Knowledge);
+    capture.preview.purpose = capture.request.purpose;
+    capture.preview.version = 3;
+    capture.preview.system = super::super::KNOWLEDGE_SYSTEM.into();
+    let (input, length, brief) = super::super::prompt_for(
+        capture.preview.purpose,
+        &capture.preview.config,
+        &capture.preview.scope,
+        &capture.preview.selected_messages,
+        &capture.ai_preview.as_ref().unwrap().items,
+        &capture.preview.units,
+    )
+    .unwrap();
+    capture.preview.input = input;
+    capture.preview.byte_length = length;
+    capture.preview.brief = brief;
+    consent.preview_digest = capture.preview_digest().unwrap();
+    let new = fixed_input(&capture, &consent).unwrap();
+    assert_eq!(new.envelope().capability_version, "2");
+    assert_eq!(
+        settings(&new).unwrap().recipe,
+        super::super::KNOWLEDGE_RECIPE
+    );
+    assert_eq!(preview_from_input(&old).unwrap(), old_preview);
+    assert_eq!(old.bytes(), old_bytes);
+    let unit = capture.preview.units[0].unit_id;
+    let entry = crate::application::ConversationKnowledgeEntry {
+        kind: crate::ContextResourceKind::Character,
+        name: "Synthetic character".into(),
+        text: "Suggested character material".into(),
+        unit_ids: vec![unit],
+    };
+    let model = ConversationPlanningModelOutput::KnowledgeProposal {
+        summary: "A material proposal".into(),
+        entries: vec![entry.clone()],
+        questions: vec![],
+    };
+    validate_model(&model, &capture.preview).unwrap();
+    assert!(validate_model(&model, &old_preview).is_err());
+    assert!(
+        validate_model(
+            &ConversationPlanningModelOutput::Proposal {
+                summary: "A plan".into(),
+                unit_ids: vec![unit],
+                options: crate::application::PlanOptions::default(),
+                questions: vec![]
+            },
+            &capture.preview
+        )
+        .is_err()
+    );
+    for units in [vec![], vec![unit, unit], vec![ExecutionId::new()]] {
+        let bad = ConversationPlanningModelOutput::KnowledgeProposal {
+            summary: "Out of scope proposal".into(),
+            entries: vec![crate::application::ConversationKnowledgeEntry {
+                unit_ids: units,
+                ..entry.clone()
+            }],
+            questions: vec![],
+        };
+        assert!(validate_model(&bad, &capture.preview).is_err());
+    }
+    let mut mixed = new.envelope().clone();
+    mixed.capability_version = "1".into();
+    assert!(settings(&FixedInput::capture(mixed).unwrap()).is_err());
+    let mut forbidden = serde_json::to_value(&entry).unwrap();
+    forbidden["contextId"] = serde_json::json!(ExecutionId::new());
+    assert!(
+        serde_json::from_value::<crate::application::ConversationKnowledgeEntry>(forbidden)
+            .is_err()
+    );
+}
+
 fn fixture(
     with_units: bool,
     protected: bool,
@@ -76,6 +161,7 @@ fn fixture(
     let (input, byte_length, brief) =
         super::super::prompt(&config, &scope, &messages, &items, &bases).unwrap();
     let preview = ConversationPlanningPreview {
+        purpose: None,
         version: CONVERSATION_PLANNING_PREVIEW_VERSION,
         project_id,
         conversation_id,
@@ -101,6 +187,7 @@ fn fixture(
     let capture = CapturedConversationPlanning {
         epoch: "synthetic-output-fixture".into(),
         request: PrepareConversationPlanning {
+            purpose: None,
             project_id,
             conversation_id,
             config,

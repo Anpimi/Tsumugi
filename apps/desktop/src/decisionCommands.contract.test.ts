@@ -7,6 +7,41 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
+function knowledgeGroup() {
+  const input = request(), page = response();
+  const proposal = { projectId: page.projectId, conversationId: "00000000-0000-4000-8000-000000000051",
+    proposalId: "00000000-0000-4000-8000-000000000052", revisionId: "00000000-0000-4000-8000-000000000053" };
+  input.query = { locale: "zh-CN", sources: ["resource-proposal"] };
+  page.query = { locale: "zh-CN", sources: ["resource-proposal"] };
+  page.items = [{ decisionId: `resource-proposal:knowledge:${proposal.revisionId}:0:zh-CN`, source: "resource-proposal",
+    state: "pending", locale: "zh-CN", targets: [{ kind: "conversation", conversationId: proposal.conversationId },
+      { kind: "conversation-proposal", conversationId: proposal.conversationId, proposalId: proposal.proposalId }],
+    targetsComplete: true, basis: "a".repeat(64), sourceActionId: null, evidence: null,
+    action: { kind: "review-knowledge-proposal", proposal, entryIndex: 0 } }];
+  page.knownCount = 1; page.total = 1; page.next = null; page.localActions = null;
+  page.executionActivity = []; page.deliveryActivity = [];
+  page.coverage = [{ source: "resource-proposal", state: "complete", knownCount: 1, total: 1, reason: null, errorCode: null }];
+  return { input, page };
+}
+
+it("keeps an exact knowledge proposal entry in the original resource inbox", async () => {
+  const { input, page } = knowledgeGroup();
+  invoke.mockResolvedValueOnce(page);
+  await expect(decisionCommands.page(input)).resolves.toEqual(page);
+});
+
+it.each(["foreign-project", "wrong-proposal", "capture-target", "missing-conversation", "invalid-index"])("rejects a misbound knowledge inbox entry: %s", async kind => {
+  const { input, page } = knowledgeGroup(), item = page.items[0]!;
+  if (item.action.kind !== "review-knowledge-proposal") throw new Error("Expected knowledge fixture");
+  if (kind === "foreign-project") item.action.proposal.projectId = item.action.proposal.conversationId;
+  if (kind === "wrong-proposal") item.action.proposal.proposalId = item.action.proposal.revisionId;
+  if (kind === "capture-target") item.targets.push({ kind: "resource", captureId: item.action.proposal.proposalId, entryId: "0" });
+  if (kind === "missing-conversation") item.targets = item.targets.filter(target => target.kind !== "conversation");
+  if (kind === "invalid-index") item.action.entryIndex = 16;
+  invoke.mockResolvedValueOnce(page);
+  await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+});
+
 function request(): DecisionPageRequest {
   const value: unknown = structuredClone(fixture.request);
   if (!validateRequestPage(value)) throw new Error("Invalid request fixture");

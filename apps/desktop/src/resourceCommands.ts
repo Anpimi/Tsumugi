@@ -54,7 +54,14 @@ function sameOriginal(actual: object, expected: object) {
 function sameContextAction(actual: ContextResourceAction, expected: ContextResourceRecoveryRequest["action"]) {
   return actual.kind === expected.kind && sameOriginal(actual.request, expected.request);
 }
+function contextActionProject(action: ContextResourceAction) {
+  return action.kind === "proposal-adoption" ? action.request.proposal.projectId : action.request.projectId;
+}
 function contextReceiptMatches(value: ContextResourceRevision, action: ContextResourceAction) {
+  if (action.kind === "proposal-adoption") return value.projectId === action.request.proposal.projectId
+    && value.actionId === action.request.actionId && !value.withdrawn && !!value.proposalOrigin
+    && jsonIdentity(value.proposalOrigin.proposal) === jsonIdentity(action.request.proposal)
+    && value.proposalOrigin.entryIndex === action.request.entryIndex;
   const request = action.request;
   if (value.projectId !== request.projectId || value.actionId !== request.actionId
     || value.actor !== request.actor || value.reason !== request.reason) return false;
@@ -92,11 +99,11 @@ export const resourceCommands = {
   contextResourceAction: (request: ContextResourceActionRequest) => checkedInvoke("read_context_resource_action", request,
     (value): value is Responses["contextResourceAction"] => validateResponseContextResourceAction(value)
       && (value === null || value.receipt.projectId === request.projectId && value.receipt.actionId === request.actionId
-        && value.request.request.projectId === request.projectId && value.request.request.actionId === request.actionId
+        && contextActionProject(value.request) === request.projectId && value.request.request.actionId === request.actionId
         && contextReceiptMatches(value.receipt, value.request))),
   reconcileContextResourceAction: (request: ContextResourceRecoveryRequest) => checkedInvoke("reconcile_context_resource_action", request,
     (value): value is Responses["contextResourceRecovery"] => validateResponseContextResourceRecovery(value)
-      && sameContextAction(value.request, request.action) && value.request.request.projectId === request.projectId
+      && request.action.kind !== "proposal-adoption" && sameContextAction(value.request, request.action) && contextActionProject(value.request) === request.projectId
       && (value.status === "recorded" ? value.receipt !== null && value.receipt.projectId === request.projectId
         && contextReceiptMatches(value.receipt, value.request) : value.status === "retry-allowed" && value.receipt === null)),
   resolveContextResources: (request: ContextResourceResolveRequest) => checkedInvoke("resolve_context_resources", request,

@@ -92,7 +92,8 @@ pub async fn reconcile_context_resource_action(state: State<'_, AppState>, reque
     state.sessions.run("reconcile_context_resource_action", CommandStage::ExecutionAdopt, move |sessions| {
         let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionAdopt)?;
         let project = match &request.action { ContextResourceAction::Save(value) => value.project_id,
-            ContextResourceAction::Withdraw(value) => value.project_id };
+            ContextResourceAction::Withdraw(value) => value.project_id,
+            ContextResourceAction::ProposalAdoption(value) => value.proposal.project_id };
         if project != request.project_id {
             return Err(resource_error(ExecutionError::new(ErrorCode::Unauthorized, "context-resource-project"), CommandStage::ExecutionAdopt));
         }

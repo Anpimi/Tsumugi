@@ -4,6 +4,8 @@ use crate::ai::conversation_planning::ConversationPlanningModelOutput;
 use serde::{Deserialize, Serialize};
 mod work_plans;
 pub use work_plans::*;
+mod knowledge;
+pub use knowledge::*;
 
 fn required_previous<'de, D: serde::Deserializer<'de>>(
     deserializer: D,

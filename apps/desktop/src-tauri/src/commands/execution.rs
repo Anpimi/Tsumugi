@@ -77,6 +77,9 @@ macro_rules! handlers {
         conversations::proposals::capture_conversation_proposal,conversations::proposals::revise_conversation_proposal,
         conversations::proposals::read_conversation_proposal,conversations::proposals::read_conversation_proposal_revisions,conversations::proposals::validate_conversation_proposal,
         conversations::proposals::recover_conversation_proposal_capture,conversations::proposals::recover_conversation_proposal_revision,
+        conversations::proposals::knowledge::preview_conversation_knowledge_adoption,conversations::proposals::knowledge::decide_conversation_knowledge_proposal,
+        conversations::proposals::knowledge::read_conversation_knowledge_decision,conversations::proposals::knowledge::read_conversation_knowledge_decision_action,
+        conversations::proposals::knowledge::recover_conversation_knowledge_decision,
         conversations::proposals::work_plans::prepare_conversation_proposal_work_plan,conversations::proposals::work_plans::authorize_conversation_proposal_work_plan,
         conversations::proposals::work_plans::recover_conversation_proposal_work_plan,conversations::proposals::work_plans::read_conversation_proposal_work_plan,conversations::proposals::work_plans::read_conversation_proposal_work_plans,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
@@ -373,6 +376,10 @@ impl ExecutionHost {
         );
         host.runtime.register_with_policy(
             Arc::new(tsumugi_core::ai::conversation_planning::ConversationPlanningRunner::with_service(provider_service.clone())),
+            tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+        ).map_err(map_read)?;
+        host.runtime.register_with_policy(
+            Arc::new(tsumugi_core::ai::conversation_planning::ConversationPlanningRunner::with_knowledge_service(provider_service.clone())),
             tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
         ).map_err(map_read)?;
         host.runtime

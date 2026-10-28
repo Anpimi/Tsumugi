@@ -1,8 +1,10 @@
 import { conversationRunResultsEn, conversationRunResultsZh } from "./conversationRunResults";
 import { conversationWorkPlansEn, conversationWorkPlansZh } from "./conversationWorkPlans";
 import { conversationRunsEn, conversationRunsZh } from "./conversationRuns";
+import { conversationKnowledgeEn, conversationKnowledgeZh } from "./conversationKnowledge";
 
 export const conversationEn = {
+  ...conversationKnowledgeEn,
   ...conversationWorkPlansEn,
   ...conversationRunsEn,
   ...conversationRunResultsEn,
@@ -80,6 +82,7 @@ export const conversationEn = {
 };
 
 export const conversationZh: typeof conversationEn = {
+  ...conversationKnowledgeZh,
   ...conversationWorkPlansZh,
   ...conversationRunsZh,
   ...conversationRunResultsZh,

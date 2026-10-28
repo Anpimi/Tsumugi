@@ -47,15 +47,16 @@ function DecisionRow({ item, selected, disabled, onSelect }: {
 }) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const description = useId(), source = sources[item.source], Icon = source.icon;
+  const knowledge = item.action.kind === "review-knowledge-proposal";
   const targets = [...new Set(item.targets.map(target => target.kind))];
   const locales = item.evidence?.kind === "delivery-outcome" ? item.evidence.locales : item.locale ? [item.locale] : [];
   return <li className={styles.row} data-selected={selected || undefined}>
-    <Icon className={source.ai ? styles.aiIcon : styles.icon} aria-hidden="true"/>
+    <Icon className={source.ai || knowledge ? styles.aiIcon : styles.icon} aria-hidden="true"/>
     <div className={styles.rowBody}>
-      <div className={styles.rowHeading}><h3>{t(item.action.kind === "clarify-conversation-proposal" ? "decisionsProposalQuestionTitle" : source.title)}</h3>
+      <div className={styles.rowHeading}><h3>{t(knowledge ? "decisionsKnowledgeProposalTitle" : item.action.kind === "clarify-conversation-proposal" ? "decisionsProposalQuestionTitle" : source.title)}</h3>
         {item.state !== "pending" ? <Badge tone="warning">{t(item.state === "stale" ? "decisionsStale" : "decisionsAwaitingRecheck")}</Badge> : null}
       </div>
-      <p id={description}>{item.evidence?.kind === "delivery" ? t("decisionsBlockerCount", { count: item.evidence.blockerCount }) : t(source.help)}</p>
+      <p id={description}>{item.evidence?.kind === "delivery" ? t("decisionsBlockerCount", { count: item.evidence.blockerCount }) : t(knowledge ? "decisionsKnowledgeProposalHelp" : source.help)}</p>
       <div className={styles.meta}>
         {targets.map(kind => <span key={kind}>{t(targetKeys[kind])}</span>)}
         {locales.map(locale => <span key={locale} lang={i18n.resolvedLanguage}>{languageName(locale, i18n.resolvedLanguage ?? i18n.language)}</span>)}
@@ -72,7 +73,7 @@ function DecisionRow({ item, selected, disabled, onSelect }: {
         {t("decisionsSourceMatches", { ambiguous: item.evidence.ambiguousCount, renamed: item.evidence.renameCandidateCount })}
       </p> : null}
       <div className={styles.rowActions}><Button size="sm" disabled={disabled} aria-current={selected ? "true" : undefined}
-        aria-describedby={description} onClick={() => onSelect(item)}>{t(source.open)}<ArrowUpRight aria-hidden="true"/></Button></div>
+        aria-describedby={description} onClick={() => onSelect(item)}>{t(knowledge ? "decisionsKnowledgeProposalOpen" : source.open)}<ArrowUpRight aria-hidden="true"/></Button></div>
     </div>
   </li>;
 }

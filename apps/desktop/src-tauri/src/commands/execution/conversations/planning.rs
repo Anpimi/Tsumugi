@@ -7,6 +7,8 @@ request!(
         conversation_id: ExecutionId,
         selected_message_ids: Vec<ExecutionId>,
         scope: ConversationPlanningScope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        purpose: Option<ConversationPlanningPurpose>,
         config: tsumugi_core::ai::AiConfig
     }
 );
@@ -53,6 +55,7 @@ pub async fn prepare_conversation_planning(
                         conversation_id: request.conversation_id,
                         selected_message_ids: request.selected_message_ids,
                         scope: request.scope,
+                        purpose: request.purpose,
                         config: request.config,
                     })
                     .map_err(map_read)?;

@@ -19,6 +19,7 @@ export interface DecisionDetailsProps {
   current: () => boolean;
   onBack: () => void;
   onOpenEntry: (unitId: string, locale: string) => Promise<boolean>;
+  onNavigate?: (item: DecisionItem, current: () => boolean) => Promise<boolean>;
 }
 
 function TextBlock({ label, text }: { label: string; text: string }) {
@@ -76,6 +77,19 @@ function ResourceDetails({ view }: { view: Extract<DecisionTargetDetails, { kind
       {origin.kind === "mcp" ? <><p>{t("decisionDetailsOriginMcp", { server: origin.provenance.tool.serverName, tool: origin.provenance.tool.toolName })}</p>
         <TextBlock label={t("decisionDetailsQuery")} text={origin.provenance.query}/></> : null}
     </section>
+  </div>;
+}
+
+function KnowledgeDetails({ view }: { view: Extract<DecisionTargetDetails, { kind: "knowledge" }> }) {
+  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), { t: global } = useTranslation();
+  return <div className={styles.body}><p>{t("decisionDetailsKnowledgeHelp")}</p>
+    <p>{t("decisionDetailsKnowledgeVersion", { version: view.revision.revision, number: view.entryIndex + 1 })}</p>
+    <h3>{view.entry.name}</h3><p>{global(`knowledge.contextKinds.${view.entry.kind}`)}</p>
+    <TextBlock label={t("decisionDetailsKnowledgeSummary")} text={view.revision.content.summary}/>
+    <TextBlock label={t("decisionDetailsProposed")} text={view.entry.text}/>
+    <p>{t("decisionDetailsKnowledgeEvidence", { count: view.entry.unitIds.length })}</p>
+    {view.decision ? <><p>{global(`knowledge.reviewDecisions.${view.decision.decision}`)}</p><p>{t("decisionDetailsActor", { actor: view.decision.actor })}</p>
+      <TextBlock label={t("decisionDetailsReason")} text={view.decision.reason}/></> : null}
   </div>;
 }
 
@@ -204,14 +218,14 @@ export default function DecisionDetails(props: DecisionDetailsProps) {
   return <DetailsRead key={identity} {...props}/>;
 }
 
-function DetailsRead({ item, disabled, current, onBack, onOpenEntry }: DecisionDetailsProps) {
+function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate }: DecisionDetailsProps) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), reads = useSessionReads(), titleId = useId();
-  const mounted = useRef(false), live = useRef({ disabled, current, onOpenEntry });
+  const mounted = useRef(false), live = useRef({ disabled, current, onOpenEntry, onNavigate });
   const result = useRef<HTMLDivElement>(null), navigation = useRef(false);
   const [opening, setOpening] = useState(false), [failure, setFailure] = useState<{ cause: CommandFailure | null } | null>(null);
   const [sourceOffsets, setSourceOffsets] = useState([0]), sourceAfter = sourceOffsets[sourceOffsets.length - 1];
   const pageFocus = useRef<{ after: number; origin: Element | null; moved: boolean; dispose: () => void } | null>(null);
-  useLayoutEffect(() => { live.current = { disabled, current, onOpenEntry }; });
+  useLayoutEffect(() => { live.current = { disabled, current, onOpenEntry, onNavigate }; });
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; pageFocus.current?.dispose(); }; }, []);
   const present = () => mounted.current && !reads.retired && !live.current.disabled && live.current.current();
   const key = decisionTargetKey(item, sourceAfter);
@@ -258,6 +272,14 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry }: DecisionD
       if (mounted.current) setOpening(false);
     }
   }
+  async function openKnowledge() {
+    const expected = view, callback = live.current.onNavigate;
+    if (!expected || expected.kind !== "knowledge" || !callback || !currentView(expected) || navigation.current) return;
+    navigation.current = true; setOpening(true); setFailure(null);
+    try { const opened = await callback(item, () => currentView(expected)); if (!opened && currentView(expected)) setFailure({ cause: null }); }
+    catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
+    finally { navigation.current = false; if (mounted.current) setOpening(false); }
+  }
   function refresh() {
     if (!present() || query.isFetching || navigation.current) return;
     setFailure(null); void query.refetch();
@@ -278,6 +300,8 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry }: DecisionD
       {opening ? <p role="status">{t("decisionDetailsOpening")}</p> : null}
       {failure ? <Banner tone="warning" role="alert"><p>{t("decisionDetailsOpenFailed")}</p><CommandFailureDetails failure={failure.cause}/></Banner> : null}
       {view?.kind === "resource" ? <ResourceDetails view={view}/> : null}
+      {view?.kind === "knowledge" ? <><KnowledgeDetails view={view}/>{onNavigate ? <div><Button size="sm" disabled={!fresh || opening || view.decision !== null}
+        onClick={() => { void openKnowledge(); }}>{t("decisionsKnowledgeProposalOpen")}</Button></div> : null}</> : null}
       {view?.kind === "mapping" ? <MappingDetails view={view}/> : null}
       {view?.kind === "source-comparison" ? <SourceComparisonDetails view={view} after={sourceAfter} disabled={!fresh || opening}
         onPrevious={() => { if (sourceOffsets.length > 1) readSourcePage(sourceOffsets.slice(0, -1)); }}

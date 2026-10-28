@@ -2,13 +2,23 @@ import { isConversationMessageText, type ConversationPlanningRun } from "../../.
 import type { ConversationProposalDraft } from "../../../conversationDraftCommands";
 import { queryField } from "../../../pluginToolChoices";
 
-export type ProposalContent = Extract<ConversationProposalDraft["content"], { kind: "proposal" }>;
+export type ProposalContent = Extract<ConversationProposalDraft["content"], { kind: "proposal" | "knowledge-proposal" }>;
+export type KnowledgeProposalContent = Extract<ProposalContent, { kind: "knowledge-proposal" }>;
 const bytes = new TextEncoder();
 export function validProposalQuestion(text: string) { return isConversationMessageText(text) && bytes.encode(text).length <= 2048; }
+export function editableProposal(content: ConversationProposalDraft["content"]): content is ProposalContent {
+  return content.kind === "proposal" || content.kind === "knowledge-proposal";
+}
+export function validKnowledgeName(text: string) { return !!text.trim() && !text.includes("\0") && bytes.encode(text).length <= 512; }
+export function validKnowledgeText(text: string) { return !!text.trim() && !text.includes("\0") && bytes.encode(text).length <= 16384; }
 export function validProposalContent(content: ConversationProposalDraft["content"], run?: ConversationPlanningRun | null) {
-  return content.kind === "proposal" && isConversationMessageText(content.summary) && content.questions.length <= 8 && content.questions.every(validProposalQuestion)
-    && content.unitIds.length > 0 && content.unitIds.length <= 100 && new Set(content.unitIds).size === content.unitIds.length
-    && (!run || run.preview.scope.kind === "units" && content.unitIds.every(id => run.preview.units.some(unit => unit.unitId === id)));
+  if (!editableProposal(content) || !isConversationMessageText(content.summary) || content.questions.length > 8 || !content.questions.every(validProposalQuestion)) return false;
+  const validUnits = (unitIds: readonly string[]) => unitIds.length > 0 && unitIds.length <= 100 && new Set(unitIds).size === unitIds.length
+    && (!run || run.preview.scope.kind === "units" && unitIds.every(id => run.preview.units.some(unit => unit.unitId === id)));
+  return content.kind === "proposal" ? validUnits(content.unitIds) && (!run || run.preview.purpose == null)
+    : content.entries.length > 0 && content.entries.length <= 16 && bytes.encode(JSON.stringify(content)).length <= 65536
+      && content.entries.every(entry => validKnowledgeName(entry.name) && validKnowledgeText(entry.text) && validUnits(entry.unitIds))
+      && (!run || run.preview.purpose === "knowledge");
 }
 /** Titles are presentation only. Allowed identities always come from the Core scope. */
 export function planningUnitLabels(input: string) {

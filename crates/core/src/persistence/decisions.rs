@@ -60,6 +60,7 @@ pub enum DecisionAction {
     CompareSourceMapping { attempt_id: ExecutionId, result_id: ExecutionId, previous_snapshot_id: ExecutionId,
         expected_content_revision: Revision },
     ClarifyConversationProposal { conversation_id: ExecutionId, proposal_id: ExecutionId, revision_id: ExecutionId },
+    ReviewKnowledgeProposal { proposal:crate::application::ConversationProposalRef, entry_index:u32 },
     InspectExecution { task_id: ExecutionId, attempt_id: ExecutionId, item_id: ExecutionId },
     InspectDelivery { locale: String },
     InspectDeliveryOutcome { release_id: ExecutionId, delivery_id: ExecutionId, action_id: ExecutionId },

@@ -18,6 +18,11 @@ pub const CONVERSATION_PLANNING_PREVIEW_VERSION: u32 = 2;
 pub const MAX_CONVERSATION_PLANNING_MESSAGES: usize = 16;
 pub const MAX_CONVERSATION_PLANNING_PREVIEW_BYTES: usize = 256 * 1024;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConversationPlanningPurpose { Knowledge }
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -39,6 +44,8 @@ pub enum ConversationPlanningScope {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PrepareConversationPlanning {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<ConversationPlanningPurpose>,
     pub project_id: ExecutionId,
     pub conversation_id: ExecutionId,
     pub selected_message_ids: Vec<ExecutionId>,
@@ -100,6 +107,8 @@ pub struct ConversationPlanningBrief {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ConversationPlanningPreview {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<ConversationPlanningPurpose>,
     pub version: u32,
     pub project_id: ExecutionId,
     pub conversation_id: ExecutionId,

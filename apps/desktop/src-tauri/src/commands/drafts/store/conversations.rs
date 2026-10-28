@@ -122,6 +122,7 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
             || !matches!(
                 draft.content,
                 ConversationPlanningModelOutput::Proposal { .. }
+                    | ConversationPlanningModelOutput::KnowledgeProposal { .. }
             )
         {
             return Err(fail(
@@ -296,7 +297,12 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
                             | ConversationDraftPending::WorkPlanControl { .. }
                     )
                 })
-        || format < FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
+        || format < REVOCATION_FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
+        || format < FORMAT && value.is_some_and(|value| {
+            value.proposal_edits.iter().any(|draft| matches!(draft.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))
+                || matches!(&value.pending, Some(ConversationDraftPending::ProposalRevision { request, .. })
+                    if matches!(request.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))
+        })
         || format == CONVERSATION_FORMAT
             && value
                 .and_then(|value| value.pending.as_ref())
@@ -331,7 +337,7 @@ fn read_head(
 }
 
 /// Validate every old head. Only format 3 needs its payload constraint rebuilt;
-/// formats 4 through 6 already have the current tables and limits.
+/// Formats 4 through 7 already have the current tables and limits.
 pub(super) fn upgrade(c: &Connection, format: i64) -> Result<()> {
     let mut query = c.prepare("SELECT project_id,conversation_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM conversation_draft_heads ORDER BY project_id,conversation_id").map_err(sql)?;
     let rows = query

@@ -27,7 +27,7 @@ export default function DecisionWorkspace({ view, feed, disabled, patch, onNavig
   const focusRequest = useRef<{ decisionId: string; origin: HTMLElement | null } | null>(null);
   const page = feed.page.data;
   const chosen = view.focus === capture?.decisionId ? capture : page?.items.find(item => item.decisionId === view.focus) ?? null;
-  const selected = chosen && !["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal"].includes(chosen.action.kind) ? chosen : null;
+  const selected = chosen && !["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal", "review-knowledge-proposal"].includes(chosen.action.kind) ? chosen : null;
   const stale = feed.changed || feed.first.isError || feed.page.isError;
   const blocked = disabled || opening || stale || feed.first.isFetching || feed.page.isFetching;
   useLayoutEffect(() => {
@@ -44,7 +44,7 @@ export default function DecisionWorkspace({ view, feed, disabled, patch, onNavig
     if (blocked || flight.current || !page || !feed.current(page.basis) || !current()) return;
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setFailure(null);
-    if (["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal"].includes(item.action.kind)) {
+    if (["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal", "review-knowledge-proposal"].includes(item.action.kind)) {
       flight.current = true; setOpening(true);
       try { if (!await onNavigate(item, () => current() && feed.current(page.basis))) setFailure({ cause: null }); }
       catch (cause) { if (current()) setFailure({ cause }); }
@@ -68,7 +68,7 @@ export default function DecisionWorkspace({ view, feed, disabled, patch, onNavig
     </div>
     {selected ? <div ref={detailsRegion} tabIndex={-1} role="region" aria-label={t("decisionTargetRegion")} className={styles.detailFocus}>
       <Suspense fallback={<LoadingState label={t("decisionReadingTarget")}/>}><DecisionDetails item={selected} disabled={disabled}
-        current={() => current() && view.focus === selected.decisionId} onBack={back} onOpenEntry={onOpenEntry}/></Suspense>
+        current={() => current() && view.focus === selected.decisionId} onBack={back} onOpenEntry={onOpenEntry} onNavigate={onNavigate}/></Suspense>
     </div> : null}
   </div>;
 }

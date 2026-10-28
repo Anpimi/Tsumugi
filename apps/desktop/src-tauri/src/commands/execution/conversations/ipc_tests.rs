@@ -1,4 +1,6 @@
 use super::*;
+#[path = "knowledge_ipc_tests.rs"]
+mod knowledge_tests;
 use serde_json::{Value, json};
 use tauri::{
     Manager,

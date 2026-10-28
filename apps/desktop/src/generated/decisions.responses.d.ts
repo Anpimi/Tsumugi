@@ -188,6 +188,11 @@ export type DecisionAction =
       revisionId: ExecutionId;
     }
   | {
+      entryIndex: number;
+      kind: "review-knowledge-proposal";
+      proposal: ConversationProposalRef;
+    }
+  | {
       attemptId: ExecutionId;
       itemId: ExecutionId;
       kind: "inspect-execution";
@@ -385,6 +390,12 @@ export interface DecisionItem {
    * Targets may be a bounded sample; the action always opens the full owner.
    */
   targetsComplete: boolean;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
 }
 export interface DecisionLocalRequestRef {
   action: DecisionClientAction;

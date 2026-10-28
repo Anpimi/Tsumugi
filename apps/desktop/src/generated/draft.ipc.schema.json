@@ -409,6 +409,14 @@
         ],
         "type": "string"
       },
+      "ContextResourceKind": {
+        "enum": [
+          "character",
+          "style",
+          "background"
+        ],
+        "type": "string"
+      },
       "ContextStrategyReference": {
         "additionalProperties": false,
         "properties": {
@@ -926,6 +934,33 @@
         ],
         "type": "object"
       },
+      "ConversationKnowledgeEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "text",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "ConversationPlanningConsent": {
         "additionalProperties": false,
         "description": "The trusted human command confirms one exact preview and one finite request.\nThe action identity is also the attempt identity in the original ledger.",
@@ -1020,6 +1055,37 @@
               "summary",
               "unitIds",
               "options",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "$ref": "#/definitions/ConversationKnowledgeEntry"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "knowledge-proposal",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "entries",
               "questions"
             ],
             "type": "object"
@@ -3821,6 +3887,14 @@
           }
         ]
       },
+      "ContextResourceKind": {
+        "enum": [
+          "character",
+          "style",
+          "background"
+        ],
+        "type": "string"
+      },
       "ContextStrategyReference": {
         "additionalProperties": false,
         "properties": {
@@ -4225,6 +4299,33 @@
         ],
         "type": "object"
       },
+      "ConversationKnowledgeEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "text",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "ConversationPlanningConsent": {
         "additionalProperties": false,
         "description": "The trusted human command confirms one exact preview and one finite request.\nThe action identity is also the attempt identity in the original ledger.",
@@ -4319,6 +4420,37 @@
               "summary",
               "unitIds",
               "options",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "entries": {
+                "items": {
+                  "$ref": "#/definitions/ConversationKnowledgeEntry"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "knowledge-proposal",
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "entries",
               "questions"
             ],
             "type": "object"

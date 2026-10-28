@@ -1,0 +1,448 @@
+{
+  "requests": {
+    "preview": {
+      "projectId": "00000000-0000-4000-8000-000000078000",
+      "sessionToken": "synthetic-knowledge-session",
+      "adoption": {
+        "proposal": {
+          "projectId": "00000000-0000-4000-8000-000000078000",
+          "conversationId": "00000000-0000-4000-8000-000000078001",
+          "proposalId": "00000000-0000-4000-8000-000000078002",
+          "revisionId": "00000000-0000-4000-8000-000000078003"
+        },
+        "entryIndex": 0,
+        "contextId": null,
+        "scope": {
+          "kind": "unit",
+          "unitId": "00000000-0000-4000-8000-000000078006"
+        }
+      }
+    },
+    "decision": {
+      "projectId": "00000000-0000-4000-8000-000000078000",
+      "sessionToken": "synthetic-knowledge-session",
+      "decision": {
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "proposal": {
+          "projectId": "00000000-0000-4000-8000-000000078000",
+          "conversationId": "00000000-0000-4000-8000-000000078001",
+          "proposalId": "00000000-0000-4000-8000-000000078002",
+          "revisionId": "00000000-0000-4000-8000-000000078003"
+        },
+        "entryIndex": 0,
+        "decision": "adopt",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "adoption": {
+          "contextId": null,
+          "expectedRevisionId": null,
+          "scope": {
+            "kind": "unit",
+            "unitId": "00000000-0000-4000-8000-000000078006"
+          },
+          "sourceBasis": {
+            "revision": "9007199254740993",
+            "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+          },
+          "name": "Reviewed Mara",
+          "text": "Human edited {{name}} — é 👩🏽‍💻",
+          "comparisonBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "confirmWiderScope": false
+        }
+      }
+    },
+    "read": {
+      "projectId": "00000000-0000-4000-8000-000000078000",
+      "sessionToken": "synthetic-knowledge-session",
+      "proposal": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "conversationId": "00000000-0000-4000-8000-000000078001",
+        "proposalId": "00000000-0000-4000-8000-000000078002",
+        "revisionId": "00000000-0000-4000-8000-000000078003"
+      },
+      "entryIndex": 0
+    },
+    "action": {
+      "projectId": "00000000-0000-4000-8000-000000078000",
+      "sessionToken": "synthetic-knowledge-session",
+      "decision": {
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "proposal": {
+          "projectId": "00000000-0000-4000-8000-000000078000",
+          "conversationId": "00000000-0000-4000-8000-000000078001",
+          "proposalId": "00000000-0000-4000-8000-000000078002",
+          "revisionId": "00000000-0000-4000-8000-000000078003"
+        },
+        "entryIndex": 0,
+        "decision": "adopt",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "adoption": {
+          "contextId": null,
+          "expectedRevisionId": null,
+          "scope": {
+            "kind": "unit",
+            "unitId": "00000000-0000-4000-8000-000000078006"
+          },
+          "sourceBasis": {
+            "revision": "9007199254740993",
+            "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+          },
+          "name": "Reviewed Mara",
+          "text": "Human edited {{name}} — é 👩🏽‍💻",
+          "comparisonBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "confirmWiderScope": false
+        }
+      }
+    },
+    "recovery": {
+      "projectId": "00000000-0000-4000-8000-000000078000",
+      "sessionToken": "synthetic-knowledge-session",
+      "decision": {
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "proposal": {
+          "projectId": "00000000-0000-4000-8000-000000078000",
+          "conversationId": "00000000-0000-4000-8000-000000078001",
+          "proposalId": "00000000-0000-4000-8000-000000078002",
+          "revisionId": "00000000-0000-4000-8000-000000078003"
+        },
+        "entryIndex": 0,
+        "decision": "adopt",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "adoption": {
+          "contextId": null,
+          "expectedRevisionId": null,
+          "scope": {
+            "kind": "unit",
+            "unitId": "00000000-0000-4000-8000-000000078006"
+          },
+          "sourceBasis": {
+            "revision": "9007199254740993",
+            "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+          },
+          "name": "Reviewed Mara",
+          "text": "Human edited {{name}} — é 👩🏽‍💻",
+          "comparisonBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "confirmWiderScope": false
+        }
+      }
+    }
+  },
+  "responses": {
+    "preview": {
+      "proposal": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "conversationId": "00000000-0000-4000-8000-000000078001",
+        "proposalId": "00000000-0000-4000-8000-000000078002",
+        "revisionId": "00000000-0000-4000-8000-000000078003"
+      },
+      "entryIndex": 0,
+      "scope": {
+        "kind": "unit",
+        "unitId": "00000000-0000-4000-8000-000000078006"
+      },
+      "entry": {
+        "kind": "character",
+        "name": "Mara",
+        "text": "Keep {{name}} — é 👩🏽‍💻",
+        "unitIds": [
+          "00000000-0000-4000-8000-000000078006"
+        ]
+      },
+      "current": null,
+      "sourceBasis": {
+        "revision": "9007199254740993",
+        "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+      },
+      "basis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "requiresWiderConfirmation": false
+    },
+    "decision": {
+      "actionId": "00000000-0000-4000-8000-000000078008",
+      "proposal": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "conversationId": "00000000-0000-4000-8000-000000078001",
+        "proposalId": "00000000-0000-4000-8000-000000078002",
+        "revisionId": "00000000-0000-4000-8000-000000078003"
+      },
+      "entryIndex": 0,
+      "decision": "adopt",
+      "actor": "Human reviewer",
+      "reason": "Compared with source",
+      "resource": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "contextId": "00000000-0000-4000-8000-000000078009",
+        "subjectId": "00000000-0000-4000-8000-000000078009",
+        "revisionId": "00000000-0000-4000-8000-000000078010",
+        "previousRevisionId": null,
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "kind": "character",
+        "locale": "zh-CN",
+        "scope": {
+          "kind": "unit",
+          "unitId": "00000000-0000-4000-8000-000000078006"
+        },
+        "sourceBasis": {
+          "revision": "9007199254740993",
+          "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+        },
+        "name": "Reviewed Mara",
+        "text": "Human edited {{name}} — é 👩🏽‍💻",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "withdrawn": false,
+        "proposalOrigin": {
+          "proposal": {
+            "projectId": "00000000-0000-4000-8000-000000078000",
+            "conversationId": "00000000-0000-4000-8000-000000078001",
+            "proposalId": "00000000-0000-4000-8000-000000078002",
+            "revisionId": "00000000-0000-4000-8000-000000078003"
+          },
+          "entryIndex": 0,
+          "modelOrigin": {
+            "attemptId": "00000000-0000-4000-8000-000000078004",
+            "resultId": "00000000-0000-4000-8000-000000078005",
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resultDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      }
+    },
+    "read": {
+      "actionId": "00000000-0000-4000-8000-000000078008",
+      "proposal": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "conversationId": "00000000-0000-4000-8000-000000078001",
+        "proposalId": "00000000-0000-4000-8000-000000078002",
+        "revisionId": "00000000-0000-4000-8000-000000078003"
+      },
+      "entryIndex": 0,
+      "decision": "adopt",
+      "actor": "Human reviewer",
+      "reason": "Compared with source",
+      "resource": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "contextId": "00000000-0000-4000-8000-000000078009",
+        "subjectId": "00000000-0000-4000-8000-000000078009",
+        "revisionId": "00000000-0000-4000-8000-000000078010",
+        "previousRevisionId": null,
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "kind": "character",
+        "locale": "zh-CN",
+        "scope": {
+          "kind": "unit",
+          "unitId": "00000000-0000-4000-8000-000000078006"
+        },
+        "sourceBasis": {
+          "revision": "9007199254740993",
+          "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+        },
+        "name": "Reviewed Mara",
+        "text": "Human edited {{name}} — é 👩🏽‍💻",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "withdrawn": false,
+        "proposalOrigin": {
+          "proposal": {
+            "projectId": "00000000-0000-4000-8000-000000078000",
+            "conversationId": "00000000-0000-4000-8000-000000078001",
+            "proposalId": "00000000-0000-4000-8000-000000078002",
+            "revisionId": "00000000-0000-4000-8000-000000078003"
+          },
+          "entryIndex": 0,
+          "modelOrigin": {
+            "attemptId": "00000000-0000-4000-8000-000000078004",
+            "resultId": "00000000-0000-4000-8000-000000078005",
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resultDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      }
+    },
+    "action": {
+      "actionId": "00000000-0000-4000-8000-000000078008",
+      "proposal": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "conversationId": "00000000-0000-4000-8000-000000078001",
+        "proposalId": "00000000-0000-4000-8000-000000078002",
+        "revisionId": "00000000-0000-4000-8000-000000078003"
+      },
+      "entryIndex": 0,
+      "decision": "adopt",
+      "actor": "Human reviewer",
+      "reason": "Compared with source",
+      "resource": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "contextId": "00000000-0000-4000-8000-000000078009",
+        "subjectId": "00000000-0000-4000-8000-000000078009",
+        "revisionId": "00000000-0000-4000-8000-000000078010",
+        "previousRevisionId": null,
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "kind": "character",
+        "locale": "zh-CN",
+        "scope": {
+          "kind": "unit",
+          "unitId": "00000000-0000-4000-8000-000000078006"
+        },
+        "sourceBasis": {
+          "revision": "9007199254740993",
+          "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+        },
+        "name": "Reviewed Mara",
+        "text": "Human edited {{name}} — é 👩🏽‍💻",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "withdrawn": false,
+        "proposalOrigin": {
+          "proposal": {
+            "projectId": "00000000-0000-4000-8000-000000078000",
+            "conversationId": "00000000-0000-4000-8000-000000078001",
+            "proposalId": "00000000-0000-4000-8000-000000078002",
+            "revisionId": "00000000-0000-4000-8000-000000078003"
+          },
+          "entryIndex": 0,
+          "modelOrigin": {
+            "attemptId": "00000000-0000-4000-8000-000000078004",
+            "resultId": "00000000-0000-4000-8000-000000078005",
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resultDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        }
+      }
+    },
+    "recovery": {
+      "request": {
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "proposal": {
+          "projectId": "00000000-0000-4000-8000-000000078000",
+          "conversationId": "00000000-0000-4000-8000-000000078001",
+          "proposalId": "00000000-0000-4000-8000-000000078002",
+          "revisionId": "00000000-0000-4000-8000-000000078003"
+        },
+        "entryIndex": 0,
+        "decision": "adopt",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "adoption": {
+          "contextId": null,
+          "expectedRevisionId": null,
+          "scope": {
+            "kind": "unit",
+            "unitId": "00000000-0000-4000-8000-000000078006"
+          },
+          "sourceBasis": {
+            "revision": "9007199254740993",
+            "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+          },
+          "name": "Reviewed Mara",
+          "text": "Human edited {{name}} — é 👩🏽‍💻",
+          "comparisonBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "confirmWiderScope": false
+        }
+      },
+      "outcome": {
+        "kind": "recorded",
+        "receipt": {
+          "actionId": "00000000-0000-4000-8000-000000078008",
+          "proposal": {
+            "projectId": "00000000-0000-4000-8000-000000078000",
+            "conversationId": "00000000-0000-4000-8000-000000078001",
+            "proposalId": "00000000-0000-4000-8000-000000078002",
+            "revisionId": "00000000-0000-4000-8000-000000078003"
+          },
+          "entryIndex": 0,
+          "decision": "adopt",
+          "actor": "Human reviewer",
+          "reason": "Compared with source",
+          "resource": {
+            "projectId": "00000000-0000-4000-8000-000000078000",
+            "contextId": "00000000-0000-4000-8000-000000078009",
+            "subjectId": "00000000-0000-4000-8000-000000078009",
+            "revisionId": "00000000-0000-4000-8000-000000078010",
+            "previousRevisionId": null,
+            "actionId": "00000000-0000-4000-8000-000000078008",
+            "kind": "character",
+            "locale": "zh-CN",
+            "scope": {
+              "kind": "unit",
+              "unitId": "00000000-0000-4000-8000-000000078006"
+            },
+            "sourceBasis": {
+              "revision": "9007199254740993",
+              "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+            },
+            "name": "Reviewed Mara",
+            "text": "Human edited {{name}} — é 👩🏽‍💻",
+            "actor": "Human reviewer",
+            "reason": "Compared with source",
+            "withdrawn": false,
+            "proposalOrigin": {
+              "proposal": {
+                "projectId": "00000000-0000-4000-8000-000000078000",
+                "conversationId": "00000000-0000-4000-8000-000000078001",
+                "proposalId": "00000000-0000-4000-8000-000000078002",
+                "revisionId": "00000000-0000-4000-8000-000000078003"
+              },
+              "entryIndex": 0,
+              "modelOrigin": {
+                "attemptId": "00000000-0000-4000-8000-000000078004",
+                "resultId": "00000000-0000-4000-8000-000000078005",
+                "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resultDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              }
+            }
+          }
+        }
+      }
+    },
+    "pending": {
+      "request": {
+        "actionId": "00000000-0000-4000-8000-000000078008",
+        "proposal": {
+          "projectId": "00000000-0000-4000-8000-000000078000",
+          "conversationId": "00000000-0000-4000-8000-000000078001",
+          "proposalId": "00000000-0000-4000-8000-000000078002",
+          "revisionId": "00000000-0000-4000-8000-000000078003"
+        },
+        "entryIndex": 0,
+        "decision": "adopt",
+        "actor": "Human reviewer",
+        "reason": "Compared with source",
+        "adoption": {
+          "contextId": null,
+          "expectedRevisionId": null,
+          "scope": {
+            "kind": "unit",
+            "unitId": "00000000-0000-4000-8000-000000078006"
+          },
+          "sourceBasis": {
+            "revision": "9007199254740993",
+            "currentSnapshot": "00000000-0000-4000-8000-000000078007"
+          },
+          "name": "Reviewed Mara",
+          "text": "Human edited {{name}} — é 👩🏽‍💻",
+          "comparisonBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "confirmWiderScope": false
+        }
+      },
+      "outcome": {
+        "kind": "pending",
+        "replay": "explicit-same-request"
+      }
+    }
+  },
+  "causal": {
+    "kind": "proposal-adoption",
+    "request": {
+      "actionId": "00000000-0000-4000-8000-000000078008",
+      "proposal": {
+        "projectId": "00000000-0000-4000-8000-000000078000",
+        "conversationId": "00000000-0000-4000-8000-000000078001",
+        "proposalId": "00000000-0000-4000-8000-000000078002",
+        "revisionId": "00000000-0000-4000-8000-000000078003"
+      },
+      "entryIndex": 0
+    }
+  }
+}

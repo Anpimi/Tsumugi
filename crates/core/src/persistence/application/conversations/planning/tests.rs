@@ -84,6 +84,7 @@ fn request(
         "  Plan e\u{301} 👩🏽‍💻\r\n保留 {{name}}  ",
     );
     PrepareConversationPlanning {
+            purpose: None,
         project_id: project,
         conversation_id,
         selected_message_ids: vec![message],

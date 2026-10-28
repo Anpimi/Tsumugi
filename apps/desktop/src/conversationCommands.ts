@@ -10,6 +10,8 @@ import { validateResponseConversation, validateResponsePage, validateResponseMes
 import { validateResponseProposal, validateResponseProposalPage, validateResponseProposalCaptureRecovery, validateResponseProposalRevisionRecovery } from "./generated/conversations.validators";
 import { validateRequestAuthorizeProposalWorkPlan, validateResponseProposalWorkPlan, validateResponseProposalWorkPlanReceipt, validateResponseProposalWorkPlanRecovery, validateResponseProposalWorkPlanLink, validateResponseProposalWorkPlanPage } from "./generated/conversations.validators";
 import { validateResponsePlanningAttemptPage } from "./generated/conversations.validators";
+import { validateResponseKnowledgeAdoption, validateResponseKnowledgeDecision, validateResponseKnowledgeDecisionRead,
+  validateResponseKnowledgeDecisionAction, validateResponseKnowledgeDecisionRecovery } from "./generated/conversations.validators";
 
 export type { ProjectConversation, ProjectConversationMessage, ProjectConversationPage, ProjectConversationMessagePage,
   ProjectConversationCreateRecovery, ProjectConversationMessageRecovery } from "./generated/conversations.responses";
@@ -21,6 +23,9 @@ export type ConversationPlanningConsent = Requests["startPlanning"]["consent"];
 export type ConversationPlanningReceipt = Responses["planningReceipt"];
 export type ConversationPlanningRun = NonNullable<Responses["planningRun"]>;
 export type ConversationProposalRevision = Responses["proposal"];
+export type { ConversationProposalRef, ConversationKnowledgeEntry, ConversationKnowledgeAdoptionPreview,
+  ConversationKnowledgeDecision, ConversationKnowledgeDecisionRecovery } from "./generated/conversations.responses";
+export type { DecideConversationKnowledgeProposal, ConversationKnowledgeAdoption, PrepareConversationKnowledgeAdoption } from "./generated/conversations.requests";
 const bytes = new TextEncoder();
 /** Match Core's Unicode whitespace rule without changing the user's text. */
 export function isConversationMessageText(value: string) {
@@ -47,7 +52,8 @@ function page<T extends { ordinal: string }>(value: { rows: T[]; nextAfter: stri
 }
 
 function planningPreview(preview: Responses["planning"]["preview"], request: Requests["preparePlanning"]) {
-  return preview.version === 2 && preview.projectId === request.projectId && preview.conversationId === request.conversationId
+  return (request.purpose === "knowledge" ? preview.version === 3 && preview.purpose === "knowledge" && request.scope.kind === "units"
+    : preview.version === 2 && preview.purpose == null) && preview.projectId === request.projectId && preview.conversationId === request.conversationId
     && sameAiConfig(preview.config, request.config) && jsonIdentity(preview.scope) === jsonIdentity(request.scope)
     && preview.selectedMessages.length >= 1 && preview.selectedMessages.length <= 16
     && sameExecutionIds(preview.selectedMessages.map(item => item.messageId), request.selectedMessageIds)
@@ -74,9 +80,12 @@ function planningRun(value: NonNullable<Responses["planningRun"]>, request: Requ
   const model = value.output?.model;
   if (model?.kind === "proposal" && (preview.scope.kind !== "units" || model.unitIds.length === 0
     || new Set(model.unitIds).size !== model.unitIds.length || model.unitIds.some(id => !preview.units.some(unit => unit.unitId === id)))) return false;
+  if (model?.kind === "knowledge-proposal" && (preview.purpose !== "knowledge" || preview.scope.kind !== "units"
+    || !knowledgeEntries(model.entries, preview.units.map(unit => unit.unitId)))) return false;
+  if (model?.kind === "proposal" && preview.purpose != null) return false;
   return planningReceipt(receipt, { ...request, consent: receipt.consent }) && receipt.consent.attemptId === request.attemptId
     && receipt.consent.shareUnits === (preview.scope.kind === "units")
-    && planningPreview(preview, { ...request, config: preview.config, scope: preview.scope, selectedMessageIds: preview.selectedMessages.map(message => message.messageId) })
+    && planningPreview(preview, { ...request, purpose: preview.purpose, config: preview.config, scope: preview.scope, selectedMessageIds: preview.selectedMessages.map(message => message.messageId) })
     && detail.attemptId === request.attemptId && detail.taskId === receipt.consent.taskId && detail.operation === "conversation-planning"
     && detail.progress.total === 1 && detail.items.length === 1 && !!item && item.status.itemId === receipt.consent.actionId
     && item.scope.kind === "project-conversation" && item.scope.id === request.conversationId
@@ -96,11 +105,43 @@ function proposal(value: Responses["proposal"], request: { projectId: string; co
     && BigInt(value.revision) > 0n && BigInt(value.ordinal) > 0n
     && (value.previousRevisionId === null ? value.revision === "1" : BigInt(value.revision) > 1n && value.previousRevisionId !== value.revisionId)
     && /^[0-9a-f]{64}$/.test(value.origin.inputDigest) && /^[0-9a-f]{64}$/.test(value.origin.resultDigest)
-    && content.kind === "proposal" && content.unitIds.length >= 1 && content.unitIds.length <= 100
-    && new Set(content.unitIds).size === content.unitIds.length
+    && (content.kind === "proposal" ? content.unitIds.length >= 1 && content.unitIds.length <= 100 && new Set(content.unitIds).size === content.unitIds.length
+      : content.kind === "knowledge-proposal" && knowledgeEntries(content.entries))
     && content.summary.length > 0 && bytes.encode(content.summary).length <= 8192
     && content.questions.length <= 8 && content.questions.every(question => question.length > 0 && bytes.encode(question).length <= 2048)
-    && bounded(value);
+    && bytes.encode(JSON.stringify(value)).length <= 64 * 1024;
+}
+function knowledgeEntries(entries: Extract<ConversationProposalRevision["content"], { kind: "knowledge-proposal" }>["entries"], units?: readonly string[]) {
+  return entries.length > 0 && entries.length <= 16 && entries.every(entry => /\P{White_Space}/u.test(entry.name)
+    && bytes.encode(entry.name).length <= 512 && /\P{White_Space}/u.test(entry.text) && bytes.encode(entry.text).length <= 16384
+    && entry.unitIds.length > 0 && entry.unitIds.length <= 100 && new Set(entry.unitIds).size === entry.unitIds.length
+    && (!units || entry.unitIds.every(unit => units.includes(unit))));
+}
+
+function sameKnowledgeDecision(actual: Responses["knowledgeDecisionRecovery"]["request"], expected: Requests["knowledgeDecision"]["decision"]) {
+  const canonical = (value: typeof expected) => ({ ...value, adoption: value.adoption ? { ...value.adoption,
+    contextId: value.adoption.contextId ?? null, subjectId: value.adoption.subjectId ?? null, expectedRevisionId: value.adoption.expectedRevisionId ?? null,
+    sourceBasis: { ...value.adoption.sourceBasis, currentSnapshot: value.adoption.sourceBasis.currentSnapshot ?? null } } : null });
+  return jsonIdentity(canonical(actual)) === jsonIdentity(canonical(expected));
+}
+function knowledgeDecision(value: Responses["knowledgeDecision"], reference: Requests["knowledgeDecisionRead"]["proposal"], entryIndex: number) {
+  const resource = value.resource, origin = resource?.proposalOrigin;
+  return jsonIdentity(value.proposal) === jsonIdentity(reference) && value.entryIndex === entryIndex
+    && (value.decision === "adopt" ? !!resource && resource.projectId === reference.projectId && resource.actionId === value.actionId
+      && !resource.withdrawn && !!origin && jsonIdentity(origin.proposal) === jsonIdentity(reference) && origin.entryIndex === entryIndex
+      && /^[0-9a-f]{64}$/.test(origin.modelOrigin.inputDigest) && /^[0-9a-f]{64}$/.test(origin.modelOrigin.resultDigest)
+      : resource === null);
+}
+function knowledgeAcknowledgement(value: Responses["knowledgeDecision"], request: Requests["knowledgeDecision"]) {
+  const decision = request.decision, resource = value.resource, adoption = decision.adoption;
+  if (decision.proposal.projectId !== request.projectId || !knowledgeDecision(value, decision.proposal, decision.entryIndex)
+    || value.actionId !== decision.actionId || value.decision !== decision.decision || value.actor !== decision.actor || value.reason !== decision.reason) return false;
+  return decision.decision === "adopt" ? !!resource && !!adoption && resource.actor === decision.actor && resource.reason === decision.reason
+    && resource.name === adoption.name && resource.text === adoption.text && jsonIdentity(resource.scope) === jsonIdentity(adoption.scope)
+    && resource.sourceBasis.revision === adoption.sourceBasis.revision && resource.sourceBasis.currentSnapshot === adoption.sourceBasis.currentSnapshot
+    && (adoption.contextId == null || resource.contextId === adoption.contextId) && resource.previousRevisionId === (adoption.expectedRevisionId ?? null)
+    && (adoption.subjectId != null ? resource.subjectId === adoption.subjectId : adoption.contextId != null || resource.subjectId === resource.contextId)
+    : adoption == null;
 }
 function capturedProposal(value: Responses["proposal"], request: Requests["captureProposal"]) {
   return proposal(value, request) && value.revision === "1" && value.previousRevisionId === null
@@ -129,6 +170,26 @@ function proposalPlanAcknowledgement(value: Responses["proposalWorkPlanLink"], r
 
 /** Project conversations, explicit planning permission and original-action history. */
 export const conversationCommands = {
+  prepareKnowledgeAdoption: (request: Requests["knowledgeAdoption"]) => checkedInvoke("preview_conversation_knowledge_adoption", request,
+    (value): value is Responses["knowledgeAdoption"] => validateResponseKnowledgeAdoption(value)
+      && request.adoption.proposal.projectId === request.projectId && jsonIdentity(value.proposal) === jsonIdentity(request.adoption.proposal)
+      && value.entryIndex === request.adoption.entryIndex && jsonIdentity(value.scope) === jsonIdentity(request.adoption.scope)
+      && /^[0-9a-f]{64}$/.test(value.basis) && !!value.sourceBasis.currentSnapshot
+      && (request.adoption.contextId == null ? value.current === null : value.current?.contextId === request.adoption.contextId
+        && value.current.projectId === request.projectId && value.current.kind === value.entry.kind)
+      && (request.adoption.subjectId == null || value.subject?.subjectId === request.adoption.subjectId && value.subject.projectId === request.projectId)),
+  decideKnowledgeProposal: (request: Requests["knowledgeDecision"]) => checkedInvoke("decide_conversation_knowledge_proposal", request,
+    (value): value is Responses["knowledgeDecision"] => validateResponseKnowledgeDecision(value) && knowledgeAcknowledgement(value, request)),
+  readKnowledgeDecision: (request: Requests["knowledgeDecisionRead"]) => checkedInvoke("read_conversation_knowledge_decision", request,
+    (value): value is Responses["knowledgeDecisionRead"] => validateResponseKnowledgeDecisionRead(value)
+      && request.projectId === request.proposal.projectId && (value === null || knowledgeDecision(value, request.proposal, request.entryIndex))),
+  knowledgeDecisionReceipt: (request: Requests["knowledgeDecisionAction"]) => checkedInvoke("read_conversation_knowledge_decision_action", request,
+    (value): value is Responses["knowledgeDecisionAction"] => validateResponseKnowledgeDecisionAction(value)
+      && (value === null || knowledgeAcknowledgement(value, request))),
+  recoverKnowledgeDecision: (request: Requests["knowledgeDecisionRecovery"]) => checkedInvoke("recover_conversation_knowledge_decision", request,
+    (value): value is Responses["knowledgeDecisionRecovery"] => validateResponseKnowledgeDecisionRecovery(value)
+      && request.projectId === request.decision.proposal.projectId && sameKnowledgeDecision(value.request, request.decision)
+      && (value.outcome.kind !== "recorded" || knowledgeAcknowledgement(value.outcome.receipt, request))),
   planningAttempts: (request: Requests["planningAttempts"]) => checkedInvoke("read_conversation_planning_attempts", request,
     (value): value is Responses["planningAttemptPage"] => validateResponsePlanningAttemptPage(value) && value.projectId === request.projectId
       && value.conversationId === request.conversationId && value.rows.length <= request.limit

@@ -16,7 +16,22 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type UnsignedDecimal = string;
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
 export type Revision = string;
+export type ConversationKnowledgeDecisionKind = "adopt" | "keep" | "reject";
+export type ConversationPlanningPurpose = "knowledge";
 export type ConversationPlanningScope =
   | {
       kind: "conversation-only";
@@ -38,6 +53,12 @@ export type ConversationPlanningModelOutput =
       questions: string[];
       summary: string;
       unitIds: ExecutionId[];
+    }
+  | {
+      entries: ConversationKnowledgeEntry[];
+      kind: "knowledge-proposal";
+      questions: string[];
+      summary: string;
     };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -133,12 +154,18 @@ export type TeamWorkKind = "translation" | "review" | "evidence";
 export type ToolGuidancePolicy = {
   profile: "declared-tools-1";
 };
+export type ContextResourceKind = "character" | "style" | "background";
 
 export interface Requests {
   append: AppendProjectConversationMessageRequest;
   authorizeProposalWorkPlan: AuthorizeConversationProposalWorkPlanRequest;
   captureProposal: CaptureConversationProposalRequest;
   create: CreateProjectConversationRequest;
+  knowledgeAdoption: PreviewConversationKnowledgeAdoptionRequest;
+  knowledgeDecision: ConversationKnowledgeDecisionRequest;
+  knowledgeDecisionAction: ConversationKnowledgeDecisionRequest;
+  knowledgeDecisionRead: ReadConversationKnowledgeDecisionRequest;
+  knowledgeDecisionRecovery: ConversationKnowledgeDecisionRequest;
   list: ListProjectConversationsRequest;
   messages: ReadProjectConversationMessagesRequest;
   planningAttempts: ReadConversationPlanningAttemptsRequest;
@@ -249,6 +276,53 @@ export interface CreateProjectConversationRequest {
   sessionToken: string;
   title: string | null;
 }
+export interface PreviewConversationKnowledgeAdoptionRequest {
+  adoption: PrepareConversationKnowledgeAdoption;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface PrepareConversationKnowledgeAdoption {
+  contextId?: ExecutionId | null;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  scope: ContextResourceScope;
+  subjectId?: ExecutionId | null;
+}
+export interface ConversationKnowledgeDecisionRequest {
+  decision: DecideConversationKnowledgeProposal;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface DecideConversationKnowledgeProposal {
+  actionId: ExecutionId;
+  actor: string;
+  adoption?: ConversationKnowledgeAdoption | null;
+  decision: ConversationKnowledgeDecisionKind;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  reason: string;
+}
+export interface ConversationKnowledgeAdoption {
+  comparisonBasis: string;
+  confirmWiderScope: boolean;
+  contextId?: ExecutionId | null;
+  expectedRevisionId?: ExecutionId | null;
+  name: string;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId?: ExecutionId | null;
+  text: string;
+}
+export interface ContentScope {
+  currentSnapshot?: ExecutionId | null;
+  revision: Revision;
+}
+export interface ReadConversationKnowledgeDecisionRequest {
+  entryIndex: number;
+  projectId: ExecutionId;
+  proposal: ConversationProposalRef;
+  sessionToken: string;
+}
 export interface ListProjectConversationsRequest {
   after?: Revision | null;
   limit: number;
@@ -273,6 +347,7 @@ export interface PrepareConversationPlanningRequest {
   config: AiConfig;
   conversationId: ExecutionId;
   projectId: ExecutionId;
+  purpose?: ConversationPlanningPurpose | null;
   scope: ConversationPlanningScope;
   selectedMessageIds: ExecutionId[];
   sessionToken: string;
@@ -647,6 +722,12 @@ export interface TeamExecutionMember {
   role: string;
   roleVersionId: ExecutionId;
   toolHandles: ExecutionId[];
+  unitIds: ExecutionId[];
+}
+export interface ConversationKnowledgeEntry {
+  kind: ContextResourceKind;
+  name: string;
+  text: string;
   unitIds: ExecutionId[];
 }
 export interface StartConversationPlanningRequest {

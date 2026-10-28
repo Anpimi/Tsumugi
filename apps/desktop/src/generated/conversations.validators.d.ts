@@ -5,6 +5,11 @@ export declare function validateRequestAppend(value: unknown): value is Requests
 export declare function validateRequestAuthorizeProposalWorkPlan(value: unknown): value is Requests["authorizeProposalWorkPlan"];
 export declare function validateRequestCaptureProposal(value: unknown): value is Requests["captureProposal"];
 export declare function validateRequestCreate(value: unknown): value is Requests["create"];
+export declare function validateRequestKnowledgeAdoption(value: unknown): value is Requests["knowledgeAdoption"];
+export declare function validateRequestKnowledgeDecision(value: unknown): value is Requests["knowledgeDecision"];
+export declare function validateRequestKnowledgeDecisionAction(value: unknown): value is Requests["knowledgeDecisionAction"];
+export declare function validateRequestKnowledgeDecisionRead(value: unknown): value is Requests["knowledgeDecisionRead"];
+export declare function validateRequestKnowledgeDecisionRecovery(value: unknown): value is Requests["knowledgeDecisionRecovery"];
 export declare function validateRequestList(value: unknown): value is Requests["list"];
 export declare function validateRequestMessages(value: unknown): value is Requests["messages"];
 export declare function validateRequestPlanningAttempts(value: unknown): value is Requests["planningAttempts"];
@@ -29,6 +34,11 @@ export declare function validateRequestValidateProposal(value: unknown): value i
 export declare function validateResponseConversation(value: unknown): value is Responses["conversation"];
 export declare function validateResponseCreateRecovery(value: unknown): value is Responses["createRecovery"];
 export declare function validateResponseError(value: unknown): value is Responses["error"];
+export declare function validateResponseKnowledgeAdoption(value: unknown): value is Responses["knowledgeAdoption"];
+export declare function validateResponseKnowledgeDecision(value: unknown): value is Responses["knowledgeDecision"];
+export declare function validateResponseKnowledgeDecisionAction(value: unknown): value is Responses["knowledgeDecisionAction"];
+export declare function validateResponseKnowledgeDecisionRead(value: unknown): value is Responses["knowledgeDecisionRead"];
+export declare function validateResponseKnowledgeDecisionRecovery(value: unknown): value is Responses["knowledgeDecisionRecovery"];
 export declare function validateResponseMessage(value: unknown): value is Responses["message"];
 export declare function validateResponseMessagePage(value: unknown): value is Responses["messagePage"];
 export declare function validateResponseMessageRecovery(value: unknown): value is Responses["messageRecovery"];

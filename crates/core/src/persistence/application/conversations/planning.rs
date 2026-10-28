@@ -19,6 +19,9 @@ fn preview_in(
     owned(c, request.project_id)?;
     conversation(c, request.project_id, request.conversation_id)?;
     request.config.validate()?;
+    if request.purpose.is_some()&&matches!(request.scope,ConversationPlanningScope::ConversationOnly{}) {
+        return Err(fail(ErrorCode::InvalidInput,"conversation-knowledge-units-required"));
+    }
     if request.config.max_requests != 1
         || request.config.max_retries != 0
         || request.config.concurrency != 1
@@ -130,16 +133,17 @@ fn preview_in(
         .as_ref()
         .map_or(&[][..], |preview| preview.items.as_slice());
     let (input, byte_length, brief) =
-        conversation_planning::prompt(&request.config, &request.scope, &messages, items, &units)?;
+        conversation_planning::prompt_for(request.purpose,&request.config, &request.scope, &messages, items, &units)?;
     let preview = ConversationPlanningPreview {
-        version: CONVERSATION_PLANNING_PREVIEW_VERSION,
+            purpose: request.purpose,
+        version: conversation_planning::profile(request.purpose).3,
         project_id: request.project_id,
         conversation_id: request.conversation_id,
         config: request.config.clone(),
         scope: request.scope.clone(),
         selected_messages: messages,
         units,
-        system: conversation_planning::SYSTEM.into(),
+        system: conversation_planning::profile(request.purpose).2.into(),
         input,
         byte_length,
         brief,
@@ -459,6 +463,7 @@ pub(super) fn validate_material_in(
     material: &Option<AiPreview>,
 ) -> Result<(), ExecutionError> {
     let request = PrepareConversationPlanning {
+            purpose: expected.purpose,
         project_id: expected.project_id,
         conversation_id: expected.conversation_id,
         selected_message_ids: expected

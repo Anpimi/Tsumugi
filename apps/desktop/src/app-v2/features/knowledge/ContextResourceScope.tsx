@@ -20,9 +20,10 @@ export function compareResourcePaths(left: string, right: string) {
   for (let index = 0; index < Math.min(a.length, b.length); index++) if (a[index] !== b[index]) return a[index] - b[index];
   return a.length - b.length;
 }
-export default function ContextResourceScope({ project, locale, value, basis, source, files, fresh, failed, onRefresh, disabled, gate, current, onChange }: {
+export default function ContextResourceScope({ project, locale, value, basis, source, files, fresh, failed, onRefresh, disabled, gate, current, onChange, unselected = false }: {
   project: ProjectView; locale: string; value: Scope; basis: ContentScope; source: ContentScope | undefined; files: ContentPage | undefined;
   fresh: () => boolean; failed: boolean; onRefresh: () => void; disabled: boolean; gate: InteractionGate; current: (dialogId?: string) => boolean; onChange: (scope: Scope) => void;
+  unselected?: boolean;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   const [open, setOpen] = useState(false), [paths, setPaths] = useState<string[]>([]), [search, setSearch] = useState("");
@@ -32,8 +33,8 @@ export default function ContextResourceScope({ project, locale, value, basis, so
   const available = () => !disabled && current(dialogId) && fresh() && !!source && !!files && sameContentScope(source, basis) && sameContentScope(files.scope, basis) && files.snapshotId === basis.currentSnapshot;
   const allPaths = [...new Set(files?.coverage.filter(file => file.role === "source").map(file => file.logicalPath) ?? [])].sort(compareResourcePaths);
   const byteSize = paths.reduce((sum, path) => sum + new TextEncoder().encode(path).length, 0);
-  return <section><h3>{t("scope")}</h3><ContextResourceScopeText scope={value}/><p className={styles.meta}>{t("contextScopeRules")}</p>
-    <div className={styles.actions}><Button disabled={disabled || value.kind === "project" || !fresh()} onClick={() => { if (current() && fresh()) onChange({ kind: "project" }); }}>{t("changeScope")}</Button>
+  return <section><h3>{t("scope")}</h3>{unselected ? <p>{t("knowledgeScopeUnset")}</p> : <ContextResourceScopeText scope={value}/>}<p className={styles.meta}>{t("contextScopeRules")}</p>
+    <div className={styles.actions}><Button disabled={disabled || !unselected && value.kind === "project" || !fresh()} onClick={() => { if (current() && fresh()) onChange({ kind: "project" }); }}>{t("changeScope")}</Button>
       <Button disabled={disabled} onClick={() => { if (current()) { setPaths(value.kind === "file-group" ? [...value.logicalPaths] : []); setOpen(true); } }}>{t("contextChooseFiles")}</Button>
       <TermScopePicker project={project} locale={locale} disabled={disabled} gate={gate} current={current} onSelect={unitId => onChange({ kind: "unit", unitId })}/></div>
     {value.kind === "file-group" ? <p className={styles.meta}>{t("contextFilesHelp")}</p> : null}

@@ -52,8 +52,9 @@ pub(super) fn project(
         // turn into a successful observation of zero outstanding questions.
         let revision = store.read_conversation_proposal(project, head.conversation_id,
             head.proposal_id, Some(head.revision_id))?;
-        let ConversationPlanningModelOutput::Proposal { questions, .. } = &revision.content else {
-            return Err(failure(ErrorCode::CorruptLedger, "decision-question-content"));
+        let questions=match &revision.content {
+            ConversationPlanningModelOutput::Proposal{questions,..}|ConversationPlanningModelOutput::KnowledgeProposal{questions,..}=>questions,
+            _=>return Err(failure(ErrorCode::CorruptLedger,"decision-question-content")),
         };
         if questions.is_empty() { continue; }
         let (state, currentness) = match store.validate_conversation_proposal(project,
@@ -119,6 +120,7 @@ mod tests {
             message_id: ExecutionId::new(), body: "Please prepare a translation proposal.".into(),
         }).unwrap();
         let capture = store.prepare_conversation_planning(&PrepareConversationPlanning {
+            purpose: None,
             project_id: project, conversation_id: conversation, selected_message_ids: vec![message.message_id],
             scope: ConversationPlanningScope::Units { locale: "zh-CN".into(), unit_ids: vec![unit] },
             config: AiConfig { endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),

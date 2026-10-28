@@ -126,6 +126,33 @@ export type CommandStage =
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
+export type ContextResourceKind = "character" | "style" | "background";
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type ConversationKnowledgeDecisionKind = "adopt" | "keep" | "reject";
+export type ConversationActionOutcome5 =
+  | {
+      kind: "recorded";
+      receipt: ConversationKnowledgeDecision;
+    }
+  | {
+      kind: "pending";
+      replay: ConversationActionReplay;
+    }
+  | {
+      kind: "mismatch";
+    };
 export type ConversationAuthor = "human";
 export type ConversationActionOutcome2 =
   | {
@@ -140,6 +167,7 @@ export type ConversationActionOutcome2 =
       kind: "mismatch";
     };
 export type UnsignedDecimal = string;
+export type ConversationPlanningPurpose = "knowledge";
 export type ConversationPlanningScope =
   | {
       kind: "conversation-only";
@@ -148,20 +176,6 @@ export type ConversationPlanningScope =
       kind: "units";
       locale: string;
       unitIds: ExecutionId[];
-    };
-export type ContextResourceKind = "character" | "style" | "background";
-export type ContextResourceScope =
-  | {
-      kind: "project";
-    }
-  | {
-      kind: "file-group";
-      logicalPaths: string[];
-      namespace: string;
-    }
-  | {
-      kind: "unit";
-      unitId: ExecutionId;
     };
 export type ContextResourceStatus =
   "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
@@ -192,6 +206,12 @@ export type ConversationPlanningModelOutput =
       questions: string[];
       summary: string;
       unitIds: ExecutionId[];
+    }
+  | {
+      entries: ConversationKnowledgeEntry[];
+      kind: "knowledge-proposal";
+      questions: string[];
+      summary: string;
     };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -462,7 +482,7 @@ export type SourceContextOmissionSample =
 export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
 export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
-export type ConversationActionOutcome5 =
+export type ConversationActionOutcome6 =
   | {
       kind: "recorded";
       receipt: ConversationProposalWorkPlanLink;
@@ -493,6 +513,11 @@ export interface Responses {
   conversation: ProjectConversation;
   createRecovery: ProjectConversationCreateRecovery;
   error: CommandError;
+  knowledgeAdoption: ConversationKnowledgeAdoptionPreview;
+  knowledgeDecision: ConversationKnowledgeDecision;
+  knowledgeDecisionAction: ConversationKnowledgeDecision | null;
+  knowledgeDecisionRead: ConversationKnowledgeDecision | null;
+  knowledgeDecisionRecovery: ConversationKnowledgeDecisionRecovery;
   message: ProjectConversationMessage;
   messagePage: ProjectConversationMessagePage;
   messageRecovery: ProjectConversationMessageRecovery;
@@ -546,6 +571,95 @@ export interface CommandError {
   recoveryRequired: boolean;
   stage: CommandStage;
 }
+export interface ConversationKnowledgeAdoptionPreview {
+  basis: string;
+  current: ContextResourceRevision | null;
+  entry: ConversationKnowledgeEntry;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  requiresWiderConfirmation: boolean;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subject?: ContextResourceRevision | null;
+}
+export interface ContextResourceRevision {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  previousRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
+  proposalOrigin?: ContextResourceProposalOrigin | null;
+  reason: string;
+  revisionId: ExecutionId;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId: ExecutionId;
+  text: string;
+  withdrawn: boolean;
+}
+export interface ContextResourceProposalOrigin {
+  entryIndex: number;
+  modelOrigin: ConversationProposalOrigin;
+  proposal: ConversationProposalRef;
+}
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ConversationProposalRef {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface ContentScope {
+  currentSnapshot: ExecutionId | null;
+  revision: Revision;
+}
+export interface ConversationKnowledgeEntry {
+  kind: ContextResourceKind;
+  name: string;
+  text: string;
+  unitIds: ExecutionId[];
+}
+export interface ConversationKnowledgeDecision {
+  actionId: ExecutionId;
+  actor: string;
+  decision: ConversationKnowledgeDecisionKind;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  reason: string;
+  resource: ContextResourceRevision | null;
+}
+export interface ConversationKnowledgeDecisionRecovery {
+  outcome: ConversationActionOutcome5;
+  request: DecideConversationKnowledgeProposal;
+}
+export interface DecideConversationKnowledgeProposal {
+  actionId: ExecutionId;
+  actor: string;
+  adoption: ConversationKnowledgeAdoption | null;
+  decision: ConversationKnowledgeDecisionKind;
+  entryIndex: number;
+  proposal: ConversationProposalRef;
+  reason: string;
+}
+export interface ConversationKnowledgeAdoption {
+  comparisonBasis: string;
+  confirmWiderScope: boolean;
+  contextId: ExecutionId | null;
+  expectedRevisionId: ExecutionId | null;
+  name: string;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId?: ExecutionId | null;
+  text: string;
+}
 export interface ProjectConversationMessage {
   author: ConversationAuthor;
   body: string;
@@ -591,6 +705,7 @@ export interface ConversationPlanningPreview {
   conversationId: ExecutionId;
   input: string;
   projectId: ExecutionId;
+  purpose?: ConversationPlanningPurpose | null;
   scope: ConversationPlanningScope;
   selectedMessages: ProjectConversationMessage[];
   system: string;
@@ -683,27 +798,6 @@ export interface ContextResourceResolutionEntry {
   missingPaths: string[];
   revision: ContextResourceRevision;
   status: ContextResourceStatus;
-}
-export interface ContextResourceRevision {
-  actionId: ExecutionId;
-  actor: string;
-  contextId: ExecutionId;
-  kind: ContextResourceKind;
-  locale: string;
-  name: string;
-  previousRevisionId: ExecutionId | null;
-  projectId: ExecutionId;
-  reason: string;
-  revisionId: ExecutionId;
-  scope: ContextResourceScope;
-  sourceBasis: ContentScope;
-  subjectId: ExecutionId;
-  text: string;
-  withdrawn: boolean;
-}
-export interface ContentScope {
-  currentSnapshot: ExecutionId | null;
-  revision: Revision;
 }
 export interface SourceContextRequest {
   locale: string;
@@ -1122,12 +1216,6 @@ export interface ConversationProposalRevision {
   revision: Revision;
   revisionId: ExecutionId;
 }
-export interface ConversationProposalOrigin {
-  attemptId: ExecutionId;
-  inputDigest: string;
-  resultDigest: string;
-  resultId: ExecutionId;
-}
 export interface ConversationProposalCaptureRecovery {
   outcome: ConversationActionOutcome4;
   request: CaptureConversationProposal;
@@ -1529,12 +1617,6 @@ export interface ToolResourceBinding {
   contributionId: string;
   schema: ContractRef;
 }
-export interface ConversationProposalRef {
-  conversationId: ExecutionId;
-  projectId: ExecutionId;
-  proposalId: ExecutionId;
-  revisionId: ExecutionId;
-}
 /**
  * A small immutable association. Lease and running state stay in the original ledger.
  */
@@ -1574,7 +1656,7 @@ export interface AutomationLease {
   planId: ExecutionId;
 }
 export interface ConversationProposalWorkPlanRecovery {
-  outcome: ConversationActionOutcome5;
+  outcome: ConversationActionOutcome6;
   request: AuthorizeConversationProposalWorkPlan;
 }
 export interface AuthorizeConversationProposalWorkPlan {

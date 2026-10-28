@@ -84,6 +84,12 @@ export type ConversationPlanningModelOutput =
       questions: string[];
       summary: string;
       unitIds: ExecutionId[];
+    }
+  | {
+      entries: ConversationKnowledgeEntry[];
+      kind: "knowledge-proposal";
+      questions: string[];
+      summary: string;
     };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -179,6 +185,7 @@ export type TeamWorkKind = "translation" | "review" | "evidence";
 export type ToolGuidancePolicy = {
   profile: "declared-tools-1";
 };
+export type ContextResourceKind = "character" | "style" | "background";
 /**
  * Requested automatic effects, never a human language-review approval.
  */
@@ -763,6 +770,12 @@ export interface SourceContextSelection {
   maxBytes: number;
   maxItems: number;
   neighbors: boolean;
+}
+export interface ConversationKnowledgeEntry {
+  kind: ContextResourceKind;
+  name: string;
+  text: string;
+  unitIds: ExecutionId[];
 }
 export interface AuthorizeConversationProposalWorkPlan {
   actionId: ExecutionId;

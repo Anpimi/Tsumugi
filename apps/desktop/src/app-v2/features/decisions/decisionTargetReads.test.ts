@@ -34,7 +34,7 @@ function attempt() {
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected read"); };
 function ports(overrides: Partial<DecisionTargetReadPorts> = {}): DecisionTargetReadPorts {
   return { preview: unexpected, historyContent: unexpected, lineage: unexpected, attempt: unexpected,
-    output: unexpected, eligibility: unexpected, deliveryRecord: unexpected, compare: unexpected, ...overrides };
+    output: unexpected, eligibility: unexpected, deliveryRecord: unexpected, compare: unexpected, proposal: unexpected, knowledgeDecision: unexpected, ...overrides };
 }
 
 it("reads an unadopted source comparison by original result and captured content scope, retaining original pagination", async () => {

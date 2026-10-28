@@ -16,6 +16,7 @@ import TermScopePicker from "./TermScopePicker";
 import { useKnowledgeScope } from "./knowledgeReads";
 import styles from "./Knowledge.module.css";
 import ContextResourceImpact from "./ContextResourceImpact";
+import type { OpenKnowledgeProposal } from "../assistant/conversationNavigation";
 
 function SourceBasis({ basis, current }: { basis: ContentScope; current: ContentScope | undefined }) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
@@ -25,8 +26,9 @@ function SourceBasis({ basis, current }: { basis: ContentScope; current: Content
     <div id={id} hidden={!expanded}><p>{t("contextSourceRevision")}: <code>{basis.revision}</code></p><p>{t("contextSourceSnapshot")}: <code>{basis.currentSnapshot ?? "—"}</code></p></div></div>;
 }
 
-export default function ContextResourceDetails({ project, owner, visible, disabled, current, gate, preset, locale }: {
+export default function ContextResourceDetails({ project, owner, visible, disabled, current, gate, preset, locale, onOpenProposal }: {
   project: ProjectView; owner: KnowledgeOwner; visible: boolean; disabled: boolean; current: (dialogId?: string) => boolean; gate: InteractionGate; preset: string; locale: string;
+  onOpenProposal?: OpenKnowledgeProposal;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   const reads = useSessionReads(), draft = owner.state.typedActiveKey ? owner.state.typedDrafts[owner.state.typedActiveKey] : null;
@@ -36,6 +38,7 @@ export default function ContextResourceDetails({ project, owner, visible, disabl
   const history = useContextResourcePages(project, active?.locale ?? owner.state.locale, kind, visible && !!active?.contextId, active?.contextId ?? undefined);
   const { source } = useContextSource(project, visible && !!active);
   const [sample, setSample] = useState<string | null>(null);
+  const [originFailed, setOriginFailed] = useState(false);
   const target = useKnowledgeScope(project, active?.locale ?? owner.state.locale, sample, visible && !!active);
   const resolutionScope = target.data && active ? { projectId: project.metadata.projectId, unitId: target.data.unitId, sourceSnapshotId: target.data.sourceSnapshotId,
     sourceRevisionId: target.data.sourceRevisionId, locale: active.locale } : null;
@@ -59,6 +62,10 @@ export default function ContextResourceDetails({ project, owner, visible, disabl
     {observed.isFetching ? <LoadingState label={t("contextReading")}/> : observed.error ? <ErrorState title={t("currentFailed")} action={<Button onClick={() => void observed.refetch()}>{t("refresh")}</Button>}/> : null}
     {active.base ? <><h3>{t("savedBasis")}</h3><p>{active.base.name}</p><pre className={styles.sourceText}>{active.base.text}</pre><ContextResourceScopeText scope={active.base.scope}/>
       <p>{t("contextActor")}: {active.base.actor}</p><p>{t("reason")}: {active.base.reason}</p><p>{t(active.base.withdrawn ? "contextStopped" : "contextActive")}</p><SourceBasis basis={active.base.sourceBasis} current={checkedSource}/></> : null}
+    {active.base?.proposalOrigin ? <><p>{t("reviewOrigin")}</p>{onOpenProposal ? <Button disabled={disabled} onClick={() => {
+      if (!current() || !active.base?.proposalOrigin) return;
+      setOriginFailed(false); void onOpenProposal(active.base.proposalOrigin.proposal, current).then(opened => { if (!opened) setOriginFailed(true); }).catch(() => setOriginFailed(true));
+    }}>{t("reviewOpenOrigin")}</Button> : null}{originFailed ? <Banner tone="warning">{t("reviewReadFailed")}</Banner> : null}</> : null}
     {changed ? <section className={styles.compare} aria-label={t("comparison")}><h3>{t("contextCurrentChanged")}</h3><p>{saved.name}</p><pre className={styles.sourceText}>{saved.text}</pre><ContextResourceScopeText scope={saved.scope}/>
       <p>{t("contextActor")}: {saved.actor}</p><p>{t("reason")}: {saved.reason}</p>{saved.withdrawn ? <Banner tone="warning">{t("contextStoppedHelp")}</Banner> : null}
       <p>{t("rebaseHelp")}</p><Button disabled={disabled || knowledgeBlocked(owner)} onClick={keep}>{t("keepEdits")}</Button></section> : null}
