@@ -15,6 +15,7 @@ mod candidate_slice;
 mod recovery;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
 pub use candidate_slice::{TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext, TranslationCandidateState};
+pub(super) use candidate_slice::pending_candidates_in;
 pub use recovery::{
     TranslationActionOutcome, TranslationActionReplay, TranslationSaveRecovery,
     TranslationMergeRecovery, TranslationSelectionRecovery,

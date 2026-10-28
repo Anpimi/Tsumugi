@@ -17,6 +17,7 @@ pub(super) mod test_fixtures;
 macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
+        decisions::read_decision_page,
         super::add_target_locale,super::set_target_locales,super::close_project,
         super::drafts::read_local_draft,super::drafts::read_local_drafts,super::drafts::write_local_draft,
         super::drafts::clear_local_draft,super::drafts::list_local_drafts,
@@ -926,6 +927,7 @@ pub(super) mod arena;
 pub(super) mod release;
 pub(super) mod resource;
 pub(super) mod review;
+pub(super) mod decisions;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;

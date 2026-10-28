@@ -1111,6 +1111,54 @@ fn capture_by_id(
     ))
 }
 
+/// Original resource capture identities for a bounded, read-only inbox scan.
+/// The preview owner still validates and interprets each saved capture.
+pub(super) fn decision_capture_refs_in(
+    connection: &Connection,
+    project: ExecutionId,
+    locale: &str,
+    limit: usize,
+) -> Result<(Vec<(ExecutionId, ExecutionId)>, bool), ExecutionError> {
+    let mut statement = connection.prepare(
+        "SELECT capture_id,action_id FROM resource_captures
+         WHERE project_id=?1 AND target_locale=?2 ORDER BY rowid DESC LIMIT ?3",
+    ).map_err(sql)?;
+    let mut rows = statement.query_map(params![project.to_string(), locale, (limit + 1) as i64], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(sql)?
+        .map(|row| {
+            let (capture, action) = row.map_err(sql)?;
+            Ok((id(capture)?, id(action)?))
+        }).collect::<Result<Vec<_>, ExecutionError>>()?;
+    let complete = rows.len() <= limit;
+    rows.truncate(limit);
+    Ok((rows, complete))
+}
+
+/// Keep and Ignore intentionally leave the current term unchanged. Their
+/// original receipts, rather than a preview diff, resolve the captured proposal.
+pub(super) fn entry_decision_in(
+    connection: &Connection,
+    project: ExecutionId,
+    capture: ExecutionId,
+    entry: &str,
+) -> Result<Option<ResourceDecisionResult>, ExecutionError> {
+    let action: Option<String> = connection.query_row(
+        "SELECT action_id FROM resource_decisions
+         WHERE project_id=?1 AND capture_id=?2 AND entry_id=?3 ORDER BY rowid DESC LIMIT 1",
+        params![project.to_string(), capture.to_string(), entry],
+        |row| row.get(0),
+    ).optional().map_err(sql)?;
+    action.map(|action| {
+        let receipt = correction::decision_action_in(connection, project, id(action)?)?
+            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "resource-decision"))?;
+        if receipt.request.capture_id != capture || receipt.request.entry_id != entry {
+            return Err(failure(ErrorCode::CorruptLedger, "resource-decision"));
+        }
+        Ok(receipt)
+    }).transpose()
+}
+
 fn external_term_id(resource_id: &str, entry_id: &str) -> String {
     format!("external:{resource_id}:{entry_id}")
 }

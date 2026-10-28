@@ -1,0 +1,154 @@
+{
+  "request": {
+    "sessionToken": "synthetic-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "query": {
+      "locale": null,
+      "sources": []
+    },
+    "cursor": null,
+    "limit": 2
+  },
+  "response": {
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "query": {
+      "locale": null,
+      "sources": []
+    },
+    "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "items": [
+      {
+        "decisionId": "execution-unknown:00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000004",
+        "source": "execution-unknown",
+        "state": "awaiting-recheck",
+        "locale": "zh-CN",
+        "targets": [
+          {
+            "kind": "plan",
+            "planId": "00000000-0000-4000-8000-000000000005"
+          }
+        ],
+        "targetsComplete": true,
+        "basis": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "sourceActionId": null,
+        "action": {
+          "kind": "inspect-execution",
+          "taskId": "00000000-0000-4000-8000-000000000006",
+          "attemptId": "00000000-0000-4000-8000-000000000003",
+          "itemId": "00000000-0000-4000-8000-000000000004"
+        },
+        "evidence": null
+      },
+      {
+        "decisionId": "source-mapping:00000000-0000-4000-8000-000000000007",
+        "source": "source-mapping",
+        "state": "pending",
+        "locale": null,
+        "targets": [
+          {
+            "kind": "source-occurrence",
+            "snapshotId": "00000000-0000-4000-8000-000000000008",
+            "occurrenceId": "00000000-0000-4000-8000-000000000007"
+          },
+          {
+            "kind": "entry",
+            "unitId": "00000000-0000-4000-8000-000000000002"
+          }
+        ],
+        "targetsComplete": true,
+        "basis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "sourceActionId": "00000000-0000-4000-8000-000000000009",
+        "action": {
+          "kind": "resolve-source-mapping",
+          "snapshotId": "00000000-0000-4000-8000-000000000008",
+          "occurrenceId": "00000000-0000-4000-8000-000000000007",
+          "ordinal": 0
+        },
+        "evidence": null
+      }
+    ],
+    "next": null,
+    "knownCount": 2,
+    "total": null,
+    "coverage": [
+      {
+        "source": "translation-candidate",
+        "state": "complete",
+        "knownCount": 0,
+        "total": 0,
+        "reason": null,
+        "errorCode": null
+      },
+      {
+        "source": "resource-proposal",
+        "state": "complete",
+        "knownCount": 0,
+        "total": 0,
+        "reason": null,
+        "errorCode": null
+      },
+      {
+        "source": "agent-question",
+        "state": "unavailable",
+        "knownCount": 0,
+        "total": null,
+        "reason": "source-not-implemented",
+        "errorCode": null
+      },
+      {
+        "source": "source-mapping",
+        "state": "complete",
+        "knownCount": 1,
+        "total": 1,
+        "reason": null,
+        "errorCode": null
+      },
+      {
+        "source": "execution-unknown",
+        "state": "complete",
+        "knownCount": 1,
+        "total": 1,
+        "reason": null,
+        "errorCode": null
+      },
+      {
+        "source": "local-action-recovery",
+        "state": "unavailable",
+        "knownCount": 0,
+        "total": null,
+        "reason": "source-not-implemented",
+        "errorCode": null
+      },
+      {
+        "source": "human-review",
+        "state": "complete",
+        "knownCount": 0,
+        "total": 0,
+        "reason": null,
+        "errorCode": null
+      },
+      {
+        "source": "review-finding",
+        "state": "complete",
+        "knownCount": 0,
+        "total": 0,
+        "reason": null,
+        "errorCode": null
+      },
+      {
+        "source": "delivery-blocker",
+        "state": "complete",
+        "knownCount": 0,
+        "total": 0,
+        "reason": null,
+        "errorCode": null
+      }
+    ],
+    "executionActivity": [
+      {
+        "attemptId": "00000000-0000-4000-8000-000000000003",
+        "active": false
+      }
+    ]
+  }
+}

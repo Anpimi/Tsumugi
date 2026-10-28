@@ -30,6 +30,15 @@ struct Responses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct DecisionRequests { page: execution::decisions::DecisionPageRequest }
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct DecisionResponses { page: tsumugi_core::DecisionPage, error: CommandError }
+
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ConversationRequests {
     create: execution::conversations::CreateProjectConversationRequest,
     list: execution::conversations::ListProjectConversationsRequest,
@@ -871,6 +880,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
             "conversations": schemas::<ConversationRequests, ConversationResponses>(),
+            "decisions": schemas::<DecisionRequests, DecisionResponses>(),
             "draft": schemas::<DraftRequests, DraftResponses>(),
             "mcp": schemas::<McpRequests, McpResponses>(),
             "mcpRetrieval": schemas::<McpRetrievalRequests, McpRetrievalResponses>(),

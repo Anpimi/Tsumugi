@@ -69,7 +69,7 @@ fn origins_in(c: &Connection, project: ExecutionId, locale: &str, targets: &[Rev
 
 /// Count all current proposals, but retain at most one page plus a lookahead.
 /// Only latest original decision receipts are streamed; history bodies are not.
-fn candidates_in(c: &Connection, project: ExecutionId, locale: &str, targets: &[ReviewTarget], state: TranslationCandidateState, after: u64)
+fn candidates_in(c: &Connection, project: ExecutionId, locale: &str, targets: &[ReviewTarget], state: TranslationCandidateState, after: u64, record_limit: usize)
     -> Result<(BTreeMap<ExecutionId, (u32, u32)>, Vec<CandidateRef>), ExecutionError> {
     let wanted = serde_json::to_string(&targets.iter().map(|target| (target.unit_id, target.source_revision_id, target.revision_id)).collect::<Vec<_>>())
         .map_err(|_| error(ErrorCode::InvalidInput, "candidate-slice-units"))?;
@@ -103,9 +103,58 @@ fn candidates_in(c: &Connection, project: ExecutionId, locale: &str, targets: &[
         *total = total.checked_add(1).ok_or_else(|| error(ErrorCode::LimitExceeded,"candidate-slice-count"))?;
         if position == 0 && ordinal <= after { continue; }
         *remaining = remaining.checked_add(1).ok_or_else(|| error(ErrorCode::LimitExceeded,"candidate-slice-count"))?;
-        if references.len() <= RECORDS { references.push(CandidateRef { unit, revision, ordinal, decision }); }
+        if references.len() <= record_limit { references.push(CandidateRef { unit, revision, ordinal, decision }); }
     }
     Ok((counts,references))
+}
+
+/// Lightweight references for the decision read model. The candidate owner
+/// applies exactly the same current-source and latest-disposition rules as the
+/// comparison slice, without loading revision bodies or changing selection.
+pub(in crate::persistence) struct PendingTranslationCandidate {
+    pub unit_id: ExecutionId,
+    pub revision_id: ExecutionId,
+    pub ordinal: u64,
+    pub action_id: ExecutionId,
+    pub decision: Option<CandidateDecision>,
+}
+
+pub(in crate::persistence) fn pending_candidates_in(
+    c: &Connection,
+    project: ExecutionId,
+    locale: &str,
+    targets: &[ReviewTarget],
+    limit: usize,
+) -> Result<(Vec<PendingTranslationCandidate>, bool), ExecutionError> {
+    let (counts, mut references) = candidates_in(
+        c, project, locale, targets, TranslationCandidateState::Available, 0, limit,
+    )?;
+    let total: u64 = counts.values().map(|(total, _)| u64::from(*total)).sum();
+    let complete = total <= limit as u64;
+    references.truncate(limit);
+    let wanted = serde_json::to_string(&references.iter().map(|value| value.revision).collect::<Vec<_>>())
+        .map_err(|_| error(ErrorCode::InvalidInput, "candidate-decision-units"))?;
+    let mut statement = c.prepare("SELECT r.revision_id,r.action_id FROM json_each(?2) w
+        JOIN translation_revisions r ON r.revision_id=w.value AND r.project_id=?1")
+        .map_err(super::super::ledger::sql_error)?;
+    let actions = statement.query_map(params![project.to_string(), wanted], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(super::super::ledger::sql_error)?
+        .map(|row| {
+            let (revision, action) = row.map_err(super::super::ledger::sql_error)?;
+            Ok((id(revision)?, id(action)?))
+        }).collect::<Result<BTreeMap<_, _>, ExecutionError>>()?;
+    let rows = references.into_iter().map(|value| {
+        Ok(PendingTranslationCandidate {
+            unit_id: value.unit,
+            revision_id: value.revision,
+            ordinal: value.ordinal,
+            action_id: *actions.get(&value.revision)
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-decision-revision"))?,
+            decision: value.decision,
+        })
+    }).collect::<Result<Vec<_>, ExecutionError>>()?;
+    Ok((rows, complete))
 }
 
 fn bodies_in(c: &Connection, project: ExecutionId, references: &[CandidateRef]) -> Result<BTreeMap<ExecutionId, TranslationRevision>, ExecutionError> {
@@ -146,7 +195,7 @@ impl ProjectStore {
             if expected_version.is_some_and(|expected| expected != version) { return Err(error(ErrorCode::DependencyConflict,"candidate-slice-changed")); }
             let mut origins = origins_in(c, project, locale, &targets)?;
             let mut protections = super::super::application::protection_summaries(c, project, units, locale)?;
-            let (counts,references) = candidates_in(c, project, locale, &targets, state, after)?;
+            let (counts,references) = candidates_in(c, project, locale, &targets, state, after, RECORDS)?;
             let mut bodies = bodies_in(c, project, &references)?;
             let mut page = TranslationCandidateSlice { project_id: project, locale: locale.into(), source_snapshot_id: snapshot, scope_id: scope,
                 read_version: version, rows: Vec::new(), next: None };

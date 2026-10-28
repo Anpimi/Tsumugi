@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- A read-only decision inbox API gathers current translation candidates, resource proposals, human review, advisory findings, unresolved source mappings, unknown execution results and delivery blockers from their original records. Pages share a read basis and report bounded or unavailable sources; no inbox-specific approval or resolved state is stored. The shared inbox interface and local pending-request source are still being connected.
+
 - Project planning IPC can run one explicitly permitted model request against the original material preview, model destination, sharing scope, budget and expiry. It uses the existing execution and usage records; cancellation, uncertain writes, stopping and reopening cannot restore an old permission. Results are checked explanations or plan suggestions, without creating or authorizing a work plan.
 
 - The opt-in desktop workspace adds a conversation panel for creating and selecting threads, paging and saving messages, recovering local input and uncertain requests, and reading recorded planning replies and proposals by thread. Saving a message does not call a model. Select 1–16 saved messages, optionally attach 1–100 selected entries and a fixed target language, review their exact material, connection and limits, and explicitly send one planning question with no automatic retries. The attached set keeps its original exclusions as filters change. Sharing options control the included terms and context; current translation text is not sent. The original request reaches the local journal before submission; an uncertain result stays available for receipt checks without being sent again.
