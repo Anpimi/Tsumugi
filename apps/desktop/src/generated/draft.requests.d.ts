@@ -3,6 +3,20 @@
 export type Revision = string;
 export type ExecutionId = string;
 /**
+ * Frozen business requests are recovery input, never restored authority.
+ */
+export type ConversationDraftPending =
+  | {
+      kind: "create";
+      request: CreateProjectConversation;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "append";
+      request: AppendProjectConversationMessage;
+      submittedSeq: Revision;
+    };
+/**
  * A frozen original request, without any session token or execution authority.
  */
 export type DraftPending =
@@ -26,6 +40,11 @@ export type DraftPending =
 
 export interface Requests {
   clear: DraftClearRequest;
+  conversationClear: ConversationDraftClearRequest;
+  conversationList: ConversationDraftListRequest;
+  conversationRead: ConversationDraftReadRequest;
+  conversationResolve: ConversationDraftResolveRequest;
+  conversationWrite: ConversationDraftWriteRequest;
   list: DraftListRequest;
   read: DraftReadRequest;
   readMany: DraftReadManyRequest;
@@ -43,6 +62,64 @@ export interface DraftKey {
   locale: string;
   projectId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface ConversationDraftClearRequest {
+  clear: ConversationDraftClear;
+  sessionToken: string;
+}
+export interface ConversationDraftClear {
+  expectedRevision: Revision;
+  key: ConversationDraftKey;
+}
+export interface ConversationDraftKey {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+}
+export interface ConversationDraftListRequest {
+  after?: ConversationDraftKey | null;
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ConversationDraftReadRequest {
+  key: ConversationDraftKey;
+  sessionToken: string;
+}
+export interface ConversationDraftResolveRequest {
+  resolve: ConversationDraftResolve;
+  sessionToken: string;
+}
+export interface ConversationDraftResolve {
+  pending: ConversationDraftPending;
+  write: ConversationDraftWrite;
+}
+export interface CreateProjectConversation {
+  actionId: ExecutionId;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  title: string | null;
+}
+export interface AppendProjectConversationMessage {
+  actionId: ExecutionId;
+  body: string;
+  conversationId: ExecutionId;
+  messageId: ExecutionId;
+  projectId: ExecutionId;
+}
+export interface ConversationDraftWrite {
+  expectedRevision: Revision;
+  key: ConversationDraftKey;
+  value: ConversationDraftValue;
+  writerId: ExecutionId;
+}
+export interface ConversationDraftValue {
+  editSeq: Revision;
+  pending?: ConversationDraftPending | null;
+  text: string;
+}
+export interface ConversationDraftWriteRequest {
+  sessionToken: string;
+  write: ConversationDraftWrite;
 }
 export interface DraftListRequest {
   after?: DraftKey | null;

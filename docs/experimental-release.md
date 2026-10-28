@@ -14,7 +14,7 @@ CARGO_NET_OFFLINE=true pnpm --dir apps/desktop tauri build --config src-tauri/ta
 
 ## Project compatibility and model connections
 
-- **Database schema**: Test with synthetic projects first. This source build uses schema `64` and upgrades valid schema `61`, `62`, or `63` projects in one transaction, preserving their content, conversations, proposal revisions, plans, team discussions, and receipts. An interrupted upgrade leaves the complete original database or complete schema 64; earlier clients cannot open schema 64. Older unsupported formats are refused without reset. Keep those older directories intact and reimport original source files into a new project. See [supported integrations](integrations.md) and the [changelog](../CHANGELOG.md) for workflow limits.
+- **Database schema**: Test with synthetic projects first. This source build uses schema `65` and upgrades valid schema `61`, `62`, `63`, or `64` projects in one transaction, preserving their content, conversations, planning history, proposal revisions, plans, team discussions, and receipts. An interrupted upgrade leaves the complete original database or complete schema 65; earlier clients cannot open schema 65. Older unsupported formats are refused without reset. Keep those older directories intact and reimport original source files into a new project. See [supported integrations](integrations.md) and the [changelog](../CHANGELOG.md) for workflow limits.
 - **Model connections**: This snapshot includes the API-key connection workflow (the experimental ChatGPT account sign-in flow is omitted). No model requests are made during installation or startup, and every provider dispatch requires explicit scope, data-sharing, and budget consent.
 
 ## Signing and current limitations

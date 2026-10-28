@@ -390,6 +390,7 @@ fn enqueue_input(
     super::mcp::record_input(tx, input)?;
     super::content::record_input(tx, input)?;
     super::translation::record_input(tx, input)?;
+    super::application::conversations::planning::history::record_input(tx, input)?;
     Ok(true)
 }
 

@@ -720,6 +720,16 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     assert_eq!(prepared["preview"]["version"], 2);
     assert!(runtime_absent(&app, &project));
     assert_eq!(provider.count(), 0);
+    let discover = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"after":"0","limit":50}),
+    );
+    let before_discovery = planning_clock(&app, &project);
+    let empty = call(&window, "read_conversation_planning_attempts", discover.clone());
+    assert_eq!(empty["rows"], json!([]));
+    assert_eq!(empty["nextAfter"], Value::Null);
+    assert_eq!(planning_clock(&app, &project), before_discovery);
+    assert!(runtime_absent(&app, &project));
     let action = identity();
     let task = identity();
     let expires = std::time::SystemTime::now()
@@ -778,6 +788,11 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     assert_eq!(view["budget"]["limit"], 1);
     assert_eq!(view["budget"]["dispatched"], 1);
     assert_eq!(provider.count(), 1);
+    let discovered = call(&window, "read_conversation_planning_attempts", discover.clone());
+    assert_eq!(discovered["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(discovered["rows"][0]["attemptId"], action);
+    assert_eq!(discovered["rows"][0]["taskId"], task);
+    assert_eq!(discovered["nextAfter"], Value::Null);
     {
         let requests = provider.requests.lock().unwrap();
         assert_eq!(
@@ -809,6 +824,18 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
         json!({"sessionToken":project["sessionToken"]}),
     );
     let reopened = call(&window, "open_project", json!({"locator":destination}));
+    let before_discovery = planning_clock(&app, &reopened);
+    assert_eq!(
+        call(&window, "read_conversation_planning_attempts", in_session(
+            &reopened,
+            json!({"conversationId":thread["conversationId"],"after":"0","limit":50}),
+        )),
+        discovered,
+    );
+    assert_eq!(planning_clock(&app, &reopened), before_discovery);
+    assert!(runtime_absent(&app, &reopened));
+    assert_eq!(provider.count(), 1);
+    assert_eq!(reject(&window, "read_conversation_planning_attempts", discover)["code"], "session-invalid");
     let history = call(
         &window,
         "read_conversation_planning",

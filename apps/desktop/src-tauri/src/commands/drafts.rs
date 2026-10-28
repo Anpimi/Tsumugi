@@ -1,9 +1,11 @@
 //! Application-local input recovery, separate from project business mutations.
 mod store;
 mod types;
+mod conversation;
 
 pub(super) use store::DraftStore;
 pub use types::*;
+pub use conversation::*;
 
 use super::{AppState, CommandError, CommandErrorCode, CommandStage, ProjectStore};
 use serde::{Deserialize, Serialize};

@@ -1,7 +1,9 @@
 import { strategyEn } from "./strategy";
 import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
+import { conversationEn } from "./conversation";
 export const enUS = {
+conversation: conversationEn,
 workbenchV2: workbenchEn,
 workbenchPreview: workbenchPreviewEn,
 semanticReview: {

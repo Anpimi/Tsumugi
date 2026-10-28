@@ -8,7 +8,7 @@ Core and desktop IPC can keep project threads and ordered human messages before 
 
 Creating a thread or appending a message uses an action identity bound to the full request. Repeating that request returns its original receipt; changing its contents under the same identity is rejected. The corresponding recovery read returns `recorded`, `pending`, or `mismatch`. `pending` means the result has not been confirmed. Its replay field says whether the same request may be submitted explicitly; it does not schedule a retry or assert that the request never ran. Recovery keeps the original business request across project reopening while using the new session token.
 
-These conversation records store human input. Planning calls use the separate permission and result checks below. Work-plan execution requires its own authorization; the project assistant interface is not yet available.
+These conversation records store human input. Planning calls use the separate permission and result checks below. The opt-in desktop workspace has a conversation panel for creating and selecting threads, paging messages, saving messages, and recovering local input. It can read recorded planning replies and proposals for the selected thread. Saving a message does not call a model. Controls to send a planning request, revise a proposal, and confirm execution are not yet available. Work-plan execution requires its own authorization.
 
 ## Preparing planning materials
 
@@ -22,7 +22,7 @@ A planning start confirms the original preview digest, exact sharing scope, one 
 
 The existing runtime, Provider service and request budget enforce this permission before dispatch and physical requests. Cancellation, uncertain writes, expiry, stopping, runtime replacement or reopening end its authority. Receipt reads and recovery check the original request; they never renew permission or replay it. A pending recovery remains unresolved, and ordinary task retry, query, resume and adoption actions are unavailable for this operation. Usage and unresolved requests stay in the original ledger.
 
-Planning results are typed replies or plan suggestions. Suggestions must stay within the captured entries and language and preserve human protection. Invalid scope, unsupported effects, extra fields and malformed output are refused without automatic repair or a second model request. The original fixed input also retains local provenance; the Provider receives only the disclosed system and input text. History remains readable after the permission ends.
+Planning results are typed replies or plan suggestions. Suggestions must stay within the captured entries and language and preserve human protection. Invalid scope, unsupported effects, extra fields and malformed output are refused without automatic repair or a second model request. The original fixed input also retains local provenance; the Provider receives only the disclosed system and input text. History remains readable after the permission ends. Planning attempts are listed by thread in bounded sequence pages, including queued and failed attempts; details come from the original ledger. Reading history does not create a runtime, renew permission, or replay a request.
 
 ## Conversation proposal revisions
 
@@ -32,7 +32,7 @@ Creating and revising a proposal records the original request and receipt in the
 
 ## Confirming a proposal as a work plan
 
-Core and desktop IPC provide a path to prepare a `WorkPlan` from an exact proposal revision and explicitly authorize it. The frontend command adapter exposes this path, but there is no assistant or proposal interface yet. Preparing or saving a proposal does not authorize or start work. Planning permission is separate from execution permission.
+Core and desktop IPC provide a path to prepare a `WorkPlan` from an exact proposal revision and explicitly authorize it. The frontend command adapter exposes this path, but the conversation panel does not yet provide proposal editing or work-plan confirmation controls. Preparing or saving a proposal does not authorize or start work. Planning permission is separate from execution permission.
 
 The prepared plan retains its proposal origin; the generic manual authorization path cannot bypass the proposal confirmation. Confirmation requires the full work-plan preview and records bounded evidence of the complete human confirmation. The original work-plan authorization, the exact revision link, and a small receipt are saved in the same transaction. The existing plan and action records remain the authority for execution permission; the link does not create a separate permission or budget. Authorization rejects an older revision, stale materials, or unresolved questions.
 

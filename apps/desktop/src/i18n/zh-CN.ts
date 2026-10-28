@@ -1,9 +1,11 @@
 import type { UiMessages } from "./types";
 import { workbenchPreviewZh } from "./workbenchPreview";
 import { workbenchZh } from "./workbench";
+import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+conversation: conversationZh,
 workbenchV2: workbenchZh,
 workbenchPreview: workbenchPreviewZh,
 semanticReview: {

@@ -43,6 +43,7 @@ import { copyWorkspaceSelection } from "./workspace/workspaceSelection";
 import type { ComparisonSession } from "./features/comparison/ComparisonSession";
 import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
+import type { ConversationSession } from "./features/assistant/ConversationSession";
 import { TokenizedText } from "../design-system/TokenizedText";
 import { installWorkspaceMenu } from "./nativeMenu";
 import { FeatureBoundary } from "./FeatureBoundary";
@@ -65,6 +66,7 @@ const CandidateBatchRecovery = lazy(() => import("./features/candidates/Candidat
 const FocusedCandidate = lazy(() => import("./features/entries/FocusedCandidate"));
 const ComparisonOwnerHost = lazy(() => import("./features/comparison/ComparisonOwnerHost"));
 const ComparisonRecovery = lazy(() => import("./features/comparison/ComparisonRecovery"));
+const ConversationPanel = lazy(() => import("./features/assistant/ConversationPanel"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
@@ -76,7 +78,8 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   reviewOwner: ReviewOwner | null; requestReview: () => void; revealReview: () => void; reviewRecovery: boolean; hideReviewRecovery: () => void;
   reviewBatchOpen: boolean; setReviewBatchOpen: (open: boolean) => void; reviewBatchSelection: WorkspaceSelection | null; prepareReviewBatch: (selection: WorkspaceSelection) => void;
   candidateBatchOpen: boolean; setCandidateBatchOpen: (open: boolean) => void;
-  comparisonOwner: ComparisonSession | null; requestComparisons: () => void };
+  comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
+  conversations: ConversationSession | null; conversationLoadFailed: boolean; retryConversations: () => void; conversationReveal: number };
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
@@ -127,7 +130,28 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const requestComparisons = useCallback(() => { comparisonStatus.current.requested = true; setComparisonsRequested(true); }, []);
   const publishComparisonOwner = useCallback((owner: ComparisonSession | null) => { comparisonStatus.current.owner = owner; setComparisonOwner(owner); }, []);
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
+  const [conversations, setConversations] = useState<ConversationSession | null>(null), [conversationLoadFailed, setConversationLoadFailed] = useState(false);
+  const [conversationAttempt, setConversationAttempt] = useState(0), [conversationReveal, setConversationReveal] = useState(0);
+  const conversationParticipant = useRef<LifecycleParticipant | null>(null), conversationOwner = useRef<ConversationSession | null>(null);
   readonlyRef.current = readOnly;
+  useLayoutEffect(() => lifecycle.register({ id: "conversation-input", area: "tasks", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => intent.kind === "restore" ? { status: "ready", revision: "initial-presentation" }
+      : conversationParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "conversation-owner-loading" },
+    prepareLeave: (intent, proof, current) => conversationParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: () => { setConversationReveal(value => value + 1); },
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId]);
+  useEffect(() => {
+    let alive = true, owner: ConversationSession | undefined;
+    setConversations(null); setConversationLoadFailed(false);
+    void import("./features/assistant/ConversationSession").then(({ ConversationSession: Owner }) => {
+      if (!alive) return;
+      owner = new Owner(executionContext(session.project), () => session.reads.invalidate(["project"]), () => setConversationReveal(value => value + 1));
+      conversationOwner.current = owner; conversationParticipant.current = owner.lifecycleParticipant(); setConversations(owner);
+      if (readonlyRef.current || session.reads.retired) owner.retire(); else void owner.initialize();
+    }).catch(() => { if (alive) setConversationLoadFailed(true); });
+    return () => { alive = false; if (conversationOwner.current === owner) { conversationOwner.current = null; conversationParticipant.current = null; } owner?.retire(); };
+  }, [session.project.sessionToken, session.project.metadata.projectId, session.reads, conversationAttempt]);
+  useEffect(() => { if (readOnly || session.reads.retired) conversations?.retire(); }, [conversations, readOnly, session.reads]);
   // A stable registration protects the gap before the heavy draft module loads.
   // Its restore projection stays stable while the real participant is attached.
   useLayoutEffect(() => lifecycle.register({ id: "translation-drafts", area: "translation", scope: { kind: "project", ...executionContext(session.project) },
@@ -197,7 +221,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
-    reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch }}>
+    reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
+    conversations, conversationLoadFailed, retryConversations: () => setConversationAttempt(value => value + 1), conversationReveal }}>
     {(importRequested || reviewRequested) && drafts ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
       <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
@@ -224,7 +249,8 @@ function WorkspaceShell() {
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
-    reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch } = useWorkspaceContext();
+    reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
+    conversations, conversationLoadFailed, retryConversations, conversationReveal } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
@@ -305,6 +331,15 @@ function WorkspaceShell() {
     if (narrow && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
     else requestAnimationFrame(() => dock.current?.focus());
   }
+  const revealedConversation = useRef(conversationReveal);
+  useEffect(() => {
+    if (revealedConversation.current === conversationReveal) return;
+    revealedConversation.current = conversationReveal;
+    const active = store.getState().activeViewId;
+    if (active) store.getState().patch(active, { dock: "agent" });
+    if (narrow && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
+    else requestAnimationFrame(() => dock.current?.focus());
+  }, [conversationReveal, store, narrow, gate]);
   const ids = state.viewOrder.join("|");
   useEffect(() => {
     let alive = true;
@@ -511,7 +546,10 @@ function WorkspaceShell() {
   function panel() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
-      <TabsContent value="agent" className={styles.dockContent}><EmptyState icon={<Sparkles />} title={message("agent")} description={message("agentHelp")} /></TabsContent>
+      <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={<ErrorState title={t("conversation.unavailable")}/>}><Suspense fallback={<LoadingState label={t("conversation.loading")}/>}>
+        {conversations ? <ConversationPanel owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}/>
+          : conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>}
+      </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}><EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}

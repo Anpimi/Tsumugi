@@ -23,6 +23,20 @@ export type DraftPending =
       request: SaveTranslationRevision;
       submittedSeq: Revision;
     };
+/**
+ * Frozen business requests are recovery input, never restored authority.
+ */
+export type ConversationDraftPending =
+  | {
+      kind: "create";
+      request: CreateProjectConversation;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "append";
+      request: AppendProjectConversationMessage;
+      submittedSeq: Revision;
+    };
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -149,6 +163,11 @@ export type DraftUnavailableReason = "source-missing" | "locale-removed";
 
 export interface Responses {
   cleared: DraftHead;
+  conversationCleared: ConversationDraftHead;
+  conversationPage: ConversationDraftPage;
+  conversationRead: ConversationDraftHead;
+  conversationResolved: ConversationDraftHead;
+  conversationWritten: ConversationDraftHead;
   error: CommandError;
   page: DraftPage;
   read: DraftReadView;
@@ -215,6 +234,44 @@ export interface SelectTranslationRevision {
 export interface MergeBasis {
   contributors: ExecutionId[];
   expectedBasis: string;
+}
+export interface ConversationDraftHead {
+  key: ConversationDraftKey;
+  revision: Revision;
+  value: ConversationDraftValue | null;
+  writerId: ExecutionId | null;
+}
+export interface ConversationDraftKey {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+}
+export interface ConversationDraftValue {
+  editSeq: Revision;
+  pending: ConversationDraftPending | null;
+  text: string;
+}
+export interface CreateProjectConversation {
+  actionId: ExecutionId;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  title: string | null;
+}
+export interface AppendProjectConversationMessage {
+  actionId: ExecutionId;
+  body: string;
+  conversationId: ExecutionId;
+  messageId: ExecutionId;
+  projectId: ExecutionId;
+}
+export interface ConversationDraftPage {
+  items: ConversationDraftSummary[];
+  next: ConversationDraftKey | null;
+}
+export interface ConversationDraftSummary {
+  editSeq: Revision;
+  hasPending: boolean;
+  key: ConversationDraftKey;
+  revision: Revision;
 }
 export interface CommandError {
   code: CommandErrorCode;

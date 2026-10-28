@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tsumugi_core::{
     MergeBasis, SaveTranslationRevision, SelectTranslationRevision,
+    application::{AppendProjectConversationMessage, CreateProjectConversation},
     execution::{ExecutionId, Revision},
 };
 
@@ -122,4 +123,95 @@ pub struct DraftPage {
     /// Cursor over scanned heads, including tombstones; it need not match the
     /// last active item. An empty page with a cursor still has more to scan.
     pub next: Option<DraftKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftKey {
+    pub project_id: ExecutionId,
+    pub conversation_id: ExecutionId,
+}
+
+/// Frozen business requests are recovery input, never restored authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConversationDraftPending {
+    Create {
+        request: CreateProjectConversation,
+        submitted_seq: Revision,
+    },
+    Append {
+        request: AppendProjectConversationMessage,
+        submitted_seq: Revision,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftValue {
+    pub text: String,
+    pub edit_seq: Revision,
+    pub pending: Option<ConversationDraftPending>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftHead {
+    pub key: ConversationDraftKey,
+    pub revision: Revision,
+    pub writer_id: Option<ExecutionId>,
+    pub value: Option<ConversationDraftValue>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftWrite {
+    pub key: ConversationDraftKey,
+    pub expected_revision: Revision,
+    pub writer_id: ExecutionId,
+    pub value: ConversationDraftValue,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftResolve {
+    pub write: ConversationDraftWrite,
+    pub pending: ConversationDraftPending,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftClear {
+    pub key: ConversationDraftKey,
+    pub expected_revision: Revision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftSummary {
+    pub key: ConversationDraftKey,
+    pub revision: Revision,
+    pub edit_seq: Revision,
+    pub has_pending: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftPage {
+    pub items: Vec<ConversationDraftSummary>,
+    pub next: Option<ConversationDraftKey>,
 }

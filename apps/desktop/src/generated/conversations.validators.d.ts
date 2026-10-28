@@ -7,6 +7,7 @@ export declare function validateRequestCaptureProposal(value: unknown): value is
 export declare function validateRequestCreate(value: unknown): value is Requests["create"];
 export declare function validateRequestList(value: unknown): value is Requests["list"];
 export declare function validateRequestMessages(value: unknown): value is Requests["messages"];
+export declare function validateRequestPlanningAttempts(value: unknown): value is Requests["planningAttempts"];
 export declare function validateRequestPreparePlanning(value: unknown): value is Requests["preparePlanning"];
 export declare function validateRequestPrepareProposalWorkPlan(value: unknown): value is Requests["prepareProposalWorkPlan"];
 export declare function validateRequestProposalRevisions(value: unknown): value is Requests["proposalRevisions"];
@@ -33,6 +34,7 @@ export declare function validateResponseMessagePage(value: unknown): value is Re
 export declare function validateResponseMessageRecovery(value: unknown): value is Responses["messageRecovery"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponsePlanning(value: unknown): value is Responses["planning"];
+export declare function validateResponsePlanningAttemptPage(value: unknown): value is Responses["planningAttemptPage"];
 export declare function validateResponsePlanningReceipt(value: unknown): value is Responses["planningReceipt"];
 export declare function validateResponsePlanningRecovery(value: unknown): value is Responses["planningRecovery"];
 export declare function validateResponsePlanningRun(value: unknown): value is Responses["planningRun"];

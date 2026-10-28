@@ -1464,6 +1464,37 @@
         ],
         "type": "object"
       },
+      "ReadConversationPlanningAttemptsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/Revision"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "conversationId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
       "ReadConversationPlanningRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2387,6 +2418,9 @@
       "messages": {
         "$ref": "#/definitions/ReadProjectConversationMessagesRequest"
       },
+      "planningAttempts": {
+        "$ref": "#/definitions/ReadConversationPlanningAttemptsRequest"
+      },
       "preparePlanning": {
         "$ref": "#/definitions/PrepareConversationPlanningRequest"
       },
@@ -2455,6 +2489,7 @@
       "startPlanning",
       "recoverPlanning",
       "readPlanning",
+      "planningAttempts",
       "captureProposal",
       "reviseProposal",
       "readProposal",
@@ -4208,6 +4243,61 @@
           "human"
         ],
         "type": "string"
+      },
+      "ConversationPlanningAttempt": {
+        "additionalProperties": false,
+        "description": "A small locator for an original submitted attempt, including attempts whose\noutput was never captured as a proposal. Details remain in the execution ledger.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sequence",
+          "taskId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "ConversationPlanningAttemptPage": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "nextAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ConversationPlanningAttempt"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId",
+          "rows",
+          "nextAfter"
+        ],
+        "type": "object"
       },
       "ConversationPlanningBrief": {
         "additionalProperties": false,
@@ -8419,6 +8509,9 @@
       "planning": {
         "$ref": "#/definitions/PreparedConversationPlanning"
       },
+      "planningAttemptPage": {
+        "$ref": "#/definitions/ConversationPlanningAttemptPage"
+      },
       "planningReceipt": {
         "$ref": "#/definitions/ConversationPlanningReceipt"
       },
@@ -8474,6 +8567,7 @@
       "planningReceipt",
       "planningRecovery",
       "planningRun",
+      "planningAttemptPage",
       "proposal",
       "proposalPage",
       "proposalCaptureRecovery",

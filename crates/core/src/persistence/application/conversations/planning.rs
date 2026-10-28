@@ -5,6 +5,7 @@ use crate::{
     application::WorkProtection,
 };
 use std::collections::BTreeSet;
+pub(in crate::persistence) mod history;
 use std::{
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},

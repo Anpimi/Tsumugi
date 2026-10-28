@@ -2,6 +2,303 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AppendProjectConversationMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "body": {
+            "type": "string"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "conversationId",
+          "messageId",
+          "body"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftClear": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "key": {
+            "$ref": "#/definitions/ConversationDraftKey"
+          }
+        },
+        "required": [
+          "key",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftClearRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "clear": {
+            "$ref": "#/definitions/ConversationDraftClear"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "clear"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftKey": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationDraftKey"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftPending": {
+        "description": "Frozen business requests are recovery input, never restored authority.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "create",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/CreateProjectConversation"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "append",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/AppendProjectConversationMessage"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationDraftReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/definitions/ConversationDraftKey"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "key"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftResolve": {
+        "additionalProperties": false,
+        "properties": {
+          "pending": {
+            "$ref": "#/definitions/ConversationDraftPending"
+          },
+          "write": {
+            "$ref": "#/definitions/ConversationDraftWrite"
+          }
+        },
+        "required": [
+          "write",
+          "pending"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "resolve": {
+            "$ref": "#/definitions/ConversationDraftResolve"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "resolve"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftValue": {
+        "additionalProperties": false,
+        "properties": {
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationDraftPending"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "editSeq"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "key": {
+            "$ref": "#/definitions/ConversationDraftKey"
+          },
+          "value": {
+            "$ref": "#/definitions/ConversationDraftValue"
+          },
+          "writerId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "key",
+          "expectedRevision",
+          "writerId",
+          "value"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionToken": {
+            "type": "string"
+          },
+          "write": {
+            "$ref": "#/definitions/ConversationDraftWrite"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "write"
+        ],
+        "type": "object"
+      },
+      "CreateProjectConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "conversationId",
+          "title"
+        ],
+        "type": "object"
+      },
       "DraftBasis": {
         "additionalProperties": false,
         "description": "The original editing basis, preserved even when the project later changes.",
@@ -466,6 +763,21 @@
       "clear": {
         "$ref": "#/definitions/DraftClearRequest"
       },
+      "conversationClear": {
+        "$ref": "#/definitions/ConversationDraftClearRequest"
+      },
+      "conversationList": {
+        "$ref": "#/definitions/ConversationDraftListRequest"
+      },
+      "conversationRead": {
+        "$ref": "#/definitions/ConversationDraftReadRequest"
+      },
+      "conversationResolve": {
+        "$ref": "#/definitions/ConversationDraftResolveRequest"
+      },
+      "conversationWrite": {
+        "$ref": "#/definitions/ConversationDraftWriteRequest"
+      },
       "list": {
         "$ref": "#/definitions/DraftListRequest"
       },
@@ -484,7 +796,12 @@
       "readMany",
       "write",
       "clear",
-      "list"
+      "list",
+      "conversationRead",
+      "conversationWrite",
+      "conversationResolve",
+      "conversationClear",
+      "conversationList"
     ],
     "title": "Requests",
     "type": "object",
@@ -494,6 +811,34 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AppendProjectConversationMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "body": {
+            "type": "string"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "conversationId",
+          "messageId",
+          "body"
+        ],
+        "type": "object"
+      },
       "CommandError": {
         "properties": {
           "code": {
@@ -1008,6 +1353,211 @@
             "type": "object"
           }
         ]
+      },
+      "ConversationDraftHead": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/definitions/ConversationDraftKey"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationDraftValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "writerId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "revision",
+          "writerId",
+          "value"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftKey": {
+        "additionalProperties": false,
+        "properties": {
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "conversationId"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/definitions/ConversationDraftSummary"
+            },
+            "type": "array"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationDraftKey"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftPending": {
+        "description": "Frozen business requests are recovery input, never restored authority.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "create",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/CreateProjectConversation"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "append",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/AppendProjectConversationMessage"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationDraftSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "hasPending": {
+            "type": "boolean"
+          },
+          "key": {
+            "$ref": "#/definitions/ConversationDraftKey"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "key",
+          "revision",
+          "editSeq",
+          "hasPending"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftValue": {
+        "additionalProperties": false,
+        "properties": {
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationDraftPending"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "editSeq",
+          "pending"
+        ],
+        "type": "object"
+      },
+      "CreateProjectConversation": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "conversationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "conversationId",
+          "title"
+        ],
+        "type": "object"
       },
       "DraftBasis": {
         "additionalProperties": false,
@@ -1541,6 +2091,21 @@
       "cleared": {
         "$ref": "#/definitions/DraftHead"
       },
+      "conversationCleared": {
+        "$ref": "#/definitions/ConversationDraftHead"
+      },
+      "conversationPage": {
+        "$ref": "#/definitions/ConversationDraftPage"
+      },
+      "conversationRead": {
+        "$ref": "#/definitions/ConversationDraftHead"
+      },
+      "conversationResolved": {
+        "$ref": "#/definitions/ConversationDraftHead"
+      },
+      "conversationWritten": {
+        "$ref": "#/definitions/ConversationDraftHead"
+      },
       "error": {
         "$ref": "#/definitions/CommandError"
       },
@@ -1563,6 +2128,11 @@
       "written",
       "cleared",
       "page",
+      "conversationRead",
+      "conversationWritten",
+      "conversationResolved",
+      "conversationCleared",
+      "conversationPage",
       "error"
     ],
     "title": "Responses",

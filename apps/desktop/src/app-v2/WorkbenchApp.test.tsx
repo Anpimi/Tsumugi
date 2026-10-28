@@ -97,12 +97,17 @@ it("shows project observation fallback in the workspace and refreshes through it
   fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
   await screen.findByText(i18n.t("execution.updatesUsingPolling"));
-  const refresh = screen.getByRole("button", { name: i18n.t("execution.refresh") });
-  await waitFor(() => expect(refresh).toBeEnabled());
-  const search = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
-  fireEvent.compositionStart(search); expect(refresh).toBeDisabled();
-  fireEvent.compositionEnd(search); await waitFor(() => expect(refresh).toBeEnabled());
-  fireEvent.click(refresh);
+  // The observation banner is available before lazy workspace modules finish.
+  const search = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") }, { timeout: 5000 });
+  const refresh = () => {
+    const notice = screen.getByText(i18n.t("execution.updatesUsingPolling")).closest<HTMLElement>("[role=status]");
+    if (!notice) throw new Error("Project observation notice is missing");
+    return within(notice).getByRole("button", { name: i18n.t("execution.refresh") });
+  };
+  await waitFor(() => expect(refresh()).toBeEnabled());
+  fireEvent.compositionStart(search); expect(refresh()).toBeDisabled();
+  fireEvent.compositionEnd(search); await waitFor(() => expect(refresh()).toBeEnabled());
+  fireEvent.click(refresh());
   await waitFor(() => expect(synchronize).toHaveBeenCalledExactlyOnceWith(true));
   expect(read).toHaveBeenCalledOnce();
   expect(write).not.toHaveBeenCalled();

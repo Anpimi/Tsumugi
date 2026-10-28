@@ -275,3 +275,24 @@ pub struct ConversationPlanningRecovery {
     pub request: ReadConversationPlanningAction,
     pub outcome: super::ConversationActionOutcome<ConversationPlanningReceipt>,
 }
+
+/// A small locator for an original submitted attempt, including attempts whose
+/// output was never captured as a proposal. Details remain in the execution ledger.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationPlanningAttempt {
+    pub sequence: crate::execution::Revision,
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationPlanningAttemptPage {
+    pub project_id: ExecutionId,
+    pub conversation_id: ExecutionId,
+    pub rows: Vec<ConversationPlanningAttempt>,
+    pub next_after: Option<crate::execution::Revision>,
+}

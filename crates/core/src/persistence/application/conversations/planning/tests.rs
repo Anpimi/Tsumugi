@@ -6,6 +6,7 @@ use crate::{
     application::*,
 };
 use std::{fs, sync::atomic::Ordering};
+mod history;
 
 struct AuthorityOnlyRunner;
 impl crate::execution::Runner for AuthorityOnlyRunner {

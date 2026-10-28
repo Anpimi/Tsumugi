@@ -43,6 +43,7 @@ struct ConversationRequests {
     start_planning: execution::conversations::planning::StartConversationPlanningRequest,
     recover_planning: execution::conversations::planning::RecoverConversationPlanningRequest,
     read_planning: execution::conversations::planning::ReadConversationPlanningRequest,
+    planning_attempts: execution::conversations::planning::ReadConversationPlanningAttemptsRequest,
     capture_proposal: execution::conversations::proposals::CaptureConversationProposalRequest,
     revise_proposal: execution::conversations::proposals::ReviseConversationProposalRequest,
     read_proposal: execution::conversations::proposals::ReadConversationProposalRequest,
@@ -70,6 +71,7 @@ struct ConversationResponses {
     planning_receipt: tsumugi_core::application::ConversationPlanningReceipt,
     planning_recovery: tsumugi_core::application::ConversationPlanningRecovery,
     planning_run: Option<execution::conversations::planning::ConversationPlanningView>,
+    planning_attempt_page: tsumugi_core::application::ConversationPlanningAttemptPage,
     proposal: tsumugi_core::application::ConversationProposalRevision,
     proposal_page: tsumugi_core::application::ConversationProposalPage,
     proposal_capture_recovery: tsumugi_core::application::ConversationProposalCaptureRecovery,
@@ -91,6 +93,11 @@ struct DraftRequests {
     write: drafts::DraftWriteRequest,
     clear: drafts::DraftClearRequest,
     list: drafts::DraftListRequest,
+    conversation_read: drafts::ConversationDraftReadRequest,
+    conversation_write: drafts::ConversationDraftWriteRequest,
+    conversation_resolve: drafts::ConversationDraftResolveRequest,
+    conversation_clear: drafts::ConversationDraftClearRequest,
+    conversation_list: drafts::ConversationDraftListRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -101,6 +108,11 @@ struct DraftResponses {
     written: drafts::DraftHead,
     cleared: drafts::DraftHead,
     page: drafts::DraftPage,
+    conversation_read: drafts::ConversationDraftHead,
+    conversation_written: drafts::ConversationDraftHead,
+    conversation_resolved: drafts::ConversationDraftHead,
+    conversation_cleared: drafts::ConversationDraftHead,
+    conversation_page: drafts::ConversationDraftPage,
     error: CommandError,
 }
 #[derive(JsonSchema)]

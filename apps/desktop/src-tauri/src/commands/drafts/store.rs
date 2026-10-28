@@ -2,6 +2,7 @@
 //! authorize execution, or turn a recovered pending request into a new action.
 
 use super::types::*;
+mod conversations;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use std::{
@@ -23,7 +24,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 2;
+const FORMAT: i64 = 3;
+const MERGE_FORMAT: i64 = 2;
 const LEGACY_FORMAT: i64 = 1;
 const HEAD_SQL: &str = "CREATE TABLE draft_heads (project_id TEXT NOT NULL, locale TEXT NOT NULL, unit_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, source_revision_id TEXT, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,locale,unit_id), CHECK((edit_seq IS NULL AND source_revision_id IS NULL AND has_pending=0) OR (edit_seq>=0 AND source_revision_id IS NOT NULL)))";
 
@@ -294,6 +296,17 @@ impl DraftStore {
         }
         let payload = encode(&after)?;
         check_quota(0, 0, 0, 0, 0, payload.len(), true, self.limits)?;
+        self.initialize_or_retry(
+            |tx| { persist_head(tx, &after, &payload)?; Ok(after.clone()) },
+            |connection| mutate_existing(connection, key, &apply, self.limits),
+        )
+    }
+
+    fn initialize_or_retry<T>(
+        &self,
+        initialize: impl Fn(&Connection) -> Result<T>,
+        retry: impl Fn(&mut Connection) -> Result<T>,
+    ) -> Result<T> {
         let mut builder = fs::DirBuilder::new();
         builder.recursive(true);
         #[cfg(unix)]
@@ -321,11 +334,12 @@ impl DraftStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
         tx.execute_batch(HEAD_SQL).map_err(sql)?;
+        tx.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
         tx.pragma_update(None, "application_id", APPLICATION_ID)
             .map_err(sql)?;
         tx.pragma_update(None, "user_version", FORMAT)
             .map_err(sql)?;
-        persist_head(&tx, &after, &payload)?;
+        let result = initialize(&tx)?;
         test_hook("initialize-before-commit", Some(&tx));
         tx.commit()
             .map_err(|_| fail(ErrorCode::OutcomeUnknown, "drafts-commit"))?;
@@ -342,14 +356,14 @@ impl DraftStore {
                     .map_err(|_| fail(ErrorCode::OutcomeUnknown, "drafts-publish"))?;
                 sync_directory(&directory)?;
                 test_hook("initialize-after-publish", None);
-                Ok(after)
+                Ok(result)
             }
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 drop(error);
                 let mut connection = self
                     .existing(true)?
                     .ok_or_else(|| fail(ErrorCode::OutcomeUnknown, "drafts-publish"))?;
-                mutate_existing(&mut connection, key, &apply, self.limits)
+                retry(&mut connection)
             }
             Err(_) => Err(fail(ErrorCode::OutcomeUnknown, "drafts-publish")),
         }
@@ -444,7 +458,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -463,10 +477,43 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
         .map_err(sql)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(sql)?;
-    if schema != vec![("draft_heads".into(), "table".into(), HEAD_SQL.into())] {
+    let mut expected: Vec<(String,String,String)> = vec![("draft_heads".into(), "table".into(), HEAD_SQL.into())];
+    if format == FORMAT {
+        expected.push(("conversation_draft_heads".into(), "table".into(), conversations::HEAD_SQL.into()));
+        expected.sort();
+    }
+    if schema != expected {
         return Err(fail(ErrorCode::CorruptLedger, "drafts-schema"));
     }
     Ok(format)
+}
+
+/// Validate the supported old records before adding the new domain. Reads never
+/// call this path; DDL, the requested mutation and format advance share one tx.
+fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
+    if format == FORMAT { return Ok(()); }
+    let mut statement = connection.prepare("SELECT project_id,locale,unit_id,revision,edit_seq,source_revision_id,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM draft_heads ORDER BY project_id,locale,unit_id").map_err(sql)?;
+    let rows = statement.query_map([MAX_DRAFT_RECORD_BYTES as i64], |row| {
+        Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,stored_head_row(row,3)?))
+    }).map_err(sql)?;
+    for row in rows {
+        let (project,locale,unit,stored)=row.map_err(sql)?;
+        let key=DraftKey { project_id:stored_id(&project)?,unit_id:stored_id(&unit)?,locale };
+        decode_head(&key,stored,format)?;
+    }
+    drop(statement);
+    test_hook("conversation-upgrade-before-ddl", Some(connection));
+    connection.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
+    connection.pragma_update(None,"user_version",FORMAT).map_err(sql)?;
+    test_hook("conversation-upgrade-after-ddl", Some(connection));
+    Ok(())
+}
+
+fn journal_usage(connection:&Connection,format:i64,project:ExecutionId) -> Result<(i64,i64,i64,i64)> {
+    let records = if format == FORMAT {
+        "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads)"
+    } else { "draft_heads" };
+    connection.query_row(&format!("SELECT COALESCE(SUM(length(payload)),0),COUNT(*),COALESCE(SUM(CASE WHEN project_id=?1 THEN length(payload) ELSE 0 END),0),COALESCE(SUM(CASE WHEN project_id=?1 THEN 1 ELSE 0 END),0) FROM {records}"),[project.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(sql)
 }
 
 fn validate_key(key: &DraftKey) -> Result<()> {
@@ -756,16 +803,15 @@ fn mutate_existing(
     let before = read_head(&tx, key, format)?;
     let after = apply(&before)?;
     if before == after {
-        if format == LEGACY_FORMAT {
-            tx.pragma_update(None, "user_version", FORMAT)
-                .map_err(sql)?;
+        if format < FORMAT {
+            upgrade_schema(&tx, format)?;
             tx.commit()
                 .map_err(|_| fail(ErrorCode::OutcomeUnknown, "drafts-commit"))?;
         }
         return Ok(before);
     }
     let payload = encode(&after)?;
-    let (total_bytes, total_records, project_bytes, project_records): (i64,i64,i64,i64) = tx.query_row("SELECT COALESCE(SUM(length(payload)),0),COUNT(*),COALESCE(SUM(CASE WHEN project_id=?1 THEN length(payload) ELSE 0 END),0),COALESCE(SUM(CASE WHEN project_id=?1 THEN 1 ELSE 0 END),0) FROM draft_heads", [key.project_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(sql)?;
+    let (total_bytes, total_records, project_bytes, project_records) = journal_usage(&tx, format, key.project_id)?;
     let old_bytes = if before.revision.get() == 0 {
         0
     } else {
@@ -781,11 +827,8 @@ fn mutate_existing(
         before.revision.get() == 0,
         limits,
     )?;
+    upgrade_schema(&tx, format)?;
     persist_head(&tx, &after, &payload)?;
-    if format == LEGACY_FORMAT {
-        tx.pragma_update(None, "user_version", FORMAT)
-            .map_err(sql)?;
-    }
     test_hook("write-before-commit", Some(&tx));
     tx.commit()
         .map_err(|_| fail(ErrorCode::OutcomeUnknown, "drafts-commit"))?;

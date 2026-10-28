@@ -577,6 +577,7 @@ fn snapshot(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::
         .into_iter()
         .filter(|name| {
             name != "application_conversation_work_plans"
+                && name != "application_conversation_planning_attempts"
                 && !(version == 61 && name.starts_with("application_conversation"))
                 && !(version == 62 && name == "application_conversation_proposals")
         })
@@ -665,7 +666,7 @@ fn supported_migrations_preserve_plans_discussions_proposals_and_receipts_at_abo
             let path = store.directory().to_path_buf();
             store.close().unwrap();
             let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            c.execute_batch("DROP TABLE application_conversation_work_plans")
+            c.execute_batch("DROP TABLE application_conversation_planning_attempts; DROP TABLE application_conversation_work_plans")
                 .unwrap();
             if version < 63 {
                 c.execute_batch("DROP TABLE application_conversation_proposals")

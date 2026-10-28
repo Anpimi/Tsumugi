@@ -140,6 +140,43 @@ request!(
         attempt_id: ExecutionId
     }
 );
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReadConversationPlanningAttemptsRequest {
+        conversation_id: ExecutionId,
+        after: Revision,
+        #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 50)))]
+        limit: u32
+    }
+);
+
+#[tauri::command]
+pub async fn read_conversation_planning_attempts(
+    state: State<'_, AppState>,
+    request: ReadConversationPlanningAttemptsRequest,
+) -> Result<ConversationPlanningAttemptPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_conversation_planning_attempts",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active.store.conversation_planning_attempts(
+                    request.project_id,
+                    request.conversation_id,
+                    request.after,
+                    request.limit,
+                ).map_err(map_read)
+            },
+        )
+        .await
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

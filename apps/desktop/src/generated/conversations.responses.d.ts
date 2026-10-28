@@ -482,6 +482,7 @@ export interface Responses {
   messageRecovery: ProjectConversationMessageRecovery;
   page: ProjectConversationPage;
   planning: PreparedConversationPlanning;
+  planningAttemptPage: ConversationPlanningAttemptPage;
   planningReceipt: ConversationPlanningReceipt;
   planningRecovery: ConversationPlanningRecovery;
   planningRun: ConversationPlanningView | null;
@@ -659,6 +660,21 @@ export interface WorkProtection {
   protected: boolean;
   revision: Revision;
   unitId: ExecutionId;
+}
+export interface ConversationPlanningAttemptPage {
+  conversationId: ExecutionId;
+  nextAfter: Revision | null;
+  projectId: ExecutionId;
+  rows: ConversationPlanningAttempt[];
+}
+/**
+ * A small locator for an original submitted attempt, including attempts whose
+ * output was never captured as a proposal. Details remain in the execution ledger.
+ */
+export interface ConversationPlanningAttempt {
+  attemptId: ExecutionId;
+  sequence: Revision;
+  taskId: ExecutionId;
 }
 export interface ConversationPlanningReceipt {
   consent: ConversationPlanningConsent;

@@ -224,7 +224,7 @@ pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     }
     Ok(())
 }
-pub(super) fn recovery_policy(
+pub(in crate::persistence) fn recovery_policy(
     c: &Connection,
     attempt: ExecutionId,
 ) -> Result<RecoveryPolicy, ExecutionError> {

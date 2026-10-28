@@ -9,6 +9,7 @@ import type { Responses } from "./generated/conversations.responses";
 import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning, validateResponsePlanningReceipt, validateResponsePlanningRecovery, validateResponsePlanningRun } from "./generated/conversations.validators";
 import { validateResponseProposal, validateResponseProposalPage, validateResponseProposalCaptureRecovery, validateResponseProposalRevisionRecovery } from "./generated/conversations.validators";
 import { validateRequestAuthorizeProposalWorkPlan, validateResponseProposalWorkPlan, validateResponseProposalWorkPlanReceipt, validateResponseProposalWorkPlanRecovery, validateResponseProposalWorkPlanLink, validateResponseProposalWorkPlanPage } from "./generated/conversations.validators";
+import { validateResponsePlanningAttemptPage } from "./generated/conversations.validators";
 
 export type { ProjectConversation, ProjectConversationMessage, ProjectConversationPage, ProjectConversationMessagePage,
   ProjectConversationCreateRecovery, ProjectConversationMessageRecovery } from "./generated/conversations.responses";
@@ -21,6 +22,10 @@ export type ConversationPlanningReceipt = Responses["planningReceipt"];
 export type ConversationPlanningRun = NonNullable<Responses["planningRun"]>;
 export type ConversationProposalRevision = Responses["proposal"];
 const bytes = new TextEncoder();
+/** Match Core's Unicode whitespace rule without changing the user's text. */
+export function isConversationMessageText(value: string) {
+  return /\P{White_Space}/u.test(value) && bytes.encode(value).length <= 8192;
+}
 const bounded = (value: unknown) => bytes.encode(JSON.stringify(value)).length <= 256 * 1024;
 function conversation(value: Responses["conversation"], projectId: string, conversationId?: string) {
   return value.projectId === projectId && (conversationId === undefined || value.conversationId === conversationId)
@@ -28,7 +33,7 @@ function conversation(value: Responses["conversation"], projectId: string, conve
 }
 function message(value: Responses["message"], projectId: string, conversationId: string) {
   return value.projectId === projectId && value.conversationId === conversationId && BigInt(value.ordinal) > 0n
-    && value.author === "human" && value.body.length > 0 && bytes.encode(value.body).length <= 8192;
+    && value.author === "human" && isConversationMessageText(value.body);
 }
 function created(value: Responses["conversation"], request: Requests["create"]) {
   return conversation(value, request.projectId, request.conversationId) && value.title === request.title;
@@ -124,6 +129,12 @@ function proposalPlanAcknowledgement(value: Responses["proposalWorkPlanLink"], r
 
 /** Project conversations, explicit planning permission and original-action history. */
 export const conversationCommands = {
+  planningAttempts: (request: Requests["planningAttempts"]) => checkedInvoke("read_conversation_planning_attempts", request,
+    (value): value is Responses["planningAttemptPage"] => validateResponsePlanningAttemptPage(value) && value.projectId === request.projectId
+      && value.conversationId === request.conversationId && value.rows.length <= request.limit
+      && value.rows.every((row, index) => BigInt(row.sequence) > BigInt(index ? value.rows[index - 1].sequence : request.after))
+      && new Set(value.rows.map(row => row.attemptId)).size === value.rows.length
+      && (value.nextAfter === null || value.rows.length > 0 && value.nextAfter === value.rows.at(-1)?.sequence) && bounded(value)),
   prepareProposalWorkPlan: async (input: Requests["prepareProposalWorkPlan"], expected: ConversationProposalRevision, locale: string, expectedTools: readonly PluginToolView[] = []) => {
     const request = structuredClone(input), revision = structuredClone(expected), tools = structuredClone(expectedTools);
     if (request.projectId !== request.proposal.projectId || !proposal(revision, request.proposal) || revision.content.kind !== "proposal" || revision.content.questions.length > 0) throw new Error("Invalid proposal work-plan preparation");

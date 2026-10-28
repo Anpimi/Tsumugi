@@ -141,6 +141,7 @@ export interface Requests {
   create: CreateProjectConversationRequest;
   list: ListProjectConversationsRequest;
   messages: ReadProjectConversationMessagesRequest;
+  planningAttempts: ReadConversationPlanningAttemptsRequest;
   preparePlanning: PrepareConversationPlanningRequest;
   prepareProposalWorkPlan: PrepareConversationProposalWorkPlanRequest;
   proposalRevisions: ReadConversationProposalRevisionsRequest;
@@ -256,6 +257,13 @@ export interface ListProjectConversationsRequest {
 }
 export interface ReadProjectConversationMessagesRequest {
   after?: Revision | null;
+  conversationId: ExecutionId;
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ReadConversationPlanningAttemptsRequest {
+  after: Revision;
   conversationId: ExecutionId;
   limit: number;
   projectId: ExecutionId;

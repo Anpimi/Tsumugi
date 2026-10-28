@@ -6,7 +6,7 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-mod planning;
+pub(in crate::persistence) mod planning;
 pub(in crate::persistence) mod proposals;
 
 const MAX_RECORD: usize = 64 * 1024;
@@ -26,7 +26,8 @@ const TABLES: &[(&str, &str)] = &[
 ];
 pub(in crate::persistence) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     initialize_messages(c)?;
-    proposals::initialize(c)
+    proposals::initialize(c)?;
+    planning::history::initialize(c)
 }
 pub(in crate::persistence) fn initialize_messages(c: &Connection) -> rusqlite::Result<()> {
     for (_, sql) in TABLES {
@@ -35,7 +36,7 @@ pub(in crate::persistence) fn initialize_messages(c: &Connection) -> rusqlite::R
     Ok(())
 }
 pub(in crate::persistence) fn table_names() -> impl Iterator<Item = String> {
-    TABLES.iter().map(|(name, _)| name.to_string()).chain(proposals::table_names())
+    TABLES.iter().map(|(name, _)| name.to_string()).chain(proposals::table_names()).chain(planning::history::table_names())
 }
 fn fail(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)

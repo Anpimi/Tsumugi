@@ -61,6 +61,7 @@ fn draft_read_many_keeps_v1_pending_tombstones_and_absent_heads_without_migratio
     let mut tombstone = request.key.clone(); tombstone.unit_id = ExecutionId::new();
     let cleared = store.clear(&DraftClear { key:tombstone.clone(),expected_revision:revision(0) }).unwrap();
     let connection = Connection::open(store.directory.join(DATABASE)).unwrap();
+    connection.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
     connection.pragma_update(None,"user_version",LEGACY_FORMAT).unwrap(); drop(connection);
     let heads = store.read_many(request.key.project_id,&request.key.locale,&[tombstone.unit_id,request.key.unit_id,missing]).unwrap();
     assert_eq!(heads[0],cleared); assert_eq!(heads[1],original); assert_eq!(heads[2],empty[1]);
@@ -280,6 +281,7 @@ fn legacy_draft_reads_and_failed_cas_do_not_upgrade_then_a_valid_write_keeps_all
         .unwrap();
     let path = store.directory.join(DATABASE);
     let database = Connection::open(&path).unwrap();
+    database.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
     database
         .pragma_update(None, "user_version", LEGACY_FORMAT)
         .unwrap();
@@ -327,6 +329,7 @@ fn legacy_upgrade_is_rolled_back_with_a_commit_failure_and_new_shapes_are_not_va
     let head = store.write(&request).unwrap();
     let path = store.directory.join(DATABASE);
     let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
     blocker
         .pragma_update(None, "user_version", LEGACY_FORMAT)
         .unwrap();
@@ -344,6 +347,7 @@ fn legacy_upgrade_is_rolled_back_with_a_commit_failure_and_new_shapes_are_not_va
     assert_eq!(store.read(&request.key).unwrap(), head);
     let merged = store.write(&next).unwrap();
     assert_eq!(disk_format(&store), FORMAT);
+    blocker.execute_batch("DROP TABLE conversation_draft_heads").unwrap();
     blocker
         .pragma_update(None, "user_version", LEGACY_FORMAT)
         .unwrap();
@@ -893,7 +897,7 @@ fn interrupted_existing_transactions_recover_old_or_new_input_with_original_pend
     }
 }
 
-fn crash_child(control: &Path, store: &DraftStore, request: &DraftWrite, stage: &str) {
+pub(super) fn crash_child(control: &Path, store: &DraftStore, request: &DraftWrite, stage: &str) {
     let input = control.join("child-request.json");
     fs::write(&input, serde_json::to_vec(request).unwrap()).unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())

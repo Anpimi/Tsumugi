@@ -153,6 +153,7 @@ fn rows(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::type
                 !name.starts_with("application_conversation")
             } else {
                 name != "application_conversation_proposals" && name != "application_conversation_work_plans"
+                    && name != "application_conversation_planning_attempts"
             }
         })
         .map(|name| {
@@ -668,7 +669,7 @@ fn proposal_migration_preserves_supported_history_across_abort_boundaries() {
             let path = store.directory().to_path_buf();
             store.close().unwrap();
             let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
-            c.execute_batch("DROP TABLE application_conversation_work_plans; DROP TABLE application_conversation_proposals")
+            c.execute_batch("DROP TABLE application_conversation_planning_attempts; DROP TABLE application_conversation_work_plans; DROP TABLE application_conversation_proposals")
                 .unwrap();
             if version == 61 {
                 c.execute_batch("DROP TABLE application_conversation_actions; DROP TABLE application_conversation_messages; DROP TABLE application_conversations;").unwrap();

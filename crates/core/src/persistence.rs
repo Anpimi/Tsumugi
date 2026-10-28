@@ -121,7 +121,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 64;
+pub(crate) const SCHEMA_VERSION: i64 = 65;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -953,7 +953,7 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, 63, SCHEMA_VERSION].contains(&user_version) {
+    if ![61, 62, 63, 64, SCHEMA_VERSION].contains(&user_version) {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -981,7 +981,7 @@ fn validate_existing_connection(
         // This is an additive migration only. The original complete validation
         // and supported storage pragmas run before any DDL can touch the file.
         // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 64.
+        // unit; a crash leaves the original supported schema or complete 65.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -997,8 +997,14 @@ fn validate_existing_connection(
             application::conversations::proposals::initialize_revisions(&transaction)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         }
-        application::conversations::proposals::work_plans::initialize(&transaction)
+        if user_version < 64 {
+            application::conversations::proposals::work_plans::initialize(&transaction)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        }
+        application::conversations::planning::history::initialize(&transaction)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        application::conversations::planning::history::backfill(&transaction)
+            .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
         #[cfg(test)]
         migration_crash_hook("conversation-after-ddl");
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -1090,6 +1096,10 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
         let added: std::collections::BTreeSet<_> = application::conversations::proposals::work_plans::table_names().collect();
         expected_tables.retain(|name| !added.contains(name));
     }
+    if version < 65 {
+        let added: std::collections::BTreeSet<_> = application::conversations::planning::history::table_names().collect();
+        expected_tables.retain(|name| !added.contains(name));
+    }
     expected_tables.extend(
         plugin_execution::TABLES
             .iter()
@@ -1134,13 +1144,21 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
         application::prepare_open(connection).map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
+    let mut planning_attempts = 0;
     ledger::validate_for_open(connection, |connection, input, results| {
         review_open.validate_input(connection, input, results)?;
+        if version >= 65 && application::conversations::planning::history::validate_input(connection, input)? {
+            planning_attempts += 1;
+        }
         application_open.validate_input(input)
     })
     .map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
+    if version >= 65 {
+        application::conversations::planning::history::validate(connection, planning_attempts)
+            .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
+    }
     review_open
         .finish()
         .map_err(|_| PersistenceError::CorruptProject {
