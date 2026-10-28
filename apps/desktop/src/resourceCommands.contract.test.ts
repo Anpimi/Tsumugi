@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/resourceCommands.contract.json";
+import contextFixture from "../test/fixtures/contextResources.contract.json";
 import { resourceCommands } from "./resourceCommands";
 import * as validators from "./generated/resource.validators";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -8,6 +9,79 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
+
+it("uses the shared typed context wire contract for every registered resource port", async () => {
+  const request = contextFixture.requests, response = contextFixture.responses;
+  if (!validators.validateRequestContextResourceSave(request.save)
+    || !validators.validateRequestContextResourceWithdraw(request.withdraw)
+    || !validators.validateRequestContextResourceCurrent(request.current)
+    || !validators.validateRequestContextResourcePage(request.page)
+    || !validators.validateRequestContextResourceHistory(request.history)
+    || !validators.validateRequestContextResourceAction(request.action)
+    || !validators.validateRequestContextResourceRecovery(request.recovery)
+    || !validators.validateRequestContextResourceResolve(request.resolve)) throw new Error("Invalid shared context fixture");
+  const { save, withdraw, current, page, history, action, recovery, resolve } = request;
+  for (const [command, input, output, run] of [
+    ["save_context_resource", save, response.saved, () => resourceCommands.saveContextResource(save)],
+    ["withdraw_context_resource", withdraw, response.withdrawn, () => resourceCommands.withdrawContextResource(withdraw)],
+    ["read_context_resource_current", current, response.current, () => resourceCommands.contextResourceCurrent(current)],
+    ["read_context_resource_page", page, response.page, () => resourceCommands.contextResourcePage(page)],
+    ["read_context_resource_history", history, response.history, () => resourceCommands.contextResourceHistory(history)],
+    ["read_context_resource_action", action, response.action, () => resourceCommands.contextResourceAction(action)],
+    ["reconcile_context_resource_action", recovery, response.recovery, () => resourceCommands.reconcileContextResourceAction(recovery)],
+    ["resolve_context_resources", resolve, response.resolution, () => resourceCommands.resolveContextResources(resolve)],
+  ] as const) {
+    invoke.mockResolvedValueOnce(output); expect(await run()).toEqual(output);
+    expect(invoke).toHaveBeenLastCalledWith(command, { request: input });
+  }
+});
+
+it("keeps schema-valid context acknowledgements for another body or subject unknown", async () => {
+  const request = contextFixture.requests.save, saved = contextFixture.responses.saved;
+  if (!validators.validateRequestContextResourceSave(request)) throw new Error("Invalid shared context save");
+  for (const change of [{ text: "An unrelated description" }, { subjectId: fixtureIdentity(99001) },
+    { scope: { kind: "project" } }, { sourceBasis: { ...saved.sourceBasis, revision: "3" } },
+    { actor: "Another author" }, { previousRevisionId: fixtureIdentity(99002) }, { withdrawn: true }]) {
+    const forged = { ...saved, ...change };
+    expect(validators.validateResponseContextResourceSaved(forged)).toBe(true);
+    invoke.mockResolvedValueOnce(forged);
+    await expect(resourceCommands.saveContextResource(request)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+});
+
+it("binds pure context action reads and explicit recovery to the complete recorded action", async () => {
+  const request = contextFixture.requests, response = contextFixture.responses;
+  if (!validators.validateRequestContextResourceRecovery(request.recovery)) throw new Error("Invalid shared context recovery");
+  invoke.mockResolvedValueOnce(null); await expect(resourceCommands.contextResourceAction(request.action)).resolves.toBeNull();
+  for (const receipt of [{ ...response.saved, text: "Forged receipt body" }, { ...response.saved, subjectId: fixtureIdentity(99003) }]) {
+    invoke.mockResolvedValueOnce({ ...response.action, receipt });
+    await expect(resourceCommands.contextResourceAction(request.action)).rejects.toThrow();
+    invoke.mockResolvedValueOnce({ ...response.recovery, receipt });
+    await expect(resourceCommands.reconcileContextResourceAction(request.recovery)).rejects.toThrow();
+  }
+  const changedAction = { ...response.recovery.request, request: { ...response.recovery.request.request, reason: "Changed after submission" } };
+  invoke.mockResolvedValueOnce({ ...response.recovery, request: changedAction });
+  await expect(resourceCommands.reconcileContextResourceAction(request.recovery)).rejects.toThrow();
+  invoke.mockResolvedValueOnce({ ...response.recovery, status: "retry-allowed", receipt: null });
+  await expect(resourceCommands.reconcileContextResourceAction(request.recovery)).resolves.toMatchObject({ status: "retry-allowed", receipt: null });
+  invoke.mockResolvedValueOnce({ ...response.recovery, status: "retry-allowed" });
+  await expect(resourceCommands.reconcileContextResourceAction(request.recovery)).rejects.toThrow();
+});
+
+it("rejects mixed context pages and a resolution for a different frozen source", async () => {
+  const request = contextFixture.requests, response = contextFixture.responses;
+  if (!validators.validateRequestContextResourcePage(request.page) || !validators.validateRequestContextResourceResolve(request.resolve)) throw new Error("Invalid shared context read");
+  for (const page of [{ ...response.page, rows: [{ ...response.saved, locale: "de-DE" }] },
+    { ...response.page, rows: [{ ...response.saved, kind: "style" }] }, { ...response.page, nextOffset: 2 }]) {
+    invoke.mockResolvedValueOnce(page); await expect(resourceCommands.contextResourcePage(request.page)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce({ ...response.page, basis: "another-page-basis" });
+  await expect(resourceCommands.contextResourcePage({ ...request.page, basis: response.page.basis })).rejects.toThrow();
+  invoke.mockResolvedValueOnce({ ...response.resolution, scope: { ...response.resolution.scope, sourceRevisionId: fixtureIdentity(99004) } });
+  await expect(resourceCommands.resolveContextResources(request.resolve)).rejects.toThrow();
+  const ephemeral = { ...request.save, resource: { ...request.save.resource, scope: { ...request.save.resource.scope, scopeId: "query-only-selector" } } };
+  expect(validators.validateRequestContextResourceSave(ephemeral)).toBe(false);
+});
 
 it("validates both directions of every shared resource contract", async () => {
   for (const [validate, value] of [

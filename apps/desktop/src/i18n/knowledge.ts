@@ -1,4 +1,6 @@
+import { contextKnowledgeEn, contextKnowledgeZh } from "./contextKnowledge";
 export const knowledgeEn = {
+  ...contextKnowledgeEn,
   "categories": "Knowledge categories",
   "newTerm": "New term",
   "sourceTerm": "Source term",
@@ -90,8 +92,8 @@ export const knowledgeEn = {
   "historyFailed": "Term history could not be read.",
   "historyEntry": "Saved version {{number, number}}",
   "moreHistory": "Read more history",
-  "draftKept": "Your term input and any unconfirmed action are kept in this project.",
-  "backToDraft": "Open term input",
+  "draftKept": "Your knowledge edits and any unconfirmed action are kept in this project.",
+  "backToDraft": "Open knowledge input",
   "proposalTitle": "Term proposals",
   "proposalHelp": "Review each change before applying it. Your saved terms stay unchanged until you choose an action.",
   "proposalChooseFile": "Read a terminology file",
@@ -146,6 +148,7 @@ export const knowledgeEn = {
 };
 
 export const knowledgeZh = {
+  ...contextKnowledgeZh,
   "categories": "知识分类",
   "newTerm": "新增术语",
   "sourceTerm": "源术语",
@@ -237,8 +240,8 @@ export const knowledgeZh = {
   "historyFailed": "没能读到术语历史。",
   "historyEntry": "保存版本 {{number, number}}",
   "moreHistory": "读取更多历史",
-  "draftKept": "术语输入与尚未确认的操作仍保留在这个项目中。",
-  "backToDraft": "打开术语输入",
+  "draftKept": "知识修改与尚未确认的操作仍保留在这个项目中。",
+  "backToDraft": "打开知识修改",
   "proposalTitle": "术语提议",
   "proposalHelp": "先核对每处变化，再选择如何处理；打开预览不会修改已保存术语。",
   "proposalChooseFile": "读取术语文件",

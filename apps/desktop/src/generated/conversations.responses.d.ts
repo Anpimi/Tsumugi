@@ -149,6 +149,22 @@ export type ConversationPlanningScope =
       locale: string;
       unitIds: ExecutionId[];
     };
+export type ContextResourceKind = "character" | "style" | "background";
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type ContextResourceStatus =
+  "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
 export type ConversationActionOutcome3 =
   | {
       kind: "recorded";
@@ -646,6 +662,7 @@ export interface SourceContextSelection {
  * These identities are shown to the caller and are never copied into the prompt.
  */
 export interface ConversationPlanningUnitBasis {
+  contextResources?: ContextResourceCapture | null;
   protection: WorkProtection;
   selectionId: ExecutionId | null;
   sharedContextRevisionId: ExecutionId | null;
@@ -653,6 +670,46 @@ export interface ConversationPlanningUnitBasis {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   translationRevisionId: ExecutionId | null;
+  unitId: ExecutionId;
+}
+/**
+ * Historical captures omit this field when empty so old input encoding stays stable.
+ */
+export interface ContextResourceCapture {
+  entries: ContextResourceResolutionEntry[];
+  scope: SourceContextRequest;
+}
+export interface ContextResourceResolutionEntry {
+  missingPaths: string[];
+  revision: ContextResourceRevision;
+  status: ContextResourceStatus;
+}
+export interface ContextResourceRevision {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  previousRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId: ExecutionId;
+  text: string;
+  withdrawn: boolean;
+}
+export interface ContentScope {
+  currentSnapshot: ExecutionId | null;
+  revision: Revision;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface WorkProtection {
@@ -1210,6 +1267,7 @@ export interface AiPreviewView {
 }
 export interface AiItemView {
   context: ContextRevision | null;
+  contextResources?: ContextResourceCapture | null;
   nativeKey: string;
   omissions: string[];
   projectContext: ProjectFactCapture;
@@ -1280,13 +1338,6 @@ export interface TextRange {
   encoding: TextEncoding;
   end: number;
   start: number;
-}
-export interface SourceContextRequest {
-  locale: string;
-  projectId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
 }
 export interface SelectedSourceContext {
   contentRevision: Revision;

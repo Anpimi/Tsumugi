@@ -213,6 +213,22 @@ export type FindingSeverity = "warning" | "error";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
 export type UnsignedDecimal = string;
+export type ContextResourceKind = "character" | "style" | "background";
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type ContextResourceStatus =
+  "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
 /**
  * Pinned local decisions are separate from raw SDK facts and the provider projection.
  */
@@ -1121,6 +1137,7 @@ export interface SourceContextSelection {
 }
 export interface AiItemView {
   context: ContextRevision | null;
+  contextResources?: ContextResourceCapture | null;
   nativeKey: string;
   omissions: string[];
   projectContext: ProjectFactCapture;
@@ -1140,6 +1157,46 @@ export interface ContextRevision {
   reason: string;
   revisionId: ExecutionId;
   text: string;
+  unitId: ExecutionId;
+}
+/**
+ * Historical captures omit this field when empty so old input encoding stays stable.
+ */
+export interface ContextResourceCapture {
+  entries: ContextResourceResolutionEntry[];
+  scope: SourceContextRequest;
+}
+export interface ContextResourceResolutionEntry {
+  missingPaths: string[];
+  revision: ContextResourceRevision;
+  status: ContextResourceStatus;
+}
+export interface ContextResourceRevision {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  previousRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId: ExecutionId;
+  text: string;
+  withdrawn: boolean;
+}
+export interface ContentScope {
+  currentSnapshot: ExecutionId | null;
+  revision: Revision;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface ContextFactDecision {
@@ -1183,13 +1240,6 @@ export interface SourceContextFact {
 export interface SourceReference {
   artifactId: string;
   range: TextRange;
-}
-export interface SourceContextRequest {
-  locale: string;
-  projectId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
 }
 export interface SelectedSourceContext {
   contentRevision: Revision;

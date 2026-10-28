@@ -205,6 +205,12 @@ pub(super) fn preview_ai_configs_in(
                 } else {
                     None
                 };
+                let context_resources = if share_context {
+                    super::resources::capture_context_resources_in(connection,&crate::SourceContextRequest {
+                        project_id:project,source_snapshot_id:source.snapshot_id,unit_id:*unit,
+                        source_revision_id:revision,locale:locale.into(),
+                    })?
+                } else {None};
                 let source_view = if share_source {
                     Some(source.project(&crate::SourceContextRequest {
                         project_id: project,
@@ -253,6 +259,7 @@ pub(super) fn preview_ai_configs_in(
                         } else {
                             None
                         },
+                        context_resources: if config.share_context {context_resources.clone()} else {None},
                         source_context,
                         project_context,
                         omissions: if config.share_terms {
@@ -262,7 +269,10 @@ pub(super) fn preview_ai_configs_in(
                         },
                         resource_baseline: baseline as u64,
                     };
-                    if config.share_context && item.context.is_none() {
+                    let has_typed_context = item.context_resources.as_ref().is_some_and(|capture| {
+                        capture.entries.iter().any(|entry| entry.status == crate::ContextResourceStatus::Selected)
+                    });
+                    if config.share_context && item.context.is_none() && !has_typed_context {
                         item.omissions.push("context-missing".into());
                     }
                     if !config.share_terms {

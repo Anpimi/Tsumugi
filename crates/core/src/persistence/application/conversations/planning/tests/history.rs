@@ -336,8 +336,14 @@ fn old_rows(c: &Connection, version: i64) -> BTreeMap<String, Vec<Vec<rusqlite::
                 && !(version == 61 && name.starts_with("application_conversation"))
         })
         .map(|name| {
+            let columns = match name.as_str() {
+                "context_revisions" => "rowid,revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest",
+                "context_current" => "rowid,unit_id,locale,revision_id",
+                "resource_changes" => "rowid,change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id",
+                _ => "*",
+            };
             let mut q = c
-                .prepare(&format!("SELECT * FROM \"{name}\" ORDER BY rowid"))
+                .prepare(&format!("SELECT {columns} FROM \"{name}\" ORDER BY rowid"))
                 .unwrap();
             let columns = q.column_count();
             let rows = q
@@ -433,6 +439,8 @@ fn planning_history_migration_preserves_all_supported_rows_and_backfills_every_a
             let path = store.directory().to_path_buf();
             store.close().unwrap();
             let c = Connection::open(path.join(DATABASE_FILENAME)).unwrap();
+            crate::persistence::resources::make_legacy_context_schema(&c).unwrap();
+            assert_eq!(c.query_row("SELECT COUNT(*) FROM pragma_table_info('context_revisions') WHERE name='context_id'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
             c.execute_batch("DROP TABLE application_conversation_planning_attempts")
                 .unwrap();
             if version < 64 {

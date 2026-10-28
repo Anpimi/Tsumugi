@@ -1,5 +1,6 @@
 import { lazy, Suspense, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import EntryContextResources from "../knowledge/EntryContextResources";
 import { FileText } from "lucide-react";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import type { ProjectView } from "../../../projectCommands";
@@ -92,6 +93,7 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
     </TabsContent>
     <TabsContent value="context" className={styles.details}>
       <h2>{t("context")}</h2><p className={local.text}>{context ? <TokenizedText text={context.text} /> : t("entryContextEmpty")}</p>
+      <EntryContextResources project={project} target={target} visible={visible && view.detailTab === "context"}/>
       <h3>{t("entryTerms")}</h3>{terms.entries.length ? <dl>{terms.entries.map(term => <div key={term.source}>
         <dt><TokenizedText text={term.source}/></dt><dd>{term.selected ? <TokenizedText text={term.selected.target}/> : t("termConflict")}
           {term.conflicting.map(conflict => <p key={conflict.revisionId}><TokenizedText text={conflict.target}/></p>)}</dd>

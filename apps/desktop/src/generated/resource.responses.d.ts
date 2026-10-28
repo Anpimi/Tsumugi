@@ -17,6 +17,23 @@ export type GlossaryCaptureOrigin =
       provenance: McpTermProvenance;
     };
 export type UnsignedDecimal = string;
+export type ContextResourceKind = "character" | "style" | "background";
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type Revision = string;
+export type ContextResourceStatus =
+  "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
 /**
  * Classification for presentation, without interpreting a format's syntax or
  * normalizing its literal text. Other source-associated information uses Note.
@@ -119,10 +136,20 @@ export type ContextFactDisposition =
   | {
       kind: "restore";
     };
+export type ContextResourceAction =
+  | {
+      kind: "save";
+      request: SaveContextResource;
+    }
+  | {
+      kind: "withdraw";
+      request: WithdrawContextResource;
+    };
+export type ContextResourceRecoveryStatus = "recorded" | "retry-allowed";
 export type TermOrigin = "manual" | "external";
 export type ResourceDecisionKind = "adopt" | "keep" | "ignore" | "override";
-export type ResourceImpactConfidence = "explicit-unit" | "literal-possible";
-export type ResourceImpactKind = "term" | "context" | "context-fact";
+export type ResourceImpactConfidence = "explicit-unit" | "literal-possible" | "scope-possible";
+export type ResourceImpactKind = "term" | "context" | "context-fact" | "context-resource";
 export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
 export type ResourceChangeKind = "added" | "edited" | "removed" | "unchanged" | "override";
 export type TmMatchKind = "exact" | "fuzzy";
@@ -198,6 +225,14 @@ export interface Responses {
   contextFactAction: ContextFactDecision | null;
   contextFactHistory: ContextFactHistory;
   contextFacts: ContextFactDecision[];
+  contextResourceAction: ContextResourceActionRead | null;
+  contextResourceCurrent: ContextResourceRevision | null;
+  contextResourceHistory: ContextResourcePage;
+  contextResourcePage: ContextResourcePage;
+  contextResourceRecovery: ContextResourceRecovery;
+  contextResourceResolution: ContextResourceResolution;
+  contextResourceSaved: ContextResourceRevision;
+  contextResourceWithdrawn: ContextResourceRevision;
   correctionAction: CorrectionTermReceipt | null;
   correctionBasis: CorrectionTermEvidence;
   correctionCapture: CorrectionTermReceipt;
@@ -279,10 +314,51 @@ export interface ContextCaptureActionRead {
 export interface ContextCapture {
   budgetBytes: number;
   captureId: ExecutionId;
+  contextResources?: ContextResourceCapture | null;
   included: ContextItem[];
   locale: string;
   omitted: ContextOmission[];
   sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+/**
+ * Historical captures omit this field when empty so old input encoding stays stable.
+ */
+export interface ContextResourceCapture {
+  entries: ContextResourceResolutionEntry[];
+  scope: SourceContextRequest;
+}
+export interface ContextResourceResolutionEntry {
+  missingPaths: string[];
+  revision: ContextResourceRevision;
+  status: ContextResourceStatus;
+}
+export interface ContextResourceRevision {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  previousRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId: ExecutionId;
+  text: string;
+  withdrawn: boolean;
+}
+export interface ContentScope {
+  currentSnapshot: ExecutionId | null;
+  revision: Revision;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface ContextItem {
@@ -293,6 +369,7 @@ export interface ContextItem {
 }
 export interface ContextOmission {
   kind: string;
+  label?: string | null;
   reason: string;
   reference: string;
 }
@@ -385,16 +462,53 @@ export interface ContractRef {
   id: string;
   schemaVersion: number;
 }
-export interface SourceContextRequest {
-  locale: string;
-  projectId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
-}
 export interface ContextFactHistory {
   nextOffset: number | null;
   rows: ContextFactDecision[];
+}
+export interface ContextResourceActionRead {
+  receipt: ContextResourceRevision;
+  request: ContextResourceAction;
+}
+export interface SaveContextResource {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId | null;
+  expectedRevisionId: ExecutionId | null;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  projectId: ExecutionId;
+  reason: string;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  /**
+   * Only an explicit scoped variant reuses an existing subject.
+   */
+  subjectId: ExecutionId | null;
+  text: string;
+}
+export interface WithdrawContextResource {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  expectedRevisionId: ExecutionId;
+  projectId: ExecutionId;
+  reason: string;
+}
+export interface ContextResourcePage {
+  basis: string;
+  nextOffset: number | null;
+  rows: ContextResourceRevision[];
+}
+export interface ContextResourceRecovery {
+  receipt: ContextResourceRevision | null;
+  request: ContextResourceAction;
+  status: ContextResourceRecoveryStatus;
+}
+export interface ContextResourceResolution {
+  entries: ContextResourceResolutionEntry[];
+  scope: SourceContextRequest;
 }
 export interface CorrectionTermReceipt {
   capture: GlossaryCapture;

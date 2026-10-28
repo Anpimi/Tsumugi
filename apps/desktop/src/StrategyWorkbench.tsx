@@ -1,3 +1,4 @@
+import { ContextResourceCapturePreview } from "./ContextResourceCapturePreview";
 import { useRef, useState, useEffect, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
@@ -180,7 +181,7 @@ function StrategyPanel({ area, project, active, disabled, config, onOpenConnecti
       {state.prepared ? <section aria-label={t("strategy.preview")}><h3>{t("strategy.preview")}</h3>
         <p>{t("strategy.conditionsHelp")}</p>
         {state.prepared.preview.config.variants.map((variant, index) => <div key={index}><h4>{t(index === 0 ? "strategy.baseline" : "strategy.candidateSlot")}</h4><p>{variant.endpoint} · {variant.model}</p><PreparationBudgetSummary config={variant} /></div>)}
-        {state.prepared.preview.items.map(row => <article key={`${row.sourceOrder}:${row.slot}`}><h4>{row.item.nativeKey} · {t(row.slot === 0 ? "strategy.baseline" : "strategy.candidateSlot")}</h4><pre className="ai-text">{row.item.sourceText}</pre><SourceContextPreview capture={row.item.sourceContext} /><ProjectFactPreview capture={row.item.projectContext} /></article>)}
+        {state.prepared.preview.items.map(row => <article key={`${row.sourceOrder}:${row.slot}`}><h4>{row.item.nativeKey} · {t(row.slot === 0 ? "strategy.baseline" : "strategy.candidateSlot")}</h4><pre className="ai-text">{row.item.sourceText}</pre><SourceContextPreview capture={row.item.sourceContext} /><ProjectFactPreview capture={row.item.projectContext} /><ContextResourceCapturePreview capture={row.item.contextResources}/></article>)}
         <label className="source-check"><input type="checkbox" checked={state.consent} disabled={locked || !state.prepared.canStart || state.stale} onChange={event => owner.setConsent(event.target.checked)} />{t("strategy.consent")}</label>
         <button type="button" className="primary-button" disabled={locked || !owner.canStart()} onClick={() => void owner.start()}>{t("strategy.start")}</button>
         {state.stale || !state.prepared.canStart ? <p role="alert">{t("strategy.previewChanged")}</p> : null}

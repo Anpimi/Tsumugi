@@ -60,6 +60,7 @@ fn brief_for(payload: &Value) -> ConversationPlanningBrief {
         brief.source_texts += u32::from(unit["sourceText"].is_string());
         brief.terms += array_len(&unit["terms"]);
         brief.manual_contexts += u32::from(unit["context"].is_string());
+        brief.manual_contexts += array_len(&unit["contextResources"]);
         brief.manual_context_facts += array_len(&unit["manualContextFacts"]);
         brief.source_context_facts += array_len(&unit["sourceContext"]["facts"]);
         brief.source_context_neighbors += array_len(&unit["sourceContext"]["neighbors"]);

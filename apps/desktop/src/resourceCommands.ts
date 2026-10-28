@@ -12,6 +12,17 @@ import type { ContextFactDecision, ContextFactHistory } from "./generated/resour
 import type { SessionRequest } from "./executionCommands";
 import type { TermCurrentRequest } from "./generated/resource.requests";
 import { validateResponseCurrentTerm } from "./generated/resource.validators";
+import type { ContextResourceSaveRequest, ContextResourceWithdrawRequest, ContextResourceCurrentRequest,
+  ContextResourceListRequest, ContextResourceHistoryRequest, ContextResourceActionRequest,
+  ContextResourceRecoveryRequest, ContextResourceResolveRequest } from "./generated/resource.requests";
+import { validateResponseContextResourceSaved, validateResponseContextResourceWithdrawn, validateResponseContextResourceCurrent,
+  validateResponseContextResourcePage, validateResponseContextResourceHistory, validateResponseContextResourceAction,
+  validateResponseContextResourceRecovery, validateResponseContextResourceResolution } from "./generated/resource.validators";
+export type { SaveContextResource, WithdrawContextResource, ContextResourceKind, ContextResourceScope, ContextResourceAction } from "./generated/resource.requests";
+export type { ContextResourceRevision, ContextResourceActionRead, ContextResourcePage,
+  ContextResourceResolution, ContextResourceResolutionEntry, ContextResourceCapture, ContextResourceRecovery } from "./generated/resource.responses";
+import type { ContextResourceAction } from "./generated/resource.requests";
+import type { ContextResourcePage, ContextResourceRevision } from "./generated/resource.responses";
 import { checkedInvoke } from "./ipc";
 import type { TbxPreviewRequest, TmxPreviewRequest, CaptureListRequest, CaptureRequest, TermRequest, DecisionRequest, TermListRequest, TermHistoryRequest, UnitLocaleRequest, ContextWriteRequest, ContextCaptureRequest, SuggestionRequest, ImpactRequest } from "./generated/resource.requests";
 import { validateResponseTbxPreview, validateResponseTmxPreview, validateResponseCaptures, validateResponseCapture, validateResponsePreview, validateResponseDecision, validateResponseTerm, validateResponseTermAction, validateResponseContextAction, validateResponseContextCaptureAction, validateResponseTerms, validateResponseResolution, validateResponseContext, validateResponseSavedContext, validateResponseContextCapture, validateResponseSuggestions, validateResponseImpacts } from "./generated/resource.validators";
@@ -40,7 +51,58 @@ function sameOriginal(actual: object, expected: object) {
     && Object.keys(b).every(key => Object.hasOwn(a, key));
 }
 
+function sameContextAction(actual: ContextResourceAction, expected: ContextResourceRecoveryRequest["action"]) {
+  return actual.kind === expected.kind && sameOriginal(actual.request, expected.request);
+}
+function contextReceiptMatches(value: ContextResourceRevision, action: ContextResourceAction) {
+  const request = action.request;
+  if (value.projectId !== request.projectId || value.actionId !== request.actionId
+    || value.actor !== request.actor || value.reason !== request.reason) return false;
+  if (action.kind === "withdraw") return value.withdrawn && value.contextId === action.request.contextId
+    && value.previousRevisionId === action.request.expectedRevisionId;
+  const save = action.request;
+  return !value.withdrawn && (save.contextId == null || value.contextId === save.contextId)
+    && (save.subjectId == null ? save.contextId != null || value.subjectId === value.contextId : value.subjectId === save.subjectId)
+    && value.previousRevisionId === (save.expectedRevisionId ?? null)
+    && value.kind === save.kind && value.locale === save.locale && value.name === save.name && value.text === save.text
+    && jsonIdentity(value.scope) === jsonIdentity(save.scope) && jsonIdentity(value.sourceBasis) === jsonIdentity(save.sourceBasis);
+}
+function contextPageMatches(value: ContextResourcePage, request: { projectId: string; offset: number; limit: number; basis?: string | null }) {
+  return value.rows.length <= request.limit && value.rows.every(row => row.projectId === request.projectId)
+    && (request.basis == null || value.basis === request.basis)
+    && (value.nextOffset === null || value.rows.length > 0 && value.nextOffset === request.offset + value.rows.length);
+}
+
 export const resourceCommands = {
+  saveContextResource: (request: ContextResourceSaveRequest) => checkedInvoke("save_context_resource", request,
+    (value): value is Responses["contextResourceSaved"] => validateResponseContextResourceSaved(value)
+      && value.projectId === request.projectId && contextReceiptMatches(value, { kind: "save", request: request.resource })),
+  withdrawContextResource: (request: ContextResourceWithdrawRequest) => checkedInvoke("withdraw_context_resource", request,
+    (value): value is Responses["contextResourceWithdrawn"] => validateResponseContextResourceWithdrawn(value)
+      && value.projectId === request.projectId && contextReceiptMatches(value, { kind: "withdraw", request: request.resource })),
+  contextResourceCurrent: (request: ContextResourceCurrentRequest) => checkedInvoke("read_context_resource_current", request,
+    (value): value is Responses["contextResourceCurrent"] => validateResponseContextResourceCurrent(value)
+      && (value === null || value.projectId === request.projectId && value.contextId === request.contextId)),
+  contextResourcePage: (request: ContextResourceListRequest) => checkedInvoke("read_context_resource_page", request,
+    (value): value is Responses["contextResourcePage"] => validateResponseContextResourcePage(value) && contextPageMatches(value, request)
+      && value.rows.every(row => row.locale === request.locale && (request.kind == null || row.kind === request.kind))),
+  contextResourceHistory: (request: ContextResourceHistoryRequest) => checkedInvoke("read_context_resource_history", request,
+    (value): value is Responses["contextResourceHistory"] => validateResponseContextResourceHistory(value) && contextPageMatches(value, request)
+      && value.rows.every(row => row.contextId === request.contextId)),
+  contextResourceAction: (request: ContextResourceActionRequest) => checkedInvoke("read_context_resource_action", request,
+    (value): value is Responses["contextResourceAction"] => validateResponseContextResourceAction(value)
+      && (value === null || value.receipt.projectId === request.projectId && value.receipt.actionId === request.actionId
+        && value.request.request.projectId === request.projectId && value.request.request.actionId === request.actionId
+        && contextReceiptMatches(value.receipt, value.request))),
+  reconcileContextResourceAction: (request: ContextResourceRecoveryRequest) => checkedInvoke("reconcile_context_resource_action", request,
+    (value): value is Responses["contextResourceRecovery"] => validateResponseContextResourceRecovery(value)
+      && sameContextAction(value.request, request.action) && value.request.request.projectId === request.projectId
+      && (value.status === "recorded" ? value.receipt !== null && value.receipt.projectId === request.projectId
+        && contextReceiptMatches(value.receipt, value.request) : value.status === "retry-allowed" && value.receipt === null)),
+  resolveContextResources: (request: ContextResourceResolveRequest) => checkedInvoke("resolve_context_resources", request,
+    (value): value is Responses["contextResourceResolution"] => validateResponseContextResourceResolution(value)
+      && request.scope.projectId === request.projectId && jsonIdentity(value.scope) === jsonIdentity(request.scope)
+      && value.entries.every(entry => entry.revision.projectId === request.projectId && entry.revision.locale === request.scope.locale)),
   correctionBasis: (request: CorrectionBasisRequest) => checkedInvoke("read_correction_term_basis", request,
     (value): value is CorrectionTermEvidence => validateResponseCorrectionBasis(value)
       && value.basis.projectId === request.projectId && value.basis.unitId === request.unitId

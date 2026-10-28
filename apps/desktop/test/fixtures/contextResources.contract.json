@@ -1,0 +1,448 @@
+{
+  "requests": {
+    "save": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "resource": {
+        "projectId": "64000000-0000-4000-8000-000000000001",
+        "actionId": "64000000-0000-4000-8000-000000000005",
+        "contextId": null,
+        "subjectId": null,
+        "expectedRevisionId": null,
+        "sourceBasis": {
+          "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+          "revision": "2"
+        },
+        "kind": "character",
+        "locale": "zh-CN",
+        "scope": {
+          "kind": "file-group",
+          "namespace": "synthetic-source",
+          "logicalPaths": [
+            "data/dialogue.json",
+            "data/角色.json"
+          ]
+        },
+        "name": "Mara 👩🏽‍💻 é",
+        "text": "Friendly but direct. Keep {{name}} unchanged.",
+        "actor": "Human reviewer",
+        "reason": "Checked against the source"
+      }
+    },
+    "withdraw": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "resource": {
+        "projectId": "64000000-0000-4000-8000-000000000001",
+        "actionId": "64000000-0000-4000-8000-000000000008",
+        "contextId": "64000000-0000-4000-8000-000000000006",
+        "expectedRevisionId": "64000000-0000-4000-8000-000000000007",
+        "actor": "Human reviewer",
+        "reason": "Stop using this scoped description"
+      }
+    },
+    "current": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "contextId": "64000000-0000-4000-8000-000000000006"
+    },
+    "page": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "kind": "character",
+      "offset": 0,
+      "limit": 1,
+      "basis": null
+    },
+    "history": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "contextId": "64000000-0000-4000-8000-000000000006",
+      "offset": 0,
+      "limit": 2,
+      "basis": null
+    },
+    "action": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "actionId": "64000000-0000-4000-8000-000000000005"
+    },
+    "recovery": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "action": {
+        "kind": "save",
+        "request": {
+          "projectId": "64000000-0000-4000-8000-000000000001",
+          "actionId": "64000000-0000-4000-8000-000000000005",
+          "contextId": null,
+          "subjectId": null,
+          "expectedRevisionId": null,
+          "sourceBasis": {
+            "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+            "revision": "2"
+          },
+          "kind": "character",
+          "locale": "zh-CN",
+          "scope": {
+            "kind": "file-group",
+            "namespace": "synthetic-source",
+            "logicalPaths": [
+              "data/dialogue.json",
+              "data/角色.json"
+            ]
+          },
+          "name": "Mara 👩🏽‍💻 é",
+          "text": "Friendly but direct. Keep {{name}} unchanged.",
+          "actor": "Human reviewer",
+          "reason": "Checked against the source"
+        }
+      }
+    },
+    "resolve": {
+      "sessionToken": "synthetic-context-session",
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "scope": {
+        "projectId": "64000000-0000-4000-8000-000000000001",
+        "unitId": "64000000-0000-4000-8000-000000000002",
+        "sourceRevisionId": "64000000-0000-4000-8000-000000000003",
+        "sourceSnapshotId": "64000000-0000-4000-8000-000000000004",
+        "locale": "zh-CN"
+      }
+    }
+  },
+  "responses": {
+    "saved": {
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "actionId": "64000000-0000-4000-8000-000000000005",
+      "contextId": "64000000-0000-4000-8000-000000000006",
+      "subjectId": "64000000-0000-4000-8000-000000000006",
+      "sourceBasis": {
+        "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+        "revision": "2"
+      },
+      "kind": "character",
+      "locale": "zh-CN",
+      "scope": {
+        "kind": "file-group",
+        "namespace": "synthetic-source",
+        "logicalPaths": [
+          "data/dialogue.json",
+          "data/角色.json"
+        ]
+      },
+      "name": "Mara 👩🏽‍💻 é",
+      "text": "Friendly but direct. Keep {{name}} unchanged.",
+      "actor": "Human reviewer",
+      "reason": "Checked against the source",
+      "revisionId": "64000000-0000-4000-8000-000000000007",
+      "previousRevisionId": null,
+      "withdrawn": false
+    },
+    "withdrawn": {
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "actionId": "64000000-0000-4000-8000-000000000008",
+      "contextId": "64000000-0000-4000-8000-000000000006",
+      "subjectId": "64000000-0000-4000-8000-000000000006",
+      "sourceBasis": {
+        "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+        "revision": "2"
+      },
+      "kind": "character",
+      "locale": "zh-CN",
+      "scope": {
+        "kind": "file-group",
+        "namespace": "synthetic-source",
+        "logicalPaths": [
+          "data/dialogue.json",
+          "data/角色.json"
+        ]
+      },
+      "name": "Mara 👩🏽‍💻 é",
+      "text": "Friendly but direct. Keep {{name}} unchanged.",
+      "actor": "Human reviewer",
+      "reason": "Stop using this scoped description",
+      "revisionId": "64000000-0000-4000-8000-000000000009",
+      "previousRevisionId": "64000000-0000-4000-8000-000000000007",
+      "withdrawn": true
+    },
+    "current": {
+      "projectId": "64000000-0000-4000-8000-000000000001",
+      "actionId": "64000000-0000-4000-8000-000000000005",
+      "contextId": "64000000-0000-4000-8000-000000000006",
+      "subjectId": "64000000-0000-4000-8000-000000000006",
+      "sourceBasis": {
+        "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+        "revision": "2"
+      },
+      "kind": "character",
+      "locale": "zh-CN",
+      "scope": {
+        "kind": "file-group",
+        "namespace": "synthetic-source",
+        "logicalPaths": [
+          "data/dialogue.json",
+          "data/角色.json"
+        ]
+      },
+      "name": "Mara 👩🏽‍💻 é",
+      "text": "Friendly but direct. Keep {{name}} unchanged.",
+      "actor": "Human reviewer",
+      "reason": "Checked against the source",
+      "revisionId": "64000000-0000-4000-8000-000000000007",
+      "previousRevisionId": null,
+      "withdrawn": false
+    },
+    "page": {
+      "basis": "synthetic-context-basis",
+      "rows": [
+        {
+          "projectId": "64000000-0000-4000-8000-000000000001",
+          "actionId": "64000000-0000-4000-8000-000000000005",
+          "contextId": "64000000-0000-4000-8000-000000000006",
+          "subjectId": "64000000-0000-4000-8000-000000000006",
+          "sourceBasis": {
+            "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+            "revision": "2"
+          },
+          "kind": "character",
+          "locale": "zh-CN",
+          "scope": {
+            "kind": "file-group",
+            "namespace": "synthetic-source",
+            "logicalPaths": [
+              "data/dialogue.json",
+              "data/角色.json"
+            ]
+          },
+          "name": "Mara 👩🏽‍💻 é",
+          "text": "Friendly but direct. Keep {{name}} unchanged.",
+          "actor": "Human reviewer",
+          "reason": "Checked against the source",
+          "revisionId": "64000000-0000-4000-8000-000000000007",
+          "previousRevisionId": null,
+          "withdrawn": false
+        }
+      ],
+      "nextOffset": null
+    },
+    "history": {
+      "basis": "synthetic-context-basis",
+      "rows": [
+        {
+          "projectId": "64000000-0000-4000-8000-000000000001",
+          "actionId": "64000000-0000-4000-8000-000000000005",
+          "contextId": "64000000-0000-4000-8000-000000000006",
+          "subjectId": "64000000-0000-4000-8000-000000000006",
+          "sourceBasis": {
+            "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+            "revision": "2"
+          },
+          "kind": "character",
+          "locale": "zh-CN",
+          "scope": {
+            "kind": "file-group",
+            "namespace": "synthetic-source",
+            "logicalPaths": [
+              "data/dialogue.json",
+              "data/角色.json"
+            ]
+          },
+          "name": "Mara 👩🏽‍💻 é",
+          "text": "Friendly but direct. Keep {{name}} unchanged.",
+          "actor": "Human reviewer",
+          "reason": "Checked against the source",
+          "revisionId": "64000000-0000-4000-8000-000000000007",
+          "previousRevisionId": null,
+          "withdrawn": false
+        },
+        {
+          "projectId": "64000000-0000-4000-8000-000000000001",
+          "actionId": "64000000-0000-4000-8000-000000000008",
+          "contextId": "64000000-0000-4000-8000-000000000006",
+          "subjectId": "64000000-0000-4000-8000-000000000006",
+          "sourceBasis": {
+            "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+            "revision": "2"
+          },
+          "kind": "character",
+          "locale": "zh-CN",
+          "scope": {
+            "kind": "file-group",
+            "namespace": "synthetic-source",
+            "logicalPaths": [
+              "data/dialogue.json",
+              "data/角色.json"
+            ]
+          },
+          "name": "Mara 👩🏽‍💻 é",
+          "text": "Friendly but direct. Keep {{name}} unchanged.",
+          "actor": "Human reviewer",
+          "reason": "Stop using this scoped description",
+          "revisionId": "64000000-0000-4000-8000-000000000009",
+          "previousRevisionId": "64000000-0000-4000-8000-000000000007",
+          "withdrawn": true
+        }
+      ],
+      "nextOffset": null
+    },
+    "action": {
+      "request": {
+        "kind": "save",
+        "request": {
+          "projectId": "64000000-0000-4000-8000-000000000001",
+          "actionId": "64000000-0000-4000-8000-000000000005",
+          "contextId": null,
+          "subjectId": null,
+          "expectedRevisionId": null,
+          "sourceBasis": {
+            "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+            "revision": "2"
+          },
+          "kind": "character",
+          "locale": "zh-CN",
+          "scope": {
+            "kind": "file-group",
+            "namespace": "synthetic-source",
+            "logicalPaths": [
+              "data/dialogue.json",
+              "data/角色.json"
+            ]
+          },
+          "name": "Mara 👩🏽‍💻 é",
+          "text": "Friendly but direct. Keep {{name}} unchanged.",
+          "actor": "Human reviewer",
+          "reason": "Checked against the source"
+        }
+      },
+      "receipt": {
+        "projectId": "64000000-0000-4000-8000-000000000001",
+        "actionId": "64000000-0000-4000-8000-000000000005",
+        "contextId": "64000000-0000-4000-8000-000000000006",
+        "subjectId": "64000000-0000-4000-8000-000000000006",
+        "sourceBasis": {
+          "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+          "revision": "2"
+        },
+        "kind": "character",
+        "locale": "zh-CN",
+        "scope": {
+          "kind": "file-group",
+          "namespace": "synthetic-source",
+          "logicalPaths": [
+            "data/dialogue.json",
+            "data/角色.json"
+          ]
+        },
+        "name": "Mara 👩🏽‍💻 é",
+        "text": "Friendly but direct. Keep {{name}} unchanged.",
+        "actor": "Human reviewer",
+        "reason": "Checked against the source",
+        "revisionId": "64000000-0000-4000-8000-000000000007",
+        "previousRevisionId": null,
+        "withdrawn": false
+      }
+    },
+    "recovery": {
+      "request": {
+        "kind": "save",
+        "request": {
+          "projectId": "64000000-0000-4000-8000-000000000001",
+          "actionId": "64000000-0000-4000-8000-000000000005",
+          "contextId": null,
+          "subjectId": null,
+          "expectedRevisionId": null,
+          "sourceBasis": {
+            "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+            "revision": "2"
+          },
+          "kind": "character",
+          "locale": "zh-CN",
+          "scope": {
+            "kind": "file-group",
+            "namespace": "synthetic-source",
+            "logicalPaths": [
+              "data/dialogue.json",
+              "data/角色.json"
+            ]
+          },
+          "name": "Mara 👩🏽‍💻 é",
+          "text": "Friendly but direct. Keep {{name}} unchanged.",
+          "actor": "Human reviewer",
+          "reason": "Checked against the source"
+        }
+      },
+      "status": "recorded",
+      "receipt": {
+        "projectId": "64000000-0000-4000-8000-000000000001",
+        "actionId": "64000000-0000-4000-8000-000000000005",
+        "contextId": "64000000-0000-4000-8000-000000000006",
+        "subjectId": "64000000-0000-4000-8000-000000000006",
+        "sourceBasis": {
+          "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+          "revision": "2"
+        },
+        "kind": "character",
+        "locale": "zh-CN",
+        "scope": {
+          "kind": "file-group",
+          "namespace": "synthetic-source",
+          "logicalPaths": [
+            "data/dialogue.json",
+            "data/角色.json"
+          ]
+        },
+        "name": "Mara 👩🏽‍💻 é",
+        "text": "Friendly but direct. Keep {{name}} unchanged.",
+        "actor": "Human reviewer",
+        "reason": "Checked against the source",
+        "revisionId": "64000000-0000-4000-8000-000000000007",
+        "previousRevisionId": null,
+        "withdrawn": false
+      }
+    },
+    "resolution": {
+      "scope": {
+        "projectId": "64000000-0000-4000-8000-000000000001",
+        "unitId": "64000000-0000-4000-8000-000000000002",
+        "sourceRevisionId": "64000000-0000-4000-8000-000000000003",
+        "sourceSnapshotId": "64000000-0000-4000-8000-000000000004",
+        "locale": "zh-CN"
+      },
+      "entries": [
+        {
+          "revision": {
+            "projectId": "64000000-0000-4000-8000-000000000001",
+            "actionId": "64000000-0000-4000-8000-000000000005",
+            "contextId": "64000000-0000-4000-8000-000000000006",
+            "subjectId": "64000000-0000-4000-8000-000000000006",
+            "sourceBasis": {
+              "currentSnapshot": "64000000-0000-4000-8000-000000000004",
+              "revision": "2"
+            },
+            "kind": "character",
+            "locale": "zh-CN",
+            "scope": {
+              "kind": "file-group",
+              "namespace": "synthetic-source",
+              "logicalPaths": [
+                "data/dialogue.json",
+                "data/角色.json"
+              ]
+            },
+            "name": "Mara 👩🏽‍💻 é",
+            "text": "Friendly but direct. Keep {{name}} unchanged.",
+            "actor": "Human reviewer",
+            "reason": "Checked against the source",
+            "revisionId": "64000000-0000-4000-8000-000000000007",
+            "previousRevisionId": null,
+            "withdrawn": false
+          },
+          "status": "selected",
+          "missingPaths": []
+        }
+      ]
+    }
+  }
+}

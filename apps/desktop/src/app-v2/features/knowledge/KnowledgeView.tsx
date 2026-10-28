@@ -12,11 +12,12 @@ import type { TermRevision } from "../../../resourceCommands";
 import { sourceCommands } from "../../../sourceCommands";
 import type { WorkspaceView, ViewPatch } from "../../workspace/workspaceStore";
 import type { InteractionGate } from "../../workspace/interactionGate";
-import { knowledgeKinds, type KnowledgeOwner, type KnowledgeKind } from "./knowledgeTypes";
-import { knowledgeBlocked, knowledgeHasDraft } from "./knowledgeState";
+import { contextKindForKnowledge, knowledgeKinds, type KnowledgeOwner, type KnowledgeKind } from "./knowledgeTypes";
+import { knowledgeBlocked } from "./knowledgeState";
 import { knowledgeCurrentKey, knowledgeTermsKey, useKnowledgeCurrent, useKnowledgeScope, useKnowledgeTerms } from "./knowledgeReads";
 import TermScopePicker from "./TermScopePicker";
 import TermProposalPanel from "./TermProposalPanel";
+import ContextResourcesView from "./ContextResourcesView";
 import styles from "./Knowledge.module.css";
 
 export interface KnowledgeViewProps {
@@ -56,8 +57,8 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
   const valid = [termDraft.source, termDraft.target, termDraft.reason].every(value => !!value.trim() && !fieldError(value))
     && termDraft.aliases.length <= 16 && termDraft.aliases.every(value => !!value.trim() && !fieldError(value));
   useEffect(() => {
-    if (!localeMatches && project.metadata.targetLocales.includes(view.locale) && !knowledgeBlocked(owner) && !knowledgeHasDraft(owner)) owner.setLocale(view.locale);
-  }, [localeMatches, view.locale, owner, project.metadata.targetLocales]);
+    if (kind === "terms" && !localeMatches && project.metadata.targetLocales.includes(view.locale) && !knowledgeBlocked(owner) && !owner.termDirty() && !owner.contextDirty() && !owner.correctionDirty() && !owner.factDirty() && !owner.tool.hasDraft()) owner.setLocale(view.locale);
+  }, [kind, localeMatches, view.locale, owner, project.metadata.targetLocales]);
   function proof() {
     const table = reads.client.getQueryState(reads.key(knowledgeTermsKey(locale)));
     const basis = reads.client.getQueryState(reads.key(["resource-source-scope"]));
@@ -119,11 +120,11 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
     <section className={styles.body} aria-label={t(`kinds.${kind}`)} onFocusCapture={() => gate.setInputOwner(view.id, inputOwner)}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.setInputOwner(view.id, null); }}
       onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
-      {kind !== "terms" ? <EmptyState title={t(`kinds.${kind}`)} description={t(`unavailable.${kind}`)}/> : <>
+      {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <EmptyState title={t("kinds.memory")} description={t("unavailable.memory")}/> : <>
         <div className={styles.toolbar}><h1>{t("kinds.terms")}</h1><Button disabled={disabled || blocked || dirty || !localeMatches || !source.data?.currentSnapshot} onClick={newTerm}><Plus/>{t("newTerm")}</Button><Button disabled={terms.isFetching} onClick={() => void terms.refetch()}>{t("refresh")}</Button></div>
         {!localeMatches ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ locale }); }}>{t("returnToLanguage", { locale })}</Button>}>{t("retainedLanguage", { locale })}</Banner> : null}
         {!localeAvailable ? <Banner tone="warning">{t("localeUnavailable", { locale })}</Banner> : null}
-        {failure ? <Banner tone="error">{t("saveFailed")}<CommandFailureDetails failure={failure}/></Banner> : null}
+        {failure && !owner.state.typedLastActionKey ? <Banner tone="error">{t("saveFailed")}<CommandFailureDetails failure={failure}/></Banner> : null}
         {selectedTerm && currentTerm.error ? <Banner tone="warning" action={<Button onClick={() => void currentTerm.refetch()}>{t("refresh")}</Button>}>{t("currentFailed")}</Banner> : null}
         {notice === "saved" || notice === "savedNewer" || notice === "decisionSaved" ? <Banner tone="success" role="status">{t(notice === "savedNewer" && dirty ? "savedNewer" : notice === "decisionSaved" ? "decisionSaved" : "saved")}</Banner> : null}
         {pending?.kind === "term" ? <Banner tone="warning" role="status" action={<div className={styles.actions}>
@@ -142,7 +143,7 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
           <TermProposalPanel project={project} owner={owner} disabled={disabled} gate={gate} viewId={view.id} current={current}/>
         </div>
       </>}
-      {kind !== "terms" && (dirty || pending) ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ preset: "terms" }); }}>{t("backToDraft")}</Button>}>{t("draftKept")}</Banner> : null}
+      {kind !== "terms" && (dirty || pending && pending.kind !== "typed-context") ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ preset: "terms" }); }}>{t("backToDraft")}</Button>}>{t("draftKept")}</Banner> : null}
     </section>
   </div>;
 }

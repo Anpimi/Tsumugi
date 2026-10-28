@@ -112,6 +112,28 @@
         ],
         "type": "object"
       },
+      "ContentScope": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
       "ContentTarget": {
         "oneOf": [
           {
@@ -395,6 +417,320 @@
         ],
         "type": "object"
       },
+      "ContextResourceAction": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "save",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SaveContextResource"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "withdraw",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/WithdrawContextResource"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextResourceActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ContextResourceCurrentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "contextId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "contextId"
+        ],
+        "type": "object"
+      },
+      "ContextResourceHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contextId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "contextId",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ContextResourceKind": {
+        "enum": [
+          "character",
+          "style",
+          "background"
+        ],
+        "type": "string"
+      },
+      "ContextResourceListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ContextResourceRecoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/ContextResourceAction"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "action"
+        ],
+        "type": "object"
+      },
+      "ContextResourceResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "ContextResourceSaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resource": {
+            "$ref": "#/definitions/SaveContextResource"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "resource"
+        ],
+        "type": "object"
+      },
+      "ContextResourceScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "project",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file-group",
+                "type": "string"
+              },
+              "logicalPaths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "namespace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "namespace",
+              "logicalPaths"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextResourceWithdrawRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resource": {
+            "$ref": "#/definitions/WithdrawContextResource"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "resource"
+        ],
+        "type": "object"
+      },
       "ContextWriteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -667,6 +1003,10 @@
         ],
         "type": "string"
       },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
       "RevisionSelectionRef": {
         "additionalProperties": false,
         "properties": {
@@ -725,6 +1065,85 @@
           "locale",
           "sourceRevisionId",
           "text",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "SaveContextResource": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "contextId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subjectId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit scoped variant reuses an existing subject."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "sourceBasis",
+          "kind",
+          "locale",
+          "scope",
+          "name",
+          "text",
+          "actor",
           "reason"
         ],
         "type": "object"
@@ -1259,6 +1678,38 @@
           "locale"
         ],
         "type": "object"
+      },
+      "WithdrawContextResource": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "contextId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "contextId",
+          "expectedRevisionId",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
       }
     },
     "properties": {
@@ -1294,6 +1745,30 @@
       },
       "contextFacts": {
         "$ref": "#/definitions/ContextFactsRequest"
+      },
+      "contextResourceAction": {
+        "$ref": "#/definitions/ContextResourceActionRequest"
+      },
+      "contextResourceCurrent": {
+        "$ref": "#/definitions/ContextResourceCurrentRequest"
+      },
+      "contextResourceHistory": {
+        "$ref": "#/definitions/ContextResourceHistoryRequest"
+      },
+      "contextResourcePage": {
+        "$ref": "#/definitions/ContextResourceListRequest"
+      },
+      "contextResourceRecovery": {
+        "$ref": "#/definitions/ContextResourceRecoveryRequest"
+      },
+      "contextResourceResolve": {
+        "$ref": "#/definitions/ContextResourceResolveRequest"
+      },
+      "contextResourceSave": {
+        "$ref": "#/definitions/ContextResourceSaveRequest"
+      },
+      "contextResourceWithdraw": {
+        "$ref": "#/definitions/ContextResourceWithdrawRequest"
       },
       "correctionBasis": {
         "$ref": "#/definitions/CorrectionBasisRequest"
@@ -1345,6 +1820,14 @@
       }
     },
     "required": [
+      "contextResourceSave",
+      "contextResourceWithdraw",
+      "contextResourceCurrent",
+      "contextResourcePage",
+      "contextResourceHistory",
+      "contextResourceAction",
+      "contextResourceRecovery",
+      "contextResourceResolve",
       "session",
       "tmxPreview",
       "tbxPreview",
@@ -1448,6 +1931,29 @@
         ],
         "type": "object"
       },
+      "ContentScope": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "revision",
+          "currentSnapshot"
+        ],
+        "type": "object"
+      },
       "ContentTarget": {
         "oneOf": [
           {
@@ -1510,6 +2016,16 @@
           },
           "captureId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "contextResources": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceCapture"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "included": {
             "items": {
@@ -1713,6 +2229,12 @@
           "kind": {
             "type": "string"
           },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "reason": {
             "type": "string"
           },
@@ -1726,6 +2248,338 @@
           "reason"
         ],
         "type": "object"
+      },
+      "ContextResourceAction": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "save",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SaveContextResource"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "withdraw",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/WithdrawContextResource"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextResourceActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "$ref": "#/definitions/ContextResourceRevision"
+          },
+          "request": {
+            "$ref": "#/definitions/ContextResourceAction"
+          }
+        },
+        "required": [
+          "request",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "ContextResourceCapture": {
+        "additionalProperties": false,
+        "description": "Historical captures omit this field when empty so old input encoding stays stable.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/ContextResourceResolutionEntry"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          }
+        },
+        "required": [
+          "scope",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "ContextResourceKind": {
+        "enum": [
+          "character",
+          "style",
+          "background"
+        ],
+        "type": "string"
+      },
+      "ContextResourcePage": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ContextResourceRevision"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "basis",
+          "rows",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "ContextResourceRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/definitions/ContextResourceAction"
+          },
+          "status": {
+            "$ref": "#/definitions/ContextResourceRecoveryStatus"
+          }
+        },
+        "required": [
+          "request",
+          "status",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "ContextResourceRecoveryStatus": {
+        "enum": [
+          "recorded",
+          "retry-allowed"
+        ],
+        "type": "string"
+      },
+      "ContextResourceResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/ContextResourceResolutionEntry"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          }
+        },
+        "required": [
+          "scope",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "ContextResourceResolutionEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "missingPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "$ref": "#/definitions/ContextResourceRevision"
+          },
+          "status": {
+            "$ref": "#/definitions/ContextResourceStatus"
+          }
+        },
+        "required": [
+          "revision",
+          "status",
+          "missingPaths"
+        ],
+        "type": "object"
+      },
+      "ContextResourceRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "contextId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subjectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "withdrawn": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revisionId",
+          "contextId",
+          "subjectId",
+          "projectId",
+          "kind",
+          "locale",
+          "scope",
+          "name",
+          "text",
+          "sourceBasis",
+          "withdrawn",
+          "actor",
+          "reason",
+          "actionId",
+          "previousRevisionId"
+        ],
+        "type": "object"
+      },
+      "ContextResourceScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "project",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file-group",
+                "type": "string"
+              },
+              "logicalPaths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "namespace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "namespace",
+              "logicalPaths"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextResourceStatus": {
+        "enum": [
+          "selected",
+          "withdrawn",
+          "conflict",
+          "ambiguous",
+          "missing-files",
+          "shadowed",
+          "outside-scope"
+        ],
+        "type": "string"
       },
       "ContextRevision": {
         "additionalProperties": false,
@@ -2482,7 +3336,8 @@
       "ResourceImpactConfidence": {
         "enum": [
           "explicit-unit",
-          "literal-possible"
+          "literal-possible",
+          "scope-possible"
         ],
         "type": "string"
       },
@@ -2490,7 +3345,8 @@
         "enum": [
           "term",
           "context",
-          "context-fact"
+          "context-fact",
+          "context-resource"
         ],
         "type": "string"
       },
@@ -2587,6 +3443,10 @@
         ],
         "type": "object"
       },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
       "RevisionSelectionRef": {
         "additionalProperties": false,
         "properties": {
@@ -2646,6 +3506,88 @@
           "sourceRevisionId",
           "expectedRevisionId",
           "text",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "SaveContextResource": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "contextId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subjectId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit scoped variant reuses an existing subject."
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "contextId",
+          "subjectId",
+          "expectedRevisionId",
+          "sourceBasis",
+          "kind",
+          "locale",
+          "scope",
+          "name",
+          "text",
+          "actor",
           "reason"
         ],
         "type": "object"
@@ -3841,6 +4783,38 @@
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
+      },
+      "WithdrawContextResource": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "contextId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "contextId",
+          "expectedRevisionId",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
       }
     },
     "properties": {
@@ -3924,6 +4898,44 @@
           "$ref": "#/definitions/ContextFactDecision"
         },
         "type": "array"
+      },
+      "contextResourceAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextResourceActionRead"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "contextResourceCurrent": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContextResourceRevision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "contextResourceHistory": {
+        "$ref": "#/definitions/ContextResourcePage"
+      },
+      "contextResourcePage": {
+        "$ref": "#/definitions/ContextResourcePage"
+      },
+      "contextResourceRecovery": {
+        "$ref": "#/definitions/ContextResourceRecovery"
+      },
+      "contextResourceResolution": {
+        "$ref": "#/definitions/ContextResourceResolution"
+      },
+      "contextResourceSaved": {
+        "$ref": "#/definitions/ContextResourceRevision"
+      },
+      "contextResourceWithdrawn": {
+        "$ref": "#/definitions/ContextResourceRevision"
       },
       "correctionAction": {
         "anyOf": [
@@ -4023,6 +5035,14 @@
       }
     },
     "required": [
+      "contextResourceSaved",
+      "contextResourceWithdrawn",
+      "contextResourceCurrent",
+      "contextResourcePage",
+      "contextResourceHistory",
+      "contextResourceAction",
+      "contextResourceRecovery",
+      "contextResourceResolution",
       "termAction",
       "contextAction",
       "captureAction",

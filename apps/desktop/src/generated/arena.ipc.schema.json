@@ -694,6 +694,16 @@
               }
             ]
           },
+          "contextResources": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextResourceCapture"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "nativeKey": {
             "type": "string"
           },
@@ -1276,6 +1286,29 @@
         ],
         "type": "object"
       },
+      "ContentScope": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "revision",
+          "currentSnapshot"
+        ],
+        "type": "object"
+      },
       "ContentTarget": {
         "oneOf": [
           {
@@ -1424,6 +1457,202 @@
           "reason"
         ],
         "type": "object"
+      },
+      "ContextResourceCapture": {
+        "additionalProperties": false,
+        "description": "Historical captures omit this field when empty so old input encoding stays stable.",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/ContextResourceResolutionEntry"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          }
+        },
+        "required": [
+          "scope",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "ContextResourceKind": {
+        "enum": [
+          "character",
+          "style",
+          "background"
+        ],
+        "type": "string"
+      },
+      "ContextResourceResolutionEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "missingPaths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "$ref": "#/definitions/ContextResourceRevision"
+          },
+          "status": {
+            "$ref": "#/definitions/ContextResourceStatus"
+          }
+        },
+        "required": [
+          "revision",
+          "status",
+          "missingPaths"
+        ],
+        "type": "object"
+      },
+      "ContextResourceRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "contextId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/ContextResourceKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContextResourceScope"
+          },
+          "sourceBasis": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "subjectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "withdrawn": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revisionId",
+          "contextId",
+          "subjectId",
+          "projectId",
+          "kind",
+          "locale",
+          "scope",
+          "name",
+          "text",
+          "sourceBasis",
+          "withdrawn",
+          "actor",
+          "reason",
+          "actionId",
+          "previousRevisionId"
+        ],
+        "type": "object"
+      },
+      "ContextResourceScope": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "project",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "file-group",
+                "type": "string"
+              },
+              "logicalPaths": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "namespace": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "namespace",
+              "logicalPaths"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextResourceStatus": {
+        "enum": [
+          "selected",
+          "withdrawn",
+          "conflict",
+          "ambiguous",
+          "missing-files",
+          "shadowed",
+          "outside-scope"
+        ],
+        "type": "string"
       },
       "ContextRevision": {
         "additionalProperties": false,

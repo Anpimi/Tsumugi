@@ -237,6 +237,8 @@ pub struct AiItem {
     pub target_locale: String,
     pub terms: Vec<SharedTerm>,
     pub context: Option<crate::ContextRevision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_resources: Option<crate::ContextResourceCapture>,
     pub source_context: crate::SourceContextCapture,
     pub project_context: crate::ProjectFactCapture,
     pub omissions: Vec<String>,
@@ -428,6 +430,15 @@ pub(super) fn validate_source_context(
     item: &AiItem,
     project: Option<ExecutionId>,
 ) -> Result<(), ExecutionError> {
+    if let Some(capture) = &item.context_resources {
+        if !config.share_context || capture.scope.unit_id != item.unit_id
+            || capture.scope.source_snapshot_id != item.source_snapshot_id
+            || capture.scope.source_revision_id != item.source_revision_id
+            || capture.scope.locale != item.target_locale
+            || project.is_some_and(|id|id != capture.scope.project_id)
+        {return Err(error(ErrorCode::InvalidInput,"context-resource-capture"));}
+        capture.validate()?;
+    }
     match &item.project_context {
         crate::ProjectFactCapture::Selected { scope, .. } => item.project_context.validate(
             config,
@@ -494,6 +505,12 @@ fn prompt_content(config: &AiConfig, item: &AiItem) -> Result<String, ExecutionE
     // resource bookkeeping are never copied as an unrestricted project dump.
     let mut shared = json!({"unitId":item.unit_id,"sourceLocale":item.source_locale,"targetLocale":item.target_locale,"nativeKey":item.native_key,"sourceText":item.source_text,"terms":item.terms.iter().map(|t|json!({"source":t.source,"target":t.target,"protected":t.protected})).collect::<Vec<_>>(),"context":item.context.as_ref().map(|c|&c.text)});
     let manual = item.project_context.manual_projection(config.share_context);
+    if config.share_context {
+        if let Some(capture) = &item.context_resources {
+            shared["contextResources"] = serde_json::to_value(capture.provider_projection())
+                .map_err(|_|error(ErrorCode::InvalidInput,"context-resource-capture"))?;
+        }
+    }
     if !manual.is_empty() {
         shared["manualContextFacts"] = serde_json::to_value(manual)
             .map_err(|_| error(ErrorCode::InvalidInput, "context-fact-capture"))?;

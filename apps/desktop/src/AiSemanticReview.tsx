@@ -1,3 +1,4 @@
+import { ContextResourceCapturePreview } from "./ContextResourceCapturePreview";
 import { useLayoutEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AiConnectionFields } from "./AiConnectionFields";
@@ -109,7 +110,7 @@ export function AiSemanticReview({ project, active, disabled, currentTarget, onO
         <p>{prepared.rules.map(rule => t(`semanticReview.rule.${rule}`)).join(" · ")}</p>
         {prepared.items.map(item => <article key={`${item.source.unitId}:${item.source.targetLocale}`}><h5>{item.source.nativeKey} → {item.source.targetLocale}</h5><pre className="ai-text">{item.source.sourceText}</pre><p>{t("semanticReview.translation")}</p><pre className="ai-text">{item.translationText}</pre>
           {item.source.terms.map(term => <p key={term.revisionId}>{term.source} → {term.target}</p>)}{item.source.context ? <pre className="ai-text">{item.source.context.text}</pre> : null}
-          <SourceContextPreview capture={item.source.sourceContext} /><ProjectFactPreview capture={item.source.projectContext} />
+          <SourceContextPreview capture={item.source.sourceContext} /><ProjectFactPreview capture={item.source.projectContext} /><ContextResourceCapturePreview capture={item.source.contextResources}/>
           {item.source.omissions.map(reason => <p key={reason}>{reason.startsWith("term-conflict:") ? t("ai.termConflict", { term: reason.slice(14) }) : t(`ai.${reason}`, { defaultValue: reason })}</p>)}
         </article>)}<p>{t("semanticReview.disclosure")}</p>
         <label className="source-check"><input type="checkbox" checked={state.consent} disabled={blocked || !!state.busy || !!state.pending || !fresh} onChange={event => owner.setConsent(event.target.checked)} />{t("semanticReview.consent")}</label>

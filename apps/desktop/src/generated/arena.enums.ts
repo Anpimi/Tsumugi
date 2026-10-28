@@ -2,6 +2,8 @@
 export const AdoptionStateValues = ["unapplied","committed","conflict","rejected"] as const;
 export const ArenaRevealTargetKindValues = ["comparison","attempt"] as const;
 export const CandidateDispositionValues = ["rejected","restored"] as const;
+export const ContextResourceKindValues = ["character","style","background"] as const;
+export const ContextResourceStatusValues = ["selected","withdrawn","conflict","ambiguous","missing-files","shadowed","outside-scope"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
 export const SourceContextDirectionValues = ["before","after"] as const;

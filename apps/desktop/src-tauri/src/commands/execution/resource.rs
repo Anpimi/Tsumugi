@@ -11,6 +11,9 @@ use tsumugi_core::{
 };
 use tsumugi_core::ResourceDecisionActionRead;
 
+#[path = "context_resources.rs"]
+pub(crate) mod context_resources;
+
 #[cfg(test)]
 #[path = "resource_exchange_tests.rs"]
 mod exchange_tests;

@@ -1,3 +1,4 @@
+import { ContextResourceCapturePreview } from "./ContextResourceCapturePreview";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
@@ -327,7 +328,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
         <details><summary>{t("ai.component.sharing")}</summary><TeamDiscussionDisclosure plan={operation.plan}/>{operation.plan.preview?.items.filter(item => operation.prepared.generation.unitIds.includes(item.unitId)).map(item =>
           <article key={item.unitId}><h4>{item.nativeKey}</h4><pre className="ai-text">{item.sourceText}</pre>
             {item.terms.map(term => <p key={term.revisionId}>{term.source}: {term.target}</p>)}
-            {item.context ? <pre className="ai-text">{item.context.text}</pre> : null}</article>)}</details>
+            {item.context ? <pre className="ai-text">{item.context.text}</pre> : null}<ContextResourceCapturePreview capture={item.contextResources}/></article>)}</details>
         {operation.prepared.preparedTools.length ? <section aria-label={t("ai.component.referenceReview")}>
           <h4>{t("ai.component.referenceReview")}</h4><p>{t("ai.component.referenceSharing")}</p>
           {operation.prepared.preparedTools.map(item => {

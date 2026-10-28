@@ -17,6 +17,7 @@ import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { TranslationDraftSession } from "../../../TranslationDraftSession";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
+import { sourceContentFixture } from "../../../testSupport/sourceFixture";
 import { Button } from "../../../design-system/Button";
 import { ProjectLifecycle, type ProjectLifecyclePorts } from "../../platform/projectLifecycle";
 import { InteractionGate } from "../../workspace/interactionGate";
@@ -65,6 +66,8 @@ beforeEach(async () => {
     if (command === "read_term_history") return structuredClone(historyRows.filter(row => row.termId === request.termId).slice(Number(request.offset), Number(request.offset) + Number(request.limit)));
     if (command === "list_resource_captures") return [];
     if (command === "read_segment_page") return structuredClone(segmentWire.responses.segmentPage);
+    if (command === "read_context_resource_page") return { rows: [], nextOffset: null, basis: "synthetic-empty-resources" };
+    if (command === "read_source_content") return sourceContentFixture(reviewWire.responses.editor.target.sourceSnapshotId, { revision: "1", currentSnapshot: reviewWire.responses.editor.target.sourceSnapshotId });
     if (command === "read_review_editor_snapshot") return structuredClone(reviewWire.responses.editor);
     if (command === "create_execution_identity") return fixtureIdentity(++identity);
     if (command === "save_term") {
@@ -197,7 +200,8 @@ it("reads additional term pages and preserves drafts while showing unsupported c
   await user.click(screen.getByRole("button", { name: k("moreTerms") })); await screen.findByRole("button", { name: "Source 100" });
   await user.click(screen.getByRole("button", { name: "Source 0" })); input("targetTerm", "Retained text");
   await user.click(screen.getByRole("button", { name: i18n.t("knowledge.kinds.characters") }));
-  expect(screen.getByText(i18n.t("knowledge.unavailable.characters"))).toBeVisible();
+  expect(await screen.findByRole("table", { name: k("contextTable") })).toBeVisible();
+  expect(await screen.findByText(k("contextEmpty"))).toBeVisible();
   await user.click(screen.getByRole("button", { name: k("backToDraft") }));
   expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("Retained text");
   expect(invoke.mock.calls.filter(([name]) => name === "save_term")).toHaveLength(0);

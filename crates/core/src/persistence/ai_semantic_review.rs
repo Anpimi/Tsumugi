@@ -162,6 +162,13 @@ fn current_item(
         return Ok(false);
     }
     let project = ExecutionId::parse(&metadata.project_id().to_string())?;
+    if config.share_context {
+        let current = super::resources::capture_context_resources_in(c,&crate::SourceContextRequest {
+            project_id:project,source_snapshot_id:source.source_snapshot_id,unit_id:source.unit_id,
+            source_revision_id:source.source_revision_id,locale:source.target_locale.clone(),
+        })?;
+        if current != source.context_resources {return Ok(false);}
+    }
     let terms = super::resources::current_terms_in(c, project, &source.target_locale)?;
     let resolved = super::resources::resolve_terms_from(
         source.unit_id,
@@ -697,6 +704,27 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
 mod start_read_tests {
     use super::*;
     use crate::persistence::review::tests::{fixture,translate,adopt_source};
+
+    #[test]
+    fn typed_context_metadata_changes_invalidate_only_reviews_that_shared_it() {
+        let (_directory,mut store,project,units)=fixture();let unit=units[0];
+        translate(&mut store,project,unit,"zh-CN","Selected synthetic translation");
+        let request=crate::SaveContextResource{project_id:project,action_id:ExecutionId::new(),context_id:None,subject_id:None,expected_revision_id:None,source_basis:store.content_scope().unwrap(),kind:crate::ContextResourceKind::Style,locale:"zh-CN".into(),scope:crate::ContextResourceScope::Unit{unit_id:unit},name:"Synthetic style".into(),text:"Human supplied style material".into(),actor:"Synthetic editor".into(),reason:"Original human reason".into()};
+        let original=store.save_context_resource(&request).unwrap();
+        let on=AiConfig{endpoint:"https://model.example/v1/chat/completions".into(),model:"synthetic-review".into(),credential_env:String::new(),share_context:true,..Default::default()};
+        let off=AiConfig{share_context:false,..on.clone()};
+        let targets=[AiSemanticReviewTarget{unit_id:unit,locale:"zh-CN".into()}];
+        let shared=store.prepare_ai_semantic_review(on.clone(),&targets,&[AiSemanticReviewRule::Style]).unwrap();
+        let private=store.prepare_ai_semantic_review(off.clone(),&targets,&[AiSemanticReviewRule::Style]).unwrap();
+        assert!(current_item(store.connection().unwrap(),&on,&shared.preview().items[0]).unwrap());
+        assert!(private.preview().items[0].source.context_resources.is_none());
+        store.save_context_resource(&crate::SaveContextResource{action_id:ExecutionId::new(),context_id:Some(original.context_id),expected_revision_id:Some(original.revision_id),reason:"Updated human reason".into(),..request}).unwrap();
+        // The prose, source, selection and change-log baseline are unchanged;
+        // the stale shared revision alone must invalidate the original review.
+        assert!(!current_item(store.connection().unwrap(),&on,&shared.preview().items[0]).unwrap());
+        assert!(current_item(store.connection().unwrap(),&off,&private.preview().items[0]).unwrap());
+        assert_eq!(shared.preview().items[0].source.context_resources.as_ref().unwrap().entries[0].revision.revision_id,original.revision_id);
+    }
 
     #[test]
     fn semantic_start_read_confirms_original_input_without_current_authority_or_runtime() {

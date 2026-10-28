@@ -184,6 +184,7 @@ pub(crate) fn settings(input: &FixedInput) -> Result<Settings, ExecutionError> {
                 if item.unit_id != basis.unit_id
                     || item.source_snapshot_id != basis.source_snapshot_id
                     || item.source_revision_id != basis.source_revision_id
+                    || item.context_resources != basis.context_resources
                 {
                     return Err(error(
                         ErrorCode::InvalidInput,

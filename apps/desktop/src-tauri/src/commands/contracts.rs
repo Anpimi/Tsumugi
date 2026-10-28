@@ -424,6 +424,14 @@ struct TranslationResponses {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceRequests {
+    context_resource_save: execution::resource::context_resources::ContextResourceSaveRequest,
+    context_resource_withdraw: execution::resource::context_resources::ContextResourceWithdrawRequest,
+    context_resource_current: execution::resource::context_resources::ContextResourceCurrentRequest,
+    context_resource_page: execution::resource::context_resources::ContextResourceListRequest,
+    context_resource_history: execution::resource::context_resources::ContextResourceHistoryRequest,
+    context_resource_action: execution::resource::context_resources::ContextResourceActionRequest,
+    context_resource_recovery: execution::resource::context_resources::ContextResourceRecoveryRequest,
+    context_resource_resolve: execution::resource::context_resources::ContextResourceResolveRequest,
     session: execution::SessionRequest,
     tmx_preview: execution::resource::TmxPreviewRequest,
     tbx_preview: execution::resource::TbxPreviewRequest,
@@ -456,6 +464,14 @@ struct ResourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceResponses {
+    context_resource_saved: tsumugi_core::ContextResourceRevision,
+    context_resource_withdrawn: tsumugi_core::ContextResourceRevision,
+    context_resource_current: Option<tsumugi_core::ContextResourceRevision>,
+    context_resource_page: tsumugi_core::ContextResourcePage,
+    context_resource_history: tsumugi_core::ContextResourcePage,
+    context_resource_action: Option<tsumugi_core::ContextResourceActionRead>,
+    context_resource_recovery: tsumugi_core::ContextResourceRecovery,
+    context_resource_resolution: tsumugi_core::ContextResourceResolution,
     term_action: Option<tsumugi_core::TermSaveActionRead>,
     context_action: Option<tsumugi_core::ContextSaveActionRead>,
     capture_action: Option<tsumugi_core::ContextCaptureActionRead>,

@@ -60,6 +60,10 @@ pub use release::{
     SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
 };
 pub use resources::McpTermQueryAdoptionHandler;
+pub use resources::{SaveContextResource, WithdrawContextResource, ContextResourceKind,
+    ContextResourceScope, ContextResourceAction, ContextResourceActionRead,
+    ContextResourceRevision, ContextResourcePage, ContextResourceStatus, ContextResourceRecovery, ContextResourceRecoveryStatus,
+    ContextResourceResolutionEntry, ContextResourceResolution, ContextResourceCapture};
 pub(crate) use resources::mcp;
 pub use resources::mcp::{validate_mcp_term_query_result, validate_mcp_term_query_preview};
 pub use resources::strategy::*;
@@ -124,7 +128,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 65;
+pub(crate) const SCHEMA_VERSION: i64 = 66;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -956,7 +960,7 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if ![61, 62, 63, 64, SCHEMA_VERSION].contains(&user_version) {
+    if ![61, 62, 63, 64, 65, SCHEMA_VERSION].contains(&user_version) {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -981,10 +985,10 @@ fn validate_existing_connection(
         });
     }
     if user_version < SCHEMA_VERSION {
-        // This is an additive migration only. The original complete validation
-        // and supported storage pragmas run before any DDL can touch the file.
+        // Validate the complete supported schema and storage pragmas before
+        // replacing any tables.
         // SQLite's rollback journal makes both schema and version one durable
-        // unit; a crash leaves the original supported schema or complete 65.
+        // unit; a crash leaves the original supported schema or complete 66.
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -1004,10 +1008,14 @@ fn validate_existing_connection(
             application::conversations::proposals::work_plans::initialize(&transaction)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         }
-        application::conversations::planning::history::initialize(&transaction)
+        if user_version < 65 {
+            application::conversations::planning::history::initialize(&transaction)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            application::conversations::planning::history::backfill(&transaction)
+                .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
+        }
+        resources::migrate_context_resources(&transaction)
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        application::conversations::planning::history::backfill(&transaction)
-            .map_err(|_| PersistenceError::CorruptProject { stage: PersistenceStage::Open })?;
         #[cfg(test)]
         migration_crash_hook("conversation-after-ddl");
         transaction.pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -1173,7 +1181,7 @@ fn validate_schema_shape_version(connection: &Connection, version: i64) -> Resul
     translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    resources::validate_version(connection, version).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     release::validate(connection).map_err(|_| PersistenceError::CorruptProject {

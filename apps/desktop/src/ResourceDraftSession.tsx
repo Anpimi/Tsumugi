@@ -1,3 +1,5 @@
+import { createContextResourceMethods, confirmContextResource, contextResourceAction, settleContextResource, type ContextResourceDraft } from "./contextResourceDrafts";
+import type { SaveContextResource, WithdrawContextResource } from "./resourceCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import { usePluginToolQuerySession, type PluginToolQuerySession } from "./PluginToolQuerySession";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -15,6 +17,8 @@ export const resourceTermDraftFor = (term: ResourceTermDraft | null): ResourceTe
   : { source: "", aliases: [], target: "", protected: false, scopeUnitId: null, reason: "" };
 type PendingBase = { session: SessionRequest };
 export type ResourcePending =
+  | (PendingBase & { kind: "typed-context"; operation: "save"; request: SaveContextResource; draftKey: string; submittedSeq: number })
+  | (PendingBase & { kind: "typed-context"; operation: "withdraw"; request: WithdrawContextResource; draftKey: string; submittedSeq: number })
   | (PendingBase & { kind: "correction"; request: CaptureCorrectionTerm; submittedSeq: number })
   | (PendingBase & { kind: "term"; request: SaveTerm; submittedSeq: number; aliasInput: string })
   | (PendingBase & { kind: "context"; request: SaveContext; submittedSeq: number })
@@ -44,11 +48,15 @@ export function isContextFactCasRejection(value:unknown) {
  * They prove non-commit even when an earlier acknowledgement was lost. */
 function isReceiptFirstRejection(action: ResourcePending, value: unknown) {
   if (!isCommandError(value) || value.code !== "dependency-conflict" || value.stage !== "execution-adopt" || value.outcome !== "rejected") return false;
-  return action.kind === "term" ? value.reason === "resource-current"
+  return action.kind === "typed-context" ? value.reason === "context-resource-current" || value.reason === "context-resource-source"
+    : action.kind === "term" ? value.reason === "resource-current"
     : action.kind === "correction" ? value.reason === "correction-stale" || value.reason === "correction-existing"
     : action.kind === "decision" && (value.reason === "correction-stale" || value.reason === "resource-current");
 }
 export interface ResourceDraftState {
+  typedDrafts: Record<string, ContextResourceDraft>;
+  typedActiveKey: string | null;
+  typedLastActionKey: string | null;
   correctionDraft: ResourceCorrectionDraft | null;
   correctionReceipt: CorrectionTermReceipt | null;
   pendingCheckedMissing: boolean;
@@ -77,6 +85,8 @@ export interface ResourceDraftState {
   fixedContext: ContextCapture | null;
   pending: ResourcePending | null;
   pendingUncertain: boolean;
+  /** A pure read found the typed receipt; explicit reconciliation is still required. */
+  pendingRecorded: boolean;
   busyMutation: boolean;
   checkingAction: "resource" | "fact" | null;
   notice: ResourceNotice;
@@ -84,6 +94,7 @@ export interface ResourceDraftState {
   completionVersion: number;
 }
 interface ResourceSession {
+  contextResources: ReturnType<typeof createContextResourceMethods>;
   canReceiveMcp: (capture: GlossaryCapture) => boolean;
   openMcpPreview: (capture: GlossaryCapture, before: ResourceDraftState, proof: () => boolean) => Promise<boolean>;
   correctionDirty: () => boolean;
@@ -144,10 +155,10 @@ function invalidReceipt() { throw new Error("Invalid resource action acknowledge
 export function ResourceDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
   const tool = usePluginToolQuerySession(project);
   const reads = useSessionReads();
-  const [state, setState] = useState<ResourceDraftState>(() => ({ correctionDraft:null,correctionReceipt:null,pendingCheckedMissing:false,factDraft:null,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:null, locale: project.metadata.targetLocales[0] ?? "",
+  const [state, setState] = useState<ResourceDraftState>(() => ({ typedDrafts: {}, typedActiveKey: null, typedLastActionKey: null, correctionDraft:null,correctionReceipt:null,pendingCheckedMissing:false,factDraft:null,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:null, locale: project.metadata.targetLocales[0] ?? "",
     selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: 0, newerTerm: false,
     selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: 0, newerContext: false,
-    previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, busyMutation: false, checkingAction: null, notice: null, failure: null, completionVersion: 0 }));
+    previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, pendingRecorded: false, busyMutation: false, checkingAction: null, notice: null, failure: null, completionVersion: 0 }));
   const currentState = useRef(state), projectRef = useRef(project);
   const [session] = useState(() => executionContext(project));
   const mounted = useSessionAlive(), running = useRef(false);
@@ -308,7 +319,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function fail(error: unknown, notice: ResourceNotice = "error") { update(before => ({ ...before, failure: commandFailure(error), notice })); }
   function reserve() {
     if (!live() || reserved()) return false;
-    running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, notice: null })); return true;
+    running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, notice: null, typedLastActionKey: null })); return true;
   }
   function release() { running.current = false; update(before => ({ ...before, busyMutation: false })); }
   function sameTermTarget(before: ResourceDraftState, start: ResourceDraftState) { return before.locale === start.locale && before.selectedTerm?.termId === start.selectedTerm?.termId && before.selectedTerm?.revisionId === start.selectedTerm?.revisionId; }
@@ -392,7 +403,17 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     update(before => ({ ...before, checkingAction: "resource", failure: null, notice: null, pendingCheckedMissing: false }));
     try {
       const request = { ...action.session, actionId: action.request.actionId };
-      if (action.kind === "correction") {
+      if (action.kind === "typed-context") {
+        const receipt = await resourceCommands.contextResourceAction(request);
+        if (!live() || current().pending !== action) return;
+        if (receipt) {
+          if (jsonIdentity(receipt.request) !== jsonIdentity(contextResourceAction(action))) invalidReceipt();
+          confirmContextResource(action, receipt.receipt, current().typedDrafts[action.draftKey]?.base);
+          // A pure read cannot clear Core's uncertain-execution barrier. Retain
+          // this exact pending request until the user explicitly reconciles it.
+          update(before => ({ ...before, pendingRecorded: true }));
+        }
+      } else if (action.kind === "correction") {
         const receipt = await resourceCommands.correctionAction(request);
         if (!live() || current().pending !== action) return;
         if (receipt === null) update(before => ({ ...before, pendingCheckedMissing: true })); else confirmCorrection(action, receipt);
@@ -420,7 +441,14 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     if (!live() || running.current || !action) return;
     running.current = true; update(before => ({ ...before, busyMutation: true }));
     try {
-      await lookupPending(action);
+      if (action.kind === "typed-context") {
+        const recovered = await resourceCommands.reconcileContextResourceAction({ ...action.session, action: contextResourceAction(action) });
+        if (!live() || current().pending !== action) return;
+        if (jsonIdentity(recovered.request) !== jsonIdentity(contextResourceAction(action))) invalidReceipt();
+        if (recovered.status === "recorded" && recovered.receipt) update(before => settleContextResource(before, action, recovered.receipt!));
+        else if (recovered.status === "retry-allowed" && recovered.receipt === null) update(before => ({ ...before, pendingCheckedMissing: true }));
+        else invalidReceipt();
+      } else await lookupPending(action);
       if (live() && current().pending === action) update(before => ({ ...before, failure: previousFailure, notice: "unknown" }));
     } catch (error) { if (live() && current().pending === action) fail(error, "unknown"); } finally { release(); }
   }
@@ -447,9 +475,14 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function dispatch(action: ResourcePending) {
     if (!live()) return;
-    update(before => ({ ...before, pending: action, pendingCheckedMissing: false }));
+    update(before => ({ ...before, pending: action, pendingRecorded: false, pendingCheckedMissing: false, typedLastActionKey: action.kind === "typed-context" ? action.draftKey : null }));
     let writeFailure: CommandFailure | null = null;
     try {
+      if (action.kind === "typed-context") {
+        const result = action.operation === "save" ? await resourceCommands.saveContextResource({ ...action.session, resource: action.request })
+          : await resourceCommands.withdrawContextResource({ ...action.session, resource: action.request });
+        if (live()) update(before => settleContextResource(before, action, result));
+      }
       if (action.kind === "correction") { const result = await resourceCommands.captureCorrection({ ...action.session, capture: action.request }); if (live()) confirmCorrection(action, result); }
       if (action.kind === "term") { const result = await resourceCommands.saveTerm({ ...action.session, term: action.request }); if (live()) confirmTerm(action, result); }
       if (action.kind === "context") { const result = await resourceCommands.saveContext({ ...action.session, context: action.request }); if (live()) confirmContext(action, result); }
@@ -468,7 +501,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       update(before => {
         if (before.pending !== action) return before;
         const uncertain = !notCommitted && (unknown || before.pendingUncertain);
-        return { ...before, pending: uncertain ? action : null, pendingUncertain: uncertain, pendingCheckedMissing: false,
+        return { ...before, pending: uncertain ? action : null, pendingUncertain: uncertain, pendingRecorded: false, pendingCheckedMissing: false,
           previewNeedsRefresh: before.previewNeedsRefresh || notCommitted && action.kind === "decision",
           notice: unknown ? null : uncertain ? "unknown" : "error", failure: unknown ? null : writeFailure };
       });
@@ -480,7 +513,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       if (live() && current().pending === action) update(before => ({ ...before, failure: writeFailure, notice: "unknown" }));
     } catch (error) { if (live() && current().pending === action) fail(error, "unknown"); }
   }
-  async function fresh(kind: ResourcePending["kind"], entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }, isScopeCurrent: () => boolean = () => true) {
+  async function fresh(kind: Exclude<ResourcePending["kind"], "typed-context">, entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }, isScopeCurrent: () => boolean = () => true) {
     const start = current(), locale = kind === "decision" ? start.previewCapture?.targetLocale ?? "" : start.locale;
     if (!(kind === "decision" ? decisionLocaleAvailable(start, entry?.decision) : localeAvailable(locale)) || (kind === "term" && (!start.termDraft.source.trim() || !start.termDraft.target.trim() || !start.termDraft.reason.trim()))
       || ((kind === "context" || kind === "capture") && (!start.selectedUnit?.unitId || !start.selectedUnit.sourceRevisionId))
@@ -552,7 +585,8 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     } catch (error) { if (!captured || isCurrent()) fail(error, hasUnknownOutcome(error) && !captured ? "pickerUnknown" : "error"); }
     finally { release(); }
   }
-  return <ResourceContext.Provider value={{ canReceiveMcp, openMcpPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
+  const contextResources = createContextResourceMethods({ session, live, current, update, reserve, release, dispatch });
+  return <ResourceContext.Provider value={{ contextResources, canReceiveMcp, openMcpPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
     setLocale, beginTerm, adoptTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     canReadCapture, saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;

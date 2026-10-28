@@ -13,6 +13,9 @@ const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
 mod context_facts;
+mod context_resources;
+pub use context_resources::*;
+pub(super) use context_resources::capture_in as capture_context_resources_in;
 mod correction;
 pub(crate) mod mcp;
 pub(crate) mod strategy;
@@ -35,6 +38,7 @@ pub(super) fn verify_input_fact_decisions(
         super::ai_semantic_review::verify_input_records(c, input)?;
     }
     context_facts::verify_input_records(c, input)?;
+    context_resources::verify_input_records(c, input)?;
     strategy::verify_input_binding(c, input)
 }
 mod source_context;
@@ -93,7 +97,7 @@ pub(super) fn revision_resources_changed(
     locale: &str,
     text: &str,
 ) -> Result<bool, ExecutionError> {
-    let mut statement=connection.prepare("SELECT scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase FROM resource_changes WHERE locale=?2 AND rowid>COALESCE((SELECT last_change_rowid FROM translation_resource_baselines WHERE revision_id=?1),0)").map_err(sql)?;
+    let mut statement=connection.prepare("SELECT scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,scope_json,old_scope_json FROM resource_changes WHERE locale=?2 AND rowid>COALESCE((SELECT last_change_rowid FROM translation_resource_baselines WHERE revision_id=?1),0)").map_err(sql)?;
     let rows = statement
         .query_map(params![revision.to_string(), locale], |r| {
             Ok((
@@ -101,12 +105,18 @@ pub(super) fn revision_resources_changed(
                 r.get::<_, Option<String>>(1)?,
                 r.get::<_, Option<String>>(2)?,
                 r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
             ))
         })
         .map_err(sql)?;
     let unit = unit.to_string();
     for row in rows {
-        let (scope, old_scope, phrase, old_phrase) = row.map_err(sql)?;
+        let (scope, old_scope, phrase, old_phrase, typed_scope, old_typed_scope) = row.map_err(sql)?;
+        for json in [typed_scope,old_typed_scope].into_iter().flatten() {
+            let scope:ContextResourceScope=serde_json::from_str(&json).map_err(|_|failure(ErrorCode::CorruptLedger,"context-resource-change-scope"))?;
+            if context_resources::scope_membership(connection,id(unit.clone())?,&scope)?.0 != ContextResourceStatus::OutsideScope {return Ok(true);}
+        }
         let (direct, lexical) = change_targets_source(
             &unit,
             text,
@@ -202,6 +212,7 @@ pub enum ResourceImpactKind {
     Term,
     Context,
     ContextFact,
+    ContextResource,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -209,6 +220,7 @@ pub enum ResourceImpactKind {
 pub enum ResourceImpactConfidence {
     ExplicitUnit,
     LiteralPossible,
+    ScopePossible,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -435,6 +447,8 @@ pub struct ContextOmission {
     pub kind: String,
     pub reference: String,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -448,6 +462,8 @@ pub struct ContextCapture {
     pub budget_bytes: u32,
     pub included: Vec<ContextItem>,
     pub omitted: Vec<ContextOmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_resources: Option<ContextResourceCapture>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -663,18 +679,26 @@ const TABLES: &[(&str, &str)] = &[
     ("context_revisions", "CREATE TABLE context_revisions (
         revision_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        unit_id TEXT NOT NULL REFERENCES source_units(unit_id),
+        unit_id TEXT REFERENCES source_units(unit_id),
         locale TEXT NOT NULL,
         text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=16384),
         reason TEXT NOT NULL,
         previous_revision_id TEXT REFERENCES context_revisions(revision_id),
         action_id TEXT NOT NULL UNIQUE,
-        request_digest TEXT NOT NULL CHECK(length(request_digest)=64))"),
+        request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
+        context_id TEXT,
+        subject_id TEXT,
+        resource_kind TEXT,
+        record_json TEXT CHECK(record_json IS NULL OR length(CAST(record_json AS BLOB))<=65536),
+        CHECK((unit_id IS NOT NULL AND context_id IS NULL AND subject_id IS NULL AND resource_kind IS NULL AND record_json IS NULL)
+           OR (unit_id IS NULL AND context_id IS NOT NULL AND subject_id IS NOT NULL AND resource_kind IN ('character','style','background') AND record_json IS NOT NULL)))"),
     ("context_current", "CREATE TABLE context_current (
-        unit_id TEXT NOT NULL REFERENCES source_units(unit_id),
+        unit_id TEXT REFERENCES source_units(unit_id),
         locale TEXT NOT NULL,
         revision_id TEXT NOT NULL REFERENCES context_revisions(revision_id),
-        PRIMARY KEY(unit_id,locale))"),
+        context_id TEXT UNIQUE,
+        UNIQUE(unit_id,locale),
+        CHECK((unit_id IS NULL)<>(context_id IS NULL)))"),
     ("context_captures", "CREATE TABLE context_captures (
         capture_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
@@ -687,7 +711,7 @@ const TABLES: &[(&str, &str)] = &[
     ("resource_changes", "CREATE TABLE resource_changes (
         change_id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
-        kind TEXT NOT NULL CHECK(kind IN ('term','context','context-fact')),
+        kind TEXT NOT NULL CHECK(kind IN ('term','context','context-fact','context-resource')),
         locale TEXT NOT NULL,
         scope_unit_id TEXT REFERENCES source_units(unit_id),
         old_scope_unit_id TEXT REFERENCES source_units(unit_id),
@@ -695,7 +719,9 @@ const TABLES: &[(&str, &str)] = &[
         old_source_phrase TEXT,
         old_revision_id TEXT,
         new_revision_id TEXT NOT NULL,
-        action_id TEXT NOT NULL UNIQUE)"),
+        action_id TEXT NOT NULL UNIQUE,
+        scope_json TEXT,
+        old_scope_json TEXT)"),
     ("translation_resource_baselines", "CREATE TABLE translation_resource_baselines (
         revision_id TEXT PRIMARY KEY NOT NULL REFERENCES translation_revisions(revision_id),
         last_change_rowid INTEGER NOT NULL CHECK(last_change_rowid>=0))"),
@@ -717,7 +743,68 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+pub(super) fn migrate_context_resources(connection: &Connection) -> rusqlite::Result<()> {
+    // Defer existing self/current references only while atomically replacing the
+    // original tables. The final foreign_key_check runs before commit.
+    connection.execute_batch("PRAGMA defer_foreign_keys=ON")?;
+    for name in ["context_revisions", "context_current", "resource_changes"] {
+        let ddl = TABLES.iter().find(|(table, _)| *table == name).unwrap().1;
+        connection.execute_batch(&ddl.replacen(
+            &format!("CREATE TABLE {name} ("), &format!("CREATE TABLE {name}_v66 ("), 1,
+        ))?;
+        let columns = match name {
+            "context_revisions" => "revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest",
+            "context_current" => "unit_id,locale,revision_id",
+            _ => "change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id",
+        };
+        // Baselines refer to resource_changes.rowid. Preserve all rowids, not
+        // merely the change IDs, including gaps left in supported projects.
+        connection.execute_batch(&format!(
+            "INSERT INTO {name}_v66(rowid,{columns}) SELECT rowid,{columns} FROM {name};"
+        ))?;
+    }
+    connection.execute_batch("DROP TABLE context_current; DROP TABLE context_revisions; DROP TABLE resource_changes;
+        ALTER TABLE context_revisions_v66 RENAME TO context_revisions;
+        ALTER TABLE context_current_v66 RENAME TO context_current;
+        ALTER TABLE resource_changes_v66 RENAME TO resource_changes;")?;
+    if connection.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    // Replacement tables now satisfy every original reference. Clear only the
+    // deferred DROP bookkeeping after checking the complete resulting graph.
+    connection.execute_batch("PRAGMA defer_foreign_keys=OFF")?;
+    Ok(())
+}
+
+/// Reconstruct the actual pre-66 table shapes in an owned, closed test project.
+/// Changing user_version alone would not exercise a supported migration input.
+#[cfg(test)]
+pub(in crate::persistence) fn make_legacy_context_schema(c:&Connection)->rusqlite::Result<()> {
+    assert!(c.is_autocommit());
+    let foreign_keys:bool=c.pragma_query_value(None,"foreign_keys",|r|r.get(0))?;
+    c.pragma_update(None,"foreign_keys",false)?;
+    let result=c.execute_batch("BEGIN IMMEDIATE;
+        CREATE TABLE context_revisions_legacy(revision_id TEXT PRIMARY KEY NOT NULL,project_id TEXT NOT NULL,unit_id TEXT NOT NULL REFERENCES source_units(unit_id),locale TEXT NOT NULL,text TEXT NOT NULL CHECK(length(CAST(text AS BLOB))<=16384),reason TEXT NOT NULL,previous_revision_id TEXT REFERENCES context_revisions(revision_id),action_id TEXT NOT NULL UNIQUE,request_digest TEXT NOT NULL CHECK(length(request_digest)=64));
+        INSERT INTO context_revisions_legacy(rowid,revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest) SELECT rowid,revision_id,project_id,unit_id,locale,text,reason,previous_revision_id,action_id,request_digest FROM context_revisions;
+        CREATE TABLE context_current_legacy(unit_id TEXT NOT NULL REFERENCES source_units(unit_id),locale TEXT NOT NULL,revision_id TEXT NOT NULL REFERENCES context_revisions(revision_id),PRIMARY KEY(unit_id,locale));
+        INSERT INTO context_current_legacy(rowid,unit_id,locale,revision_id) SELECT rowid,unit_id,locale,revision_id FROM context_current;
+        CREATE TABLE resource_changes_legacy(change_id TEXT PRIMARY KEY NOT NULL,project_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('term','context','context-fact')),locale TEXT NOT NULL,scope_unit_id TEXT REFERENCES source_units(unit_id),old_scope_unit_id TEXT REFERENCES source_units(unit_id),source_phrase TEXT,old_source_phrase TEXT,old_revision_id TEXT,new_revision_id TEXT NOT NULL,action_id TEXT NOT NULL UNIQUE);
+        INSERT INTO resource_changes_legacy(rowid,change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id) SELECT rowid,change_id,project_id,kind,locale,scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase,old_revision_id,new_revision_id,action_id FROM resource_changes;
+        DROP TABLE context_current;DROP TABLE context_revisions;DROP TABLE resource_changes;
+        ALTER TABLE context_revisions_legacy RENAME TO context_revisions;
+        ALTER TABLE context_current_legacy RENAME TO context_current;
+        ALTER TABLE resource_changes_legacy RENAME TO resource_changes;
+        COMMIT;");
+    if result.is_err()&&!c.is_autocommit(){c.execute_batch("ROLLBACK")?;}
+    c.pragma_update(None,"foreign_keys",foreign_keys)?;
+    result
+}
+
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+    validate_version(connection, super::SCHEMA_VERSION)
+}
+
+pub(super) fn validate_version(connection: &Connection, version: i64) -> rusqlite::Result<()> {
     context_facts::validate(connection)?;
     strategy::validate(connection)?;
     for (name, _) in TABLES {
@@ -794,6 +881,9 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     }
     correction::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     mcp::validate_captures(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    if version >= 66 {
+        context_resources::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    }
     Ok(())
 }
 
@@ -1752,7 +1842,7 @@ impl ProjectStore {
                 .collect(),
             total_affected,
             next_offset: (offset.saturating_add(limit) < total_affected).then_some(offset + limit),
-            coverage: "current-snapshot; explicit unit and literal possible matches".into(),
+            coverage: "current-snapshot; explicit unit, literal possible and scoped context possible dependencies".into(),
         })
     }
     pub(in crate::persistence) fn capture_resource_impacts(
@@ -1789,6 +1879,7 @@ impl ProjectStore {
                         CASE kind WHEN 'term' THEN
                             (SELECT removed FROM term_revisions WHERE revision_id=new_revision_id)
                           WHEN 'context-fact' THEN (SELECT json_extract(CAST(request AS TEXT),'$.disposition.kind')='reject-inference' FROM context_fact_decisions WHERE action_id=new_revision_id)
+                          WHEN 'context-resource' THEN (SELECT json_extract(record_json,'$.receipt.withdrawn') FROM context_revisions WHERE revision_id=new_revision_id)
                           ELSE 0 END
                  FROM resource_changes WHERE project_id=?1 AND locale=?2
                  ORDER BY rowid LIMIT 10001",
@@ -1864,10 +1955,27 @@ impl ProjectStore {
         if selections.len() > 2_000 {
             return Err(failure(ErrorCode::LimitExceeded, "impact-unit-budget"));
         }
+        let mut context_targets = BTreeMap::new();
+        for change in &changes {
+            if change.2 != "context-resource" {continue;}
+            let raw:(Option<String>,Option<String>)=connection.query_row("SELECT scope_json,old_scope_json FROM resource_changes WHERE change_id=?1",[&change.1],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql)?;
+            let scopes=[raw.0,raw.1].into_iter().flatten().map(|json|serde_json::from_str::<ContextResourceScope>(&json).map_err(|_|failure(ErrorCode::CorruptLedger,"context-resource-change-scope"))).collect::<Result<Vec<_>,_>>()?;
+            let mut targets=BTreeSet::new();
+            for selected in &selections {
+                let unit=id(selected.0.clone())?;
+                for scope in &scopes {
+                    if context_resources::scope_membership(connection,unit,scope)?.0 != ContextResourceStatus::OutsideScope {
+                        targets.insert(selected.0.clone());break;
+                    }
+                }
+            }
+            context_targets.insert(change.1.clone(),targets);
+        }
         Ok(CapturedResourceImpacts {
             locale: locale.into(),
             changes,
             selections,
+            context_targets,
         })
     }
 }
@@ -1891,6 +1999,7 @@ pub(in crate::persistence) struct CapturedResourceImpacts {
     locale: String,
     changes: Vec<ImpactChange>,
     selections: Vec<ImpactSelection>,
+    context_targets: BTreeMap<String,BTreeSet<String>>,
 }
 impl CapturedResourceImpacts {
     pub(in crate::persistence) fn evaluate(self) -> Result<Vec<ImpactItem>, ExecutionError> {
@@ -1898,6 +2007,7 @@ impl CapturedResourceImpacts {
             locale,
             changes,
             selections,
+            context_targets,
         } = self;
         let mut items = Vec::new();
         for (
@@ -1938,16 +2048,18 @@ impl CapturedResourceImpacts {
                     source_phrase.as_deref(),
                     old_source_phrase.as_deref(),
                 );
-                if !direct && !lexical {
+                let scoped = context_targets.get(change_id).is_some_and(|targets|targets.contains(&unit));
+                if !direct && !lexical && !scoped {
                     continue;
                 }
-                uncertain |= lexical;
+                uncertain |= lexical || scoped;
                 reasons.push(ImpactReason {
                     change_id: id(change_id.clone())?,
                     kind: match kind.as_str() {
                         "term" => ResourceImpactKind::Term,
                         "context" => ResourceImpactKind::Context,
                         "context-fact" => ResourceImpactKind::ContextFact,
+                        "context-resource" => ResourceImpactKind::ContextResource,
                         _ => return Err(failure(ErrorCode::CorruptLedger, "resource-change-kind")),
                     },
                     old_revision_id: old_revision.clone().map(id).transpose()?,
@@ -1957,6 +2069,8 @@ impl CapturedResourceImpacts {
                     new_removed: *new_removed,
                     confidence: if direct {
                         ResourceImpactConfidence::ExplicitUnit
+                    } else if scoped {
+                        ResourceImpactConfidence::ScopePossible
                     } else {
                         ResourceImpactConfidence::LiteralPossible
                     },
@@ -2298,6 +2412,7 @@ impl ProjectStore {
                 used -= manual.text.as_bytes().len();
                 omitted.push(ContextOmission {
                     kind: "manual".into(),
+                    label: None,
                     reference: manual.revision_id.to_string(),
                     reason: if included.len() >= 128 {
                         "item-cap"
@@ -2328,6 +2443,7 @@ impl ProjectStore {
                 } else {
                     omitted.push(ContextOmission {
                         kind: "term".into(),
+                        label: None,
                         reference: term.revision_id.to_string(),
                         reason: if included.len() >= 128 {
                             "item-cap"
@@ -2340,10 +2456,40 @@ impl ProjectStore {
             } else {
                 omitted.push(ContextOmission {
                     kind: "term".into(),
+                    label: None,
                     reference: item.source,
                     reason: "conflict".into(),
                 });
             }
+        }
+        let snapshot = super::content::scope(&tx)?.current_snapshot
+            .ok_or_else(||failure(ErrorCode::DependencyConflict,"context-resource-source"))?;
+        let mut context_resources = context_resources::capture_in(&tx,&SourceContextRequest {
+            project_id:request.project_id,source_snapshot_id:snapshot,unit_id:request.unit_id,
+            source_revision_id:source_revision,locale:request.locale.clone(),
+        })?;
+        if let Some(resources) = &mut context_resources {
+            let mut item_count = included.len();
+            resources.entries.retain(|entry| {
+                let reason = if entry.status != ContextResourceStatus::Selected {
+                    Some(match entry.status {
+                        ContextResourceStatus::Withdrawn => "withdrawn",
+                        ContextResourceStatus::Conflict => "conflict",
+                        ContextResourceStatus::Ambiguous => "ambiguous",
+                        ContextResourceStatus::MissingFiles => "missing-files",
+                        ContextResourceStatus::Shadowed => "shadowed",
+                        ContextResourceStatus::OutsideScope => "outside-scope",
+                        ContextResourceStatus::Selected => unreachable!(),
+                    }.into())
+                } else if item_count >= 128 {
+                    Some("item-cap".into())
+                } else if used+entry.revision.name.len()+entry.revision.text.len()>request.budget_bytes as usize {
+                    Some("budget".into())
+                } else { None };
+                if let Some(reason)=reason {
+                    omitted.push(ContextOmission {kind:"context-resource".into(),reference:entry.revision.revision_id.to_string(),reason,label:Some(entry.revision.name.clone())});false
+                } else {used+=entry.revision.name.len()+entry.revision.text.len();item_count+=1;true}
+            });
         }
         let capture = ContextCapture {
             capture_id: ExecutionId::new(),
@@ -2353,6 +2499,7 @@ impl ProjectStore {
             budget_bytes: request.budget_bytes,
             included,
             omitted,
+            context_resources,
         };
         let json = serde_json::to_string(&capture)
             .map_err(|_| failure(ErrorCode::StorageFailed, "context-encode"))?;
@@ -3180,7 +3327,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    fn fixture_project() -> (tempfile::TempDir, ProjectStore, ExecutionId) {
+    pub(super) fn fixture_project() -> (tempfile::TempDir, ProjectStore, ExecutionId) {
         let temp = tempfile::tempdir().unwrap();
         let mut store = ProjectStore::create(
             temp.path().join("project"),

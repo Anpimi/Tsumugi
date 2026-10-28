@@ -103,6 +103,30 @@ export type ContextFactDisposition =
   | {
       kind: "restore";
     };
+export type ContextResourceKind = "character" | "style" | "background";
+export type ContextResourceAction =
+  | {
+      kind: "save";
+      request: SaveContextResource;
+    }
+  | {
+      kind: "withdraw";
+      request: WithdrawContextResource;
+    };
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type Revision = string;
 export type ResourceDecisionKind = "adopt" | "keep" | "ignore" | "override";
 
 export interface Requests {
@@ -117,6 +141,14 @@ export interface Requests {
   contextFactAction: ContextFactActionRequest;
   contextFactHistory: ContextFactHistoryRequest;
   contextFacts: ContextFactsRequest;
+  contextResourceAction: ContextResourceActionRequest;
+  contextResourceCurrent: ContextResourceCurrentRequest;
+  contextResourceHistory: ContextResourceHistoryRequest;
+  contextResourcePage: ContextResourceListRequest;
+  contextResourceRecovery: ContextResourceRecoveryRequest;
+  contextResourceResolve: ContextResourceResolveRequest;
+  contextResourceSave: ContextResourceSaveRequest;
+  contextResourceWithdraw: ContextResourceWithdrawRequest;
   correctionBasis: CorrectionBasisRequest;
   correctionCapture: CorrectionCaptureRequest;
   currentTerm: TermCurrentRequest;
@@ -262,6 +294,83 @@ export interface ContextFactsRequest {
 export interface ContextFactPosition {
   blockIndex: number;
   factIndex: number;
+}
+export interface ContextResourceActionRequest {
+  actionId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ContextResourceCurrentRequest {
+  contextId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ContextResourceHistoryRequest {
+  basis?: string | null;
+  contextId: ExecutionId;
+  limit: number;
+  offset: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ContextResourceListRequest {
+  basis?: string | null;
+  kind?: ContextResourceKind | null;
+  limit: number;
+  locale: string;
+  offset: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ContextResourceRecoveryRequest {
+  action: ContextResourceAction;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface SaveContextResource {
+  actionId: ExecutionId;
+  actor: string;
+  contextId?: ExecutionId | null;
+  expectedRevisionId?: ExecutionId | null;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  projectId: ExecutionId;
+  reason: string;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  /**
+   * Only an explicit scoped variant reuses an existing subject.
+   */
+  subjectId?: ExecutionId | null;
+  text: string;
+}
+export interface ContentScope {
+  currentSnapshot?: ExecutionId | null;
+  revision: Revision;
+}
+export interface WithdrawContextResource {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  expectedRevisionId: ExecutionId;
+  projectId: ExecutionId;
+  reason: string;
+}
+export interface ContextResourceResolveRequest {
+  projectId: ExecutionId;
+  scope: SourceContextRequest;
+  sessionToken: string;
+}
+export interface ContextResourceSaveRequest {
+  projectId: ExecutionId;
+  resource: SaveContextResource;
+  sessionToken: string;
+}
+export interface ContextResourceWithdrawRequest {
+  projectId: ExecutionId;
+  resource: WithdrawContextResource;
+  sessionToken: string;
 }
 export interface CorrectionBasisRequest {
   afterSelectionId: ExecutionId;

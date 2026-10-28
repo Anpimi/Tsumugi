@@ -12,7 +12,19 @@ Unsaved term input stays in the project session while you switch tabs. Save it o
 
 Term proposals retain their saved sources. Read a terminology file in the JSON format below, or open a previously captured source, then review each proposed translation against the saved value. You can use the proposed value, keep the saved value, or reject the proposal. Replacing a manual override or stopping use of a removed term requires confirmation. Source or term changes invalidate the old comparison; read it again before making another decision. Outdated correction or MCP evidence remains readable without restoring permission to adopt it.
 
-The other knowledge categories still need their own editing capabilities. Existing source observations, per-entry context, context strategies and translation memory keep the behavior described below. Precise term-reference counts and complete TMX/TBX import and export are not available in this view yet.
+### Character, style and background notes
+
+Choose **Characters**, **Style** or **Background** to add human-written material for a project language. Give it a name, write the material, choose its scope, and record who made the change and why. Each save keeps an earlier version. Drafts stay available when you switch categories or tabs, and a late response cannot replace newer input.
+
+Material can apply to the whole project, selected source files, or one entry. Selected files use their saved source namespace and paths; a later source version at the same paths continues to match. Renamed files are not matched by guesswork. Missing files are shown separately. An entry that occurs in several files must be covered in every occurrence before file-scoped material can apply; partial coverage is shown as uncertain.
+
+Use the scope-variant action to give the same subject a more specific description. A single-entry version takes precedence over a file-scoped version, which takes precedence over a project-wide version. Equally specific, conflicting versions remain unresolved. Two independently created notes with the same name remain separate subjects.
+
+Withdraw a saved version to stop using it at that scope. Withdrawal keeps its history and blocks a wider version of the same subject from taking its place. Restore it explicitly to save another version. If the source or saved material changes while you edit, compare the current basis before saving; your input remains available. When a save result is uncertain, checking the original request completes recovery before another write is allowed. Finding a record through an ordinary read alone does not finish recovery.
+
+Entry references and AI material previews show the applicable saved versions and explain omissions. These notes are sent only when saved-context sharing is enabled. The provider receives the kind, name and text; local identities, file paths, author and change reason stay local. Changing a saved resource can require a fresh AI preparation, including preparations outside its scope while the current project-wide resource baseline is in use. Affected work is a possible scope match, not proof that a translation used the material.
+
+These three categories currently support manual maintenance. AI proposals for them, a separate translation-memory workspace, precise reference counts and complete TMX/TBX import and export still need further work. Existing source observations, per-entry context notes, context strategies and translation-memory suggestions keep the behavior described below.
 
 ## Managing terms and per-entry context
 

@@ -1,3 +1,4 @@
+import { ContextResourceCapturePreview } from "../../../ContextResourceCapturePreview";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -208,8 +209,9 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
     {!target.selectionId || target.translationText === null ? <Banner tone="info">{w("entrySemanticNoSelection")}</Banner> : null}
     {state.mode !== "current" ? <Banner tone="warning"><p>{w("entrySemanticCurrentOnly")}</p><Button size="sm" disabled={!scopeAvailability(scopePayload).enabled}
       onClick={() => commands.dispatch("review.entry-semantic-current", commandScope, scopePayload)}>{w("entrySemanticUseCurrent")}</Button></Banner> : null}
-    <details open={state.expanded} onToggle={event => { const expanded = event.currentTarget.open; if (semantic.current().expanded !== expanded) semantic.setExpanded(expanded); }}>
-      <summary>{t("semanticReview.prepareTitle")}</summary>
+    <Button size="sm" aria-expanded={state.expanded} aria-controls={`${inputOwner}-preparation`} disabled={!sameView()}
+      onClick={() => { if (sameView()) semantic.setExpanded(!semantic.current().expanded); }}>{t("semanticReview.prepareTitle")}</Button>
+    <div id={`${inputOwner}-preparation`} hidden={!state.expanded}>
     <fieldset className={styles.configuration} disabled={!inputAllowed()}><legend>{t("semanticReview.prepareTitle")}</legend>
       <p>{target.nativeKey} → {target.locale}</p>
       <div className={styles.checks}>{(["meaning", "style"] as const).map(rule => <label className={styles.check} key={rule}><TextInput className={styles.checkbox} type="checkbox" checked={state.rules.includes(rule)}
@@ -234,14 +236,14 @@ export default function EntrySemanticPanel({ project, target, owner, drafts, com
         <h5>{item.source.nativeKey} → {item.source.targetLocale}</h5><div className={styles.text}><TokenizedText text={item.source.sourceText}/></div>
         <p>{t("semanticReview.translation")}</p><div className={styles.text}>{item.translationText === "" ? w("editorEmptySelection") : <TokenizedText text={item.translationText}/>}</div>
         {item.source.terms.map(term => <p key={term.revisionId}>{term.source} → {term.target}</p>)}{item.source.context ? <div className={styles.text}><TokenizedText text={item.source.context.text}/></div> : null}
-        <SourceContextPreview capture={item.source.sourceContext}/><ProjectFactPreview capture={item.source.projectContext}/>
+        <SourceContextPreview capture={item.source.sourceContext}/><ProjectFactPreview capture={item.source.projectContext}/><ContextResourceCapturePreview capture={item.source.contextResources}/>
         {item.source.omissions.map(reason => <p className={styles.meta} key={reason}>{reason.startsWith("term-conflict:") ? t("ai.termConflict", { term: reason.slice(14) }) : t(`ai.${reason}`, { defaultValue: reason })}</p>)}
       </div>)}<p className={styles.meta}>{t("semanticReview.disclosure")}</p>
       <label className={styles.check}><TextInput type="checkbox" className={styles.checkbox} checked={state.consent} disabled={!captured || !consentAvailability({ ...captured, kind: "entry-semantic-consent", preparation: prepared, approved: true }).enabled}
         onChange={event => { if (captured) commands.dispatch("review.entry-semantic-consent", commandScope, { ...captured, kind: "entry-semantic-consent", preparation: prepared, approved: event.target.checked }); }}/>{t("semanticReview.consent")}</label>
       <Button size="sm" variant="primary" disabled={!startPayload || !startAvailability(startPayload).enabled} onClick={() => { if (startPayload) commands.dispatch("review.entry-semantic-start", commandScope, startPayload); }}>{t("semanticReview.start")}</Button>
     </section> : null}
-    </details>
+    </div>
     {state.attempts.length ? <div className={styles.actions}><Menu label={t("semanticReview.history")} trigger={<Button size="sm" disabled={!present() || semantic.reserved()}>{t("semanticReview.history")}</Button>}
       items={state.attempts.map((attemptId, index) => { const payload: EntrySemanticReadPayload = { kind: "entry-semantic-read", attemptId }; return { id: attemptId,
         label: t("semanticReview.attempt", { count: index + 1 }), disabled: !readAvailability(payload, true).enabled, onSelect: () => commands.dispatch("review.entry-semantic-show-attempt", commandScope, payload) }; })}/>

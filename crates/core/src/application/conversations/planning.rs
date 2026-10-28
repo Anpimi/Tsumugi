@@ -76,6 +76,8 @@ pub struct ConversationPlanningUnitBasis {
     #[serde(deserialize_with = "required_nullable")]
     #[cfg_attr(feature = "wire-schema", schemars(schema_with = "nullable_id"))]
     pub shared_context_revision_id: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_resources: Option<crate::ContextResourceCapture>,
 }
 
 /// Counts are derived from the exact JSON input, including repeated per-unit

@@ -49,6 +49,7 @@ fn fixture(
             },
             shared_term_revision_ids: vec![],
             shared_context_revision_id: None,
+            context_resources: None,
         }]
     } else {
         vec![]
@@ -65,6 +66,7 @@ fn fixture(
             target_locale: "zh-CN".into(),
             terms: vec![],
             context: None,
+            context_resources: None,
             source_context: crate::SourceContextCapture::NotSelected,
             project_context: crate::ProjectFactCapture::NotSelected,
             omissions: vec![],

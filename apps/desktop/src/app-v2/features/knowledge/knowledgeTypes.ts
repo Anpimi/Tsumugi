@@ -4,3 +4,5 @@ import type { useResourceDraftSession } from "../../../ResourceDraftSession";
 export type KnowledgeOwner = ReturnType<typeof useResourceDraftSession>;
 export const knowledgeKinds = ["characters", "terms", "style", "background", "memory"] as const;
 export type KnowledgeKind = typeof knowledgeKinds[number];
+
+export function contextKindForKnowledge(preset: string) { return preset === "characters" ? "character" : preset === "style" ? "style" : preset === "background" ? "background" : null; }

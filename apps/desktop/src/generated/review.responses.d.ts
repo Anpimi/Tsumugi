@@ -127,9 +127,25 @@ export type UnsignedDecimal = string;
 export type SegmentSelectionFilter = "all" | "selected" | "unselected";
 export type SegmentStatusFilter =
   "all" | "untranslated" | "needs-review" | "issues" | "affected" | "blocking" | "ai-pending";
-export type ResourceImpactConfidence = "explicit-unit" | "literal-possible";
-export type ResourceImpactKind = "term" | "context" | "context-fact";
+export type ResourceImpactConfidence = "explicit-unit" | "literal-possible" | "scope-possible";
+export type ResourceImpactKind = "term" | "context" | "context-fact" | "context-resource";
 export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
+export type ContextResourceKind = "character" | "style" | "background";
+export type ContextResourceScope =
+  | {
+      kind: "project";
+    }
+  | {
+      kind: "file-group";
+      logicalPaths: string[];
+      namespace: string;
+    }
+  | {
+      kind: "unit";
+      unitId: ExecutionId;
+    };
+export type ContextResourceStatus =
+  "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
 /**
  * Pinned local decisions are separate from raw SDK facts and the provider projection.
  */
@@ -1211,6 +1227,7 @@ export interface AiSemanticReviewItemView {
 }
 export interface AiItemView {
   context: ContextRevision | null;
+  contextResources?: ContextResourceCapture | null;
   nativeKey: string;
   omissions: string[];
   projectContext: ProjectFactCapture;
@@ -1222,6 +1239,46 @@ export interface AiItemView {
   sourceText: string;
   targetLocale: string;
   terms: SharedTerm[];
+  unitId: ExecutionId;
+}
+/**
+ * Historical captures omit this field when empty so old input encoding stays stable.
+ */
+export interface ContextResourceCapture {
+  entries: ContextResourceResolutionEntry[];
+  scope: SourceContextRequest;
+}
+export interface ContextResourceResolutionEntry {
+  missingPaths: string[];
+  revision: ContextResourceRevision;
+  status: ContextResourceStatus;
+}
+export interface ContextResourceRevision {
+  actionId: ExecutionId;
+  actor: string;
+  contextId: ExecutionId;
+  kind: ContextResourceKind;
+  locale: string;
+  name: string;
+  previousRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  scope: ContextResourceScope;
+  sourceBasis: ContentScope;
+  subjectId: ExecutionId;
+  text: string;
+  withdrawn: boolean;
+}
+export interface ContentScope {
+  currentSnapshot: ExecutionId | null;
+  revision: Revision;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
 }
 export interface ContextFactDecision {
@@ -1265,13 +1322,6 @@ export interface SourceContextFact {
 export interface SourceReference {
   artifactId: string;
   range: TextRange;
-}
-export interface SourceContextRequest {
-  locale: string;
-  projectId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
 }
 export interface SelectedSourceContext {
   contentRevision: Revision;

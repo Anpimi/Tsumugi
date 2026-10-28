@@ -13,6 +13,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import { workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import styles from "./ConversationPanel.module.css";
+import { ContextResourceCapturePreview } from "../../../ContextResourceCapturePreview";
 
 /** Formatting changes no material; consent still binds the original opaque capture. */
 function formattedInput(input: string) {
@@ -104,6 +105,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
         <p>{t("askProtectionShared", { count: prepared.preview.units.filter(unit => unit.protection.protected).length })}</p>
       </> : null}
       {prepared.preview.selectedMessages.map(message => <div className={styles.previewMessage} key={message.messageId}><p className={styles.text}>{message.body}</p></div>)}
+      {prepared.preview.units.map(unit => <ContextResourceCapturePreview key={unit.unitId} capture={unit.contextResources}/>)}
       <Button size="sm" aria-expanded={materialOpen} aria-controls={`${id}-material`} onClick={() => setMaterialOpen(value => !value)}>{t("askFullMaterial")}</Button>
       {materialOpen ? <div id={`${id}-material`}><pre className={styles.text}>{prepared.preview.system}</pre><pre className={styles.text}>{formattedInput(prepared.preview.input)}</pre></div> : null}
       <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.consent} disabled={blocked || !connectionCurrent}

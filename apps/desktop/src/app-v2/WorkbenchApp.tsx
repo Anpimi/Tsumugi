@@ -48,8 +48,8 @@ import type { ConversationSession } from "./features/assistant/ConversationSessi
 import type { ConversationRecoveryTarget } from "./features/assistant/ConversationPanel";
 import type { ConversationProposalTarget } from "./features/assistant/conversationNavigation";
 import type { DecisionItem } from "../decisionCommands";
-import type { KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
-import { knowledgeBlocked, knowledgeHasDraft } from "./features/knowledge/knowledgeState";
+import { contextKindForKnowledge, type KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
+import { knowledgeBlocked, knowledgeHasDraft, knowledgeRecovery } from "./features/knowledge/knowledgeState";
 import { useDecisionFeed } from "./features/decisions/useDecisionFeed";
 import { DecisionBadge, DecisionTray } from "./features/decisions/DecisionList";
 import { TokenizedText } from "../design-system/TokenizedText";
@@ -79,6 +79,7 @@ const DecisionWorkspace = lazy(() => import("./features/decisions/DecisionWorksp
 const KnowledgeOwnerHost = lazy(() => import("./features/knowledge/KnowledgeOwnerHost"));
 const KnowledgeView = lazy(() => import("./features/knowledge/KnowledgeView"));
 const KnowledgeDetails = lazy(() => import("./features/knowledge/KnowledgeDetails"));
+const ContextResourceDetails = lazy(() => import("./features/knowledge/ContextResourceDetails"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
@@ -692,12 +693,14 @@ function WorkspaceShell() {
   async function openKnowledge(newView = false, restoreDraft = false) {
     requestKnowledge();
     const state = store.getState(), existing = state.viewOrder.map(id => state.views[id]).find(item => item.kind === "knowledge");
-    const locale = knowledgeOwner?.state.locale ?? activeLocale;
+    const recovery = knowledgeRecovery(knowledgeOwner);
+    const locale = restoreDraft ? recovery.locale ?? activeLocale : activeLocale;
+    if (restoreDraft && recovery.key) knowledgeOwner?.contextResources.activate(recovery.key);
     if (existing && !newView) {
-      if (restoreDraft) await runtime.navigation.update(existing.id, { locale, preset: "terms" });
+      if (restoreDraft) await runtime.navigation.update(existing.id, { locale, preset: recovery.preset });
       else await runtime.navigation.activate(existing.id);
     }
-    else await runtime.navigation.open({ kind: "knowledge", locale, preset: "terms" });
+    else await runtime.navigation.open({ kind: "knowledge", locale, preset: restoreDraft ? recovery.preset : "terms" });
   }
   const openKnowledgeDraft = () => openKnowledge(false, true);
   function panel() {
@@ -708,7 +711,8 @@ function WorkspaceShell() {
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
-      <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
+      <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? contextKindForKnowledge(view.preset) ? <ContextResourceDetails project={session.project} owner={knowledgeOwner} disabled={disabled} gate={gate} preset={view.preset} locale={view.locale}
+        visible={view.dock === "details" && (!narrow || drawer)} current={dialogId => knowledgeCurrent(dialogId ?? (narrow && drawer ? "workspace-dock" : undefined))}/> : <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
         visible={view.dock === "details" && (!narrow || drawer)} current={() => knowledgeCurrent(narrow && drawer ? "workspace-dock" : undefined)}/> : <LoadingState label={t("knowledge.readingTerms")}/> : <EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}

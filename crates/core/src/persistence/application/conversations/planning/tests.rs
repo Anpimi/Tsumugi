@@ -273,6 +273,32 @@ fn complete_original_material_and_actual_share_brief_use_one_readonly_capture() 
 }
 
 #[test]
+fn typed_context_material_is_the_original_capture_and_share_off_omits_it() {
+    let (_temp,mut store,project,units)=fixture();
+    let original=crate::SaveContextResource{project_id:project,action_id:ExecutionId::new(),context_id:None,subject_id:None,expected_revision_id:None,source_basis:store.content_scope().unwrap(),kind:crate::ContextResourceKind::Character,locale:"zh-CN".into(),scope:crate::ContextResourceScope::Unit{unit_id:units[0]},name:"Synthetic character".into(),text:"Human supplied character material".into(),actor:"Synthetic editor".into(),reason:"Explicit scoped setting".into()};
+    let saved=store.save_context_resource(&original).unwrap();
+    let mut req=request(&store,project,&units[..1]);req.config.share_context=true;
+    let capture=readonly(&store,||store.prepare_conversation_planning(&req).unwrap());
+    let material=capture.ai_preview.as_ref().unwrap().items[0].context_resources.clone();
+    assert!(material.is_some());assert_eq!(capture.preview().units[0].context_resources,material);
+    assert_eq!(material.as_ref().unwrap().entries[0].revision.revision_id,saved.revision_id);
+    let prompt:serde_json::Value=serde_json::from_str(&capture.preview().input).unwrap();
+    assert_eq!(prompt["units"][0]["contextResources"][0]["name"],saved.name);
+    assert_eq!(capture.preview().brief.manual_contexts,1);
+    let mut off=req.clone();off.config.share_context=false;
+    let private=readonly(&store,||store.prepare_conversation_planning(&off).unwrap());
+    assert!(private.preview().units[0].context_resources.is_none());
+    assert!(serde_json::to_value(&private.preview().units[0]).unwrap().get("contextResources").is_none());
+    let body:serde_json::Value=serde_json::from_str(&private.preview().input).unwrap();
+    assert!(body["units"][0].get("contextResources").is_none());
+    // Unchanged prose with a new authoritative revision still changes local
+    // evidence; the frozen material never silently becomes the new revision.
+    store.save_context_resource(&crate::SaveContextResource{action_id:ExecutionId::new(),context_id:Some(saved.context_id),expected_revision_id:Some(saved.revision_id),reason:"Updated human reason".into(),..original}).unwrap();
+    assert!(store.validate_conversation_planning(&capture).is_err());
+    assert_eq!(capture.preview().units[0].context_resources,material);
+}
+
+#[test]
 fn conversation_only_needs_no_source_or_fake_unit_and_subscription_keeps_zero_output_tokens() {
     let temp = tempfile::tempdir().unwrap();
     let store = ProjectStore::create(

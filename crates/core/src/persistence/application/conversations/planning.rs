@@ -119,6 +119,7 @@ fn preview_in(
                             .context
                             .as_ref()
                             .map(|context| context.revision_id),
+                        context_resources: item.context_resources.clone(),
                     })
                 })
                 .collect::<Result<Vec<_>, ExecutionError>>()?;
@@ -504,7 +505,7 @@ fn check_material(
                         }
                         _ => Vec::new(),
                     };
-                    (item.source_context.clone(), manual)
+                    (item.source_context.clone(), manual, item.context_resources.clone())
                 })
                 .collect::<Vec<_>>()
         })
