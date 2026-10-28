@@ -1,13 +1,17 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement, Profiler } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { i18n } from "../../../i18n";
+import type { workbenchEn } from "../../../i18n/workbench";
 import type { DraftKey, DraftSummary, DraftValue } from "../../../draftCommands";
 import type { SegmentRow } from "../../../segmentCommands";
 import type { DraftEntry } from "../editor/translationDrafts";
 import EntryStatus, { type EntryStatusProps } from "./EntryStatus";
 import { deriveEntryStatus } from "./deriveEntryStatus";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
+const w = (key: WorkbenchTextKey) => i18n.t(`workbenchV2.${key}`);
+beforeEach(async () => { await i18n.changeLanguage("en-US"); });
 afterEach(cleanup);
 
 const counts = { passed: 0, findings: 0, missing: 0, unavailable: 0, failed: 0, cancelled: 0,
@@ -209,6 +213,21 @@ it("keeps manual protection orthogonal to every main glyph", () => {
   expect(protectedCases).toEqual(cases.map(status => ({ ...status, protected: true })));
 });
 
+it.each(["en-US", "zh-CN"] as const)("renders translated, protected and changed-source labels with real %s resources", async language => {
+  await i18n.changeLanguage(language);
+  const row = selected(); row.protection.protected = true;
+  const ui = render(createElement(EntryStatus, { row, projectId: key.projectId, drafts: null }));
+  expect(screen.getByRole("img", { name: w("entryStatusTranslated") })).toHaveAccessibleName(language === "en-US"
+    ? "Translation selected; review approval is still needed." : "已有译文，尚未审阅通过。");
+  expect(screen.getByRole("img", { name: w("entryStatusProtected") })).toHaveAccessibleName(language === "en-US"
+    ? "Manually protected: automatic selection cannot replace this translation." : "人工保护：自动选择不会替换此译文。");
+  const changed = { ...row, applicability: { ...row.applicability, sourceBasisCurrent: false } };
+  ui.rerender(createElement(EntryStatus, { row: changed, projectId: key.projectId, drafts: null }));
+  expect(screen.getByRole("img", { name: w("entryStatusSourceChanged") })).toHaveAttribute("data-state", "stale");
+  expect(screen.queryByRole("img", { name: w("entryStatusTranslated") })).not.toBeInTheDocument();
+  expect(screen.getByRole("img", { name: w("entryStatusProtected") })).toBeVisible();
+});
+
 it("subscribes to the entity snapshot and leaves an unrelated row notification out of rendering", () => {
   const row = selected(), listeners = new Set<() => void>(), onRender = vi.fn();
   let entry = draft(row, row.content.translationPreview ?? "");
@@ -219,7 +238,7 @@ it("subscribes to the entity snapshot and leaves an unrelated row notification o
   };
   const props: EntryStatusProps = { row, projectId: key.projectId, drafts };
   const ui = render(createElement(Profiler, { id: "entry-status", onRender }, createElement(EntryStatus, props)));
-  expect(screen.getByRole("img", { name: "entryStatusTranslated" })).toHaveAttribute("data-state", "translated");
+  expect(screen.getByRole("img", { name: w("entryStatusTranslated") })).toHaveAttribute("data-state", "translated");
   const renders = onRender.mock.calls.length;
   act(() => listeners.forEach(listener => listener()));
   expect(onRender).toHaveBeenCalledTimes(renders);
@@ -227,10 +246,10 @@ it("subscribes to the entity snapshot and leaves an unrelated row notification o
     const value: DraftValue = { ...entry.value, text: "Non-active local input", editSeq: "2" };
     entry = { ...entry, value }; listeners.forEach(listener => listener());
   });
-  expect(screen.getByRole("img", { name: "entryStatusDraft" })).toHaveAttribute("data-state", "draft");
+  expect(screen.getByRole("img", { name: w("entryStatusDraft") })).toHaveAttribute("data-state", "draft");
   const protectedRow = { ...row, protection: { ...row.protection, protected: true } };
   ui.rerender(createElement(Profiler, { id: "entry-status", onRender }, createElement(EntryStatus, { ...props, row: protectedRow })));
-  expect(screen.getByRole("img", { name: "entryStatusProtected" })).toBeInTheDocument();
+  expect(screen.getByRole("img", { name: w("entryStatusProtected") })).toBeInTheDocument();
   ui.unmount(); expect(listeners.size).toBe(0);
 });
 
@@ -244,10 +263,10 @@ it("uses stable retained metadata until the owner loads the entity, without read
     getSnapshot: () => ({ hydration: "ready", revision: 1, failure: null, retired: false, mutationReserved: false, summaries: [summary] }),
   };
   render(createElement(Profiler, { id: "retained-status", onRender }, createElement(EntryStatus, { row, projectId: key.projectId, drafts })));
-  expect(screen.getByRole("img", { name: "entryStatusRetainedDraft" })).toHaveAttribute("data-state", "draft");
+  expect(screen.getByRole("img", { name: w("entryStatusRetainedDraft") })).toHaveAttribute("data-state", "draft");
   const renders = onRender.mock.calls.length;
   act(() => listeners.forEach(listener => listener()));
   expect(onRender).toHaveBeenCalledTimes(renders);
   act(() => { entry = draft(row, row.content.translationPreview ?? ""); listeners.forEach(listener => listener()); });
-  expect(screen.getByRole("img", { name: "entryStatusTranslated" })).toHaveAttribute("data-state", "translated");
+  expect(screen.getByRole("img", { name: w("entryStatusTranslated") })).toHaveAttribute("data-state", "translated");
 });

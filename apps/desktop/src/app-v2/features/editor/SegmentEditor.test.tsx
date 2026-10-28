@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, createRef } from "react";
 import { canonicalTranslationReuse } from "../../../translationReuse";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { i18n } from "../../../i18n";
+import type { workbenchEn } from "../../../i18n/workbench";
 import fixture from "../../../../test/fixtures/translation-commands.json";
 import type { DraftBasis, DraftHead, DraftKey, DraftReadView, DraftValue } from "../../../draftCommands";
 import type { TranslationSaveReceipt, TranslationSaveRequest } from "../../../translationCommands";
@@ -10,7 +12,9 @@ import { TranslationDrafts, type TranslationDraftPorts } from "./translationDraf
 import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import SegmentEditor, { type EditorCommand, type SegmentEditorHandle, type SegmentEditorProps } from "./SegmentEditor";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, parameters?: { key?: string }) => parameters?.key === undefined ? key : `${key}:${parameters.key}` }) }));
+type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
+const w = (key: WorkbenchTextKey) => i18n.t(`workbenchV2.${key}`);
+beforeEach(async () => { await i18n.changeLanguage("en-US"); });
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 const originalInsertCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
 afterEach(() => {
@@ -71,7 +75,7 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
   return { drafts, ports, gate, props, dispatch, commitWrite, setCurrent: (next: DraftReadView["current"]) => { current = copy(next); },
     ready: async () => { await drafts.initialize(); await drafts.open(key); } };
 }
-const input = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:dialogue.hello" });
+const input = () => screen.getByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "dialogue.hello" }) });
 
 async function diagnosticEditor() {
   const text = "A\r\n👩🏽‍💻\rB\nZ é";
@@ -131,7 +135,7 @@ it("consumes pending focus when the user visits another control before the draft
   act(() => { other.focus(); other.blur(); }); expect(document.activeElement).toBe(document.body);
   expect(located.mock.calls).toEqual([[h.focus.id, false]]);
   await act(async () => reading.resolve({ head: { key, revision: "1", writerId, value: { basis: copy(h.focus.basis), text: h.text, editSeq: h.focus.editSeq, pending: null } }, current: currentView(h.focus.basis) }));
-  await screen.findByRole("textbox", { name: "editorLabel:dialogue.hello" });
+  await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "dialogue.hello" }) });
   expect(input()).not.toHaveFocus(); expect(located).toHaveBeenCalledTimes(1); expect(drafts.getEntry(key)?.value?.text).toBe(h.text);
 });
 
@@ -141,9 +145,9 @@ it("uses the entry label, keeps disabled text selectable, and delegates all conf
   const ui = render(<SegmentEditor {...h.props} ref={ref} />);
   expect(input()).toHaveValue("Retained input");
   expect(input()).toHaveAttribute("data-editor", "true");
-  fireEvent.click(screen.getByRole("button", { name: "editorConfirm" }));
-  fireEvent.click(screen.getByRole("button", { name: "confirmNext" }));
-  fireEvent.click(screen.getByRole("button", { name: "editorExit" }));
+  fireEvent.click(screen.getByRole("button", { name: w("editorConfirm") }));
+  fireEvent.click(screen.getByRole("button", { name: w("confirmNext") }));
+  fireEvent.click(screen.getByRole("button", { name: w("editorExit") }));
   expect(h.dispatch.mock.calls.map(([command, source]) => [command, source])).toEqual([
     ["translation.confirm", "button"], ["translation.confirm-next", "button"], ["translation.exit-editor", "button"],
   ]);
@@ -156,32 +160,47 @@ it("uses the entry label, keeps disabled text selectable, and delegates all conf
 it("limits recovery presentation to confirmation without promising advance", async () => {
   const h = harness(draftHead()); await h.ready();
   const ui = render(<SegmentEditor {...h.props} allowAdvance={false} />);
-  expect(screen.queryByRole("button", { name: "confirmNext" })).not.toBeInTheDocument();
-  expect(screen.getByText("editorRecoveryHint")).toBeVisible(); expect(screen.queryByText("editorHint")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "editorConfirm" }));
+  expect(screen.queryByRole("button", { name: w("confirmNext") })).not.toBeInTheDocument();
+  expect(screen.getByText(i18n.t("workbenchV2.editorRecoveryHint", { modifier: navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl" }))).toBeVisible(); expect(screen.queryByText(i18n.t("workbenchV2.editorHint", { modifier: navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl" }))).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: w("editorConfirm") }));
   expect(h.dispatch).toHaveBeenCalledWith("translation.confirm", "button", expect.any(String));
   expect(h.dispatch.mock.calls.some(([command]) => command === "translation.confirm-next")).toBe(false);
   ui.rerender(<SegmentEditor {...h.props} />);
-  expect(screen.getByRole("button", { name: "confirmNext" })).toBeVisible(); expect(screen.getByText("editorHint")).toBeVisible();
-  expect(screen.queryByText("editorRecoveryHint")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: w("confirmNext") })).toBeVisible(); expect(screen.getByText(i18n.t("workbenchV2.editorHint", { modifier: navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl" }))).toBeVisible();
+  expect(screen.queryByText(i18n.t("workbenchV2.editorRecoveryHint", { modifier: navigator.platform.startsWith("Mac") ? "⌘" : "Ctrl" }))).not.toBeInTheDocument();
 });
 
-it("accepts B while confirmation of A is in flight and announces that newer input remains", async () => {
+it.each(["en-US", "zh-CN"] as const)("keeps newer input and focus when the mounted editor changes language from %s during confirmation", async language => {
+  await i18n.changeLanguage(language);
   const h = harness(); await h.ready();
   const receipt = deferred<TranslationSaveReceipt>(); h.ports.save.mockReturnValueOnce(receipt.promise);
   let confirming: ReturnType<TranslationDrafts["confirm"]> | undefined;
   h.dispatch.mockImplementation((command: EditorCommand) => { if (command === "translation.confirm") confirming = h.drafts.confirm(key); return true; });
   render(<SegmentEditor {...h.props} />);
-  fireEvent.change(input(), { target: { value: "A" } }); await act(async () => { await h.drafts.flush(key); });
-  fireEvent.click(screen.getByRole("button", { name: "editorConfirm" }));
+  const field = input(), originalLabel = i18n.t("workbenchV2.editorLabel", { key: "dialogue.hello" });
+  expect(field).toHaveAccessibleName(language === "en-US" ? "Translation for dialogue.hello" : "编辑译文：dialogue.hello");
+  fireEvent.change(field, { target: { value: "A" } }); await act(async () => { await h.drafts.flush(key); });
+  fireEvent.click(screen.getByRole("button", { name: w("editorConfirm") }));
   await waitFor(() => expect(h.ports.save).toHaveBeenCalledTimes(1));
-  expect(screen.getByText("editorConfirming")).toBeVisible(); expect(input()).not.toHaveAttribute("readonly");
-  fireEvent.change(input(), { target: { value: "B 👩🏽‍💻\né" } });
-  expect(input()).toHaveValue("B 👩🏽‍💻\né");
+  expect(screen.getByText(w("editorConfirming"))).toBeVisible(); expect(input()).not.toHaveAttribute("readonly");
+  fireEvent.change(field, { target: { value: "B 👩🏽‍💻\né" } });
+  act(() => { field.focus(); field.setSelectionRange(2, 5, "backward"); });
+  await act(async () => { await i18n.changeLanguage(language === "en-US" ? "zh-CN" : "en-US"); });
+  expect(input()).toBe(field); expect(field).toHaveFocus();
+  expect(field).not.toHaveAccessibleName(originalLabel);
+  expect(field).toHaveAccessibleName(language === "en-US" ? "编辑译文：dialogue.hello" : "Translation for dialogue.hello");
+  expect(screen.getByRole("button", { name: w("editorConfirm") })).toHaveAccessibleName(language === "en-US" ? "确认" : "Confirm");
+  expect(field).toHaveValue("B 👩🏽‍💻\né");
+  expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(5); expect(field.selectionDirection).toBe("backward");
   const result = saved(h.ports.save.mock.calls[0][0]);
   h.setCurrent(currentView({ ...initial, selectionId: result.selection.eventId, revisionId: result.selection.revisionId, text: "A" }));
   await act(async () => { receipt.resolve(result); await confirming; });
-  expect(input()).toHaveValue("B 👩🏽‍💻\né"); expect(screen.getByText("editorNewerInput")).toBeVisible();
+  expect(input()).toBe(field); expect(field).toHaveFocus(); expect(field).toHaveValue("B 👩🏽‍💻\né");
+  expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(5); expect(field.selectionDirection).toBe("backward");
+  expect(screen.queryByText(w("editorDraftLabel"))).not.toBeInTheDocument();
+  expect(screen.getByText(w("editorNewerInput"))).toBeVisible();
+  expect(screen.getByText(language === "en-US" ? "上一版已确认，还有新修改" : "The earlier version is confirmed; newer edits remain")).toBeVisible();
+  expect(h.drafts.getEntry(key)?.value?.text).toBe("B 👩🏽‍💻\né");
 });
 
 it("gates composition and does not install a competing keyboard command handler", async () => {
@@ -212,23 +231,23 @@ it("reports a draft as retained only after the journal acknowledgement and keeps
   const written = deferred<DraftHead>(); h.ports.write.mockReturnValueOnce(written.promise);
   render(<SegmentEditor {...h.props} />);
   fireEvent.change(input(), { target: { value: "Unacknowledged" } });
-  expect(screen.getByText("editorPreserving")).toBeVisible(); expect(screen.queryByText("editorPreserved")).not.toBeInTheDocument();
+  expect(screen.getByText(w("editorPreserving"))).toBeVisible(); expect(screen.queryByText(w("editorPreserved"))).not.toBeInTheDocument();
   await waitFor(() => expect(h.ports.write).toHaveBeenCalledTimes(1));
   await act(async () => { written.resolve(await h.commitWrite(h.ports.write.mock.calls[0][0])); await h.drafts.flush(key); });
-  expect(screen.getByText("editorPreserved")).toBeVisible();
+  expect(screen.getByText(w("editorPreserved"))).toBeVisible();
   h.ports.write.mockRejectedValueOnce(new Error("Synthetic disk failure"));
   fireEvent.change(input(), { target: { value: "Still here" } });
-  expect(await screen.findByText("editorJournalFailed")).toBeVisible();
-  expect(input()).toHaveValue("Still here"); expect(screen.queryByText("editorPreserved")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "editorConfirm" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "editorRetryPreserve" }));
-  await waitFor(() => expect(screen.getByText("editorPreserved")).toBeVisible());
+  expect(await screen.findByText(w("editorJournalFailed"))).toBeVisible();
+  expect(input()).toHaveValue("Still here"); expect(screen.queryByText(w("editorPreserved"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: w("editorRetryPreserve") }));
+  await waitFor(() => expect(screen.getByText(w("editorPreserved"))).toBeVisible());
 });
 
 it("shares input across views and keeps it after every borrowed editor unmounts", async () => {
   const h = harness(); await h.ready();
   const ui = render(<StrictMode><SegmentEditor {...h.props} /><SegmentEditor {...h.props} viewId="view-two" autoFocus={false} /></StrictMode>);
-  const fields = screen.getAllByRole("textbox", { name: "editorLabel:dialogue.hello" });
+  const fields = screen.getAllByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "dialogue.hello" }) });
   fireEvent.change(fields[0], { target: { value: "Shared draft" } });
   expect(fields[1]).toHaveValue("Shared draft");
   await act(async () => { await h.drafts.flush(key); });
@@ -239,12 +258,12 @@ it("shares input across views and keeps it after every borrowed editor unmounts"
 it("offers lookup before replay and never offers fresh confirmation or discard for an unknown action", async () => {
   const h = harness(draftHead(true)); await h.ready();
   render(<SegmentEditor {...h.props} />);
-  expect(screen.getByText("editorPending")).toBeVisible();
-  expect(screen.getByRole("button", { name: "editorConfirm" })).toBeDisabled();
-  expect(screen.queryByRole("button", { name: "editorReplay" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "editorRestore" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "editorCheckResult" }));
-  expect(await screen.findByRole("button", { name: "editorReplay" })).toBeEnabled();
+  expect(screen.getByText(w("editorPending"))).toBeVisible();
+  expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: w("editorReplay") })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: w("editorRestore") })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: w("editorCheckResult") }));
+  expect(await screen.findByRole("button", { name: w("editorReplay") })).toBeEnabled();
   expect(h.ports.recoverSave).toHaveBeenCalledTimes(1); expect(h.ports.save).not.toHaveBeenCalled();
 });
 
@@ -256,63 +275,66 @@ it.each(["mismatch", "read-failed"] as const)("preserves unknown input after %s 
     return { request: { ...business, reuseOrigin: canonicalTranslationReuse(business.reuseOrigin), expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "mismatch" } };
   });
   render(<SegmentEditor {...h.props} />);
-  fireEvent.click(screen.getByRole("button", { name: "editorCheckResult" }));
-  expect(await screen.findByText(outcome === "mismatch" ? "editorMismatch" : "editorRecoveryFailed")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: w("editorCheckResult") }));
+  expect(await screen.findByText(outcome === "mismatch" ? w("editorMismatch") : w("editorRecoveryFailed"))).toBeVisible();
   expect(input()).toHaveValue("Retained input");
-  expect(screen.queryByRole("button", { name: "editorReplay" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "editorConfirm" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: w("editorReplay") })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeDisabled();
 });
 
 it.each(["source-missing", "locale-removed"] as const)("keeps local input copyable when %s", async reason => {
   const h = harness(draftHead(), { kind: "unavailable", reason }); await h.ready();
   render(<SegmentEditor {...h.props} />);
   expect(input()).toHaveValue("Retained input");
-  expect(screen.getByText(reason === "source-missing" ? "editorSourceMissing" : "editorLocaleRemoved")).toBeVisible();
-  expect(screen.getByRole("button", { name: "editorCopy" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "editorConfirm" })).toBeDisabled();
-  expect(screen.queryByRole("button", { name: "editorRestore" })).not.toBeInTheDocument();
+  expect(screen.getByText(reason === "source-missing" ? w("editorSourceMissing") : w("editorLocaleRemoved"))).toBeVisible();
+  expect(screen.getByRole("button", { name: w("editorCopy") })).toBeEnabled();
+  expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: w("editorRestore") })).not.toBeInTheDocument();
 });
 
 it.each([null, "", "Current chosen text"])("shows current selection %j separately and rebases without replacing input", async text => {
   const nextBasis = { ...initial, sourceRevisionId: "changed-source", selectionId: text === null ? null : "new-selection", revisionId: text === null ? null : "new-revision", text };
   const h = harness(draftHead(), currentView(nextBasis)); await h.ready();
   render(<SegmentEditor {...h.props} />);
-  const current = within(screen.getByRole("group", { name: "editorCurrentSelection" }));
-  expect(current.getByText(text === null ? "editorNoSelection" : text === "" ? "editorEmptySelection" : text)).toBeVisible();
-  expect(input()).toHaveValue("Retained input"); expect(screen.getByRole("button", { name: "editorConfirm" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "editorRebase" }));
-  await waitFor(() => expect(screen.queryByText("editorBasisChanged")).not.toBeInTheDocument());
-  expect(input()).toHaveValue("Retained input"); expect(screen.getByRole("button", { name: "editorConfirm" })).toBeEnabled();
+  const field = input();
+  expect(field.getAttribute("aria-describedby")?.split(" ")).toContain(screen.getByText(w("editorDraftLabel")).id);
+  const current = within(screen.getByRole("group", { name: w("editorCurrentSelection") }));
+  expect(current.getByText(text === null ? w("editorNoSelection") : text === "" ? w("editorEmptySelection") : text)).toBeVisible();
+  expect(input()).toHaveValue("Retained input"); expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: w("editorRebase") }));
+  await waitFor(() => expect(screen.queryByText(w("editorBasisChanged"))).not.toBeInTheDocument());
+  expect(input()).toBe(field); expect(field).toHaveFocus(); expect(field).toHaveValue("Retained input");
+  expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeEnabled();
 });
 
 it("can retry its initial read without clearing input held by the session", async () => {
   const h = harness(draftHead()); await h.drafts.initialize(); h.ports.read.mockRejectedValueOnce(new Error("Read failed"));
   render(<SegmentEditor {...h.props} />);
-  expect(await screen.findByText("editorReadFailed")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "editorRetryRead" }));
-  expect(await screen.findByRole("textbox", { name: "editorLabel:dialogue.hello" })).toHaveValue("Retained input");
+  expect(await screen.findByText(w("editorReadFailed"))).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: w("editorRetryRead") }));
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "dialogue.hello" }) })).toHaveValue("Retained input");
 });
 
 it("requires an explicit second action before restoring the confirmed version", async () => {
   const h = harness(draftHead()); await h.ready(); render(<SegmentEditor {...h.props} />);
-  fireEvent.click(screen.getByRole("button", { name: "editorRestore" }));
-  expect(screen.getByText("editorRestoreHelp")).toBeVisible(); expect(h.ports.clear).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "editorKeepDraft" }));
+  fireEvent.click(screen.getByRole("button", { name: w("editorRestore") }));
+  expect(screen.getByText(w("editorRestoreHelp"))).toBeVisible(); expect(h.ports.clear).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: w("editorKeepDraft") }));
   expect(input()).toHaveValue("Retained input"); expect(h.ports.clear).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "editorRestore" }));
-  fireEvent.click(screen.getByRole("button", { name: "editorRestoreNow" }));
+  fireEvent.click(screen.getByRole("button", { name: w("editorRestore") }));
+  fireEvent.click(screen.getByRole("button", { name: w("editorRestoreNow") }));
   await waitFor(() => expect(input()).toHaveValue("")); expect(h.ports.clear).toHaveBeenCalledTimes(1);
 });
 
 it("withdraws a restore confirmation when the selected version changes", async () => {
   const h = harness(draftHead()); await h.ready(); render(<SegmentEditor {...h.props} />);
-  fireEvent.click(screen.getByRole("button", { name: "editorRestore" }));
-  expect(screen.getByRole("button", { name: "editorRestoreNow" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: w("editorRestore") }));
+  expect(screen.getByRole("button", { name: w("editorRestoreNow") })).toBeEnabled();
   await act(async () => {
     h.setCurrent(currentView({ ...initial, selectionId: "new-selection", revisionId: "new-revision", text: "New current selection" }));
     await h.drafts.open(key);
   });
-  expect(screen.queryByRole("button", { name: "editorRestoreNow" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: w("editorRestoreNow") })).not.toBeInTheDocument();
   expect(input()).toHaveValue("Retained input"); expect(h.ports.clear).not.toHaveBeenCalled();
 });
 
@@ -324,8 +346,8 @@ it("does not steal focus as durable status changes and explains clipboard denial
   screen.getByRole("textbox", { name: "Another input" }).focus();
   await act(async () => { h.drafts.edit(key, "Newer local input"); await h.drafts.flush(key); });
   expect(screen.getByRole("textbox", { name: "Another input" })).toHaveFocus();
-  fireEvent.click(screen.getByRole("button", { name: "editorCopy" }));
-  expect(await screen.findByText("editorCopyFailed")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: w("editorCopy") }));
+  expect(await screen.findByText(w("editorCopyFailed"))).toBeVisible();
   expect(input()).toHaveFocus(); expect(input()).toHaveProperty("selectionStart", 0); expect(input()).toHaveProperty("selectionEnd", "Newer local input".length);
 });
 
@@ -351,8 +373,8 @@ async function pasteEditor() {
 
 it("does not claim untouched initial text was written to the local journal", async () => {
   const h = harness(); await h.ready(); render(<SegmentEditor {...h.props} />);
-  expect(screen.getByText("editorReady")).toBeVisible();
-  expect(screen.queryByText("editorPreserved")).not.toBeInTheDocument(); expect(screen.queryByText("editorNotPreserved")).not.toBeInTheDocument();
+  expect(screen.getByText(w("editorReady"))).toBeVisible();
+  expect(screen.queryByText(w("editorPreserved"))).not.toBeInTheDocument(); expect(screen.queryByText(w("editorNotPreserved"))).not.toBeInTheDocument();
 });
 
 it("pastes the original decomposed Mac text and line endings through native insertion", async () => {
@@ -382,7 +404,7 @@ it("allows a local paste of B while formal confirmation of A owns the mutation r
   const receipt = saved(editor.ports.save.mock.calls[0][0]);
   editor.setCurrent(currentView({ ...initial, selectionId: receipt.selection.eventId, revisionId: receipt.selection.revisionId, text: "Left replace right" }));
   await act(async () => { response.resolve(receipt); await confirming; });
-  expect(editor.field).toHaveValue("Left e\u0301 right"); expect(screen.getByText("editorNewerInput")).toBeVisible();
+  expect(editor.field).toHaveValue("Left e\u0301 right"); expect(screen.getByText(w("editorNewerInput"))).toBeVisible();
 });
 
 it.each(["newer input", "composition", "selection", "focus", "retirement", "source change", "unmount"] as const)("rejects a late paste after %s", async change => {
@@ -391,7 +413,7 @@ it.each(["newer input", "composition", "selection", "focus", "retirement", "sour
   if (change === "newer input") fireEvent.change(editor.field, { target: { value: "Newer B" } });
   else if (change === "composition") fireEvent.compositionStart(editor.field);
   else if (change === "selection") { editor.field.setSelectionRange(0, 0); fireEvent.select(editor.field); }
-  else if (change === "focus") act(() => screen.getByRole("button", { name: "editorExit" }).focus());
+  else if (change === "focus") act(() => screen.getByRole("button", { name: w("editorExit") }).focus());
   else if (change === "retirement") act(() => editor.drafts.retire());
   else if (change === "source change") await act(async () => { editor.setCurrent(currentView({ ...initial, sourceRevisionId: "new-source" })); await editor.drafts.open(key); });
   else editor.view.unmount();
@@ -410,7 +432,7 @@ it.each(["denied", "mismatched", "unavailable"] as const)("preserves input and s
     else editor.clipboard.resolve(privateText);
   });
   expect(editor.insertText).not.toHaveBeenCalled(); expect(editor.field).toHaveValue("Left replace right");
-  expect(screen.getByText(failure === "denied" ? "editorPasteFailed" : failure === "mismatched" ? "editorPasteChanged" : "editorPasteUnavailable")).toBeVisible();
+  expect(screen.getByText(failure === "denied" ? w("editorPasteFailed") : failure === "mismatched" ? w("editorPasteChanged") : w("editorPasteUnavailable"))).toBeVisible();
   expect(document.body).not.toHaveTextContent(privateText); expect(document.body).not.toHaveTextContent("Private failure details");
   expect(editor.gate.getSnapshot().intentOwner).toBeNull();
 });
@@ -418,19 +440,19 @@ it.each(["denied", "mismatched", "unavailable"] as const)("preserves input and s
 it("clears stale paste feedback when ordinary typing continues after cancellation", async () => {
   const editor = await pasteEditor(); fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
   fireEvent.change(editor.field, { target: { value: "Newer B" } });
-  expect(screen.getByText("editorPasteChanged")).toBeVisible();
+  expect(screen.getByText(w("editorPasteChanged"))).toBeVisible();
   fireEvent.change(editor.field, { target: { value: "Newer B, still typing" } });
-  expect(screen.queryByText("editorPasteChanged")).not.toBeInTheDocument();
+  expect(screen.queryByText(w("editorPasteChanged"))).not.toBeInTheDocument();
   await act(async () => { editor.clipboard.resolve("e\u0301"); await editor.clipboard.promise; await editor.drafts.flush(key); });
   expect(editor.field).toHaveValue("Newer B, still typing"); expect(editor.insertText).not.toHaveBeenCalled();
-  expect(screen.queryByText("editorPasteChanged")).not.toBeInTheDocument();
+  expect(screen.queryByText(w("editorPasteChanged"))).not.toBeInTheDocument();
 });
 
 it("cancels a pending paste from its keyboard reachable action and ignores the later clipboard result", async () => {
   const editor = await pasteEditor(); fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
-  const cancel = screen.getByRole("button", { name: "editorPasteCancel" });
+  const cancel = screen.getByRole("button", { name: w("editorPasteCancel") });
   act(() => cancel.focus()); fireEvent.click(cancel);
-  expect(screen.getByText("editorPasteCancelled")).toBeVisible(); expect(editor.field).toHaveFocus();
+  expect(screen.getByText(w("editorPasteCancelled"))).toBeVisible(); expect(editor.field).toHaveFocus();
   expect(editor.gate.getSnapshot().intentOwner).toBeNull();
   await act(async () => { editor.clipboard.resolve("e\u0301"); await editor.clipboard.promise; });
   expect(editor.insertText).not.toHaveBeenCalled(); expect(editor.field).toHaveValue("Left replace right");
@@ -440,14 +462,14 @@ it("keeps actual partial native input without assigning a fallback value", async
   const editor = await pasteEditor(), readingDuringInsertion: boolean[] = [];
   editor.insertText.mockImplementation(() => {
     fireEvent.change(editor.field, { target: { value: "Partial native input" } });
-    readingDuringInsertion.push(screen.queryByText("editorPasteReading") !== null);
+    readingDuringInsertion.push(screen.queryByText(w("editorPasteReading")) !== null);
     return false;
   });
   fireEvent.paste(editor.field, { clipboardData: { getData: () => "é" } });
   await act(async () => { editor.clipboard.resolve("e\u0301"); await editor.clipboard.promise; await editor.drafts.flush(key); });
   expect(editor.field).toHaveValue("Partial native input"); expect(editor.drafts.getEntry(key)?.value?.text).toBe("Partial native input");
   expect(readingDuringInsertion).toEqual([true]);
-  expect(screen.getByText("editorPasteUnconfirmed")).toBeVisible();
+  expect(screen.getByText(w("editorPasteUnconfirmed"))).toBeVisible();
 });
 
 it("keeps Windows native paste behavior", async () => {

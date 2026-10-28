@@ -5,7 +5,7 @@ import { readExactPaste } from "../../../exactPaste";
 import { diagnosticTextareaSelection, textareaDisplayText } from "../../../reviewDiagnosticNavigation";
 import { Button } from "../../../design-system/Button";
 import { Banner, ErrorState, LoadingState } from "../../../design-system/Feedback";
-import { Field, TextArea } from "../../../design-system/Field";
+import { TextArea } from "../../../design-system/Field";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import TranslationReuseReference from "./TranslationReuseReference";
 import type { InteractionGate, InteractionIntent } from "../../workspace/interactionGate";
@@ -230,7 +230,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   }
 
   const editor = value ? <TextArea ref={field} editor rows={3} aria-label={t("editorLabel", { key: nativeKey ?? (entry.current.kind === "current" ? entry.current.nativeKey : draftKey.unitId) })}
-    aria-describedby={`${ownerId}-hint${status ? ` ${ownerId}-status` : ""}`} value={textareaDisplayText(value.text)} readOnly={readonly}
+    aria-describedby={`${ownerId}-hint${basisChanged ? ` ${ownerId}-draft` : ""}${status ? ` ${ownerId}-status` : ""}`} value={textareaDisplayText(value.text)} readOnly={readonly}
     onPaste={pasteOriginalText}
     onChange={event => {
       rejectDiagnostic();
@@ -267,7 +267,8 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
         ? entry.current.basis.text === "" ? t("editorEmptySelection") : <TokenizedText text={entry.current.basis.text} />
         : t("editorNoSelection")}</div></div>
     </> : null}
-    {basisChanged ? <Field label={t("editorDraftLabel")}>{editor}</Field> : editor}
+    {basisChanged ? <p className={styles.editHint} id={`${ownerId}-draft`}>{t("editorDraftLabel")}</p> : null}
+    {editor}
     {status ? <p className={styles.editHint} id={`${ownerId}-status`} role="status">{t(status)}</p> : null}
     {pending ? <Banner tone="warning" action={<div className={styles.actions}>
       <Button size="sm" disabled={readonly || entry.busy} onClick={() => { void drafts.recover(draftKey); }}>{t("editorCheckResult")}</Button>

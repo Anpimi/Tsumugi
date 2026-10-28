@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createRef, useSyncExternalStore } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { i18n } from "../../../i18n";
+import type { workbenchEn } from "../../../i18n/workbench";
 import fixture from "../../../../test/fixtures/translation-commands.json";
 import { SessionReadProvider } from "../../../SessionReadProvider";
 import { SessionReads } from "../../../sessionReads";
@@ -16,7 +18,9 @@ import { createWorkspaceStore, getWorkspaceView, type NewWorkspaceView, type Wor
 import { TranslationDrafts, type TranslationDraftPorts } from "../editor/translationDrafts";
 import EntriesView, { type EntriesHandle } from "./EntriesView";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, parameters?: { key?: string }) => parameters?.key === undefined ? key : `${key}:${parameters.key}` }) }));
+type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
+const w = (key: WorkbenchTextKey) => i18n.t(`workbenchV2.${key}`);
+beforeEach(async () => { await i18n.changeLanguage("en-US"); });
 const owners: SessionReads[] = [];
 afterEach(() => { cleanup(); owners.splice(0).forEach(reads => reads.retire()); });
 
@@ -113,41 +117,55 @@ async function harness(initialView: Partial<NewWorkspaceView> = {}) {
   }
   render(<SessionReadProvider context={context} reads={reads} bridge={false}><Surface /></SessionReadProvider>);
   const view = () => getWorkspaceView(store.getState(), store.getState().activeViewId);
-  const open = async (unit = unitA) => { fireEvent.click(await screen.findByRole("button", { name: `entryEdit:key.${unit}` })); return screen.findByRole<HTMLTextAreaElement>("textbox", { name: `editorLabel:key.${unit}` }); };
+  const open = async (unit = unitA) => { fireEvent.click(await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unit}` }) })); return screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unit}` }) }); };
   return { reads, store, gate, drafts, ports, ref, page, queue, source, comparison, navigate, navigationAllowed, view, open, commit };
 }
+
+it.each(["en-US", "zh-CN"] as const)("uses real %s search labels, counts and interpolated row actions", async language => {
+  await i18n.changeLanguage(language);
+  const h = await harness();
+  const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
+  const search = screen.getByRole("textbox", { name: w("searchEntries") });
+  expect(search).toHaveAccessibleName(language === "en-US" ? "Search entries" : "查找条目");
+  expect(screen.getByRole("form", { name: w("searchEntries") })).toBeVisible();
+  expect(screen.getByText(i18n.t("workbenchV2.entryCount", { count: units.length }))).toHaveTextContent(language === "en-US" ? "4 entries" : "4 条");
+  expect(edit).toHaveAccessibleName(language === "en-US" ? `Edit key.${unitA}` : `编辑 key.${unitA}`);
+  fireEvent.change(search, { target: { value: "用户 query é 👩🏽‍💻" } });
+  expect(h.view()?.searchInput).toBe("用户 query é 👩🏽‍💻");
+  expect(h.page).toHaveBeenLastCalledWith(expect.objectContaining({ query: { text: "", selection: "unselected", status: "all" } }));
+});
 
 it("loads comparison for only the current page and keeps the same editor through toggles, failure and retry", async () => {
   const h = await harness(), field = await h.open();
   fireEvent.change(field, { target: { value: "Keep {{name}} — é 👩🏽‍💻" } }); field.setSelectionRange(5, 13, "backward");
   expect(h.comparison).not.toHaveBeenCalled();
   h.comparison.mockRejectedValueOnce(new Error("Scope read unavailable"));
-  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("sourceComparisonFailed");
+  fireEvent.click(screen.getByRole("button", { name: w("sourceComparisonToggle") }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(w("sourceComparisonFailed"));
   expect(h.view()).toMatchObject({ compareSource: true, focus: unitA, editing: true });
-  expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) })).toBe(field);
   expect(field).toHaveValue("Keep {{name}} — é 👩🏽‍💻");
   const selected = h.view()?.selection;
-  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonRetry" }));
+  fireEvent.click(screen.getByRole("button", { name: w("sourceComparisonRetry") }));
   await waitFor(() => expect(document.querySelector('[data-source-version="previous"]')).toBeInTheDocument());
   expect(h.comparison.mock.calls.every(([request]) => request.unitIds.length === 2 && request.scopeId === "fixed-scope")).toBe(true);
   expect(h.view()?.selection).toBe(selected);
-  expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) })).toBe(field);
   expect(field.selectionStart).toBe(5); expect(field.selectionEnd).toBe(13); expect(field.selectionDirection).toBe("backward");
-  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  fireEvent.click(screen.getByRole("button", { name: w("sourceComparisonToggle") }));
   expect(document.querySelector('[data-source-version="previous"]')).toBeNull();
-  expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) })).toBe(field);
   expect(field).toHaveValue("Keep {{name}} — é 👩🏽‍💻");
 });
 
 it("does not display a late previous-source response after comparison is switched off", async () => {
   const h = await harness(), pending = deferred<SegmentSourceComparison>();
-  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
   h.comparison.mockReturnValueOnce(pending.promise);
-  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  fireEvent.click(screen.getByRole("button", { name: w("sourceComparisonToggle") }));
   await waitFor(() => expect(h.comparison).toHaveBeenCalledTimes(1));
-  expect(screen.getByRole("status")).toHaveTextContent("sourceComparisonLoading");
-  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
+  expect(screen.getByRole("status")).toHaveTextContent(w("sourceComparisonLoading"));
+  fireEvent.click(screen.getByRole("button", { name: w("sourceComparisonToggle") }));
   const request = h.comparison.mock.calls[0][0];
   await act(async () => { pending.resolve({ projectId: context.projectId, locale: request.locale, scopeId: request.scopeId,
     currentSnapshotId: "snapshot", baseSnapshotId: "previous-snapshot", nextAfter: null,
@@ -159,14 +177,14 @@ it("does not display a late previous-source response after comparison is switche
 
 it("explains the first source version while retaining empty source text as a real endpoint", async () => {
   const h = await harness();
-  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
   h.comparison.mockImplementationOnce(async request => ({ projectId: context.projectId, locale: request.locale, scopeId: request.scopeId,
     currentSnapshotId: "snapshot", baseSnapshotId: null, nextAfter: null,
     rows: request.unitIds.map(unitId => ({ unitId, changeKind: "added", old: null, current: { sourceRevisionId: initial.sourceRevisionId, text: "" } })) }));
-  fireEvent.click(screen.getByRole("button", { name: "sourceComparisonToggle" }));
-  expect(await screen.findByText("sourceComparisonFirstVersion")).toBeVisible();
-  expect(screen.getAllByText("sourceComparisonNoPrevious").length).toBeGreaterThan(0);
-  expect(screen.getAllByText("sourceComparisonEmptyText").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("button", { name: w("sourceComparisonToggle") }));
+  expect(await screen.findByText(w("sourceComparisonFirstVersion"))).toBeVisible();
+  expect(screen.getAllByText(w("sourceComparisonNoPrevious")).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(w("sourceComparisonEmptyText")).length).toBeGreaterThan(0);
   expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(1);
 });
 
@@ -174,11 +192,11 @@ it("confirms and advances through the same fixed queue, including its next windo
   const h = await harness(), field = await h.open();
   fireEvent.change(field, { target: { value: "Confirmed A" } });
   await act(async () => { await h.ref.current?.confirm(true); });
-  expect(await screen.findByRole("textbox", { name: "editorLabel:key.unit-b" })).toBeVisible();
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-b" }) })).toBeVisible();
   expect(h.view()).toMatchObject({ focus: "unit-b", queueScopeId: "fixed-scope", queueActive: true });
-  fireEvent.change(screen.getByRole("textbox", { name: "editorLabel:key.unit-b" }), { target: { value: "Confirmed B" } });
+  fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-b" }) }), { target: { value: "Confirmed B" } });
   await act(async () => { await h.ref.current?.confirm(true); });
-  expect(await screen.findByRole("textbox", { name: "editorLabel:key.unit-c" })).toBeVisible();
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-c" }) })).toBeVisible();
   expect(h.view()).toMatchObject({ focus: "unit-c", queueAnchor: "unit-c", queueScopeId: "fixed-scope" });
   expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(1);
   expect(h.queue.mock.calls.every(([request]) => request.scopeId === "fixed-scope")).toBe(true);
@@ -194,7 +212,7 @@ it("keeps B and stays on the row when A's confirmation arrives", async () => {
   fireEvent.change(field, { target: { value: "Newer B" } });
   await act(async () => { saved.resolve(h.commit(h.ports.save.mock.calls[0][0])); await confirming; });
   expect(h.view()?.focus).toBe(unitA); expect(field).toHaveValue("Newer B");
-  expect(screen.getByText("editorNewerInput")).toBeVisible();
+  expect(screen.getByText(w("editorNewerInput"))).toBeVisible();
   expect(h.navigate.mock.calls.some(([value]) => value.focus === "unit-b")).toBe(false);
 });
 
@@ -220,9 +238,9 @@ it.each(["focus round trip", "completed composition"] as const)("revokes automat
   await waitFor(() => expect(h.ports.save).toHaveBeenCalledTimes(1));
   if (changed === "focus round trip") {
     act(() => { h.store.getState().patch("view-one", { focus: "unit-c", queueAnchor: "unit-c" }); });
-    await screen.findByRole("textbox", { name: "editorLabel:key.unit-c" });
+    await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-c" }) });
     act(() => { h.store.getState().patch("view-one", { focus: unitA, queueAnchor: unitA }); });
-    await screen.findByRole("textbox", { name: `editorLabel:key.${unitA}` });
+    await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) });
   } else {
     fireEvent.compositionStart(field); fireEvent.compositionEnd(field);
     expect(h.gate.getSnapshot().composingOwners).toEqual([]);
@@ -237,11 +255,11 @@ it("keeps search and list navigation separate from textarea typing and confirmat
   fireEvent.change(field, { target: { value: "Draft text" } });
   fireEvent.keyDown(field, { key: "ArrowDown" }); fireEvent.keyDown(field, { key: "j" });
   expect(h.view()?.focus).toBe(unitA); expect(h.ports.save).not.toHaveBeenCalled();
-  const search = screen.getByRole("textbox", { name: "searchEntries" });
+  const search = screen.getByRole("textbox", { name: w("searchEntries") });
   act(() => search.focus()); fireEvent.keyDown(search, { key: "Enter", metaKey: true });
   expect(h.ports.save).not.toHaveBeenCalled();
   fireEvent.change(search, { target: { value: "submitted query" } });
-  fireEvent.keyDown(search, { key: "Enter" }); fireEvent.submit(screen.getByRole("form", { name: "searchEntries" }));
+  fireEvent.keyDown(search, { key: "Enter" }); fireEvent.submit(screen.getByRole("form", { name: w("searchEntries") }));
   expect(h.view()).toMatchObject({ query: "submitted query", editing: false, focus: null });
   expect(h.ports.save).not.toHaveBeenCalled(); expect(h.drafts.getEntry({ ...context, unitId: unitA, locale: "zh-CN" })?.value?.text).toBe("Draft text");
 });
@@ -255,22 +273,22 @@ it("restores focus to the same textarea and selection across a focus mode round 
     await act(async () => { await h.drafts.flush({ ...context, unitId: unitA, locale: "zh-CN" }); });
     field.setSelectionRange(5, 18, "backward"); fireEvent.select(field);
     const selection = { start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection };
-    const enter = screen.getByRole("button", { name: "editorFocusMode" });
+    const enter = screen.getByRole("button", { name: w("editorFocusMode") });
     act(() => enter.focus()); fireEvent.click(enter);
     await waitFor(() => expect(h.view()?.focusMode).toBe(true));
     await waitFor(() => expect(frames.length).toBeGreaterThan(0));
     expect(field).not.toHaveFocus();
     act(() => { frames.splice(0).forEach(callback => callback(0)); });
     expect(field).toHaveFocus();
-    expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+    expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) })).toBe(field);
     expect(field.selectionStart).toBe(selection.start); expect(field.selectionEnd).toBe(selection.end); expect(field.selectionDirection).toBe(selection.direction);
-    const exits = screen.getAllByRole("button", { name: "editorTableMode" }), exit = exits[exits.length - 1];
+    const exits = screen.getAllByRole("button", { name: w("editorTableMode") }), exit = exits[exits.length - 1];
     act(() => exit.focus()); fireEvent.click(exit);
     await waitFor(() => expect(h.view()?.focusMode).toBe(false));
     await waitFor(() => expect(frames.length).toBeGreaterThan(0));
     expect(field).not.toHaveFocus();
     act(() => { frames.splice(0).forEach(callback => callback(0)); });
-    expect(field).toHaveFocus(); expect(screen.getByRole("textbox", { name: `editorLabel:key.${unitA}` })).toBe(field);
+    expect(field).toHaveFocus(); expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: `key.${unitA}` }) })).toBe(field);
     expect(field).toHaveValue("Keep this selected draft");
     expect(field.selectionStart).toBe(selection.start); expect(field.selectionEnd).toBe(selection.end); expect(field.selectionDirection).toBe(selection.direction);
     expect(h.view()).toMatchObject({ focus: unitA, queueScopeId: "fixed-scope", editing: true }); expect(h.ports.save).not.toHaveBeenCalled();
@@ -279,26 +297,26 @@ it("restores focus to the same textarea and selection across a focus mode round 
 
 it("opens a row from a nonzero page at that row's fixed queue position", async () => {
   const h = await harness({ cursor: "page-two", afterOrdinal: 2 });
-  const edit = await screen.findByRole("button", { name: "entryEdit:key.unit-c" }); expect(edit).toHaveTextContent("3");
+  const edit = await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-c" }) }); expect(edit).toHaveTextContent("3");
   fireEvent.click(edit);
-  expect(await screen.findByRole("textbox", { name: "editorLabel:key.unit-c" })).toBeVisible();
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-c" }) })).toBeVisible();
   expect(h.view()).toMatchObject({ focus: "unit-c", queueAnchor: "unit-c", queueScopeId: "fixed-scope" });
   expect(h.queue).toHaveBeenCalledWith(expect.objectContaining({ anchorUnitId: "unit-c", scopeId: "fixed-scope" }));
-  expect(screen.getByRole("button", { name: "entryEdit:key.unit-c" })).toHaveTextContent("3");
+  expect(screen.getByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-c" }) })).toHaveTextContent("3");
 });
 
 it("opens an address-restored focus outside the first page by reading its queue anchor", async () => {
   const h = await harness({ focus: "unit-d" });
-  expect(await screen.findByRole("textbox", { name: "editorLabel:key.unit-d" })).toBeVisible();
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-d" }) })).toBeVisible();
   expect(h.view()).toMatchObject({ focus: "unit-d", queueAnchor: "unit-d", queueScopeId: "fixed-scope", editing: true });
   expect(h.queue).toHaveBeenCalledWith(expect.objectContaining({ anchorUnitId: "unit-d" }));
-  expect(screen.getByRole("button", { name: "entryEdit:key.unit-d" })).toHaveTextContent("4");
+  expect(screen.getByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-d" }) })).toHaveTextContent("4");
 });
 
 it("does not read a fresh queue when its guarded refresh is refused", async () => {
   const h = await harness(); await h.open();
   const captureCalls = h.page.mock.calls.filter(([request]) => request.scopeId === null).length, sourceCalls = h.source.mock.calls.length;
-  h.navigationAllowed.value = false; fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+  h.navigationAllowed.value = false; fireEvent.click(screen.getByRole("button", { name: w("refresh") }));
   await waitFor(() => expect(h.navigate).toHaveBeenLastCalledWith(expect.objectContaining({ queueActive: false, focus: null })));
   expect(h.view()).toMatchObject({ queueActive: true, queueScopeId: "fixed-scope", focus: unitA });
   expect(h.page.mock.calls.filter(([request]) => request.scopeId === null)).toHaveLength(captureCalls); expect(h.source).toHaveBeenCalledTimes(sourceCalls);
@@ -308,18 +326,18 @@ it("clears the fixed queue identity when an explicit refresh returns to browsing
   const h = await harness(); await h.open();
   h.page.mockImplementation(async request => ({ projectId: context.projectId, locale: request.locale, query: { ...request.query, status: request.query.status ?? "all" }, queryFingerprint: "new-query-fingerprint", epoch: "epoch", sequence: "3",
     scopeId: "fresh-scope", sourceSnapshotId: "snapshot", readVersion: "2", total: units.length, rows: units.slice(0, 2).map(unit => row(unit, request.locale)), nextCursor: "page-two" }));
-  fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+  fireEvent.click(screen.getByRole("button", { name: w("refresh") }));
   await waitFor(() => expect(h.page.mock.calls.filter(([request]) => request.scopeId === null).length).toBeGreaterThan(1));
   await waitFor(() => expect(h.view()).toMatchObject({ editing: false, focus: null, queueActive: false, queueScopeId: null, queueAnchor: null }));
 });
 
 it("does not advance an old queue window after an explicit move to the queue start", async () => {
   const h = await harness({ focus: "unit-c" });
-  const field = await screen.findByRole("textbox", { name: "editorLabel:key.unit-c" }), saved = deferred<TranslationSaveReceipt>();
+  const field = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-c" }) }), saved = deferred<TranslationSaveReceipt>();
   h.ports.save.mockReturnValueOnce(saved.promise); fireEvent.change(field, { target: { value: "Submitted C" } });
   let confirming: Promise<void> | undefined; act(() => { confirming = h.ref.current?.confirm(true); });
   await waitFor(() => expect(h.ports.save).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole("button", { name: "firstPage" }));
+  fireEvent.click(screen.getByRole("button", { name: w("firstPage") }));
   await waitFor(() => expect(h.view()?.queueAnchor).toBeNull());
   const before = h.view();
   await act(async () => { saved.resolve(h.commit(h.ports.save.mock.calls[0][0])); await confirming; });
@@ -334,46 +352,46 @@ function selectionCapture() {
   } };
 }
 async function selectionMenu(name: string) {
-  const trigger = screen.getByRole("button", { name: "entrySelectionMenu" });
+  const trigger = screen.getByRole("button", { name: w("entrySelectionMenu") });
   act(() => trigger.focus()); fireEvent.keyDown(trigger, { key: "Enter" });
   fireEvent.click(await screen.findByRole("menuitem", { name }));
 }
 it("freezes all pages, keeps that selection through filtering, and excludes only an original member", async () => {
   const capture = vi.spyOn(segmentCommands, "captureScope").mockResolvedValue(selectionCapture());
-  const h = await harness(); await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
-  await selectionMenu("entrySelectPage");
+  const h = await harness(); await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
+  await selectionMenu(w("entrySelectPage"));
   expect(h.view()?.selection).toMatchObject({ kind: "ids", unitIds: units.slice(0, 2) });
-  fireEvent.click(screen.getByRole("button", { name: "nextPage" }));
-  await screen.findByRole("button", { name: "entryEdit:key.unit-c" });
-  await selectionMenu("entrySelectMatches");
+  fireEvent.click(screen.getByRole("button", { name: w("nextPage") }));
+  await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-c" }) });
+  await selectionMenu(w("entrySelectMatches"));
   await waitFor(() => expect(h.view()?.selection?.kind).toBe("scope"));
   expect(capture).toHaveBeenCalledWith({ ...context, locale: "zh-CN", scopeId: "fixed-scope", queryFingerprint: "query-fingerprint", readVersion: "1", excluded: [] });
   const fixed = h.view()?.selection;
-  const filter = screen.getByRole("button", { name: "unselectedEntries" });
+  const filter = screen.getByRole("button", { name: w("unselectedEntries") });
   act(() => filter.focus()); fireEvent.keyDown(filter, { key: "Enter" });
-  fireEvent.click(await screen.findByRole("menuitem", { name: "entryPresetIssues" }));
-  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  fireEvent.click(await screen.findByRole("menuitem", { name: w("entryPresetIssues") }));
+  await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
   expect(h.page).toHaveBeenLastCalledWith(expect.objectContaining({ query: { text: "", selection: "all", status: "issues" } }));
   expect(h.view()?.selection).toEqual(fixed); expect(capture).toHaveBeenCalledTimes(1);
-  const checkbox = screen.getByRole("checkbox", { name: `entrySelect:key.${unitA}` });
+  const checkbox = screen.getByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: `key.${unitA}` }) });
   expect(checkbox).toBeChecked(); fireEvent.click(checkbox);
   expect(h.view()?.selection).toMatchObject({ kind: "scope", selection: { capture: { units: selectionCapture().capture.units }, excluded: [unitA] } });
   act(() => { h.store.getState().patch("view-one", { locale: "ja" }); });
-  await screen.findByText("entrySelectionChanged");
+  await screen.findByText(w("entrySelectionChanged"));
   expect(h.view()?.selection).toMatchObject({ selection: { capture: { locale: "zh-CN" }, excluded: [unitA] } });
-  expect(await screen.findByRole("checkbox", { name: `entrySelect:key.${unitA}` })).toBeDisabled();
+  expect(await screen.findByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: `key.${unitA}` }) })).toBeDisabled();
 });
 
 it("does not install an earlier full-scope selection after the user changes the filter", async () => {
   const pending = deferred<Awaited<ReturnType<typeof segmentCommands.captureScope>>>();
   vi.spyOn(segmentCommands, "captureScope").mockReturnValue(pending.promise);
-  const h = await harness(); await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
-  await selectionMenu("entrySelectPage"); const original = h.view()?.selection;
-  await selectionMenu("entrySelectMatches"); await screen.findByText("entryCapturingSelection");
-  const filter = screen.getByRole("button", { name: "unselectedEntries" });
+  const h = await harness(); await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
+  await selectionMenu(w("entrySelectPage")); const original = h.view()?.selection;
+  await selectionMenu(w("entrySelectMatches")); await screen.findByText(w("entryCapturingSelection"));
+  const filter = screen.getByRole("button", { name: w("unselectedEntries") });
   act(() => filter.focus()); fireEvent.keyDown(filter, { key: "Enter" });
-  fireEvent.click(await screen.findByRole("menuitem", { name: "entryPresetReview" }));
-  await screen.findByRole("button", { name: `entryEdit:key.${unitA}` });
+  fireEvent.click(await screen.findByRole("menuitem", { name: w("entryPresetReview") }));
+  await screen.findByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: `key.${unitA}` }) });
   await act(async () => { pending.resolve(selectionCapture()); });
   expect(h.view()?.preset).toBe("needs-review"); expect(h.view()?.selection).toEqual(original);
 });
@@ -391,6 +409,6 @@ it("moves list focus across fixed page boundaries and edits only after Enter", a
   await waitFor(() => expect(h.view()).toMatchObject({ focus: "unit-b", editing: false, queueAnchor: "unit-b" }));
   const back = await screen.findByRole("listitem", { name: "key.unit-b" });
   await waitFor(() => expect(back).toHaveFocus()); fireEvent.keyDown(back, { key: "Enter" });
-  expect(await screen.findByRole("textbox", { name: "editorLabel:key.unit-b" })).toBeVisible();
+  expect(await screen.findByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-b" }) })).toBeVisible();
   expect(h.ports.save).not.toHaveBeenCalled();
 });

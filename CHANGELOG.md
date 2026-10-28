@@ -104,6 +104,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Fixed
 
+- Fixed the editor losing focus or selection when an earlier confirmation completes while newer text remains in the draft.
+
 - Fixed a conversation action that could be submitted before its original request was saved during rapid edits. Submission now waits for the previous save and confirms the new request is retained first.
 
 - Project update listeners retry registration without creating duplicate subscriptions. Periodic reads continue while the listener is unavailable, and a successful registration checks for changes made during the gap. Both workspaces distinguish this fallback from a failed project read and offer an explicit refresh.

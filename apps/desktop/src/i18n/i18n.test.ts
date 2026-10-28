@@ -68,11 +68,18 @@ describe("i18n resources", () => {
     }
   });
 
-  it("allows a test-only third resource without a product language branch", async () => {
-    i18n.addResourceBundle("test-locale", "translation", enUS, true, true);
-    await i18n.changeLanguage("test-locale");
-    expect(i18n.t("brandDescription")).toBe(enUS.brandDescription);
-    await i18n.changeLanguage("en-US");
+  it("resolves a registered third resource without English fallback or changing the UI singleton", async () => {
+    const thirdLanguage = createInstance(), originalLanguage = i18n.resolvedLanguage;
+    const description = "A distinct test resource — 第三种语言";
+    await thirdLanguage.init({
+      ...i18n.options,
+      lng: "test-locale",
+      supportedLngs: [...localeOptions.map(({ value }) => value), "test-locale"],
+      resources: { ...resources, "test-locale": { translation: { ...enUS, brandDescription: description } } },
+    });
+    expect(thirdLanguage.resolvedLanguage).toBe("test-locale");
+    expect(thirdLanguage.t("brandDescription")).toBe(description);
+    expect(i18n.resolvedLanguage).toBe(originalLanguage);
     expect(resources["en-US"].translation.brandDescription).toBe(enUS.brandDescription);
   });
 });

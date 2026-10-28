@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createRef } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { i18n } from "../../../i18n";
+import type { workbenchEn } from "../../../i18n/workbench";
 import type { DraftHead, DraftValue } from "../../../draftCommands";
 import type { SegmentRow, SegmentSourceComparison } from "../../../segmentCommands";
 import { InteractionGate } from "../../workspace/interactionGate";
@@ -9,10 +11,8 @@ import { TranslationDrafts, type TranslationDraftPorts } from "../editor/transla
 import type { EntryDiagnosticFocus } from "../review/navigationTypes";
 import EntriesTable, { type EntriesTableHandle, type EntriesTableProps } from "./EntriesTable";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string, parameters?: Record<string, unknown>) => {
-  if (key === "entriesVisibleRange") return `${parameters?.first}–${parameters?.last} / ${parameters?.total}`;
-  return parameters?.key === undefined ? key : `${key}:${parameters.key}`;
-} }) }));
+type WorkbenchTextKey = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
+const w = (key: WorkbenchTextKey) => i18n.t(`workbenchV2.${key}`);
 
 const heights = new Map<string, number>();
 const observers = new Set<LayoutObserver>();
@@ -30,7 +30,8 @@ function resize(element: HTMLElement) {
     if (observer.targets.has(element)) observer.callback([{ target: element, borderBoxSize: [{ blockSize: size, inlineSize: 900 }] } as unknown as ResizeObserverEntry], observer as unknown as ResizeObserver);
   });
 }
-beforeEach(() => {
+beforeEach(async () => {
+  await i18n.changeLanguage("en-US");
   heights.clear(); observers.clear();
   vi.stubGlobal("ResizeObserver", LayoutObserver);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) { return this.getAttribute("role") === "region" ? 240 : 0; });
@@ -74,18 +75,32 @@ function surface(overrides: Partial<EntriesTableProps> = {}) {
   const ui = render(<EntriesTable {...props} ref={ref} />);
   return { gate, ref, get props() { return props; }, update: (patch: Partial<EntriesTableProps>) => { props = { ...props, ...patch }; ui.rerender(<EntriesTable {...props} ref={ref} />); } };
 }
-function viewport() { return screen.getByRole("region", { name: "entriesTableLabel" }); }
+function viewport() { return screen.getByRole("region", { name: w("entriesTableLabel") }); }
 function scrollTo(top: number) { fireEvent.scroll(viewport(), { target: { scrollTop: top } }); }
 
 it("shows the shared status glyph directly and keeps details beside the source key", () => {
   const summary = row(0); summary.candidateCount = summary.aiCandidateCount = 1; summary.protection.protected = true;
   const h = surface({ rows: [summary], view: makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", entryPageMode: true }, "entries") });
-  const glyph = screen.getByRole("img", { name: "entryStatusCandidate" });
+  const glyph = screen.getByRole("img", { name: w("entryStatusCandidate") });
   expect(glyph.closest("button")).toBeNull();
-  expect(screen.getByRole("img", { name: "entryStatusProtected" }).closest("button")).toBeNull();
-  expect(screen.queryByText("candidateCount")).not.toBeInTheDocument();
-  expect(screen.queryByText("protectedEntry")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "showEntryDetails:key.unit-0" }));
+  expect(screen.getByRole("img", { name: w("entryStatusProtected") }).closest("button")).toBeNull();
+  expect(screen.queryByText(i18n.t("workbenchV2.candidateCount", { count: summary.aiCandidateCount }))).not.toBeInTheDocument();
+  expect(screen.queryByText(w("protectedEntry"))).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: "key.unit-0" }) }));
+  expect(h.props.onDetails).toHaveBeenCalledWith("unit-0");
+});
+
+it.each(["en-US", "zh-CN"] as const)("labels the table, global range and row actions with real %s resources", async language => {
+  await i18n.changeLanguage(language);
+  const drafts = await draftOwner("unit-0");
+  const h = surface({ rows: [row(0), row(1)], drafts, view: makeWorkspaceView({ kind: "entries", locale: "zh-CN", entryPageMode: true }, "entries") });
+  expect(viewport()).toHaveAccessibleName(language === "en-US" ? "Translation entries" : "译文条目");
+  expect(viewport()).toHaveAccessibleDescription(language === "en-US" ? "Showing 51–52 of 200 entries" : "正在显示第 51–52 条，共 200 条");
+  const entry = within(screen.getByRole("listitem", { name: "key.unit-0" }));
+  const edit = entry.getByRole("button", { name: i18n.t("workbenchV2.entryEdit", { key: "key.unit-0" }) });
+  expect(edit).toHaveAccessibleName(language === "en-US" ? "Edit key.unit-0" : "编辑 key.unit-0");
+  fireEvent.click(edit); expect(h.props.onEdit).toHaveBeenCalledWith("unit-0");
+  fireEvent.click(entry.getByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: "key.unit-0" }) }));
   expect(h.props.onDetails).toHaveBeenCalledWith("unit-0");
 });
 
@@ -105,7 +120,7 @@ it("renders exact previous and current Unicode endpoints without remounting the 
   const drafts = await draftOwner("unit-0");
   const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true, entryPageMode: true }, "entries");
   const h = surface({ rows: [row(0)], drafts, view });
-  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:key.unit-0" });
+  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) });
   fireEvent.change(field, { target: { value: "Keep {{name}} é 👩🏽‍💻" } }); field.setSelectionRange(2, 9, "backward");
   fireEvent.compositionStart(field);
   const previous = "Previous {{name}}\r\né 👩🏽‍💻", current = "Current <b>日本語</b>\n🙂";
@@ -114,13 +129,13 @@ it("renders exact previous and current Unicode endpoints without remounting the 
   h.update({ view: { ...view, compareSource: true }, sourceComparison });
   expect(document.querySelector('[data-source-version="previous"]')?.lastElementChild?.textContent).toBe(previous);
   expect(document.querySelector('[data-source-version="current"]')?.lastElementChild?.textContent).toBe(current);
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field);
   expect(field).toHaveValue("Keep {{name}} é 👩🏽‍💻");
   expect(field.selectionStart).toBe(2); expect(field.selectionEnd).toBe(9); expect(field.selectionDirection).toBe("backward");
   expect(h.gate.getSnapshot().composingOwners).toHaveLength(1);
   h.update({ view: { ...view, compareSource: false } });
   expect(document.querySelector('[data-source-version="previous"]')).toBeNull();
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field);
   fireEvent.compositionEnd(field);
 });
 
@@ -133,10 +148,10 @@ it("distinguishes a missing prior unit from real empty source text", () => {
     ] };
   surface({ rows: [row(0), row(1)], view, sourceComparison });
   const newEntry = screen.getByRole("listitem", { name: "key.unit-0" }), emptyEntry = screen.getByRole("listitem", { name: "key.unit-1" });
-  expect(within(newEntry).getByText("sourceComparisonNoPrevious")).toBeVisible();
-  expect(within(newEntry).getAllByText("sourceComparisonEmptyText")).toHaveLength(1);
-  expect(within(emptyEntry).queryByText("sourceComparisonNoPrevious")).not.toBeInTheDocument();
-  expect(within(emptyEntry).getAllByText("sourceComparisonEmptyText")).toHaveLength(2);
+  expect(within(newEntry).getByText(w("sourceComparisonNoPrevious"))).toBeVisible();
+  expect(within(newEntry).getAllByText(w("sourceComparisonEmptyText"))).toHaveLength(1);
+  expect(within(emptyEntry).queryByText(w("sourceComparisonNoPrevious"))).not.toBeInTheDocument();
+  expect(within(emptyEntry).getAllByText(w("sourceComparisonEmptyText"))).toHaveLength(2);
 });
 
 async function draftOwner(unitId: string, sourceText?: string) {
@@ -169,18 +184,18 @@ it("locates the full read-only source independently of source comparison while p
   const sourceComparison: SegmentSourceComparison = { projectId: "project", locale: "zh-CN", scopeId: "scope", currentSnapshotId: "snapshot", baseSnapshotId: "base", nextAfter: null,
     rows: [{ unitId: key.unitId, changeKind: "changed", old: { sourceRevisionId: "old", text: "Previous source" }, current: { sourceRevisionId: "revision", text } }] };
   const located = vi.fn(), edit = vi.spyOn(drafts, "edit"), h = surface({ rows: [summary], drafts, view, sourceComparison, diagnosticFocus: focus, onDiagnosticFocus: located });
-  const source = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "editorDiagnosticSourceLabel:key.unit-0" });
+  const source = screen.getByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorDiagnosticSourceLabel", { key: "key.unit-0" }) });
   expect(source).toHaveAttribute("readonly"); expect(source).toHaveValue("A\n👩🏽‍💻\nB\nZ é"); expect(source).toHaveFocus();
   expect(source.selectionStart).toBe(2); expect(source.selectionEnd).toBe(9); expect(located.mock.calls).toEqual([[focus.id, true]]);
   expect(document.querySelector('[data-source-version="previous"]')).toBeNull();
-  const translation = screen.getByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:key.unit-0" });
+  const translation = screen.getByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) });
   expect(translation).toHaveValue("Translation draft B {name}"); expect(translation).not.toHaveFocus(); expect(drafts.getEntry(key)?.value?.text).toBe("Translation draft B {name}");
   expect(text).toContain("\r\n"); const setSource = vi.spyOn(source, "value", "set");
   h.update({ diagnosticFocus: { ...focus, status: "applied" } });
   expect(source).toHaveFocus(); expect(source.selectionStart).toBe(2); expect(source.selectionEnd).toBe(9); expect(setSource).not.toHaveBeenCalled();
   const current = drafts.getEntry(key)?.current; expect(current?.kind === "current" ? current.sourceText : null).toBe(text);
   act(() => source.setSelectionRange(1, 1)); h.update({ diagnosticFocus: { ...focus, status: "applied" } });
-  expect(screen.getByRole("textbox", { name: "editorDiagnosticSourceLabel:key.unit-0" })).toBe(source);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorDiagnosticSourceLabel", { key: "key.unit-0" }) })).toBe(source);
   expect(source.selectionStart).toBe(1); expect(source.selectionEnd).toBe(1); expect(located).toHaveBeenCalledTimes(1); expect(edit).not.toHaveBeenCalled(); expect(setSource).not.toHaveBeenCalled();
 });
 
@@ -192,7 +207,7 @@ it("consumes a stale source sequence without selecting it later when the same re
   await act(async () => { drafts.edit(key, "New input B"); await drafts.flush(key); });
   const view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true, entryPageMode: true }, "entries");
   const located = vi.fn(), h = surface({ rows: [row(0)], drafts, view, diagnosticFocus: focus, onDiagnosticFocus: located });
-  const source = screen.getByRole("textbox", { name: "editorDiagnosticSourceLabel:key.unit-0" });
+  const source = screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorDiagnosticSourceLabel", { key: "key.unit-0" }) });
   expect(located.mock.calls).toEqual([[focus.id, false]]); expect(source).not.toHaveFocus(); expect(drafts.getEntry(key)?.value?.text).toBe("New input B");
   const current = drafts.getEntry(key)?.value; if (!current) throw new Error("Expected retained newer input");
   h.update({ diagnosticFocus: { ...focus, editSeq: current.editSeq } });
@@ -211,7 +226,7 @@ it("bounds mounted rows, keeps global list positions, and measures a row after i
   scrollTo(1600);
   await waitFor(() => expect(screen.queryByRole("listitem", { name: "key.unit-0" })).not.toBeInTheDocument());
   expect(screen.getAllByRole("listitem").length).toBeLessThan(15);
-  expect(viewport()).toHaveAccessibleDescription(/\d+–\d+ \/ 200/);
+  expect(viewport()).toHaveAccessibleDescription(/^Showing \d+–\d+ of 200 entries$/);
   expect(screen.queryByRole("grid")).not.toBeInTheDocument();
 });
 
@@ -250,16 +265,16 @@ it("moves list focus without editing and leaves text selections, input, modifier
 it("keeps the actual textarea and selection through scrolling, focus mode and composition", async () => {
   const drafts = await draftOwner("unit-0"), view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true }, "entries");
   const h = surface({ drafts, view });
-  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:key.unit-0" });
+  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) });
   fireEvent.change(field, { target: { value: "Keep {name}\ne\u0301 中文🙂 العربية" } }); field.setSelectionRange(3, 11, "backward");
   fireEvent.compositionStart(field); scrollTo(1600);
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field); expect(field).toHaveFocus();
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field); expect(field).toHaveFocus();
   fireEvent.keyDown(field, { key: "j", isComposing: true }); expect(h.props.onMove).not.toHaveBeenCalled();
   fireEvent.compositionEnd(field); scrollTo(0);
   h.update({ view: { ...view, focusMode: true } });
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field);
   h.update({ view: { ...view, focusMode: false } }); act(() => h.ref.current?.focusEditor());
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field); expect(field).toHaveValue("Keep {name}\ne\u0301 中文🙂 العربية");
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field); expect(field).toHaveValue("Keep {name}\ne\u0301 中文🙂 العربية");
   expect(field.selectionStart).toBe(3); expect(field.selectionEnd).toBe(11); expect(field.selectionDirection).toBe("backward");
   expect(field).toHaveFocus();
 });
@@ -268,11 +283,11 @@ it("preserves scroll restoration and selected offscreen identities with a guarde
   const h = surface({ scroll: { top: 800, left: 12 }, selectedIds: ["unit-0", "unit-20"], canSelect: unitId => unitId !== "unit-1" });
   expect(viewport().scrollTop).toBe(800); expect(viewport().scrollLeft).toBe(12);
   h.update({ scroll: { top: 0, left: 0 } }); fireEvent.scroll(viewport());
-  const first = screen.getByRole("checkbox", { name: "entrySelect:key.unit-0" }); expect(first).toBeChecked();
-  expect(screen.getByRole("checkbox", { name: "entrySelect:key.unit-1" })).toBeDisabled();
+  const first = screen.getByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: "key.unit-0" }) }); expect(first).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: "key.unit-1" }) })).toBeDisabled();
   fireEvent.click(first); expect(h.props.onSelection).toHaveBeenCalledWith("unit-0", false);
   scrollTo(1600);
-  const later = await screen.findByRole("checkbox", { name: "entrySelect:key.unit-20" }); expect(later).toBeChecked();
+  const later = await screen.findByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: "key.unit-20" }) }); expect(later).toBeChecked();
   expect(h.props.onScroll).toHaveBeenLastCalledWith({ top: 1600, left: 0 });
 });
 
@@ -280,21 +295,21 @@ it("preserves scroll restoration and selected offscreen identities with a guarde
 it("shows only the loaded page in natural flow and keeps the editor instance when switching rendering modes", async () => {
   const drafts = await draftOwner("unit-0"), view = makeWorkspaceView({ kind: "entries", locale: "zh-CN", focus: "unit-0", editing: true }, "entries");
   const h = surface({ drafts, view });
-  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: "editorLabel:key.unit-0" });
+  const field = await screen.findByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) });
   fireEvent.change(field, { target: { value: "Keep {name} 中文\ne\u0301🙂 العربية" } }); field.setSelectionRange(5, 12, "backward");
   fireEvent.compositionStart(field);
   expect(screen.getAllByRole("listitem").length).toBeLessThan(15);
   h.update({ view: { ...view, entryPageMode: true } });
-  const list = screen.getByRole("list", { name: "entriesTableLabel" });
+  const list = screen.getByRole("list", { name: w("entriesTableLabel") });
   expect(screen.getAllByRole("listitem")).toHaveLength(50);
   expect(screen.getByRole("listitem", { name: "key.unit-49" })).toHaveAttribute("aria-posinset", "100");
   expect(list.style.height).toBe("");
   expect(screen.getByRole("listitem", { name: "key.unit-49" }).style.transform).toBe("");
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field);
   scrollTo(1600); expect(screen.getAllByRole("listitem")).toHaveLength(50);
   h.update({ view: { ...view, entryPageMode: false } });
   expect(screen.getAllByRole("listitem").length).toBeLessThan(15);
-  expect(screen.getByRole("textbox", { name: "editorLabel:key.unit-0" })).toBe(field);
+  expect(screen.getByRole("textbox", { name: i18n.t("workbenchV2.editorLabel", { key: "key.unit-0" }) })).toBe(field);
   expect(field).toHaveValue("Keep {name} 中文\ne\u0301🙂 العربية"); expect(field).toHaveFocus();
   expect(field.selectionStart).toBe(5); expect(field.selectionEnd).toBe(12); expect(field.selectionDirection).toBe("backward");
   expect(h.gate.getSnapshot().composingOwners).toHaveLength(1); fireEvent.compositionEnd(field);
