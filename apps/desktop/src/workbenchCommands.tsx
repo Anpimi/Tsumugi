@@ -11,6 +11,7 @@ import type { CandidateAuditCapture } from "./CandidateDecisionSession";
 import type { WorkspaceSelection } from "./app-v2/workspace/workspaceSelection";
 import type { ReviewEntryTarget, ReviewEntryDecisionPayload, ReviewEntryBasisPayload, ReviewEntryPendingPayload, RetainedReviewPendingPayload } from "./app-v2/features/review/reviewTypes";
 import type { EntrySemanticCapture, EntrySemanticPreparePayload, EntrySemanticStartPayload, EntrySemanticConsentPayload, EntrySemanticScopePayload, EntrySemanticReadPayload, EntrySemanticRecordPayload, EntrySemanticPendingPayload, EntrySemanticTaskPayload, EntrySemanticCancelPayload } from "./app-v2/features/review/semanticTypes";
+import type { ReviewBatchReadPayload, ReviewBatchApprovePayload, ReviewBatchControlPayload, ReviewBatchPagePayload, ReviewBatchReadRequest } from "./app-v2/features/review/batchTypes";
 import type { EntryFallbackPayload } from "./app-v2/features/review/fallbackTypes";
 import type { EntryChecksPreparePayload, EntryChecksRunPayload, EntryChecksConsentPayload, EntryChecksPendingPayload, EntryChecksDiscoveryPayload, EntryChecksRemovePayload, EntryChecksCapture } from "./app-v2/features/review/checksTypes";
 import type { EntryIssueWaiverPayload, EntryIssueFindingPayload, EntryIssuesReadPayload, EntryIssueLocatePayload } from "./app-v2/features/review/issuesTypes";
@@ -61,6 +62,7 @@ export interface ProjectMetadataReconcileCommandPayload {
   value: string;
   directoryName: string | null;
 }
+export interface ReviewBatchSelectionCommandPayload { kind: "review-batch-selection"; selection: WorkspaceSelection }
 export interface ReviewFallbackCommandPayload {
   kind: "review-fallback";
   unitId: string;
@@ -310,6 +312,16 @@ export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string;
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 export interface TaskSavedBuildCommandPayload { kind: "task-saved-build"; taskId: string; attemptId: string; operation: "locale-build"; itemId: string | null; resultId: string | null }
 interface WorkbenchCommandPayloads {
+  "review.batch-preview": ReviewBatchSelectionCommandPayload;
+  "review.batch-show": ReviewBatchControlPayload;
+  "review.batch-hide": ReviewBatchControlPayload;
+  "review.batch-read": ReviewBatchReadPayload;
+  "review.batch-approve": ReviewBatchApprovePayload;
+  "review.batch-stop": ReviewBatchControlPayload;
+  "review.batch-end": ReviewBatchControlPayload;
+  "review.batch-page": ReviewBatchPagePayload;
+  "review.batch-check": RetainedReviewPendingPayload;
+  "review.batch-retry": RetainedReviewPendingPayload;
   "review.entry-semantic-current": EntrySemanticScopePayload;
   "review.entry-semantic-prepare": EntrySemanticPreparePayload;
   "review.entry-semantic-start": EntrySemanticStartPayload;
@@ -662,6 +674,11 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-finding" | "review.restore-finding" | "review.repair-finding"> | PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"review-batch-selection", "review.batch-preview">
+  | ResourceCommand<"review-batch-control", "review.batch-show" | "review.batch-hide" | "review.batch-stop" | "review.batch-end">
+  | ResourceCommand<"review-batch-read", "review.batch-read">
+  | ResourceCommand<"review-batch-approve", "review.batch-approve">
+  | ResourceCommand<"review-batch-page", "review.batch-page">
   | ResourceCommand<"entry-semantic-scope", "review.entry-semantic-current">
   | ResourceCommand<"entry-semantic-prepare", "review.entry-semantic-prepare">
   | ResourceCommand<"entry-semantic-start", "review.entry-semantic-start">
@@ -675,7 +692,7 @@ export type WorkbenchCommand = ResourceCommand<"review-finding", "review.reject-
   | ResourceCommand<"entry-review-decision", "review.entry-approve" | "review.entry-request-changes">
   | ResourceCommand<"entry-review-basis", "review.entry-adopt-current">
   | ResourceCommand<"entry-review-pending", "review.entry-check" | "review.entry-retry">
-  | ResourceCommand<"retained-review-pending", "review.recover-entry-check" | "review.recover-entry-retry" | "review.recover-entry-cancel">
+  | ResourceCommand<"retained-review-pending", "review.recover-entry-check" | "review.recover-entry-retry" | "review.recover-entry-cancel" | "review.batch-check" | "review.batch-retry">
   | ResourceCommand<"entry-checks-prepare", "review.entry-prepare-checks">
   | ResourceCommand<"entry-checks-run", "review.entry-run-checks">
   | ResourceCommand<"entry-checks-consent", "review.entry-checker-consent">
@@ -808,6 +825,17 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind === "review-batch-selection") return payload?.kind === command.payloadKind && validWorkspaceSelection(payload.selection)
+    && (payload.selection.kind !== "scope" || payload.selection.selection.projectId === command.scope.projectId && payload.selection.selection.sessionToken === command.scope.sessionToken)
+    ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "review-batch-read") return payload?.kind === command.payloadKind && validBatchChosen(payload.chosen)
+    && (payload.request === null || validBatchReadRequest(payload.request)) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "review-batch-approve") return payload?.kind === command.payloadKind && validBatchChosen(payload.chosen)
+    && typeof payload.actor === "string" && !!payload.actor.trim() && validBatchReadRequest(payload.request) && editSequence(payload.queryVersion) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "review-batch-control") return payload?.kind === command.payloadKind && validBatchChosen(payload.chosen) && validBatchItems(payload.items) ? command.availability(payload) : unavailable;
+  if (command.payloadKind === "review-batch-page") return payload?.kind === command.payloadKind && validBatchChosen(payload.chosen) && validBatchItems(payload.items)
+    && editSequence(payload.offset) && payload.offset % 50 === 0 ? command.availability(payload) : unavailable;
+
   if (command.payloadKind === "entry-semantic-scope") return payload?.kind === command.payloadKind && editSequence(payload.sequence) ? command.availability(payload) : unavailable;
   if (command.payloadKind === "entry-semantic-prepare") return payload?.kind === command.payloadKind && validSemanticCapture(payload) ? command.availability(payload) : unavailable;
   if (command.payloadKind === "entry-semantic-start") return payload?.kind === command.payloadKind && validSemanticCapture(payload) && validSemanticPreparation(payload.preparation) ? command.availability(payload) : unavailable;
@@ -849,7 +877,8 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
     const session = human ? pending.session : pending.request;
     return (human ? validReviewEntryPending({ kind: "entry-review-pending", pending }) : validChecksPending(pending))
       && session.projectId === command.scope.projectId && session.sessionToken === command.scope.sessionToken
-      && (command.id !== "review.recover-entry-cancel" || pending.kind === "check") ? command.availability(payload) : unavailable;
+      && (command.id !== "review.recover-entry-cancel" || pending.kind === "check")
+      && (!["review.batch-check", "review.batch-retry"].includes(command.id) || pending.kind === "decision" && pending.submittedSeq === -1) ? command.availability(payload) : unavailable;
   }
   if (command.payloadKind === "entry-checks-prepare") return payload?.kind === command.payloadKind && validChecksCapture(payload) ? command.availability(payload) : unavailable;
   if (command.payloadKind === "entry-checks-run") return payload?.kind === command.payloadKind && validChecksCapture(payload) && validChecksPreparation(payload.preparation)
@@ -1065,6 +1094,18 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
   return !command.payloadKind && payload === undefined ? command.availability() : { enabled: false, reason: "unavailable" };
 }
 function validIdentity(value: unknown): value is string { return typeof value === "string" && value.length > 0; }
+function validBatchChosen(value: ReviewBatchApprovePayload["chosen"] | null | undefined): boolean {
+  return !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every(target => !!target && validReviewTargetBasis(target)
+    && (target.currentDecision === null || !!target.currentDecision && validIdentity(target.currentDecision.decisionId)));
+}
+function validBatchItems(value: ReviewBatchControlPayload["items"] | null | undefined): boolean {
+  return Array.isArray(value) && value.every(item => !!item && validReviewTargetBasis(item.target)
+    && ["not-started", "pending", "recorded", "conflicted", "failed"].includes(item.status));
+}
+function validBatchReadRequest(value: ReviewBatchReadRequest | null | undefined): boolean {
+  return !!value && editSequence(value.serial) && validWorkspaceSelection(value.selection)
+    && (value.expected === undefined || Array.isArray(value.expected) && value.expected.every(target => validReviewTargetBasis(target)));
+}
 function validSemanticCapture(value: EntrySemanticCapture): boolean {
   const basis = value.basisEvidence;
   return validReviewTargetBasis(value) && validIdentity(value.selectionId) && validIdentity(value.revisionId) && editSequence(value.sequence) && !!basis
@@ -1149,7 +1190,7 @@ function validStageTarget(payload: Omit<TranslationStageCommandPayload, "kind" |
     && basis.selectionId === payload.expectedSelectionId && basis.revisionId === payload.expectedRevisionId
     && (basis.selectionId === null ? basis.revisionId === null && basis.text === null : basis.revisionId !== null && basis.text !== null);
 }
-function validCandidateBatchSelection(selection: WorkspaceSelection) {
+function validWorkspaceSelection(selection: WorkspaceSelection) {
   if (!selection || typeof selection !== "object") return false;
   if (selection.kind === "scope") return validContentSelection(selection.selection) && !!selection.query
     && typeof selection.query.text === "string" && ["all", "selected", "unselected"].includes(selection.query.selection);
@@ -1160,7 +1201,7 @@ function validCandidateBatchSelection(selection: WorkspaceSelection) {
 function validTranslationPayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`translation-${string}`}> {
   if (!payload || typeof payload !== "object") return false;
   switch (payload.kind) {
-    case "translation-candidate-batch-preview": return ["stage", "reject", "restore"].includes(payload.mode) && validCandidateBatchSelection(payload.selection);
+    case "translation-candidate-batch-preview": return ["stage", "reject", "restore"].includes(payload.mode) && validWorkspaceSelection(payload.selection);
     case "translation-candidate-batch": return editSequence(payload.captureId) && editSequence(payload.revision)
       && (payload.audit === null || !!payload.audit && typeof payload.audit.actor === "string" && typeof payload.audit.reason === "string" && editSequence(payload.audit.editSeq));
     case "translation-candidate-batch-pending": return editSequence(payload.captureId) && editSequence(payload.revision) && validIdentity(payload.itemId)
@@ -1502,7 +1543,12 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "entry-semantic-scope" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "review-batch-selection" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "review-batch-control" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "review-batch-read" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "review-batch-approve" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "review-batch-page" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "entry-semantic-scope" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-semantic-prepare" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-semantic-start" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "entry-semantic-consent" && payload?.kind === command.payloadKind) command.handler(payload);

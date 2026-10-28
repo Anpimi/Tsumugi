@@ -11,6 +11,7 @@ import type { PluginTextReviewSelection } from "./pluginCommands";
 import { useAiSemanticReviewSession } from "./AiSemanticReviewSession";
 import type { MutationCoordinator } from "./ExecutionTaskSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { validateResponseTarget } from "./generated/review.validators";
 type ReviewCheckPreparation = { request: ReviewCheckRequest; view: ReviewPluginCheckView };
 export type ReviewHumanPending = (
   | { kind: "finding"; request: ReviewFindingWrite; basisEvidence: ReviewBasis; evidence: Pick<AdvisoryFinding, "requirement" | "finding" | "runId" | "purpose" | "aiOrigin">; submittedSeq: number }
@@ -29,7 +30,49 @@ type HumanReceipt = ReviewDecision | Waiver | FallbackDecision | ReviewFindingDe
 type HumanOutcome = { kind: "saved"; receipt: HumanReceipt; checked: boolean }
   | { kind: "pending" } | { kind: "retired" } | { kind: "rejected"; error: unknown };
 export type ReviewNotice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "checkUnknown" | "cancelRequested" | null;
-export interface ReviewBatchStatus { applied: number; conflicted: number; failed: number; notStarted: number }
+export const REVIEW_BATCH_PREPARE_LIMIT = 100;
+export interface ReviewBatchStatus { applied: number; conflicted: number; failed: number; pending: number; notStarted: number }
+export interface ReviewBatchItem {
+  target: ReviewSummary;
+  status: "not-started" | "pending" | "recorded" | "conflicted" | "failed";
+  request: ReviewWrite | null;
+  receipt: ReviewDecision | null;
+  failure: CommandFailure;
+}
+export interface ReviewBatchCapture { chosen: ReviewDraftState["chosen"]; actor: string }
+export interface ReviewBatchPreparation {
+  projectId: string;
+  sessionToken: string;
+  targets: readonly ReviewTarget[];
+  expectedChosen: ReviewDraftState["chosen"];
+}
+
+function batchStatus(items: readonly ReviewBatchItem[]): ReviewBatchStatus {
+  const result = { applied: 0, conflicted: 0, failed: 0, pending: 0, notStarted: 0 };
+  for (const item of items) {
+    if (item.status === "recorded") result.applied++;
+    else if (item.status === "not-started") result.notStarted++;
+    else result[item.status]++;
+  }
+  return result;
+}
+function batchPreview(text: string) {
+  let preview = "", count = 0;
+  // Match the existing Core summary's code-point preview, without retaining a
+  // second full copy of the target read in this operation plan.
+  for (const character of text) { if (count++ === 256) break; preview += character; }
+  return preview;
+}
+function batchSummary(target: ReviewTarget): ReviewSummary {
+  return { unitId: target.unitId, locale: target.locale, nativeKey: target.nativeKey, basis: target.basis,
+    sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId,
+    selectionId: target.selectionId, revisionId: target.revisionId, sourcePreview: batchPreview(target.sourceText),
+    translationPreview: target.translationText === null ? null : batchPreview(target.translationText),
+    currentDecision: target.currentDecision ? { decisionId: target.currentDecision.decisionId, basis: target.currentDecision.basis, kind: target.currentDecision.kind } : null,
+    currentCheck: target.currentCheck ? { runId: target.currentCheck.runId, basis: target.currentCheck.basis, outcome: target.currentCheck.outcome,
+      hasFindings: target.currentCheck.rules.some(rule => rule.status === "findings"),
+      hasIncomplete: target.currentCheck.rules.some(rule => !["passed", "findings", "not-applicable"].includes(rule.status)) } : null };
+}
 
 export interface ReviewDraftState {
   locale: string;
@@ -56,6 +99,8 @@ export interface ReviewDraftState {
   checkConsent: string[];
   batchRunning: boolean;
   batchStatus: ReviewBatchStatus | null;
+  batchItems: readonly ReviewBatchItem[];
+  batchEnded: boolean;
   completionVersion: number;
 }
 
@@ -72,6 +117,8 @@ export interface ReviewSession {
   editReason: (target: ReviewTarget, value: string) => void;
   adoptCurrent: () => boolean;
   toggleChosen: (target: ReviewSummary, checked: boolean) => void;
+  prepareBatch: (preparation: ReviewBatchPreparation, currentRead: () => boolean) => boolean;
+  endBatch: (expectedChosen: ReviewDraftState["chosen"]) => boolean;
   clear: () => void;
   setNotice: (notice: ReviewNotice) => void;
   setReason: (reason: CommandFailure) => void;
@@ -89,7 +136,7 @@ export interface ReviewSession {
   retryPending: () => Promise<void>;
   checkPending: () => Promise<void>;
   cancelCheck: () => Promise<void>;
-  approveBatch: () => Promise<void>;
+  approveBatch: (capture?: ReviewBatchCapture, currentRead?: () => boolean) => Promise<void>;
   stopBatch: () => void;
 }
 
@@ -115,7 +162,7 @@ export function ReviewDraftProvider({ project, mutations, children }: {
   const [state, setState] = useState<ReviewDraftState>(() => ({
     locale: project.metadata.targetLocales[0] ?? "", actor: "", drafts: {}, editSeq: {}, draftTargets: {}, selected: null, projection: null, chosen: {},
     pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false, notice: null, reasonValue: "", busyMutation: false, activeCheckId: null,
-    batchRunning: false, batchStatus: null, completionVersion: 0, advisoryChecks: [], checkReview: null, checkConsent: [],
+    batchRunning: false, batchStatus: null, batchItems: [], batchEnded: false, completionVersion: 0, advisoryChecks: [], checkReview: null, checkConsent: [],
   }));
   const currentState = useRef(state);
   const semantic = useAiSemanticReviewSession(project, state.projection, Object.values(state.chosen), state.locale);
@@ -222,9 +269,41 @@ export function ReviewDraftProvider({ project, mutations, children }: {
       return { ...before, chosen };
     });
   }
+  function prepareBatch(preparation: ReviewBatchPreparation, currentRead: () => boolean) {
+    const before = current(), { targets } = preparation, project = projectRef.current;
+    if (!mounted.current || reads.retired || running.current || mutation.current || semantic.reserved() || before.busyMutation
+      || before.pending || before.batchRunning || before.chosen !== preparation.expectedChosen || Object.keys(before.chosen).length > 0
+      || before.batchItems.length > 0 && !before.batchEnded || preparation.projectId !== project.metadata.projectId
+      || preparation.sessionToken !== project.sessionToken || preparation.projectId !== reads.context.projectId
+      || preparation.sessionToken !== reads.context.sessionToken || !targets.length || targets.length > REVIEW_BATCH_PREPARE_LIMIT
+      || !currentRead()) return false;
+    const first = targets[0], members = new Set<string>();
+    for (const target of targets) {
+      if (!validateResponseTarget(target)) return false;
+      const key = reviewDraftKey(target), basis = target.basisEvidence;
+      if (members.has(key) || !localeAvailable(target.locale) || target.locale !== first.locale
+        || target.sourceSnapshotId !== first.sourceSnapshotId || target.selectionId === null || target.revisionId === null || target.translationText === null
+        || basis.sourceSnapshotId !== target.sourceSnapshotId || basis.sourceRevisionId !== target.sourceRevisionId
+        || basis.selectionId !== target.selectionId || basis.revisionId !== target.revisionId) return false;
+      members.add(key);
+    }
+    if (current() !== before || !currentRead()) return false;
+    const summaries = targets.map(batchSummary), chosen: ReviewDraftState["chosen"] = {};
+    for (const target of summaries) chosen[reviewDraftKey(target)] = target;
+    update(value => ({ ...value, chosen, batchItems: summaries.map<ReviewBatchItem>(target => ({ target, status: "not-started", request: null, receipt: null, failure: "" })),
+      batchEnded: false, batchStatus: null }));
+    return true;
+  }
+  function endBatch(expectedChosen: ReviewDraftState["chosen"]) {
+    const before = current();
+    if (!mounted.current || reads.retired || running.current || before.busyMutation || before.batchRunning || before.pending
+      || mutation.current || semantic.reserved() || before.chosen !== expectedChosen || !reserveMutation()) return false;
+    try { update(value => ({ ...value, chosen: {}, batchEnded: true })); return true; }
+    finally { releaseReservation(); }
+  }
   function clear() {
     if (running.current || current().pending || !semantic.clear()) return;
-    update(before => ({ ...before, drafts: {}, editSeq: {}, draftTargets: {}, chosen: {}, selected: null, projection: null, notice: null, reasonValue: "", checkReview: null, checkConsent: [], advisoryChecks: [] }));
+    update(before => ({ ...before, drafts: {}, editSeq: {}, draftTargets: {}, chosen: {}, batchEnded: true, selected: null, projection: null, notice: null, reasonValue: "", checkReview: null, checkConsent: [], advisoryChecks: [] }));
   }
   function setNotice(notice: ReviewNotice) { update(before => ({ ...before, notice })); }
   function setReason(reasonValue: CommandFailure) { update(before => ({ ...before, reasonValue })); }
@@ -244,6 +323,11 @@ export function ReviewDraftProvider({ project, mutations, children }: {
   function matchingSelected(before: ReviewDraftState, action: Pick<ReviewPending, "request">) {
     return !!before.selected && before.selected.unitId === action.request.unitId
       && before.selected.locale === action.request.locale && before.selected.basis === action.request.expectedBasis;
+  }
+  function batchReceipt(before: ReviewDraftState, action: ReviewHumanPending, patch: Partial<ReviewBatchItem>) {
+    if (action.kind !== "decision" || action.submittedSeq !== -1) return {};
+    const items = before.batchItems.map<ReviewBatchItem>(item => item.request === action.request ? { ...item, ...patch } : item);
+    return { batchItems: items, batchStatus: before.batchStatus === null ? null : batchStatus(items) };
   }
   function confirmed(action: Exclude<ReviewPending, { kind: "prepare-check" }>, receipt: ReviewDecision | CheckRun | Waiver | FallbackDecision | ReviewFindingDecision, pending: ReviewPending = action) {
     update(before => {
@@ -287,10 +371,8 @@ export function ReviewDraftProvider({ project, mutations, children }: {
       }
       const nextReason = reasonAfterReceipt({ ...before, draftTargets }, action);
       const checkOutcome = action.kind === "check" ? (receipt as CheckRun).outcome : null;
-      const batchStatus = action.kind === "decision" && action.submittedSeq === -1 && !before.batchRunning
-        && before.batchStatus && before.batchStatus.failed > 0
-        ? { ...before.batchStatus, applied: before.batchStatus.applied + 1, failed: before.batchStatus.failed - 1 } : before.batchStatus;
-      return { ...before, ...nextReason, selected, projection, chosen, batchStatus, pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false,
+      const batch = action.kind === "decision" ? batchReceipt(before, action, { status: "recorded", receipt: receipt as ReviewDecision, failure: "" }) : {};
+      return { ...before, ...nextReason, ...batch, selected, projection, chosen, pending: null, pendingUncertain: false, checkingAction: false, retryAllowed: false,
         notice: checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : checkOutcome === "unknown" ? "checkUnknown" : "saved",
         reasonValue: "", checkReview: action.kind === "check" ? null : before.checkReview,
         checkConsent: action.kind === "check" ? [] : before.checkConsent,
@@ -327,17 +409,20 @@ export function ReviewDraftProvider({ project, mutations, children }: {
         confirmed(action, receipt);
         return { kind: "saved", receipt, checked: true };
       }
-      update(before => ({ ...before, checkingAction: false, retryAllowed: true, pendingUncertain: true, notice: "unknown", reasonValue: originalFailure }));
+      update(before => ({ ...before, ...batchReceipt(before, action, { status: "pending", failure: originalFailure }),
+        checkingAction: false, retryAllowed: true, pendingUncertain: true, notice: "unknown", reasonValue: originalFailure }));
     } catch (error) {
       if (!matchesHuman(action)) return { kind: "retired" };
-      update(before => ({ ...before, checkingAction: false, retryAllowed: false, pendingUncertain: true, notice: "unknown", reasonValue: commandFailure(error) }));
+      update(before => ({ ...before, ...batchReceipt(before, action, { status: "pending", failure: commandFailure(error) }),
+        checkingAction: false, retryAllowed: false, pendingUncertain: true, notice: "unknown", reasonValue: commandFailure(error) }));
     }
     return { kind: "pending" };
   }
   async function dispatchHuman(action: ReviewHumanPending): Promise<HumanOutcome> {
     if (!mounted.current || reads.retired) return { kind: "retired" };
     const uncertain = current().pending === action && current().pendingUncertain;
-    update(before => ({ ...before, pending: action, checkingAction: false, retryAllowed: false, notice: null, reasonValue: "" }));
+    update(before => ({ ...before, ...batchReceipt(before, action, { status: "pending", failure: "" }),
+      pending: action, checkingAction: false, retryAllowed: false, notice: null, reasonValue: "" }));
     let failed: { error: unknown } | null = null;
     let receipt: HumanReceipt | null = null;
     try {
@@ -358,7 +443,8 @@ export function ReviewDraftProvider({ project, mutations, children }: {
     const error = failed.error;
     const unknown = hasUnknownOutcome(error);
     const failure = commandFailure(error);
-    update(before => ({ ...before, pending: unknown || uncertain ? action : null, pendingUncertain: unknown || uncertain,
+    update(before => ({ ...before, ...batchReceipt(before, action, { status: unknown || uncertain ? "pending" : isConflict(error) ? "conflicted" : "failed", failure }),
+      pending: unknown || uncertain ? action : null, pendingUncertain: unknown || uncertain,
       retryAllowed: false, notice: unknown || uncertain ? "unknown" : isConflict(error) ? "conflict" : "error", reasonValue: failure }));
     // A failed lookup cannot enter this write-error branch and cause another read.
     if (unknown) return lookupHuman(action, failure);
@@ -583,46 +669,58 @@ export function ReviewDraftProvider({ project, mutations, children }: {
       if (await reviewCommands.cancelCheck({ ...executionContext(projectRef.current), actionId })) setNotice("cancelRequested");
     } catch (error) { fail(error); }
   }
-  async function approveBatch() {
+  async function approveBatch(capture?: ReviewBatchCapture, currentRead: () => boolean = () => true) {
     const before = current();
     const frozen = Object.values(before.chosen), batchActor = before.actor.trim();
-    if (!mounted.current || running.current || before.pending || !batchActor || frozen.length === 0 || !reserveMutation()) return;
+    const session = executionContext(projectRef.current);
+    const retained = !!capture && !before.batchEnded && before.batchItems.length > 0;
+    if (!mounted.current || reads.retired || running.current || before.pending || !batchActor || frozen.length === 0
+      || session.projectId !== reads.context.projectId || session.sessionToken !== reads.context.sessionToken
+      || capture && (capture.chosen !== before.chosen || capture.actor !== batchActor)
+      || retained && frozen.some(target => !before.batchItems.some(item => item.target === target))
+      || !currentRead() || !reserveMutation()) return;
+    const items: ReviewBatchItem[] = retained ? before.batchItems.map<ReviewBatchItem>(item => frozen.includes(item.target)
+      ? { ...item, status: "not-started", request: null, receipt: null, failure: "" } : item)
+      : frozen.map<ReviewBatchItem>(target => ({ target, status: "not-started", request: null, receipt: null, failure: "" }));
+    const appliedBefore = batchStatus(items).applied;
+    const available = (target: ReviewSummary) => !cancelBatch.current && mounted.current && !reads.retired && !current().pending
+      && projectRef.current.metadata.projectId === session.projectId && projectRef.current.sessionToken === session.sessionToken && localeAvailable(target.locale);
+    let started = false;
     running.current = true; cancelBatch.current = false;
-    update(value => ({ ...value, busyMutation: true, batchRunning: true, batchStatus: null, notice: null }));
-    const result = { applied: 0, conflicted: 0, failed: 0 };
-    let processed = 0;
+    update(value => ({ ...value, busyMutation: true, batchRunning: true, batchStatus: null, batchItems: items, batchEnded: false, notice: null }));
     try {
       for (const target of frozen) {
-        if (cancelBatch.current || !mounted.current || current().pending || !localeAvailable(target.locale)) break;
+        if (!available(target) || !started && (!currentRead() || capture && current().chosen !== capture.chosen)) break;
         try {
-          const session = executionContext(projectRef.current);
           const actionId = await executionCommands.identity(session);
-          if (cancelBatch.current || !mounted.current || current().pending || !localeAvailable(target.locale)) break;
+          if (!available(target) || !started && (!currentRead() || capture && current().chosen !== capture.chosen)) break;
           const request: ReviewWrite = { projectId: session.projectId, actionId,
             unitId: target.unitId, locale: target.locale, expectedBasis: target.basis,
             expectedDecisionId: target.currentDecision?.decisionId ?? null, actor: batchActor, kind: "approve", reason: "" };
           const action: ReviewHumanPending = { kind: "decision", session: structuredClone(session), request, submittedSeq: -1 };
+          update(value => ({ ...value, batchItems: value.batchItems.map(item => item.target === target ? { ...item, request } : item) }));
+          // Confirmation owns this fixed operation now. Its own invalidation or
+          // a hidden consumer cannot revoke an already dispatched acknowledgement.
+          started = true;
           const outcome = await dispatchHuman(action);
           if (outcome.kind === "retired") break;
           if (outcome.kind === "saved") {
-            result.applied++;
             // An uncertain batch action is checked once, never a reason to resume
             // the remaining batch after that recovery boundary.
-            if (outcome.checked) { processed++; break; }
-          } else if (outcome.kind === "pending") { result.failed++; processed++; break; }
-          else if (isConflict(outcome.error)) result.conflicted++;
-          else result.failed++;
+            if (outcome.checked) break;
+          } else if (outcome.kind === "pending") break;
         } catch (error) {
-          if (hasUnknownOutcome(error)) { result.failed++; processed++; break; }
-          if (isConflict(error)) result.conflicted++; else result.failed++;
+          // Identity failures have no dispatched review request to recover.
+          update(value => ({ ...value, batchItems: value.batchItems.map<ReviewBatchItem>(item => item.target === target && item.request === null
+            ? { ...item, status: isConflict(error) ? "conflicted" : "failed", failure: commandFailure(error) } : item) }));
+          if (hasUnknownOutcome(error)) break;
         }
-        processed++;
       }
     } finally {
       running.current = false;
       update(value => ({ ...value, busyMutation: false, batchRunning: false,
-        batchStatus: { ...result, notStarted: frozen.length - processed },
-        completionVersion: value.completionVersion + (result.applied > 0 ? 1 : 0) }));
+        batchStatus: batchStatus(value.batchItems),
+        completionVersion: value.completionVersion + (batchStatus(value.batchItems).applied > appliedBefore ? 1 : 0) }));
       releaseSettledMutation();
     }
   }
@@ -637,7 +735,7 @@ export function ReviewDraftProvider({ project, mutations, children }: {
   }, [targetScope, state.locale, state.pending, state.busyMutation, state.chosen, state.drafts]);
 
   const owner: ReviewSession = { state, current, semantic, inFlight: () => running.current || semantic.reserved(),
-    setLocale, setActor, setSelected, receiveTarget, observeProjection, editReason, adoptCurrent, toggleChosen, clear, setNotice, setReason,
+    setLocale, setActor, setSelected, receiveTarget, observeProjection, editReason, adoptCurrent, toggleChosen, prepareBatch, endBatch, clear, setNotice, setReason,
     decide, prepareCheck, check, setAdvisoryChecks, observeSettingsRevision, slotConsentKey, setCheckerConsent, checkersConfirmed, waive, finding, fallback, retryPending, checkPending, cancelCheck, approveBatch, stopBatch };
   return <ReviewContext.Provider value={owner}>{children}</ReviewContext.Provider>;
 }

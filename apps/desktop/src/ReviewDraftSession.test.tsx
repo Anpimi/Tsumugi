@@ -231,9 +231,9 @@ it.each([false, true])("settles only the uncertain batch entry and retains the r
     throw new Error(name);
   });
   await act(async () => { await owner.approveBatch(); });
-  expect(owner.current().batchStatus).toEqual({ applied: late ? 0 : 1, conflicted: 0, failed: late ? 1 : 0, notStarted: 1 });
+  expect(owner.current().batchStatus).toEqual({ applied: late ? 0 : 1, conflicted: 0, failed: 0, pending: late ? 1 : 0, notStarted: 1 });
   if (late) await act(async () => { await owner.checkPending(); });
-  expect(owner.current().pending).toBeNull(); expect(owner.current().batchStatus).toEqual({ applied: 1, conflicted: 0, failed: 0, notStarted: 1 });
+  expect(owner.current().pending).toBeNull(); expect(owner.current().batchStatus).toEqual({ applied: 1, conflicted: 0, failed: 0, pending: 0, notStarted: 1 });
   expect(Object.values(owner.current().chosen).map(entry => entry.unitId)).toEqual([second.unitId]);
   expect(calls(names.decision.write)).toHaveLength(1); expect(calls("create_execution_identity")).toHaveLength(1);
 });

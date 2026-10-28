@@ -26,7 +26,8 @@ export default function ReviewRecovery({ project, owner, commands, gate, viewId,
   const pending: RetainedReviewPendingPayload | null = state.pending ? { kind: "retained-review-pending", pending: state.pending } : null;
   const hasResult = ["saved", "checkFailed", "checkCancelled", "checkUnknown"].includes(state.notice ?? "");
   const semanticSource = owner.semantic.state.pending?.preparation.value.preview.items[0]?.source;
-  const original = state.pending?.request ?? (semanticSource ? { unitId: semanticSource.unitId, locale: semanticSource.targetLocale } : state.selected ?? Object.values(state.draftTargets)[0]);
+  const original = state.pending?.request ?? (semanticSource ? { unitId: semanticSource.unitId, locale: semanticSource.targetLocale }
+    : state.selected ?? Object.values(state.draftTargets)[0] ?? Object.values(state.chosen)[0] ?? state.batchItems[0]?.target);
   const busy = state.busyMutation || state.checkingAction || state.batchRunning;
   const cancelFlight = useRef(false), region = useRef<HTMLDivElement>(null), live = useRef({ visible, disabled, viewId });
   useLayoutEffect(() => { live.current = { visible, disabled, viewId }; });

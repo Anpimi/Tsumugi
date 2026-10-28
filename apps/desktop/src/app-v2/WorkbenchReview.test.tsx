@@ -211,3 +211,77 @@ it("keeps the original semantic start reachable after all entry views close with
   expect(aiSemanticReviewCommands.read).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
   expect(draftCommands.write).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(reviewCommands.check).not.toHaveBeenCalled();
 });
+
+it("opens batch approval from the entry selection and reconciles a closed batch before explicitly approving the remaining entry", async () => {
+  const user = userEvent.setup(), second = reviewTargetFixture({ unitId: fixtureIdentity(13101), sourceSnapshotId: target.sourceSnapshotId,
+    sourceRevisionId: fixtureIdentity(13102), selectionId: fixtureIdentity(13103), revisionId: fixtureIdentity(13104),
+    nativeKey: "batch.second", sourceText: "Another saved source", translationText: "另一条译文", basis: "b".repeat(64) });
+  let secondCurrent = second;
+  const firstRow = page().rows[0];
+  vi.mocked(segmentCommands.page).mockImplementation(async () => ({ ...page(), total: 2, rows: [page().rows[0], {
+    ...firstRow, content: reviewSummaryFor(secondCurrent), protection: { ...firstRow.protection, unitId: second.unitId },
+    applicability: { ...firstRow.applicability, selectedSourceRevisionId: second.sourceRevisionId },
+  }] }));
+  vi.spyOn(reviewCommands, "target").mockImplementation(async request => structuredClone(request.unitId === target.unitId ? current : secondCurrent));
+  let identity = 13200, original: ReviewWrite | null = null, originalReceipt: ReturnType<typeof reviewDecisionFixture> | null = null;
+  vi.mocked(executionCommands.identity).mockImplementation(async () => fixtureIdentity(identity++));
+  vi.spyOn(reviewCommands, "decide").mockImplementation(async (_, request) => {
+    const selected = request.unitId === target.unitId ? current : secondCurrent;
+    const receipt = { ...reviewDecisionFixture(request, selected), decisionId: fixtureIdentity(identity++) };
+    if (request.unitId === target.unitId) {
+      original = structuredClone(request); originalReceipt = receipt; current = { ...current, currentDecision: receipt };
+      throw Object.assign(new Error("Synthetic lost batch approval ACK"), { outcome: "unknown" });
+    }
+    secondCurrent = { ...secondCurrent, currentDecision: receipt };
+    return receipt;
+  });
+  vi.spyOn(reviewCommands, "decisionAction").mockRejectedValueOnce(new Error("Original batch receipt unavailable"))
+    .mockImplementation(async (_, request) => {
+      if (!original || !originalReceipt || request.actionId !== original.actionId) throw new Error("Foreign batch recovery");
+      return { request: { ...original, expectedDecisionId: original.expectedDecisionId ?? null }, receipt: originalReceipt };
+    });
+  controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
+  const ready = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(ready).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: w("commandPlaceholder") })).toBeEnabled());
+  const selection = screen.getByRole("button", { name: w("entrySelectionMenu") });
+  await waitFor(() => expect(selection).toBeEnabled()); selection.focus(); fireEvent.keyDown(selection, { key: "Enter" });
+  await user.click(await screen.findByRole("menuitem", { name: w("entrySelectPage") }));
+  await user.click(await screen.findByRole("button", { name: w("reviewBatchTitle") }));
+  const dialog = await screen.findByRole("dialog", { name: w("reviewBatchTitle") });
+  const name = within(dialog).getByRole("textbox", { name: w("entryReviewActor") });
+  fireEvent.change(name, { target: { value: "Batch reviewer A" } });
+  const approve = within(dialog).getByRole("button", { name: i18n.t("workbenchV2.reviewBatchConfirm", { count: 2, actor: "Batch reviewer A" }) });
+  await waitFor(() => expect(approve).toBeEnabled()); await user.click(approve);
+  await waitFor(() => expect(within(dialog).getByText(i18n.t("workbenchV2.reviewBatchCounts", { applied: 0, conflicted: 0, failed: 0, pending: 1, notStarted: 1 }))).toBeVisible());
+  expect(reviewCommands.decide).toHaveBeenCalledTimes(1);
+  fireEvent.change(name, { target: { value: "Batch reviewer B" } });
+  expect(within(dialog).getByText(i18n.t("workbenchV2.entryReviewOriginalAudit", { actor: "Batch reviewer A", locale: target.locale }))).toBeVisible();
+  await user.click(within(dialog).getAllByRole("button", { name: w("close") }).at(-1)!);
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: w("reviewBatchTitle") })).toBeNull());
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.viewName", { locale: target.locale }) }) }));
+  await screen.findByText(w("noViews"));
+  const check = await screen.findByRole("button", { name: w("reviewRecoveryCheck") });
+  await waitFor(() => expect(check).toBeEnabled()); await user.click(check);
+  await waitFor(() => expect(screen.queryByRole("button", { name: w("reviewRecoveryCheck") })).toBeNull());
+  expect(reviewCommands.decide).toHaveBeenCalledTimes(1); expect(executionCommands.identity).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: w("reviewBatchShow") }));
+  const reopened = await screen.findByRole("dialog", { name: w("reviewBatchTitle") });
+  expect(within(reopened).getByRole("textbox", { name: w("entryReviewActor") })).toHaveValue("Batch reviewer B");
+  expect(within(reopened).getByRole("button", { name: i18n.t("workbenchV2.reviewBatchConfirm", { count: 1, actor: "Batch reviewer B" }) })).toBeDisabled();
+  await user.click(within(reopened).getByRole("button", { name: w("reviewBatchReadRemainingButton") }));
+  const remaining = within(reopened).getByRole("button", { name: i18n.t("workbenchV2.reviewBatchConfirm", { count: 1, actor: "Batch reviewer B" }) });
+  await waitFor(() => expect(remaining).toBeEnabled()); await user.click(remaining);
+  await waitFor(() => expect(within(reopened).getByText(i18n.t("workbenchV2.reviewBatchCounts", { applied: 2, conflicted: 0, failed: 0, pending: 0, notStarted: 0 }))).toBeVisible());
+  expect(within(reopened).queryByText(w("reviewBatchReadRemaining"))).toBeNull();
+  expect(within(reopened).queryByRole("button", { name: w("reviewBatchApprove") })).toBeNull();
+  expect(within(reopened).getByText(i18n.t("workbenchV2.reviewBatchReviewer", { actor: "Batch reviewer A" }))).toBeVisible();
+  expect(within(reopened).getByText(i18n.t("workbenchV2.reviewBatchReviewer", { actor: "Batch reviewer B" }))).toBeVisible();
+  expect(reviewCommands.decide).toHaveBeenCalledTimes(2); expect(executionCommands.identity).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(reviewCommands.decide).mock.calls[0][1]).toMatchObject({ actor: "Batch reviewer A", reason: "" });
+  expect(vi.mocked(reviewCommands.decide).mock.calls[1][1]).toMatchObject({ actor: "Batch reviewer B", unitId: second.unitId, reason: "" });
+  expect(draftCommands.write).not.toHaveBeenCalled(); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(reviewCommands.check).not.toHaveBeenCalled();
+});

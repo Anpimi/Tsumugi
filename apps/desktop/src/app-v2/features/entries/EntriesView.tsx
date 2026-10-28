@@ -36,6 +36,8 @@ type Props = {
   onCandidateBatch?: (mode: "stage" | "reject" | "restore", selection: WorkspaceSelection) => void;
   candidateBatchTriggerRef?: Ref<HTMLButtonElement>;
   candidateBatchBlocked?: boolean;
+  onReviewBatch?: (selection: WorkspaceSelection) => void;
+  reviewBatchTriggerRef?: Ref<HTMLButtonElement>;
   renderCandidate?: (row: SegmentRow) => ReactNode;
   ref?: Ref<EntriesHandle>;
 };
@@ -48,7 +50,7 @@ export interface EntriesHandle {
 const noSubscription = () => () => {};
 const noDraftSnapshot = () => null;
 
-export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, renderCandidate, commands, ref }: Props) {
+export default function EntriesView({ project, view, disabled, patch, navigate, drafts, gate, dispatch, onRevealDraft, onImport, onCandidateBatch, candidateBatchTriggerRef, candidateBatchBlocked = false, onReviewBatch, reviewBatchTriggerRef, renderCandidate, commands, ref }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads();
   useSyncExternalStore(drafts?.subscribe ?? noSubscription, drafts?.getSnapshot ?? noDraftSnapshot, drafts?.getSnapshot ?? noDraftSnapshot);
@@ -330,6 +332,8 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
         {onCandidateBatch ? <Menu label={t("candidateBatchMenu")} trigger={<Button ref={candidateBatchTriggerRef} size="sm" disabled={disabled || candidateBatchBlocked || !selectionMatches || !selectedIds.length} title={candidateBatchBlocked ? t("candidateBatchRetained") : undefined}>{t("candidateBatchMenu")}<ChevronDown /></Button>}
           items={(["stage", "reject", "restore"] as const).map(mode => ({ id: mode, label: t(mode === "stage" ? "candidateBatchStage" : mode === "reject" ? "candidateBatchReject" : "candidateBatchRestore"),
             onSelect: () => { const selection = copyWorkspaceSelection(view.selection); if (selection) onCandidateBatch(mode, selection); }, disabled: disabled || candidateBatchBlocked || !selectionMatches || !selectedIds.length }))}/> : null}
+        {onReviewBatch ? <Button ref={reviewBatchTriggerRef} size="sm" disabled={disabled || !selectionMatches || !selectedIds.length}
+          onClick={() => { const selection = copyWorkspaceSelection(view.selection); if (selection) onReviewBatch(selection); }}>{t("reviewBatchTitle")}</Button> : null}
         <Button size="sm" onClick={() => patch({ selection: null })}>{t("entryClearSelection")}</Button></> : null}
     </div> : null}
     {!selectionMatches ? <Banner tone="warning">{t("entrySelectionChanged")}</Banner> : null}

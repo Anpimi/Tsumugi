@@ -36,7 +36,9 @@ import type { CandidateOwners } from "./features/candidates/candidateTypes";
 import type { ReviewOwner } from "./features/review/reviewTypes";
 import type { CandidateBatchSnapshot } from "./features/candidates/CandidateBatchSession";
 import type { TranslationCandidateBatchPreviewCommandPayload } from "../workbenchCommands";
+import type { ReviewBatchSelectionCommandPayload } from "../workbenchCommands";
 import type { WorkspaceSelection } from "./workspace/workspaceSelection";
+import { copyWorkspaceSelection } from "./workspace/workspaceSelection";
 import type { ComparisonSession } from "./features/comparison/ComparisonSession";
 import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
@@ -53,6 +55,7 @@ const ImportOwnerHost = lazy(() => import("./features/import/ImportOwnerHost"));
 const ExecutionOwnerHost = lazy(() => import("./features/execution/ExecutionOwnerHost"));
 const ReviewOwnerHost = lazy(() => import("./features/review/ReviewOwnerHost"));
 const ReviewRecovery = lazy(() => import("./features/review/ReviewRecovery"));
+const ReviewBatchPanel = lazy(() => import("./features/review/ReviewBatchPanel"));
 const TranslationImportPanel = lazy(() => import("./features/import/TranslationImportPanel"));
 const CandidateOwnerHost = lazy(() => import("./features/candidates/CandidateOwnerHost"));
 const CandidateRecovery = lazy(() => import("./features/candidates/CandidateRecovery"));
@@ -70,6 +73,7 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void;
   candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void;
   reviewOwner: ReviewOwner | null; requestReview: () => void; revealReview: () => void; reviewRecovery: boolean; hideReviewRecovery: () => void;
+  reviewBatchOpen: boolean; setReviewBatchOpen: (open: boolean) => void; reviewBatchSelection: WorkspaceSelection | null; prepareReviewBatch: (selection: WorkspaceSelection) => void;
   candidateBatchOpen: boolean; setCandidateBatchOpen: (open: boolean) => void;
   comparisonOwner: ComparisonSession | null; requestComparisons: () => void };
 const WorkspaceContext = createContext<SessionContext | null>(null);
@@ -98,9 +102,16 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const revealCandidates = requestCandidates;
   const publishCandidateOwners = useCallback((value: CandidateOwners | null) => { candidateStatus.current.owners = value; setCandidateOwners(value); }, []);
   const [reviewRequested, setReviewRequested] = useState(false), [reviewOwner, setReviewOwner] = useState<ReviewOwner | null>(null), [reviewRecovery, setReviewRecovery] = useState(false);
+  const [reviewBatchOpen, setReviewBatchOpen] = useState(false), [reviewBatchSelection, setReviewBatchSelection] = useState<WorkspaceSelection | null>(null);
   const reviewStatus = useRef({ requested: false, owner: null as ReviewOwner | null });
   const requestReview = useCallback(() => { reviewStatus.current.requested = true; setReviewRequested(true); }, []);
-  const revealReview = useCallback(() => { requestReview(); setReviewRecovery(true); }, [requestReview]);
+  const revealReview = useCallback(() => {
+    requestReview(); setReviewRecovery(true);
+    const owner = reviewStatus.current.owner, state = owner?.current();
+    if (owner && state && !owner.semantic.reserved() && !state.batchEnded && state.batchItems.length > 0
+      && (state.batchRunning || Object.keys(state.chosen).length > 0)) setReviewBatchOpen(true);
+  }, [requestReview]);
+  const prepareReviewBatch = useCallback((selection: WorkspaceSelection) => { requestReview(); setReviewBatchSelection(copyWorkspaceSelection(selection)); setReviewBatchOpen(true); }, [requestReview]);
   const hideReviewRecovery = useCallback(() => setReviewRecovery(false), []);
   const publishReviewOwner = useCallback((owner: ReviewOwner | null) => { reviewStatus.current.owner = owner; setReviewOwner(owner); }, []);
   const [executionTasks, setExecutionTasks] = useState<ReturnType<typeof useExecutionTaskSession> | null>(null);
@@ -184,7 +195,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
-    reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery }}>
+    reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
+    reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch }}>
     {(importRequested || reviewRequested) && drafts ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
       <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
@@ -210,7 +222,7 @@ function WorkspaceShell() {
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
-    reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery } = useWorkspaceContext();
+    reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
@@ -236,6 +248,11 @@ function WorkspaceShell() {
   const entries = useRef<EntriesHandle>(null), dock = useRef<HTMLDivElement>(null);
   const candidateBatchTrigger = useRef<HTMLButtonElement>(null);
   const candidateBatchRecoveryTrigger = useRef<HTMLButtonElement>(null);
+  const reviewBatchTrigger = useRef<HTMLButtonElement>(null), reviewBatchRecoveryTrigger = useRef<HTMLButtonElement>(null);
+  const reviewBatchReturnFocus = useMemo(() => ({ get current() {
+    const trigger = reviewBatchTrigger.current;
+    return trigger?.isConnected && !trigger.disabled ? trigger : reviewBatchRecoveryTrigger.current;
+  } }), []);
   const candidateBatchReturnFocus = useMemo(() => ({ get current() {
     const trigger = candidateBatchTrigger.current;
     return trigger?.isConnected && !trigger.disabled ? trigger : candidateBatchRecoveryTrigger.current;
@@ -320,6 +337,21 @@ function WorkspaceShell() {
   function previewCandidateBatch(mode: "stage" | "reject" | "restore", selection: WorkspaceSelection) {
     const payload: TranslationCandidateBatchPreviewCommandPayload = { kind: "translation-candidate-batch-preview", mode, selection };
     if (commandsReady && commands) commands.dispatch("translation.preview-candidate-batch", scope, payload);
+  }
+  useLayoutEffect(() => {
+    if (!commands) return;
+    return commands.register({ id: "review.batch-preview", nameKey: "workbenchV2.reviewBatchTitle", category: "review", scope,
+      binding: null, risk: "reads-review", confirmation: "none", payloadKind: "review-batch-selection",
+      availability: input => {
+        const current = store.getState(), active = current.activeViewId ? current.views[current.activeViewId] : null;
+        return !disabled && !reviewBatchOpen && current.activeViewId === currentId && active?.kind === "entries" && !!active.selection
+          && JSON.stringify(input?.selection) === JSON.stringify(active.selection) && !!currentScope()
+          && gate.canDispatch({ viewId: currentId, source: "button" }) ? { enabled: true } : { enabled: false, reason: "unavailable" };
+      }, handler: input => prepareReviewBatch(input.selection) });
+  }, [commands, scope, disabled, currentId, gate, store, reviewBatchOpen, prepareReviewBatch]);
+  function previewReviewBatch(selection: WorkspaceSelection) {
+    const payload: ReviewBatchSelectionCommandPayload = { kind: "review-batch-selection", selection };
+    if (commandsReady && commands) commands.dispatch("review.batch-preview", scope, payload);
   }
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void lifecycle.refresh(); entries.current?.refresh(); },
     openImport: async () => {}, canOpenImport: () => false,
@@ -502,6 +534,20 @@ function WorkspaceShell() {
       : !drafts || draftState.hydration === "idle" || draftState.hydration === "loading" ? <Banner>{message("draftIndexLoading")}</Banner> : null}
     {pendingDrafts.length ? <Banner tone="warning" action={<Button onClick={() => revealDraft(pendingDrafts[0].key)}>{message("draftRecoveryOpen")}</Button>}>{message("draftPendingSummary", { count: pendingDrafts.length })}</Banner> : null}
     {importNeedsAttention && !importVisible ? <Banner tone="warning" action={<Button onClick={revealImport}>{message("importOpen")}</Button>}>{message("importPendingNotice")}</Banner> : null}
+    {reviewBatchOpen && !reviewOwner ? <Banner>{message("reviewLoading")}</Banner> : null}
+    {reviewOwner && commandsReady && commands && !reviewBatchOpen && !reviewOwner.state.batchEnded && reviewOwner.state.batchItems.length > 0 ? <Banner
+      tone={reviewOwner.state.pending ? "warning" : "info"} action={<div className={styles.actions}>
+        <Button ref={reviewBatchRecoveryTrigger} disabled={disabled || !gate.canDispatch({ viewId: currentId, source: "button" })}
+          onClick={() => commands.dispatch("review.batch-show", scope, { kind: "review-batch-control", chosen: reviewOwner.current().chosen, items: reviewOwner.current().batchItems })}>{message("reviewBatchShow")}</Button>
+        {reviewOwner.state.batchRunning ? <Button disabled={disabled || !gate.canDispatch({ viewId: currentId, source: "button" })}
+          onClick={() => commands.dispatch("review.batch-stop", scope, { kind: "review-batch-control", chosen: reviewOwner.current().chosen, items: reviewOwner.current().batchItems })}>{message("reviewBatchStop")}</Button> : null}
+      </div>}>
+      {message(reviewOwner.state.batchRunning ? "reviewBatchRunning" : reviewOwner.state.pending ? "reviewBatchUnknown"
+        : reviewOwner.state.batchItems.every(item => item.status === "recorded") ? "reviewBatchComplete" : "reviewBatchPaused")}
+    </Banner> : null}
+    {reviewOwner && commandsReady && commands ? <Suspense fallback={null}><ReviewBatchPanel project={session.project} owner={reviewOwner} commands={commands} gate={gate} viewId={currentId}
+      selection={reviewBatchSelection} disabled={disabled} open={reviewBatchOpen} onOpenChange={setReviewBatchOpen} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+      returnFocusRef={reviewBatchReturnFocus}/></Suspense> : null}
     {reviewOwner && commandsReady && commands ? <Suspense fallback={null}><ReviewRecovery project={session.project} owner={reviewOwner} commands={commands} gate={gate} viewId={currentId}
       disabled={disabled} visible={reviewRecovery || !reviewPanelVisible} semanticVisible={!reviewPanelVisible || view?.detailTab !== "issues"} onOpen={(unitId, locale) => { void inspectReview(unitId, locale).catch(() => setCommandFailed(true)); }}/></Suspense> : null}
     {candidateOwners && commandsReady && commands ? <Suspense fallback={null}><CandidateRecovery project={session.project} owners={candidateOwners} commands={commands} gate={gate} viewId={currentId}
@@ -542,7 +588,7 @@ function WorkspaceShell() {
           })}<IconButton size="xs" label={message("newView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}><Plus /></IconButton>
             {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
           </div>
-          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} commands={commandsReady ? commands : null} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} onCandidateBatch={candidateOwners && commandsReady ? previewCandidateBatch : undefined} candidateBatchTriggerRef={candidateBatchTrigger} candidateBatchBlocked={candidateBatchBlocked} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
+          {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} commands={commandsReady ? commands : null} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} onCandidateBatch={candidateOwners && commandsReady ? previewCandidateBatch : undefined} candidateBatchTriggerRef={candidateBatchTrigger} candidateBatchBlocked={candidateBatchBlocked} onReviewBatch={commandsReady ? previewReviewBatch : undefined} reviewBatchTriggerRef={reviewBatchTrigger} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
             const accepted = await runtime.navigation.update(view.id, patch);
             if (accepted && patch.dock === "details" && narrow) showDock();
             return accepted;

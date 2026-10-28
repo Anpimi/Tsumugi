@@ -2077,7 +2077,7 @@ ai: {
       batchLimit: "You can approve at most {{count}} entries at a time. Save or deselect some entries before adding more.",
       batchStart: "Confirm approvals",
       batchCancel: "Stop after the current entry",
-      batchResult: "{{applied}} recorded, {{conflicted}} changed, {{failed}} not confirmed. Check any unconfirmed actions before retrying.",
+      batchResult: "Approved {{applied}}, changed {{conflicted}}, failed {{failed}}, awaiting a result check {{pending}}.",
       batchRemaining_one: "{{count}} remaining entry was not started.",
       batchRemaining_other: "{{count}} remaining entries were not started.",
       leaveTitle: "Leave with an unfinished review?",

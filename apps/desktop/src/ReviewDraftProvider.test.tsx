@@ -206,7 +206,7 @@ it("holds a batch reservation across its identities and releases only after the 
   expect(h.drafts.reserveMutation()).toBeNull(); expect(owner.current().batchRunning).toBe(true);
   const request: ReviewWrite = calls("write_review_decision")[1][1].request.decision;
   await act(async () => { secondWrite.resolve(reviewDecisionFixture(request, second)); await job; });
-  expect(owner.current().batchStatus).toEqual({ applied: 2, conflicted: 0, failed: 0, notStarted: 0 });
+  expect(owner.current().batchStatus).toEqual({ applied: 2, conflicted: 0, failed: 0, pending: 0, notStarted: 0 });
   expect(h.mutations.releaseMutation).toHaveBeenCalledOnce(); expect(h.drafts.getSnapshot().mutationReserved).toBe(false);
 });
 

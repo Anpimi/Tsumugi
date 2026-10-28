@@ -1,0 +1,15 @@
+.dialog { inline-size: min(62rem, calc(100vw - var(--space-8))); max-block-size: calc(100dvh - var(--space-8)); }
+.content { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.footer, .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.footer { justify-content: space-between; inline-size: 100%; }
+.meta { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.key { margin: 0; font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pageRegion { min-inline-size: 0; overflow: auto; }
+.pageRegion:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
+.table { border-collapse: collapse; inline-size: 100%; table-layout: fixed; font-size: var(--text-sm); }
+.table th, .table td { text-align: start; vertical-align: top; padding: var(--space-3); border-block-end: var(--border-width) solid var(--color-border-subtle); }
+.table th { color: var(--color-text-secondary); font-weight: var(--weight-semibold); }
+.table th:first-child { inline-size: 18%; }
+.table th:last-child { inline-size: 20%; }
+.recovery { display: grid; gap: var(--space-3); padding-block: var(--space-3); border-block: var(--border-width) solid var(--color-border-subtle); }

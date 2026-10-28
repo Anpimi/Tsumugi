@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- The opt-in desktop workspace can approve a fixed selection of up to 100 saved translations, with a full-text preview, the reviewer’s name, and per-entry results. You can stop after the current entry or reopen the batch after closing views. Uncertain results stay separate from failures; checking them never resumes the remaining approvals without a new confirmation. Existing per-entry reasons and translation drafts are kept.
+
 - Entry issues in the opt-in desktop workspace can prepare AI meaning and style reviews, preview shared text and budgets, and record results through the existing task confirmation flow. Uncertain starts and recordings remain available after entry views close. Entry details also offer explicit permission to use source text when no translation is selected, with the reviewer and reason retained.
 
 - Entry issues can open the exact source or translation range in the editor, including emoji and text after line breaks. Existing drafts are preserved, stale locations are rejected, and returning keeps the original issue scope without rerunning checks.

@@ -2066,7 +2066,7 @@ ai: {
       batchLimit: "单次最多可批量批准 {{count}} 个条目。请先完成保存或取消选择部分条目。",
       batchStart: "确认批准",
       batchCancel: "完成当前条目后停止",
-      batchResult: "已保存 {{applied}} 项，内容已变 {{conflicted}} 项，未确认 {{failed}} 项。重试前请先核对未确认的操作。",
+      batchResult: "已批准 {{applied}} 条，内容有变 {{conflicted}} 条，失败 {{failed}} 条，待核对 {{pending}} 条。",
       batchRemaining_one: "剩余 {{count}} 项未开始。",
       batchRemaining_other: "剩余 {{count}} 项未开始。",
       leaveTitle: "要离开未完成的审阅吗？",

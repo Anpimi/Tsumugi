@@ -710,7 +710,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenEx
           {pending ? <button className="secondary-button" disabled={!checkPendingAvailability().enabled}
             onClick={() => commandRegistry.dispatch("review.check-pending", commandScope)}>{t("review.checkSaved")}</button> : null}
           {pending && owner.state.retryAllowed ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
-          {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
+          {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "Approved {{applied}}, changed {{conflicted}}, failed {{failed}}, awaiting a result check {{pending}}." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
           {batchRunning ? <button className="secondary-button" disabled={!stopBatchAvailability().enabled} onClick={() => commandRegistry.dispatch("review.stop-batch", commandScope)}>{t("review.batchCancel")}</button> : null}
           {tab === "review" ? <AiSemanticReview project={project} active={open && tab === "review" && !leavePrompt} disabled={disabled || !!pending || busyMutation || batchRunning} currentTarget={currentTarget} onOpenConnections={onOpenConnections} /> : null}
