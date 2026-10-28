@@ -54,7 +54,7 @@ Consumers pin SDK artifacts by exact commit and SHA-256 digest rather than relyi
 
 ### Core Storage and Desktop Domain Transition
 
-Current projects use SQLite schema **61** (`DELETE` journaling, `FULL` synchronization), which unifies project content, execution history, plugin grants, team work plans, context strategies, and provider usage ledgers. Older development schemas are rejected on open without modifying or resetting the project folder; users should keep old folders intact and re-import original source files into a new project.
+Current projects use SQLite schema **62** (`DELETE` journaling, `FULL` synchronization), including project-local human conversations alongside existing content, execution history, grants, team work plans, context strategies, and usage ledgers. Valid schema 61 projects upgrade in one transaction that adds the conversation records and preserves existing data. An interrupted upgrade reopens as complete schema 61 or 62; older clients reject schema 62. Earlier unsupported development schemas are refused without resetting the folder. Keep those unsupported folders intact and re-import original source files into a new project.
 
 By default, `tsumugi-core` requires SDK plugin provenance for domain operations. The desktop crate currently enables the transitional `legacy-desktop-domain` feature so existing built-in SMAPI/WebVTT commands and current-project receipt recovery remain available alongside plugin-backed workflows. Both paths share the same Store, runtime, usage ledger, and receipt checks, and plugin-bound inputs never fall back to built-in validation. Remove `legacy-desktop-domain` only after all remaining built-in command callers and receipt recovery paths have completed their migration.
 

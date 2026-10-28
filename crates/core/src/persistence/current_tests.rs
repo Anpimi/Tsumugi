@@ -370,7 +370,7 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
 
 #[test]
 fn current_layout_reopens_and_every_unsupported_snapshot_preserves_bytes() {
-    for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1]) {
+    for version in (0..61).chain([SCHEMA_VERSION + 1]) {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("project");
         let store = ProjectStore::create(

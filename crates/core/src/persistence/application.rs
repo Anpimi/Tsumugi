@@ -1,6 +1,7 @@
 //! Work plans use the existing project and execution authorities.
 mod agents;
 mod control;
+pub(in crate::persistence) mod conversations;
 pub(crate) mod coordination;
 pub(crate) mod recovery;
 mod guidance;
@@ -27,24 +28,33 @@ pub(super) use control::{
 pub(in crate::persistence) use control::protection_summaries;
 
 pub(super) fn initialize(c: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conversations::initialize(c)?;
     control::initialize(c)?;
     team::initialize(c)?;
     coordination::initialize(c)
 }
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     control::table_names()
+        .chain(conversations::table_names())
         .chain(team::table_names())
         .chain(coordination::table_names())
 }
 pub(super) fn validate(c: &rusqlite::Connection) -> Result<(), ExecutionError> {
+    conversations::validate(c)?;
     control::validate(c)?;
     team::validate(c)?;
     coordination::validate(c)
 }
+#[cfg(test)]
 pub(super) fn validate_after_open(
-    c: &rusqlite::Connection,
-    inputs: OpenControlValidation<'_>,
+    c: &rusqlite::Connection, inputs: OpenControlValidation<'_>,
 ) -> Result<(), ExecutionError> {
+    validate_after_open_version(c, inputs, true)
+}
+pub(super) fn validate_after_open_version(
+    c: &rusqlite::Connection, inputs: OpenControlValidation<'_>, conversations: bool,
+) -> Result<(), ExecutionError> {
+    if conversations { self::conversations::validate(c)?; }
     control::validate_after_open(c, inputs)?;
     team::validate(c)?;
     coordination::validate(c)

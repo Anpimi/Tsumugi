@@ -64,6 +64,10 @@ macro_rules! handlers {
         list_execution_tasks,read_execution_task_activity,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,read_execution_cancellation_action,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,read_execution_adoption_action,adopt_execution,
         read_execution_receipt,execution_status,read_plugin_execution_start,quiesce_execution,create_execution_identity,
+        conversations::create_project_conversation,conversations::list_project_conversations,
+        conversations::read_project_conversation,conversations::read_project_conversation_messages,
+        conversations::append_project_conversation_message,conversations::recover_project_conversation_create,
+        conversations::recover_project_conversation_message,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         crate::commands::plugins::application::read_application_plugin_instance,
         crate::commands::plugins::application::stop_application_plugin_instance,
@@ -901,6 +905,7 @@ request!(
     }
 );
 pub(super) mod ai;
+pub(super) mod conversations;
 pub(super) mod ai_wire;
 pub(super) mod arena;
 pub(super) mod release;

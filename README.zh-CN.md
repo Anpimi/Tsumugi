@@ -173,7 +173,7 @@ pnpm --dir apps/desktop check:contracts
 
 ### 存储格式、诊断与测试宿主
 
-- **数据库 Schema**：当前项目使用 SQLite schema **61**，固定采用 `DELETE` 日志模式与 `FULL` 同步级别。早期开发快照或不受支持的 SQLite 存储配置会被明确拒绝（Core Rust 错误类型为 `PersistenceError::UnsupportedStorage`，桌面 IPC 错误码为 `unsupported-schema` 且 `reason: "storage-mode"`），Tsumugi 不会自动修改、升级或重置原目录。如需迁移旧开发快照中的数据，请保留原目录并新建项目重新导入原始源文件。
+- **数据库 Schema**：当前项目使用 SQLite schema **62**，采用 `DELETE` 日志模式与 `FULL` 同步级别。有效的 schema 61 项目会在打开时通过单个事务升级，保留原有内容、计划、团队讨论和回执；升级中断后，数据库保持为完整的 schema 61 或 62。更早的开发格式和不支持的存储配置仍会被拒绝，不会重置目录。不支持的存储配置仍返回 Rust 的 `PersistenceError::UnsupportedStorage`，或桌面 IPC 的 `unsupported-schema` 与 `reason: "storage-mode"`。旧客户端不能打开升级后的 schema 62 项目；不受支持的旧目录请原样保留，再在新项目中重新导入原始源文件。
 - **结构化诊断与恢复**：命令失败时会保留原始结构化证据。若保存时底层基准已发生变化，可展开诊断面板对照提交值与当前值，并按提示执行下一步读取或决策，系统不会自动重放写入。命令边界日志通过诊断编号关联，仅记录操作标签与错误分类，不包含请求正文或本地工程路径。
 - **执行测试宿主**：开发调试时可使用隔离的[执行测试宿主](docs/execution-test-host.md)，在不接入外部翻译模型的情况下验证任务进度、取消与恢复流程。
 

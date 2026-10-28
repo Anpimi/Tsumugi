@@ -2172,6 +2172,9 @@ impl ProjectStore {
             .map_err(|_| error(ErrorCode::StorageFailed, "session"))
     }
     pub(super) fn execution_write(&self) -> Result<ExecutionTransaction<'_>, ExecutionError> {
+        self.execution_write_scoped(super::ChangeScope::Execution)
+    }
+    pub(super) fn execution_write_scoped(&self, scope: super::ChangeScope) -> Result<ExecutionTransaction<'_>, ExecutionError> {
         if self.is_reconciling() {
             return Err(error(ErrorCode::OutcomeUnknown, "session"));
         }
@@ -2182,7 +2185,7 @@ impl ProjectStore {
             TransactionBehavior::Immediate,
         )
         .map_err(sql_error)?;
-        let observer = change_clock.observe(&tx, super::ChangeScope::Execution);
+        let observer = change_clock.observe(&tx, scope);
         Ok(ExecutionTransaction {
             tx,
             unknown,

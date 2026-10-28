@@ -14,6 +14,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 mod disclosure;
+pub mod conversations;
+pub use conversations::*;
 pub mod team;
 pub use team::*;
 pub mod team_execution;

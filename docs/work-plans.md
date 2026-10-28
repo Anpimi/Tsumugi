@@ -2,6 +2,14 @@
 
 A `WorkPlan` is Tsumugi Core's internal contract (`crates/core/src/application`) for scoping, authorizing, and tracking manual or AI-assisted translation workflows across a fixed set of source entries. Work plans are an internal application mechanism rather than a public plugin SDK API, and plugins or models never receive direct access to human-authorization methods, `ProjectStore`, or the raw execution runtime.
 
+## Project conversation records
+
+Core and desktop IPC can keep project threads and ordered human messages before a work plan exists. Each thread has its own identity. Messages retain their original whitespace and Unicode; an untitled thread uses an explicit `null` title. Reads use decimal cursors and return at most 50 complete records within 256 KiB, with a cursor for the next page.
+
+Creating a thread or appending a message uses an action identity bound to the full request. Repeating that request returns its original receipt; changing its contents under the same identity is rejected. The corresponding recovery read returns `recorded`, `pending`, or `mismatch`. `pending` means the result has not been confirmed. Its replay field says whether the same request may be submitted explicitly; it does not schedule a retry or assert that the request never ran. Recovery keeps the original business request across project reopening while using the new session token.
+
+These records store human input. Planning requests, plan proposals, model sharing, and execution still need their own permission and result checks. The project assistant interface is a separate integration from this storage and IPC support.
+
 ## Preparing and verifying a work plan
 
 ### Plan preparation (`ProjectStore::prepare_work_plan`)

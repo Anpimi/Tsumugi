@@ -121,7 +121,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 61;
+pub(crate) const SCHEMA_VERSION: i64 = 62;
 #[cfg(test)]
 pub(crate) enum UnsupportedFixtureDomain {
     Arena,
@@ -152,7 +152,7 @@ pub(crate) fn remove_unsupported_fixture_domain(
 }
 
 /// A real pre-AI origin constraint for an isolated unsupported snapshot. Only
-/// fixture construction can call this; project opening has no upgrade path.
+/// fixture construction can call this; it is outside the supported 61 upgrade.
 #[cfg(test)]
 pub(crate) fn prepare_unsupported_translation_fixture(
     connection: &Connection,
@@ -947,7 +947,7 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if user_version != SCHEMA_VERSION {
+    if user_version != SCHEMA_VERSION && user_version != 61 {
         return Err(PersistenceError::UnsupportedSchema {
             found_version: user_version,
             stage: PersistenceStage::Open,
@@ -970,6 +970,32 @@ fn validate_existing_connection(
         return Err(PersistenceError::UnsupportedStorage {
             stage: PersistenceStage::Open,
         });
+    }
+    if user_version == 61 {
+        // This is an additive migration only. The original complete validation
+        // and supported storage pragmas run before any DDL can touch the file.
+        // SQLite's rollback journal makes both schema and version one durable
+        // unit; a crash leaves either the original 61 or complete 62 schema.
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        validate_schema_shape_version(&transaction, 61)?;
+        let _ = read_metadata_from(&transaction)?;
+        #[cfg(test)]
+        migration_crash_hook("conversation-before-ddl");
+        application::conversations::initialize(&transaction)
+            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        #[cfg(test)]
+        migration_crash_hook("conversation-after-ddl");
+        transaction.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        validate_schema_shape(&transaction)?;
+        #[cfg(test)]
+        migration_crash_hook("conversation-before-commit");
+        transaction.commit().map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        #[cfg(test)]
+        migration_crash_hook("conversation-after-commit");
+        return Ok(());
     }
     // Every open-time association check must see the same database snapshot.
     // A deferred transaction keeps validation read-only while excluding
@@ -1019,6 +1045,9 @@ fn backup_current_schema(
 }
 
 fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
+    validate_schema_shape_version(connection, SCHEMA_VERSION)
+}
+fn validate_schema_shape_version(connection: &Connection, version: i64) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -1035,6 +1064,10 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     expected_tables.extend(arena::table_names());
     expected_tables.extend(ledger::provider::table_names());
     expected_tables.extend(application::table_names());
+    if version == 61 {
+        let added: std::collections::BTreeSet<_> = application::conversations::table_names().collect();
+        expected_tables.retain(|name| !added.contains(name));
+    }
     expected_tables.extend(
         plugin_execution::TABLES
             .iter()
@@ -1109,7 +1142,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     plugin_execution::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
-    application::validate_after_open(connection, application_open).map_err(|_| {
+    application::validate_after_open_version(connection, application_open, version != 61).map_err(|_| {
         PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         }
@@ -1382,7 +1415,7 @@ mod tests {
 
     #[test]
     fn open_refuses_unsupported_schema_without_repair() {
-        for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1, 99]) {
+        for version in (0..61).chain([SCHEMA_VERSION + 1, 99]) {
             let parent = temporary_directory("schema");
             let project_path = parent.path().join("project");
             let store = ProjectStore::create(&project_path, metadata()).unwrap();

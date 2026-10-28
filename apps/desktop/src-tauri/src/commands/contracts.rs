@@ -30,6 +30,31 @@ struct Responses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct ConversationRequests {
+    create: execution::conversations::CreateProjectConversationRequest,
+    list: execution::conversations::ListProjectConversationsRequest,
+    read: execution::conversations::ReadProjectConversationRequest,
+    messages: execution::conversations::ReadProjectConversationMessagesRequest,
+    append: execution::conversations::AppendProjectConversationMessageRequest,
+    recover_create: execution::conversations::CreateProjectConversationRequest,
+    recover_message: execution::conversations::AppendProjectConversationMessageRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ConversationResponses {
+    conversation: tsumugi_core::application::ProjectConversation,
+    page: tsumugi_core::application::ProjectConversationPage,
+    message: tsumugi_core::application::ProjectConversationMessage,
+    message_page: tsumugi_core::application::ProjectConversationMessagePage,
+    create_recovery: tsumugi_core::application::ProjectConversationCreateRecovery,
+    message_recovery: tsumugi_core::application::ProjectConversationMessageRecovery,
+    error: CommandError,
+}
+
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct DraftRequests {
     read: drafts::DraftReadRequest,
     read_many: drafts::DraftReadManyRequest,
@@ -797,6 +822,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
+            "conversations": schemas::<ConversationRequests, ConversationResponses>(),
             "draft": schemas::<DraftRequests, DraftResponses>(),
             "mcp": schemas::<McpRequests, McpResponses>(),
             "mcpRetrieval": schemas::<McpRetrievalRequests, McpRetrievalResponses>(),
