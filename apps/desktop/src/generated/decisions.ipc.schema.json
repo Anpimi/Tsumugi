@@ -876,6 +876,60 @@
               "attemptId": {
                 "$ref": "#/definitions/ExecutionId"
               },
+              "expectedContentRevision": {
+                "$ref": "#/definitions/Revision"
+              },
+              "kind": {
+                "const": "compare-source-mapping",
+                "type": "string"
+              },
+              "previousSnapshotId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "attemptId",
+              "resultId",
+              "previousSnapshotId",
+              "expectedContentRevision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "clarify-conversation-proposal",
+                "type": "string"
+              },
+              "proposalId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "revisionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId",
+              "proposalId",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
               "itemId": {
                 "$ref": "#/definitions/ExecutionId"
               },
@@ -1228,6 +1282,53 @@
               "locales",
               "fileCount",
               "unknownFileCount"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "ambiguousCount": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "source-comparison",
+                "type": "string"
+              },
+              "renameCandidateCount": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "ambiguousCount",
+              "renameCandidateCount"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "proposal-questions",
+                "type": "string"
+              },
+              "questionCount": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "questionCount"
             ],
             "type": "object"
           }
@@ -1673,6 +1774,27 @@
           {
             "additionalProperties": false,
             "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "conversation-proposal",
+                "type": "string"
+              },
+              "proposalId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId",
+              "proposalId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "kind": {
                 "const": "source-occurrence",
                 "type": "string"
@@ -1688,6 +1810,27 @@
               "kind",
               "snapshotId",
               "occurrenceId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-result",
+                "type": "string"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "attemptId",
+              "resultId"
             ],
             "type": "object"
           },

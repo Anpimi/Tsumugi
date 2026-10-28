@@ -23,6 +23,7 @@ import { SessionReads } from "../sessionReads";
 import { sourceCommands } from "../sourceCommands";
 import { fixtureIdentity as id } from "../testSupport/executionFixture";
 import { reviewDiagnosticFixture } from "../testSupport/reviewDiagnosticFixture";
+import { conversationProposalFixture } from "../testSupport/conversationProposalFixture";
 import { reviewSummaryFor } from "../testSupport/reviewFixture";
 import { translationCommands } from "../translationCommands";
 import { workPlanCommands } from "../workPlanCommands";
@@ -40,6 +41,7 @@ const counts = { passed: 0, findings: 0, missing: 0, unavailable: 0, failed: 0, 
 const originalWidth = Object.getOwnPropertyDescriptor(window, "innerWidth");
 let controller: ProjectLifecycle | undefined, reads: SessionReads, fixture: ReturnType<typeof reviewDiagnosticFixture>;
 let knownCount = 2, basis = "a".repeat(64);
+let originalItems: DecisionPage["items"] | null = null;
 
 function segmentPage(query: SegmentPage["query"]): SegmentPage {
   const target = fixture.target;
@@ -54,7 +56,7 @@ function segmentPage(query: SegmentPage["query"]): SegmentPage {
 }
 
 function decisionPage(request: DecisionPageRequest): DecisionPage {
-  const items: DecisionPage["items"] = Array.from({ length: knownCount }, (_, index) => {
+  const items: DecisionPage["items"] = originalItems ?? Array.from({ length: knownCount }, (_, index) => {
     const originalDelivery = index === 0 ? deliveryId : id(90100 + index), originalAction = index === 0 ? actionId : id(90200 + index);
     return { decisionId: `delivery-unknown:${originalDelivery}`, source: "delivery-unknown", state: "awaiting-recheck", locale: null,
       targets: [{ kind: "delivery", releaseId, deliveryId: originalDelivery }], targetsComplete: true, basis: "b".repeat(64), sourceActionId: originalAction,
@@ -62,10 +64,11 @@ function decisionPage(request: DecisionPageRequest): DecisionPage {
       evidence: { kind: "delivery-outcome", state: "unknown", locales: ["fr-FR", "zh-CN"], fileCount: 2, unknownFileCount: 1 } };
   });
   const coverage = DecisionSourceValues.map((source): DecisionPage["coverage"][number] => {
-    if (source === "agent-question") return { source, state: "unavailable", knownCount: 0, total: null, reason: "source-not-implemented", errorCode: null };
+    if (source === "agent-question") return { source, state: "partial", knownCount: items.filter(item => item.source === source).length,
+      total: null, reason: "source-not-implemented", errorCode: null };
     if (source === "local-action-recovery" && request.activity == null) return { source, state: "unavailable", knownCount: 0,
       total: null, reason: "lifecycle-unavailable", errorCode: null };
-    const count = source === "delivery-unknown" ? knownCount : 0;
+    const count = items.filter(item => item.source === source).length;
     return { source, state: "complete", knownCount: count, total: count, reason: null, errorCode: null };
   });
   const value: unknown = { projectId: context.projectId, query: { locale: null, sources: [] }, basis, items, next: null,
@@ -87,7 +90,7 @@ function deliveryRecord(): DeliveryRecordView {
 beforeEach(async () => {
   localStorage.clear(); history.replaceState(null, "", "/"); await i18n.changeLanguage("en-US");
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
-  fixture = reviewDiagnosticFixture(); knownCount = 2; basis = "a".repeat(64); reads = new SessionReads(context);
+  fixture = reviewDiagnosticFixture(); knownCount = 2; originalItems = null; basis = "a".repeat(64); reads = new SessionReads(context);
   const target = fixture.target;
   const currentBasis: DraftBasis = { sourceRevisionId: target.sourceRevisionId, selectionId: target.selectionId, revisionId: target.revisionId, text: target.translationText };
   vi.spyOn(SessionReads.prototype, "start").mockReturnValue(() => {}); vi.spyOn(window, "scrollTo").mockImplementation(() => {});
@@ -212,4 +215,31 @@ it("keeps an incomplete zero count unconfirmed and blocks both decision entrance
   await user.click(within(drawer).getByRole("button", { name: w("decisionsTrayUnknown") }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: w("agent") })).not.toBeInTheDocument());
   await waitFor(() => expect(screen.getByRole("main")).toHaveFocus());
+});
+
+it("opens a saved proposal question at its original conversation version without writing the journal or replacing message input", async () => {
+  const conversationId = id(90400), key = { projectId: context.projectId, conversationId };
+  const proposal = conversationProposalFixture(key).revision;
+  proposal.content.questions = ["Which audience should this proposal use?"];
+  knownCount = 1;
+  originalItems = [{ decisionId: `agent-question:proposal:${proposal.proposalId}`, source: "agent-question", state: "pending", locale: null,
+    targets: [{ kind: "conversation-proposal", conversationId, proposalId: proposal.proposalId }], targetsComplete: true,
+    basis: "d".repeat(64), sourceActionId: null, evidence: { kind: "proposal-questions", questionCount: 1 },
+    action: { kind: "clarify-conversation-proposal", conversationId, proposalId: proposal.proposalId, revisionId: proposal.revisionId } }];
+  vi.spyOn(conversationCommands, "readProposal").mockResolvedValue(proposal);
+  vi.spyOn(conversationCommands, "read").mockResolvedValue({ ...key, title: "Original conversation", ordinal: "1" });
+  vi.spyOn(conversationDraftCommands, "read").mockResolvedValue({ key, revision: "2", writerId: id(90401),
+    value: { text: "Later message input B", editSeq: "2", pending: null, messageEditSeq: "2", proposalEdits: [], revocations: [] } });
+  vi.spyOn(conversationCommands, "messages").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "planningAttempts").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalRevisions").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalWorkPlans").mockResolvedValue({ ...key, rows: [], nextAfter: null });
+  const write = vi.spyOn(conversationDraftCommands, "write").mockRejectedValue(new Error("Viewing questions cannot write the journal"));
+  const user = await openWorkspace();
+  await user.click(activity().getByRole("button", { name: w("decisions") }));
+  await user.click(await screen.findByRole("button", { name: w("decisionsQuestionOpen") }));
+  await screen.findByText("Which audience should this proposal use?");
+  expect(screen.getByRole("textbox", { name: i18n.t("conversation.message") })).toHaveValue("Later message input B");
+  expect(write).not.toHaveBeenCalled();
+  expect(conversationCommands.readProposal).toHaveBeenCalledWith({ ...context, conversationId, proposalId: proposal.proposalId, revisionId: proposal.revisionId });
 });

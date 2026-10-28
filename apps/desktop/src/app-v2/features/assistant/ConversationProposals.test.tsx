@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import { SessionReadProvider } from "../../../SessionReadProvider";
@@ -12,6 +13,7 @@ import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import ConversationPanel from "./ConversationPanel";
 import { ConversationSession } from "./ConversationSession";
+import type { ConversationProposalTarget } from "./conversationNavigation";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -43,25 +45,37 @@ function harness(saved = true) {
     head: { key, revision: "0", writerId: null, value: null } as ConversationDraftHead,
     revisions: saved ? [structuredClone(fixture.revision)] : [] as ConversationProposalRevision[],
     revisionWait: null as ReturnType<typeof deferred> | null,
+    readWaits: new Map<string, ReturnType<typeof deferred>>(), readFailures: new Set<string>(),
   };
   invoke.mockImplementation(async (command: string, { request }) => {
     if (command === "list_project_conversations") return { projectId: context.projectId,
       rows: [{ ...key, title: "夜行对话", ordinal: "1" }], nextAfter: null };
-    if (command === "read_project_conversation_messages") return { ...key, rows: fixture.run.preview.selectedMessages, nextAfter: null };
-    if (command === "read_conversation_planning_attempts") return { ...key,
-      rows: [{ attemptId: fixture.run.receipt.consent.attemptId, taskId: fixture.run.receipt.consent.taskId, sequence: "1" }], nextAfter: null };
+    if (command === "read_project_conversation_messages") return { projectId: context.projectId, conversationId: request.conversationId,
+      rows: request.conversationId === conversationId ? fixture.run.preview.selectedMessages : [], nextAfter: null };
+    if (command === "read_conversation_planning_attempts") return { projectId: context.projectId, conversationId: request.conversationId,
+      rows: request.conversationId === conversationId ? [{ attemptId: fixture.run.receipt.consent.attemptId, taskId: fixture.run.receipt.consent.taskId, sequence: "1" }] : [], nextAfter: null };
     if (command === "read_conversation_planning") return structuredClone(fixture.run);
-    if (command === "read_conversation_proposal_revisions") return { ...key, rows: structuredClone(state.revisions), nextAfter: null };
-    if (command === "read_conversation_proposal_work_plans") return { ...key, rows: [], nextAfter: null };
+    if (command === "read_conversation_proposal_revisions") {
+      const remaining = state.revisions.filter(revision => revision.conversationId === request.conversationId && BigInt(revision.ordinal) > BigInt(request.after ?? "0"));
+      const rows = remaining.slice(0, request.limit);
+      return { projectId: context.projectId, conversationId: request.conversationId, rows: structuredClone(rows), nextAfter: remaining.length > rows.length ? rows.at(-1)?.ordinal : null };
+    }
+    if (command === "read_conversation_proposal_work_plans") return { projectId: context.projectId, conversationId: request.conversationId, rows: [], nextAfter: null };
     if (command === "read_conversation_proposal" || command === "validate_conversation_proposal") {
-      const revision = request.revisionId === null ? [...state.revisions].reverse().find(item => item.proposalId === request.proposalId)
-        : state.revisions.find(item => item.proposalId === request.proposalId && item.revisionId === request.revisionId);
+      const revision = request.revisionId === null ? [...state.revisions].reverse().find(item => item.conversationId === request.conversationId && item.proposalId === request.proposalId)
+        : state.revisions.find(item => item.conversationId === request.conversationId && item.proposalId === request.proposalId && item.revisionId === request.revisionId);
       if (!revision) throw new Error("Synthetic proposal version not found");
-      return structuredClone(revision);
+      const result = structuredClone(revision);
+      if (request.revisionId !== null) {
+        if (state.readFailures.has(request.revisionId)) throw new Error("Synthetic proposal read failed");
+        await state.readWaits.get(request.revisionId)?.promise;
+      }
+      return result;
     }
     if (command === "list_local_conversation_drafts") return { items: state.head.value ? [{ key, revision: state.head.revision,
       editSeq: state.head.value.editSeq, hasPending: !!state.head.value.pending }] : [], next: null };
-    if (command === "read_local_conversation_draft") return structuredClone(state.head);
+    if (command === "read_local_conversation_draft") return request.key.conversationId === conversationId ? structuredClone(state.head)
+      : { key: request.key, revision: "0", writerId: null, value: null };
     if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
       const write = request.write ?? request.resolve.write;
       const response: unknown = { key, revision: String(BigInt(state.head.revision) + 1n), writerId: write.writerId,
@@ -89,16 +103,22 @@ function harness(saved = true) {
     }
     throw new Error(`Unexpected synthetic command: ${command}`);
   });
-  const open = async () => {
+  const open = async (initialTarget: ConversationProposalTarget | null = null, options: { strict?: boolean; visible?: boolean } = {}) => {
     const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
     const owner = new ConversationSession(context, () => reads.invalidate(["project"]), () => {});
     expect(await owner.initialize()).toBe(true); expect(await owner.open(conversationId)).toBe(true);
-    const view = render(<ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
-      <ConversationPanel owner={owner} visible disabled={false} gate={gate} viewId="entries"/>
-    </SessionReadProvider></ApplicationReadProvider>);
+    let target = initialTarget, visible = options.visible ?? true;
+    const tree = () => {
+      const content = <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
+        <ConversationPanel owner={owner} visible={visible} disabled={false} gate={gate} viewId="entries" proposalTarget={target}/>
+      </SessionReadProvider></ApplicationReadProvider>;
+      return options.strict ? <StrictMode>{content}</StrictMode> : content;
+    };
+    const view = render(tree());
+    const show = (next: ConversationProposalTarget | null = target, nextVisible = visible) => { target = next; visible = nextVisible; view.rerender(tree()); };
     const retire = () => { owner.retire(); reads.retire(); gate.dispose(); };
     disposals.push(retire);
-    return { owner, gate, view, retire, flush: async () => { await act(async () => { expect(await owner.flush()).toBe(true); }); } };
+    return { owner, gate, reads, view, show, retire, flush: async () => { await act(async () => { expect(await owner.flush()).toBe(true); }); } };
   };
   const edit = async () => {
     fireEvent.click(await screen.findByRole("button", { name: "修改这份提议" }));
@@ -234,5 +254,161 @@ it("compares an external latest version and requires explicit rebasing while pre
   expect(calls("revise_conversation_proposal")[0][1].request).toMatchObject({ expectedRevisionId: latest.revisionId,
     content: { summary: "我的本机修改，不替换为外部内容", questions: [], unitIds: [h.unitIds[0]] } });
   expect(h.state.revisions[0]).toEqual(h.revision); expect(h.state.revisions[1]).toEqual(latest);
+  expectNoExecution();
+});
+
+const proposalTarget = (revision: ConversationProposalRevision, focus = true): ConversationProposalTarget => ({
+  conversationId: revision.conversationId, proposalId: revision.proposalId, revisionId: revision.revisionId, focus,
+});
+const openedVersion = (number: string) => i18n.t("conversation.proposalTargetVersion", { number });
+
+it("locates the exact version beyond the first fifty rows in StrictMode and merges the later page without duplicating it or writing a draft", async () => {
+  const h = harness(), wait = deferred();
+  h.state.revisions = Array.from({ length: 51 }, (_, index) => ({ ...structuredClone(h.revision), revisionId: id(35000 + index),
+    revision: String(index + 1), ordinal: String(index + 1), previousRevisionId: index ? id(35000 + index - 1) : null,
+    content: { ...structuredClone(h.content), summary: `已保存的提议 ${index + 1}`, questions: index === 50 ? ["夜行时要保留哪种语气？", "换行和 {name} 需要保留吗？"] : [] } }));
+  const revision = h.state.revisions[50]; h.state.readWaits.set(revision.revisionId, wait);
+  const session = await h.open(proposalTarget(revision), { strict: true });
+  await screen.findByText(i18n.t("conversation.proposalTargetReading"));
+  const history = within(await screen.findByRole("region", { name: i18n.t("conversation.proposalHistory") }));
+  expect(history.getAllByRole("article")).toHaveLength(50);
+  expect(history.queryByText(revision.content.summary)).not.toBeInTheDocument();
+  expect(calls("read_conversation_proposal").map(([, payload]) => payload.request)).toContainEqual({ ...context,
+    conversationId, proposalId: revision.proposalId, revisionId: revision.revisionId });
+  await act(async () => { wait.resolve(); });
+  const card = await screen.findByRole("article", { name: openedVersion("51") });
+  await waitFor(() => expect(card).toHaveFocus());
+  expect(within(card).getAllByRole("listitem").map(item => item.textContent)).toEqual(revision.content.questions);
+  expect(within(card).getByRole("button", { name: i18n.t("conversation.proposalEdit") })).toBeEnabled();
+  expect(within(card).getByRole("button", { name: i18n.t("conversation.planReviewOpen") })).toBeEnabled();
+  expect(screen.queryByRole("region", { name: i18n.t("conversation.proposalEditor") })).not.toBeInTheDocument();
+  expect(session.owner.getSnapshot().inputs.get(conversationId)?.value.proposalEdits).toBeUndefined();
+  expect(calls("write_local_conversation_draft")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.moreProposalVersions") }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: i18n.t("conversation.moreProposalVersions") })).not.toBeInTheDocument());
+  expect(history.getAllByRole("article")).toHaveLength(51);
+  expect(history.getAllByText(revision.content.summary)).toHaveLength(1);
+  expect(calls("read_conversation_proposal_revisions").at(-1)?.[1].request).toMatchObject({ after: "50", limit: 50 });
+  expect(calls("read_conversation_proposal_revisions").every(([, payload]) => payload.request.after === null || payload.request.after === "50")).toBe(true);
+  expect(calls("read_conversation_proposal").every(([, payload]) => payload.request.revisionId === revision.revisionId)).toBe(true);
+  expect(calls("capture_conversation_proposal")).toHaveLength(0); expect(calls("revise_conversation_proposal")).toHaveLength(0);
+  const beginEdit = vi.spyOn(session.owner, "beginProposalEdit");
+  fireEvent.click(within(card).getByRole("button", { name: i18n.t("conversation.proposalEdit") }));
+  expect(beginEdit).toHaveBeenCalledTimes(1); expect(beginEdit).toHaveBeenCalledWith(revision);
+  await session.flush();
+  expect(session.owner.getSnapshot().inputs.get(conversationId)?.value.proposalEdits?.[0]).toMatchObject({ expectedRevisionId: revision.revisionId,
+    proposalId: revision.proposalId, content: revision.content });
+  expect(calls("write_local_conversation_draft").length).toBeGreaterThan(0);
+  expectNoExecution();
+});
+
+it.each(["moved", "hidden", "initially-hidden"] as const)("does not take focus after a delayed proposal read when %s", async mode => {
+  const h = harness(), wait = deferred(), target = proposalTarget(h.revision);
+  h.state.readWaits.set(h.revision.revisionId, wait);
+  const session = await h.open(target, { strict: true, visible: mode !== "initially-hidden" });
+  const composer = screen.getByRole("textbox", { name: i18n.t("conversation.message") });
+  if (mode === "initially-hidden") {
+    expect(calls("read_conversation_proposal")).toHaveLength(0);
+    session.show(target, true);
+  }
+  await waitFor(() => expect(calls("read_conversation_proposal").length).toBeGreaterThan(0));
+  if (mode === "moved") act(() => composer.focus());
+  if (mode === "hidden") session.show(target, false);
+  await act(async () => { wait.resolve(); });
+  if (mode === "hidden") session.show(target, true);
+  const card = await screen.findByRole("article", { name: openedVersion("1") });
+  expect(card).not.toHaveFocus();
+  if (mode === "moved") expect(composer).toHaveFocus();
+  expect(calls("write_local_conversation_draft")).toHaveLength(0);
+  expectNoExecution();
+});
+
+it("keeps the newer target and input B when an earlier exact-version read finishes late, then clears the target without choosing another card", async () => {
+  const h = harness(), wait = deferred();
+  h.state.revisions[0].content.questions = ["第一版的问题"];
+  const latest: ConversationProposalRevision = { ...structuredClone(h.revision), revisionId: id(36001), revision: "2", ordinal: "2", previousRevisionId: h.revision.revisionId,
+    content: { ...structuredClone(h.content), summary: "第二版的目标", questions: ["第二版的问题"] } };
+  h.state.revisions.push(latest); h.state.readWaits.set(h.revision.revisionId, wait);
+  const session = await h.open(proposalTarget(h.revision), { strict: true });
+  await waitFor(() => expect(calls("read_conversation_proposal").length).toBeGreaterThan(0));
+  session.show(proposalTarget(latest));
+  const current = await screen.findByRole("article", { name: openedVersion("2") });
+  await waitFor(() => expect(current).toHaveFocus());
+  expect(within(current).getByRole("list").textContent).toBe("第二版的问题");
+  const composer = screen.getByRole("textbox", { name: i18n.t("conversation.message") }); act(() => composer.focus());
+  fireEvent.change(composer, { target: { value: "读取期间继续写 B 🙂\n下一行" } }); await session.flush();
+  const writes = calls("write_local_conversation_draft").length;
+  await act(async () => { wait.resolve(); });
+  expect(screen.queryByRole("article", { name: openedVersion("1") })).not.toBeInTheDocument();
+  expect(within(current).getByRole("list").textContent).toBe("第二版的问题");
+  expect(composer).toHaveFocus(); expect(composer).toHaveValue("读取期间继续写 B 🙂\n下一行");
+  expect(calls("write_local_conversation_draft")).toHaveLength(writes);
+  session.show(null);
+  expect(screen.queryByRole("article", { name: openedVersion("2") })).not.toBeInTheDocument();
+  expect(composer).toHaveFocus(); expect(screen.queryByText("第一版的问题")).not.toBeInTheDocument();
+  session.show(proposalTarget(latest));
+  await waitFor(() => expect(screen.getByRole("article", { name: openedVersion("2") })).toHaveFocus());
+  expectNoExecution();
+});
+
+it("does not reuse the same target’s focus attempt after switching conversations and reopening the original conversation", async () => {
+  const h = harness(), wait = deferred(), target = proposalTarget(h.revision), otherId = id(36002);
+  h.state.revisions[0].content.questions = ["原对话的问题"]; h.state.readWaits.set(h.revision.revisionId, wait);
+  const session = await h.open(target, { strict: true });
+  await waitFor(() => expect(calls("read_conversation_proposal").length).toBeGreaterThan(0));
+  await act(async () => { expect(await session.owner.open(otherId)).toBe(true); });
+  expect(screen.getByText(i18n.t("conversation.proposalTargetConversationChanged"))).toBeInTheDocument();
+  expect(screen.queryByText("原对话的问题")).not.toBeInTheDocument();
+  await act(async () => { wait.resolve(); });
+  expect(screen.queryByRole("article", { name: openedVersion("1") })).not.toBeInTheDocument();
+  await act(async () => { expect(await session.owner.open(conversationId)).toBe(true); });
+  const card = await screen.findByRole("article", { name: openedVersion("1") });
+  expect(within(card).getByRole("list").textContent).toBe("原对话的问题");
+  expect(card).not.toHaveFocus();
+  expect(calls("write_local_conversation_draft")).toHaveLength(0);
+  expectNoExecution();
+});
+
+it("preserves message and proposal edits B when opening an exact version and reuses the original Session only after explicit editing", async () => {
+  const h = harness(), session = await h.open(), editor = await h.edit(), wait = deferred();
+  const summary = editor.getByRole("textbox", { name: i18n.t("conversation.proposalSummary") }), composer = screen.getByRole("textbox", { name: i18n.t("conversation.message") });
+  fireEvent.change(summary, { target: { value: "已在修改的提议 B" } });
+  fireEvent.change(composer, { target: { value: "消息 B" } }); await session.flush();
+  h.state.readWaits.set(h.revision.revisionId, wait);
+  const beginEdit = vi.spyOn(session.owner, "beginProposalEdit"), target = proposalTarget(h.revision);
+  session.show(target);
+  await waitFor(() => expect(calls("read_conversation_proposal").filter(([, payload]) => payload.request.revisionId === h.revision.revisionId).length).toBeGreaterThan(1));
+  fireEvent.change(summary, { target: { value: "等待原提议时继续写 B" } });
+  fireEvent.change(composer, { target: { value: "等待原提议时的消息 B" } }); await session.flush();
+  const saved = structuredClone(h.state.head.value), writes = calls("write_local_conversation_draft").length;
+  await act(async () => { wait.resolve(); });
+  const card = await screen.findByRole("article", { name: openedVersion("1") });
+  expect(summary).toHaveValue("等待原提议时继续写 B"); expect(composer).toHaveValue("等待原提议时的消息 B");
+  expect(h.state.head.value).toEqual(saved); expect(calls("write_local_conversation_draft")).toHaveLength(writes);
+  expect(beginEdit).not.toHaveBeenCalled();
+  fireEvent.click(within(card).getByRole("button", { name: i18n.t("conversation.proposalContinueEditing") }));
+  expect(beginEdit).toHaveBeenCalledTimes(1); expect(beginEdit).toHaveBeenCalledWith(h.revision);
+  await waitFor(() => expect(screen.getByRole("region", { name: i18n.t("conversation.proposalEditor") })).toHaveFocus());
+  expect(summary).toHaveValue("等待原提议时继续写 B"); expect(composer).toHaveValue("等待原提议时的消息 B");
+  expect(session.owner.getSnapshot().inputs.get(conversationId)?.value.proposalEdits).toHaveLength(1);
+  expect(calls("capture_conversation_proposal")).toHaveLength(0); expect(calls("revise_conversation_proposal")).toHaveLength(0);
+  expectNoExecution();
+});
+
+it("rereads a failed exact version in place without creating a draft or claiming an unlisted question was answered", async () => {
+  const h = harness(); h.state.readFailures.add(h.revision.revisionId);
+  const session = await h.open(proposalTarget(h.revision), { strict: true });
+  await screen.findByText(i18n.t("conversation.proposalTargetReadFailed"));
+  expect(screen.queryByRole("article", { name: openedVersion("1") })).not.toBeInTheDocument();
+  const failedReads = calls("read_conversation_proposal").length;
+  h.state.readFailures.delete(h.revision.revisionId);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.retryRead") }));
+  const card = await screen.findByRole("article", { name: openedVersion("1") });
+  expect(within(card).getByText(i18n.t("conversation.proposalTargetNoQuestions"))).toBeInTheDocument();
+  expect(card).not.toHaveFocus(); expect(screen.queryByText(/已有答复|已经答复|已回答/)).not.toBeInTheDocument();
+  expect(calls("read_conversation_proposal")).toHaveLength(failedReads + 1);
+  expect(calls("read_conversation_proposal").every(([, payload]) => payload.request.revisionId === h.revision.revisionId)).toBe(true);
+  expect(session.owner.getSnapshot().inputs.get(conversationId)?.value.proposalEdits).toBeUndefined();
+  expect(calls("write_local_conversation_draft")).toHaveLength(0);
   expectNoExecution();
 });

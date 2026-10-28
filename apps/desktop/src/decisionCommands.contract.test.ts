@@ -18,6 +18,47 @@ function response(): DecisionPage {
   return value;
 }
 
+function originalGroups() {
+  const input = request();
+  input.query = { locale: null, sources: ["agent-question", "source-mapping"] };
+  const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const page: DecisionPage = { ...response(), query: { locale: null, sources: ["agent-question", "source-mapping"] },
+    items: [
+      { decisionId: `agent-question:proposal:${uuid(50)}`, source: "agent-question", state: "pending", locale: null,
+        targets: [{ kind: "conversation-proposal", conversationId: uuid(51), proposalId: uuid(50) }], targetsComplete: true,
+        basis: "a".repeat(64), sourceActionId: null, evidence: { kind: "proposal-questions", questionCount: 2 },
+        action: { kind: "clarify-conversation-proposal", conversationId: uuid(51), proposalId: uuid(50), revisionId: uuid(52) } },
+      { decisionId: `source-mapping:result:${uuid(53)}`, source: "source-mapping", state: "stale", locale: null,
+        targets: [{ kind: "source-result", attemptId: uuid(54), resultId: uuid(53) }], targetsComplete: true,
+        basis: "b".repeat(64), sourceActionId: null, evidence: { kind: "source-comparison", ambiguousCount: 1, renameCandidateCount: 2 },
+        action: { kind: "compare-source-mapping", attemptId: uuid(54), resultId: uuid(53), previousSnapshotId: uuid(55), expectedContentRevision: "2" } },
+    ], knownCount: 2, total: null, next: null, localActions: null, executionActivity: [], deliveryActivity: [],
+    coverage: [
+      { source: "agent-question", state: "partial", knownCount: 1, total: null, reason: "source-not-implemented", errorCode: null },
+      { source: "source-mapping", state: "complete", knownCount: 1, total: 1, reason: null, errorCode: null },
+    ] };
+  return { input, page };
+}
+
+it("accepts original proposal and pending source groups without pretending member questions are complete", async () => {
+  const { input, page } = originalGroups();
+  expect(validateResponsePage(page)).toBe(true);
+  invoke.mockResolvedValueOnce(page);
+  expect(await decisionCommands.page(input)).toEqual(page);
+});
+
+it.each(["wrong-proposal", "wrong-result", "missing-evidence", "empty-group", "fake-entry", "false-language"])("rejects an invalid original group: %s", async kind => {
+  const { input, page } = originalGroups(), question = page.items[0]!, source = page.items[1]!;
+  if (kind === "wrong-proposal" && question.action.kind === "clarify-conversation-proposal") question.action.proposalId = source.action.kind === "compare-source-mapping" ? source.action.resultId : "";
+  if (kind === "wrong-result" && source.action.kind === "compare-source-mapping") source.action.resultId = source.action.attemptId;
+  if (kind === "missing-evidence") question.evidence = null;
+  if (kind === "empty-group") source.evidence = { kind: "source-comparison", ambiguousCount: 0, renameCandidateCount: 0 };
+  if (kind === "fake-entry") source.targets.push({ kind: "entry", unitId: page.projectId });
+  if (kind === "false-language") question.locale = "zh-CN";
+  invoke.mockResolvedValueOnce(page);
+  await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+});
+
 it("keeps plan and source targets and unknown totals for unavailable sources", async () => {
   const input = request(), page = response();
   invoke.mockResolvedValueOnce(page);

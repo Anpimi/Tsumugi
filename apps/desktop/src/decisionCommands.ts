@@ -58,6 +58,17 @@ function relatedItem(item: DecisionItem): boolean {
     case "resolve-source-mapping":
       return item.source === "source-mapping" && item.evidence === null
         && item.targets.some(target => target.kind === "source-occurrence" && target.snapshotId === action.snapshotId && target.occurrenceId === action.occurrenceId);
+    case "compare-source-mapping":
+      return item.source === "source-mapping" && item.locale === null && item.sourceActionId === null
+        && item.evidence?.kind === "source-comparison" && item.evidence.ambiguousCount + item.evidence.renameCandidateCount > 0
+        && ["pending", "stale"].includes(item.state)
+        && item.targets.some(target => target.kind === "source-result" && target.attemptId === action.attemptId && target.resultId === action.resultId)
+        && item.targets.every(target => target.kind !== "entry" && target.kind !== "source-occurrence");
+    case "clarify-conversation-proposal":
+      return item.source === "agent-question" && item.locale === null && item.sourceActionId === null
+        && item.evidence?.kind === "proposal-questions" && item.evidence.questionCount > 0
+        && ["pending", "stale"].includes(item.state)
+        && item.targets.some(target => target.kind === "conversation-proposal" && target.conversationId === action.conversationId && target.proposalId === action.proposalId);
     case "inspect-execution":
       return item.source === "execution-unknown" && item.evidence === null;
     case "inspect-local-request": {

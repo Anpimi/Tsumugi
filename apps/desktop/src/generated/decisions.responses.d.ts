@@ -176,6 +176,19 @@ export type DecisionAction =
     }
   | {
       attemptId: ExecutionId;
+      expectedContentRevision: Revision;
+      kind: "compare-source-mapping";
+      previousSnapshotId: ExecutionId;
+      resultId: ExecutionId;
+    }
+  | {
+      conversationId: ExecutionId;
+      kind: "clarify-conversation-proposal";
+      proposalId: ExecutionId;
+      revisionId: ExecutionId;
+    }
+  | {
+      attemptId: ExecutionId;
       itemId: ExecutionId;
       kind: "inspect-execution";
       taskId: ExecutionId;
@@ -235,6 +248,15 @@ export type DecisionEvidence =
       locales: string[];
       state: DeliveryState;
       unknownFileCount: number;
+    }
+  | {
+      ambiguousCount: number;
+      kind: "source-comparison";
+      renameCandidateCount: number;
+    }
+  | {
+      kind: "proposal-questions";
+      questionCount: number;
     };
 export type DecisionLocalOutcome =
   "recorded" | "fenced-not-applied" | "receipt-absent" | "in-flight" | "mismatch" | "unavailable";
@@ -254,9 +276,19 @@ export type DecisionTarget =
       kind: "conversation";
     }
   | {
+      conversationId: ExecutionId;
+      kind: "conversation-proposal";
+      proposalId: ExecutionId;
+    }
+  | {
       kind: "source-occurrence";
       occurrenceId: ExecutionId;
       snapshotId: ExecutionId;
+    }
+  | {
+      attemptId: ExecutionId;
+      kind: "source-result";
+      resultId: ExecutionId;
     }
   | {
       captureId: ExecutionId;

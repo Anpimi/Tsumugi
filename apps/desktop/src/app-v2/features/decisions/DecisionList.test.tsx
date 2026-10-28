@@ -52,6 +52,28 @@ function content(value: DecisionListProps, onOpen = vi.fn()) {
   </I18nextProvider>;
 }
 
+it.each(["en-US", "zh-CN"])("keeps proposal question groups and unadopted source results distinct while member questions remain incomplete (%s)", async locale => {
+  await language.changeLanguage(locale);
+  const question: DecisionItem = { decisionId: "agent-question:proposal:original", source: "agent-question", state: "pending", locale: null,
+    targets: [{ kind: "conversation-proposal", conversationId: id(20), proposalId: id(21) }], targetsComplete: true, basis: "a".repeat(64), sourceActionId: null,
+    action: { kind: "clarify-conversation-proposal", conversationId: id(20), proposalId: id(21), revisionId: id(22) },
+    evidence: { kind: "proposal-questions", questionCount: 2 } };
+  const mapping: DecisionItem = { ...question, decisionId: "source-mapping:result:original", source: "source-mapping",
+    targets: [{ kind: "source-result", attemptId: id(23), resultId: id(24) }],
+    action: { kind: "compare-source-mapping", attemptId: id(23), resultId: id(24), previousSnapshotId: id(25), expectedContentRevision: "2" },
+    evidence: { kind: "source-comparison", ambiguousCount: 3, renameCandidateCount: 1 } };
+  const page = { ...sample(), items: [question, mapping], knownCount: 2, total: null, next: null,
+    coverage: [{ source: "agent-question" as const, state: "partial" as const, knownCount: 1, total: null,
+      reason: "source-not-implemented" as const, errorCode: null }] };
+  const value = props(page), rendered = render(content(value));
+  expect(screen.getByText(language.t("workbenchV2.decisionsTeamQuestionsIncomplete"))).toBeVisible();
+  expect(screen.getByText(language.t("workbenchV2.decisionsProposalQuestions", { count: 2 }))).toBeVisible();
+  expect(screen.getByText(language.t("workbenchV2.decisionsSourceMatches", { ambiguous: 3, renamed: 1 }))).toBeVisible();
+  await userEvent.setup().click(screen.getByRole("button", { name: language.t("workbenchV2.decisionsQuestionOpen") }));
+  expect(value.onSelect).toHaveBeenCalledWith(question);
+  expect(rendered.container.textContent).not.toContain(question.decisionId);
+});
+
 it("uses the shared full count, groups the current page and opens the captured item with keyboard", async () => {
   const page = sample(), value = props(page), onOpen = vi.fn(), user = userEvent.setup();
   const rendered = render(content(value, onOpen));

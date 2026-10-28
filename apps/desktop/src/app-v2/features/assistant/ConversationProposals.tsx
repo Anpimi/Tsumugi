@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { conversationCommands, isConversationMessageText, type ConversationProposalRevision } from "../../../conversationCommands";
 import type { ConversationProposalDraft } from "../../../conversationDraftCommands";
 import { commandFailure, CommandFailureDetails } from "../../../CommandFailure";
-import { useSessionQuery } from "../../../SessionReadProvider";
+import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { Button } from "../../../design-system/Button";
 import { Dialog } from "../../../design-system/Dialog";
 import { Field, TextArea, TextInput } from "../../../design-system/Field";
@@ -12,6 +12,7 @@ import { Menu } from "../../../design-system/Menu";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import { planningUnitLabels, validProposalContent, validProposalQuestion } from "./proposalDraft";
+import type { ConversationProposalTarget } from "./conversationNavigation";
 import styles from "./ConversationPanel.module.css";
 
 interface ContextProps {
@@ -111,10 +112,57 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
   </section>;
 }
 
-export function ConversationProposals({ revisions, ...props }: ContextProps & { revisions: readonly ConversationProposalRevision[] }) {
+export function ConversationProposals({ revisions, proposalTarget, proposalFocusTargets, ...props }: ContextProps & {
+  revisions: readonly ConversationProposalRevision[]; proposalTarget?: ConversationProposalTarget | null;
+  proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>>;
+}) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const { owner, input, visible, disabled, gate, viewId, parentDialogId } = props;
+  const reads = useSessionReads(), conversationId = input.key.conversationId;
   const focusRequest = useRef(false);
+  const target = proposalTarget?.conversationId === conversationId ? proposalTarget : null;
+  const requested = useSessionQuery({ key: ["conversation", conversationId, "proposal", target?.proposalId ?? null, "opened-version", target?.revisionId ?? null],
+    scopes: ["project"], enabled: visible && !reads.retired && !!target,
+    read: () => {
+      if (!target) throw new Error("No proposal version was requested");
+      return conversationCommands.readProposal({ ...owner.context, conversationId, proposalId: target.proposalId, revisionId: target.revisionId });
+    } });
+  const opened = target && requested.data?.projectId === owner.context.projectId && requested.data.conversationId === conversationId
+    && requested.data.proposalId === target.proposalId && requested.data.revisionId === target.revisionId ? requested.data : null;
+  const seenRevisions = new Set<string>();
+  const history = [...(opened ? [opened] : []), ...revisions].filter(revision => {
+    if (seenRevisions.has(revision.revisionId)) return false;
+    seenRevisions.add(revision.revisionId); return true;
+  });
+  const targetCard = useRef<HTMLElement>(null);
+  const targetFocus = useRef<{ target: ConversationProposalTarget; origin: Element | null; moved: boolean; listen: () => void; dispose: () => void } | null>(null);
+  // StrictMode replays layout setup after cleanup. Keep the pending ticket so
+  // that replay can resume it; the panel-owned set still prevents a remount
+  // after changing conversations from creating another attempt.
+  useLayoutEffect(() => () => { targetFocus.current?.dispose(); }, []);
+  useLayoutEffect(() => {
+    if (proposalTarget && !proposalFocusTargets.current.has(proposalTarget)) {
+      targetFocus.current?.dispose(); targetFocus.current = null;
+      proposalFocusTargets.current.add(proposalTarget);
+      if (proposalTarget.focus && target && visible && !disabled) {
+        const ticket = { target: proposalTarget, origin: document.activeElement, moved: false,
+          listen: () => document.addEventListener("focusin", moved), dispose: () => document.removeEventListener("focusin", moved) };
+        const moved = (event: FocusEvent) => { if (event.target !== ticket.origin) ticket.moved = true; };
+        targetFocus.current = ticket;
+      }
+    }
+    const ticket = targetFocus.current;
+    if (!ticket) return;
+    ticket.listen();
+    const state = owner.getSnapshot();
+    if (ticket.target !== proposalTarget || !target || !visible || disabled || reads.retired || state.retired
+      || state.activeId !== conversationId || ticket.moved || requested.isError) {
+      ticket.dispose(); targetFocus.current = null; return;
+    }
+    if (!opened || !targetCard.current || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) return;
+    ticket.dispose(); targetFocus.current = null;
+    if (document.activeElement === ticket.origin) targetCard.current.focus();
+  });
   const edits = input.value.proposalEdits ?? [], active = edits.find(edit => edit.proposalId === input.proposalEditorId) ?? edits[0];
   const allowed = () => visible && !disabled && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
   return <>
@@ -123,10 +171,19 @@ export function ConversationProposals({ revisions, ...props }: ContextProps & { 
         items={edits.map((edit, index) => ({ id: edit.proposalId, label: edit.content.summary || t("proposalDraftNumber", { number: index + 1 }), onSelect: () => { if (allowed()) { focusRequest.current = true; owner.showProposalEdit(input.key.conversationId, edit.proposalId); } } }))}/>
     </section> : null}
     {active ? <ProposalEditor key={active.proposalId} {...props} draft={active} focusRequest={focusRequest}/> : null}
-    {revisions.length ? <section className={styles.history} aria-label={t("proposalHistory")}><h3>{t("proposalHistory")}</h3>
-      {revisions.map(revision => <article key={revision.revisionId} className={styles.proposalRevision}><h4>{t("proposalVersion", { number: revision.revision })}</h4>
+    {target ? requested.isError ? <Banner tone="error" action={<Button size="sm" disabled={disabled || !visible || requested.isFetching} onClick={() => { if (allowed()) void requested.refetch(); }}>{t("retryRead")}</Button>}>
+      <p>{t("proposalTargetReadFailed")}</p><CommandFailureDetails failure={commandFailure(requested.error)}/>
+    </Banner> : requested.isPending ? <LoadingState label={t("proposalTargetReading")}/> : !opened ? <Banner tone="warning">{t("proposalTargetUnavailable")}</Banner> : null : null}
+    {history.length ? <section className={styles.history} aria-label={t("proposalHistory")}><h3>{t("proposalHistory")}</h3>
+      {history.map(revision => <article key={revision.revisionId} ref={opened?.revisionId === revision.revisionId ? targetCard : undefined}
+        tabIndex={opened?.revisionId === revision.revisionId ? -1 : undefined} aria-label={opened?.revisionId === revision.revisionId ? t("proposalTargetVersion", { number: revision.revision }) : undefined}
+        className={styles.proposalRevision}><h4>{t("proposalVersion", { number: revision.revision })}</h4>
+        {opened?.revisionId === revision.revisionId ? <p>{t("proposalTargetOriginal")}</p> : null}
         <p className={styles.text}>{revision.content.summary}</p>{revision.content.kind === "proposal" ? <p>{t("proposalScope", { count: revision.content.unitIds.length })}</p> : null}
         {revision.content.questions.length ? <p>{t("proposalQuestionsRemaining", { count: revision.content.questions.length })}</p> : null}
+        {opened?.revisionId === revision.revisionId ? revision.content.questions.length ? <ul aria-label={t("proposalQuestions")}>
+          {revision.content.questions.map((question, index) => <li className={styles.text} key={index}>{question}</li>)}
+        </ul> : <p>{t("proposalTargetNoQuestions")}</p> : null}
         <Button size="sm" disabled={disabled || !visible} onClick={() => { if (allowed()) { focusRequest.current = true; owner.beginProposalEdit(revision); } }}>{t(edits.some(edit => edit.proposalId === revision.proposalId) ? "proposalContinueEditing" : "proposalEdit")}</Button>
         <Button size="sm" disabled={disabled || !visible || (!!input.busy || input.journalBusy) || !!input.workPlan.busy || !!input.value.pending} onClick={() => { if (allowed()) owner.beginWorkPlan(revision); }}>{t("planReviewOpen")}</Button>
       </article>)}

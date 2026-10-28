@@ -1,10 +1,17 @@
 export const decisionDetailsEn = {
+  decisionDetailsContent: "Original record contents",
   decisionDetailsTitles: {
+    "compare-source-mapping": "Source matches before import", "clarify-conversation-proposal": "Proposal questions",
     "review-resource": "Knowledge proposal", "resolve-source-mapping": "Source mapping", "inspect-execution": "Execution record",
     "inspect-delivery": "Delivery blockers", "inspect-delivery-outcome": "Recorded delivery result", "compare-candidate": "Translation candidate",
     "review-translation": "Translation review", "review-finding": "Review finding", "inspect-local-request": "Unconfirmed local request",
   },
   decisionDetailsBack: "Back to decisions", decisionDetailsRead: "Read details again", decisionDetailsLoading: "Reading the original record…",
+  decisionDetailsSourcePreviewHelp: "This extraction has not been applied to the project. You can review possible matches here; applying source updates is not available in this workspace yet.",
+  decisionDetailsSourcePage: "Preview rows {{from, number}}–{{to, number}} of {{total, number}}; showing the uncertain matches on this page.",
+  decisionDetailsSourcePageNoMatches: "This preview page has no uncertain matches. Other pages may contain them.",
+  decisionDetailsSourcePages: "Source preview pages", decisionDetailsNewSource: "New source text",
+  decisionDetailsPreviousCandidates: "Possible previous entries", decisionDetailsRenameCandidate: "Possible rename", decisionDetailsAmbiguousMatch: "Match needs checking",
   decisionDetailsHelp: "Review the original record here. Decisions update when their source records a change.",
   decisionDetailsReadFailed: "The original record could not be read or matched. Your decision is kept. Read the details again to check.",
   decisionDetailsMissing: "The original record is no longer available at this location. Your decision is kept; read the inbox again to check its current location.",
@@ -56,12 +63,19 @@ export const decisionDetailsEn = {
 };
 
 export const decisionDetailsZh: typeof decisionDetailsEn = {
+  decisionDetailsContent: "原记录内容",
   decisionDetailsTitles: {
+    "compare-source-mapping": "导入前的源文对应", "clarify-conversation-proposal": "提议中的问题",
     "review-resource": "知识提议", "resolve-source-mapping": "源内容对应关系", "inspect-execution": "执行记录",
     "inspect-delivery": "交付阻塞原因", "inspect-delivery-outcome": "已记录的交付结果", "compare-candidate": "译文候选",
     "review-translation": "译文审阅", "review-finding": "审校发现", "inspect-local-request": "待确认的本地请求",
   },
   decisionDetailsBack: "返回待你决定", decisionDetailsRead: "重新读取详情", decisionDetailsLoading: "正在读取原记录…",
+  decisionDetailsSourcePreviewHelp: "这份提取结果还没有应用到项目。这里可以核对可能的对应关系，暂时还不能在此应用源更新。",
+  decisionDetailsSourcePage: "读取预览第 {{from, number}}–{{to, number}} 行，共 {{total, number}} 行；下方显示其中待核对的对应关系。",
+  decisionDetailsSourcePageNoMatches: "这一页没有待核对的对应关系，其他页可能还有。",
+  decisionDetailsSourcePages: "源内容预览分页", decisionDetailsNewSource: "新源文",
+  decisionDetailsPreviousCandidates: "可能对应的旧条目", decisionDetailsRenameCandidate: "可能改了名称", decisionDetailsAmbiguousMatch: "对应关系待核对",
   decisionDetailsHelp: "先查看原记录，处理结果会同步到待处理列表。",
   decisionDetailsReadFailed: "没能读到对应的原记录，或记录与这个事项不符。原事项仍保留，可以重新读取详情。",
   decisionDetailsMissing: "这个位置已找不到对应的原记录。原事项仍保留，请重新读取收件箱，核对当前去向。",

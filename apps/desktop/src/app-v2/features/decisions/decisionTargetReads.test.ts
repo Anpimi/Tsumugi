@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { DecisionAction, DecisionItem } from "../../../generated/decisions.responses";
 import { validateResponseAttempt } from "../../../generated/execution.validators";
 import { validateResponsePreview } from "../../../generated/resource.validators";
-import { validateResponsePage } from "../../../generated/source.validators";
+import { validateResponsePage, validateResponseComparison } from "../../../generated/source.validators";
 import { validateResponseEligibility } from "../../../generated/review.validators";
 import type { DeliveryRecordView } from "../../../generated/release.responses";
 import executionFixture from "../../../../test/fixtures/executionCommands.contract.json";
@@ -34,8 +34,29 @@ function attempt() {
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected read"); };
 function ports(overrides: Partial<DecisionTargetReadPorts> = {}): DecisionTargetReadPorts {
   return { preview: unexpected, historyContent: unexpected, lineage: unexpected, attempt: unexpected,
-    output: unexpected, eligibility: unexpected, deliveryRecord: unexpected, ...overrides };
+    output: unexpected, eligibility: unexpected, deliveryRecord: unexpected, compare: unexpected, ...overrides };
 }
+
+it("reads an unadopted source comparison by original result and captured content scope, retaining original pagination", async () => {
+  const value: unknown = structuredClone(sourceFixture.comparison);
+  if (!validateResponseComparison(value)) throw new Error("Invalid source comparison fixture");
+  const page = { ...value, scope: { ...value.scope, currentSnapshot: value.previousSnapshotId },
+    confirmation: { ...value.confirmation, expectedCurrentSnapshot: value.previousSnapshotId } };
+  const action = { kind: "compare-source-mapping" as const, attemptId: page.attemptId, resultId: page.resultId,
+    previousSnapshotId: page.previousSnapshotId, expectedContentRevision: page.scope.revision };
+  const row = { ...item(action), locale: null, targets: [{ kind: "source-result" as const, attemptId: action.attemptId, resultId: action.resultId }] };
+  const compare = vi.fn(async () => page);
+  expect(await readDecisionTarget(context, row, () => true, ports({ compare }))).toEqual({ kind: "source-comparison", page });
+  expect(compare).toHaveBeenCalledWith({ ...context, attemptId: action.attemptId, resultId: action.resultId,
+    base: action.previousSnapshotId, after: 0, filter: "", limit: 50 });
+  compare.mockResolvedValueOnce({ ...page, scope: { ...page.scope, revision: "9007199254740994" } });
+  await expect(readDecisionTarget(context, row, () => true, ports({ compare }))).rejects.toThrow("mismatch");
+  compare.mockResolvedValueOnce({ ...page, nextOrdinal: 0 });
+  await expect(readDecisionTarget(context, row, () => true, ports({ compare }))).rejects.toThrow("mismatch");
+  const originalError = new Error("Original comparison read unavailable");
+  compare.mockRejectedValueOnce(originalError);
+  await expect(readDecisionTarget(context, row, () => true, ports({ compare }))).rejects.toBe(originalError);
+});
 
 it("keys the original full action, language and observation separately", () => {
   const first = item({ kind: "review-resource", captureId: "capture", entryId: "first" });

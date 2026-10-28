@@ -9,6 +9,8 @@ mod content;
 mod recovery;
 mod local;
 mod delivery;
+mod questions;
+mod source_pending;
 pub use local::*;
 #[cfg(test)]
 mod tests;
@@ -36,7 +38,9 @@ pub enum DecisionTarget {
     Entry { unit_id: ExecutionId },
     Plan { plan_id: ExecutionId },
     Conversation { conversation_id: ExecutionId },
+    ConversationProposal { conversation_id: ExecutionId, proposal_id: ExecutionId },
     SourceOccurrence { snapshot_id: ExecutionId, occurrence_id: ExecutionId },
+    SourceResult { attempt_id: ExecutionId, result_id: ExecutionId },
     Resource { capture_id: ExecutionId, entry_id: String },
     Delivery { release_id: ExecutionId, delivery_id: ExecutionId },
     Project,
@@ -53,6 +57,9 @@ pub enum DecisionAction {
     ReviewFinding { unit_id: ExecutionId, run_id: ExecutionId, issue_id: String },
     ReviewResource { capture_id: ExecutionId, entry_id: String },
     ResolveSourceMapping { snapshot_id: ExecutionId, occurrence_id: ExecutionId, ordinal: u32 },
+    CompareSourceMapping { attempt_id: ExecutionId, result_id: ExecutionId, previous_snapshot_id: ExecutionId,
+        expected_content_revision: Revision },
+    ClarifyConversationProposal { conversation_id: ExecutionId, proposal_id: ExecutionId, revision_id: ExecutionId },
     InspectExecution { task_id: ExecutionId, attempt_id: ExecutionId, item_id: ExecutionId },
     InspectDelivery { locale: String },
     InspectDeliveryOutcome { release_id: ExecutionId, delivery_id: ExecutionId, action_id: ExecutionId },
@@ -71,6 +78,8 @@ pub enum DecisionEvidence {
     Delivery { blocker_count: u32, reasons: Vec<super::EligibilityReason>, reasons_complete: bool },
     LocalRequest { outcome: DecisionLocalOutcome, error_code: Option<ErrorCode> },
     DeliveryOutcome { state: super::DeliveryState, locales: Vec<String>, file_count: u32, unknown_file_count: u32 },
+    SourceComparison { ambiguous_count: u32, rename_candidate_count: u32 },
+    ProposalQuestions { question_count: u32 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -214,14 +223,18 @@ impl ProjectStore {
             let observe = |attempt| *activity.borrow_mut().entry(attempt).or_insert_with(|| active(attempt));
             for source in DecisionSource::ALL {
                 if !query.sources.is_empty() && !query.sources.contains(&source) { continue; }
-                if source == DecisionSource::AgentQuestion {
-                    coverage.push(DecisionCoverage { source, state: DecisionCoverageState::Unavailable,
-                        known_count: 0, total: None, reason: Some(DecisionCoverageReason::SourceNotImplemented), error_code: None });
-                    continue;
-                }
                 let mut local_reason = None;
                 let mut local_error = None;
                 let projections = match source {
+                    DecisionSource::SourceMapping => vec![recovery::project(self, c, project, query.locale.as_deref(), source, &observe),
+                        source_pending::project(self, c, project)],
+                    DecisionSource::AgentQuestion => {
+                        // Proposal questions are observable today. Member-to-human
+                        // questions still need an explicit fact in their owner.
+                        let projection = questions::project(self, c, project);
+                        if projection.is_ok() { local_reason = Some(DecisionCoverageReason::SourceNotImplemented); }
+                        vec![projection]
+                    }
                     DecisionSource::DeliveryUnknown => vec![delivery::project(self, c, project, query.locale.as_deref(), &delivery_activity)],
                     DecisionSource::LocalActionRecovery => match local.take().expect("one local source")(self) {
                         Ok(Some(projection)) => {
@@ -245,7 +258,7 @@ impl ProjectStore {
                     _ => vec![recovery::project(self, c, project, query.locale.as_deref(), source, &observe)],
                 };
                 let mut rows = Vec::new();
-                let mut complete = true;
+                let mut complete = source != DecisionSource::AgentQuestion;
                 let mut available = false;
                 let mut error_code = local_error;
                 for projection in projections {

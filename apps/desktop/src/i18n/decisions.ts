@@ -1,4 +1,10 @@
 export const decisionsEn = {
+  decisionsTargetSourceResult: "Source extraction preview", decisionsTargetProposal: "Saved proposal",
+  decisionsProposalQuestionTitle: "A proposal has questions to clarify",
+  decisionsProposalQuestions: "{{count, number}} questions in the original proposal",
+  decisionsProposalQuestions_one: "{{count, number}} question in the original proposal",
+  decisionsSourceMatches: "Uncertain matches: {{ambiguous, number}} · Possible renames: {{renamed, number}}",
+  decisionsTeamQuestionsIncomplete: "Readable proposal questions are included here. Questions from team members still cannot be read.",
   decisionNavigationChanged: "The record or page changed. Your work is kept; refresh before opening it again.",
   decisionReadLatest: "View the latest list", decisionPageChanged: "Decisions have changed. Return to the latest list to continue.",
   decisionReturnList: "Return to your decisions", decisionSelectionChanged: "This item was updated or handled. Return to the list to check.",
@@ -59,6 +65,12 @@ export const decisionsEn = {
 };
 
 export const decisionsZh: typeof decisionsEn = {
+  decisionsTargetSourceResult: "源文件提取预览", decisionsTargetProposal: "已保存提议",
+  decisionsProposalQuestionTitle: "提议中还有问题需要澄清",
+  decisionsProposalQuestions: "原提议中有 {{count, number}} 个问题",
+  decisionsProposalQuestions_one: "原提议中有 {{count, number}} 个问题",
+  decisionsSourceMatches: "{{ambiguous, number}} 处对应不确定 · {{renamed, number}} 处可能改名",
+  decisionsTeamQuestionsIncomplete: "这里包含可读取的提议问题，团队成员的待答问题尚无法读取。",
   decisionNavigationChanged: "原记录或页面已变化，工作仍保留。请刷新后再打开。",
   decisionReadLatest: "查看最新列表", decisionPageChanged: "待处理事项有变化，请回到最新列表继续。",
   decisionReturnList: "返回待处理事项", decisionSelectionChanged: "这项已更新或处理，请返回列表查看。",

@@ -35,6 +35,7 @@ const sources = {
 const targetKeys = {
   entry: "decisionsTargetEntry", project: "decisionsTargetProject", plan: "decisionsTargetPlan", conversation: "decisionsTargetConversation",
   "source-occurrence": "decisionsTargetSource", resource: "decisionsTargetResource", delivery: "decisionsTargetDelivery",
+  "source-result": "decisionsTargetSourceResult", "conversation-proposal": "decisionsTargetProposal",
 } as const satisfies Record<DecisionTarget["kind"], string>;
 const coverageKeys = {
   "source-limit": "decisionsSourceLimit", "source-unavailable": "decisionsSourceUnavailable",
@@ -51,7 +52,7 @@ function DecisionRow({ item, selected, disabled, onSelect }: {
   return <li className={styles.row} data-selected={selected || undefined}>
     <Icon className={source.ai ? styles.aiIcon : styles.icon} aria-hidden="true"/>
     <div className={styles.rowBody}>
-      <div className={styles.rowHeading}><h3>{t(source.title)}</h3>
+      <div className={styles.rowHeading}><h3>{t(item.action.kind === "clarify-conversation-proposal" ? "decisionsProposalQuestionTitle" : source.title)}</h3>
         {item.state !== "pending" ? <Badge tone="warning">{t(item.state === "stale" ? "decisionsStale" : "decisionsAwaitingRecheck")}</Badge> : null}
       </div>
       <p id={description}>{item.evidence?.kind === "delivery" ? t("decisionsBlockerCount", { count: item.evidence.blockerCount }) : t(source.help)}</p>
@@ -64,6 +65,12 @@ function DecisionRow({ item, selected, disabled, onSelect }: {
         {t(item.evidence.unknownFileCount > 0 ? "decisionsDeliveryUnknownFiles" : "decisionsDeliveryFiles",
           { count: item.evidence.unknownFileCount > 0 ? item.evidence.unknownFileCount : item.evidence.fileCount })}
       </p> : null}
+      {item.evidence?.kind === "proposal-questions" ? <p className={styles.fileSummary}>
+        {t("decisionsProposalQuestions", { count: item.evidence.questionCount })}
+      </p> : null}
+      {item.evidence?.kind === "source-comparison" ? <p className={styles.fileSummary}>
+        {t("decisionsSourceMatches", { ambiguous: item.evidence.ambiguousCount, renamed: item.evidence.renameCandidateCount })}
+      </p> : null}
       <div className={styles.rowActions}><Button size="sm" disabled={disabled} aria-current={selected ? "true" : undefined}
         aria-describedby={description} onClick={() => onSelect(item)}>{t(source.open)}<ArrowUpRight aria-hidden="true"/></Button></div>
     </div>
@@ -74,7 +81,8 @@ function IncompleteSources({ coverage }: { coverage: DecisionCoverage[] }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   return <Banner tone="warning"><p className={styles.partialHelp}>{t("decisionsPartial")}</p>
     <dl className={styles.coverage}>{coverage.filter(source => source.state !== "complete").map(source => <div key={source.source}>
-      <dt>{t(sources[source.source].group)}</dt><dd>{t(source.reason ? coverageKeys[source.reason] : "decisionsSourceUnavailable")}</dd>
+      <dt>{t(sources[source.source].group)}</dt><dd>{t(source.source === "agent-question" && source.state === "partial" && source.reason === "source-not-implemented"
+        ? "decisionsTeamQuestionsIncomplete" : source.reason ? coverageKeys[source.reason] : "decisionsSourceUnavailable")}</dd>
     </div>)}</dl>
   </Banner>;
 }

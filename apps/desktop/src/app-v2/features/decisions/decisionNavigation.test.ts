@@ -7,13 +7,14 @@ import { validateResponseRevision } from "../../../generated/translation.validat
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
 import { reviewDiagnosticFixture } from "../../../testSupport/reviewDiagnosticFixture";
 import { reviewFindingViewFixture, reviewTargetFixture } from "../../../testSupport/reviewFixture";
+import { conversationProposalFixture } from "../../../testSupport/conversationProposalFixture";
 import type { TranslationRevision } from "../../../translationCommands";
 import { DecisionNavigationChanged, resolveDecisionNavigation, type DecisionNavigationPorts } from "./decisionNavigation";
 
 const ctx = { projectId: id(60000), sessionToken: "synthetic-decision-session" };
 function ports(overrides: Partial<DecisionNavigationPorts> = {}): DecisionNavigationPorts {
   const unexpected = vi.fn(async () => { throw new Error("Unexpected reader"); });
-  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, ...overrides };
+  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, proposal: unexpected, ...overrides };
 }
 function item(action: DecisionItem["action"], targets: DecisionItem["targets"], locale: string | null = "zh-CN"): DecisionItem {
   const source = action.kind === "compare-candidate" ? "translation-candidate" : action.kind === "review-translation" ? "human-review"
@@ -30,6 +31,26 @@ function candidate(value = revision()) {
   return item({ kind: "compare-candidate", unitId: value.unitId, revisionId: value.revisionId,
     sourceSnapshotId: value.sourceSnapshotId, sourceRevisionId: value.sourceRevisionId }, [{ kind: "entry", unitId: value.unitId }], value.locale);
 }
+
+it("opens the exact proposal group only while that original revision remains the latest", async () => {
+  const original = conversationProposalFixture({ projectId: ctx.projectId, conversationId: id(60200) }).revision;
+  original.content.questions = ["Who is the intended audience?"];
+  const action = { kind: "clarify-conversation-proposal" as const, conversationId: original.conversationId,
+    proposalId: original.proposalId, revisionId: original.revisionId };
+  const row = item(action, [{ kind: "conversation-proposal", conversationId: action.conversationId, proposalId: action.proposalId }], null);
+  const proposal = vi.fn(async (_request: Parameters<DecisionNavigationPorts["proposal"]>[0]) => original);
+  expect(await resolveDecisionNavigation(ctx, row, () => true, ports({ proposal }))).toEqual({ kind: "conversation-proposal",
+    conversationId: action.conversationId, proposalId: action.proposalId, revisionId: action.revisionId });
+  expect(proposal.mock.calls.map(call => call[0])).toEqual([
+    { ...ctx, conversationId: action.conversationId, proposalId: action.proposalId, revisionId: action.revisionId },
+    { ...ctx, conversationId: action.conversationId, proposalId: action.proposalId, revisionId: null },
+  ]);
+  proposal.mockResolvedValueOnce(original).mockResolvedValueOnce({ ...original, revisionId: id(60201) });
+  await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ proposal }))).rejects.toBeInstanceOf(DecisionNavigationChanged);
+  let current = true;
+  await expect(resolveDecisionNavigation(ctx, row, () => current, ports({ proposal: async () => { current = false; return original; } })))
+    .rejects.toBeInstanceOf(DecisionNavigationChanged);
+});
 function translationLocal() {
   const key = { projectId: ctx.projectId, unitId: id(60001), locale: "zh-CN" };
   const pending = { kind: "save" as const, submittedSeq: "4", request: { ...key, actionId: id(60002), sourceRevisionId: id(60003), expectedSelectionId: null, text: "Submitted A" } };

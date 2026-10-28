@@ -1,4 +1,5 @@
 import { conversationDraftCommands, conversationPendingTarget } from "../../../conversationDraftCommands";
+import { conversationCommands } from "../../../conversationCommands";
 import { draftCommands, sameDraftKey, type DraftKey } from "../../../draftCommands";
 import type { SessionRequest } from "../../../executionCommands";
 import type { DecisionItem } from "../../../decisionCommands";
@@ -12,6 +13,7 @@ export type DecisionNavigation =
   | { kind: "finding"; unitId: string; locale: string; runId: string; issueId: string; offset: number }
   | { kind: "translation-request"; key: DraftKey }
   | { kind: "conversation-request"; conversationId: string; slot: "primary" | "revocation"; actionId: string }
+  | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
   | { kind: "details" };
 
 export interface DecisionNavigationPorts {
@@ -20,6 +22,7 @@ export interface DecisionNavigationPorts {
   findings: typeof reviewCommands.findings;
   draft: typeof draftCommands.read;
   conversationDraft: typeof conversationDraftCommands.read;
+  proposal: typeof conversationCommands.readProposal;
 }
 const ports: DecisionNavigationPorts = {
   revision: request => translationCommands.revision(request),
@@ -27,6 +30,7 @@ const ports: DecisionNavigationPorts = {
   findings: request => reviewCommands.findings(request),
   draft: request => draftCommands.read(request),
   conversationDraft: request => conversationDraftCommands.read(request),
+  proposal: request => conversationCommands.readProposal(request),
 };
 
 export class DecisionNavigationChanged extends Error {
@@ -56,6 +60,20 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
   }
   present();
   switch (action.kind) {
+    case "clarify-conversation-proposal": {
+      match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "conversation-proposal"
+        && target.conversationId === action.conversationId && target.proposalId === action.proposalId));
+      const request = { ...ctx, conversationId: action.conversationId, proposalId: action.proposalId };
+      const exact = await commands.proposal({ ...request, revisionId: action.revisionId });
+      present();
+      match(exact.projectId === ctx.projectId && exact.conversationId === action.conversationId && exact.proposalId === action.proposalId
+        && exact.revisionId === action.revisionId && exact.content.kind === "proposal" && exact.content.questions.length > 0);
+      const latest = await commands.proposal({ ...request, revisionId: null });
+      present();
+      match(latest.projectId === ctx.projectId && latest.conversationId === action.conversationId && latest.proposalId === action.proposalId
+        && latest.revisionId === exact.revisionId);
+      return { kind: "conversation-proposal", conversationId: action.conversationId, proposalId: action.proposalId, revisionId: action.revisionId };
+    }
     case "compare-candidate": {
       const locale = entry(action.unitId);
       present();

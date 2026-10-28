@@ -9,6 +9,7 @@ use crate::{
 use rusqlite::{Connection, params};
 pub(in crate::persistence) mod maintenance;
 pub(in crate::persistence) mod maintenance_hook;
+pub(in crate::persistence) mod decision_mappings;
 
 const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (

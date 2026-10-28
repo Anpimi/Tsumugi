@@ -132,6 +132,32 @@ function ExecutionDetails({ view, item, blocked, openEntry }: { view: Extract<De
   </div>;
 }
 
+function SourceComparisonDetails({ view, after, disabled, onPrevious, onNext }: {
+  view: Extract<DecisionTargetDetails, { kind: "source-comparison" }>; after: number; disabled: boolean;
+  onPrevious: () => void; onNext: (after: number) => void;
+}) {
+  const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const page = view.page, uncertain = page.rows.filter(row => row.kind === "ambiguous" || row.kind === "rename-candidate");
+  return <div className={styles.body}>
+    <p>{t("decisionDetailsSourcePreviewHelp")}</p>
+    <p className={styles.meta}>{t("decisionDetailsSourcePage", { from: page.rows.length ? after + 1 : 0, to: after + page.rows.length, total: page.filteredTotal })}</p>
+    {uncertain.length ? <ul className={styles.list}>{uncertain.map(row => <li className={styles.record} key={row.new?.ordinal}>
+      <h3>{row.new?.nativeIdentity?.display?.value || row.new?.key || t("decisionDetailsUnnamed")}</h3>
+      <p><Badge>{t(row.kind === "rename-candidate" ? "decisionDetailsRenameCandidate" : "decisionDetailsAmbiguousMatch")}</Badge></p>
+      {row.new ? <TextBlock label={t("decisionDetailsNewSource")} text={row.new.text}/> : null}
+      <h4>{t("decisionDetailsPreviousCandidates")}</h4>
+      <ul>{row.candidates.map(candidate => <li key={candidate.occurrenceId}>
+        <p>{candidate.occurrence.nativeIdentity?.display?.value || candidate.occurrence.key || t("decisionDetailsUnnamed")}</p>
+        <TextBlock label={t("decisionDetailsSource")} text={candidate.occurrence.text}/>
+      </li>)}</ul>
+    </li>)}</ul> : <p>{t("decisionDetailsSourcePageNoMatches")}</p>}
+    <div className={styles.actions} role="navigation" aria-label={t("decisionDetailsSourcePages")}>
+      <Button size="sm" disabled={disabled || after === 0} onClick={onPrevious}>{t("decisionsPrevious")}</Button>
+      <Button size="sm" disabled={disabled || page.nextOrdinal === null} onClick={() => { if (page.nextOrdinal !== null) onNext(page.nextOrdinal); }}>{t("decisionsNext")}</Button>
+    </div>
+  </div>;
+}
+
 function DeliveryDetails({ view, blocked, openEntry }: { view: Extract<DecisionTargetDetails, { kind: "delivery" }>; blocked: boolean; openEntry: (unitId: string, locale: string) => void }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), { t: global } = useTranslation();
   const { locale } = view;
@@ -183,19 +209,41 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry }: DecisionD
   const mounted = useRef(false), live = useRef({ disabled, current, onOpenEntry });
   const result = useRef<HTMLDivElement>(null), navigation = useRef(false);
   const [opening, setOpening] = useState(false), [failure, setFailure] = useState<{ cause: CommandFailure | null } | null>(null);
+  const [sourceOffsets, setSourceOffsets] = useState([0]), sourceAfter = sourceOffsets[sourceOffsets.length - 1];
+  const pageFocus = useRef<{ after: number; origin: Element | null; moved: boolean; dispose: () => void } | null>(null);
   useLayoutEffect(() => { live.current = { disabled, current, onOpenEntry }; });
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; pageFocus.current?.dispose(); }; }, []);
   const present = () => mounted.current && !reads.retired && !live.current.disabled && live.current.current();
-  const key = decisionTargetKey(item);
+  const key = decisionTargetKey(item, sourceAfter);
   const query = useSessionQuery({ key, scopes: ["project", "source", "translation", "resources", "review", "execution", "release"],
     enabled: !disabled && !reads.retired && current(), structuralSharing: false,
-    read: () => readDecisionTarget(reads.context, item, present) });
+    read: () => readDecisionTarget(reads.context, item, present, undefined, sourceAfter) });
   const view = query.error ? null : query.data ?? null;
   function currentView(expected: DecisionTargetDetails) {
     const state = reads.client.getQueryState<DecisionTargetDetails>(reads.key(key));
     return present() && state?.status === "success" && state.fetchStatus === "idle" && !state.isInvalidated && state.error === null && state.data === expected;
   }
   const fresh = !!view && !query.isFetching && !query.isStale && currentView(view);
+  useLayoutEffect(() => {
+    const ticket = pageFocus.current;
+    if (!ticket) return;
+    if (!present() || query.isError || ticket.moved || ticket.after !== sourceAfter) {
+      ticket.dispose(); pageFocus.current = null; return;
+    }
+    if (view?.kind === "source-comparison" && fresh) {
+      ticket.dispose(); pageFocus.current = null;
+      if (document.activeElement === ticket.origin || document.activeElement === document.body) result.current?.focus();
+    }
+  });
+  function readSourcePage(offsets: number[]) {
+    if (!view || view.kind !== "source-comparison" || !currentView(view)) return;
+    pageFocus.current?.dispose();
+    const ticket = { after: offsets[offsets.length - 1], origin: document.activeElement, moved: false,
+      dispose: () => document.removeEventListener("focusin", moved) };
+    const moved = (event: FocusEvent) => { if (event.target !== ticket.origin) ticket.moved = true; };
+    document.addEventListener("focusin", moved); pageFocus.current = ticket;
+    setSourceOffsets(offsets);
+  }
   async function openEntry(unitId: string, locale: string) {
     const expected = view, callback = live.current.onOpenEntry;
     if (!expected || !currentView(expected) || navigation.current || !matchesEntry(expected, item, unitId, locale)) return;
@@ -226,11 +274,14 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry }: DecisionD
     {query.error ? <Banner tone="error" role="alert"><p>{t(query.error instanceof DecisionTargetReadError && query.error.reason === "missing" ? "decisionDetailsMissing" : "decisionDetailsReadFailed")}</p>
       <CommandFailureDetails failure={commandFailure(query.error)}/></Banner> : null}
     {view && !fresh ? <Banner tone="warning" role="status">{t("decisionDetailsChanged")}</Banner> : null}
-    <div className={styles.body} ref={result} tabIndex={-1}>
+    <div className={styles.body} ref={result} tabIndex={-1} role="region" aria-label={t("decisionDetailsContent")}>
       {opening ? <p role="status">{t("decisionDetailsOpening")}</p> : null}
       {failure ? <Banner tone="warning" role="alert"><p>{t("decisionDetailsOpenFailed")}</p><CommandFailureDetails failure={failure.cause}/></Banner> : null}
       {view?.kind === "resource" ? <ResourceDetails view={view}/> : null}
       {view?.kind === "mapping" ? <MappingDetails view={view}/> : null}
+      {view?.kind === "source-comparison" ? <SourceComparisonDetails view={view} after={sourceAfter} disabled={!fresh || opening}
+        onPrevious={() => { if (sourceOffsets.length > 1) readSourcePage(sourceOffsets.slice(0, -1)); }}
+        onNext={after => { if (view.page.nextOrdinal === after) readSourcePage([...sourceOffsets, after]); }}/>: null}
       {view?.kind === "execution" ? <ExecutionDetails view={view} item={item} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery" ? <DeliveryDetails view={view} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery-outcome" ? <DeliveryOutcomeDetails view={view}/> : null}

@@ -5,11 +5,12 @@ import type { DeliveryRecordView } from "../../../generated/release.responses";
 import { releaseCommands } from "../../../releaseCommands";
 import { resourceCommands, type ResourcePreview, type ResourcePreviewRow, type TermRevision } from "../../../resourceCommands";
 import { reviewCommands, type Eligibility, type EligibilityLocale } from "../../../reviewCommands";
-import { sourceCommands, type ContentPage, type ContentRow, type LineageEvidence } from "../../../sourceCommands";
+import { sourceCommands, type ContentPage, type ContentRow, type LineageEvidence, type SourceChangePage } from "../../../sourceCommands";
 
 export type DecisionTargetDetails =
   | { kind: "resource"; preview: ResourcePreview; proposal: { kind: "row"; row: ResourcePreviewRow } | { kind: "removed"; term: TermRevision } }
   | { kind: "mapping"; page: ContentPage; row: ContentRow; lineage: LineageEvidence[] }
+  | { kind: "source-comparison"; page: SourceChangePage }
   | { kind: "execution"; detail: AttemptDetail; item: ItemView; output: ExecutionOutputView | null }
   | { kind: "delivery"; eligibility: Eligibility; locale: EligibilityLocale }
   | { kind: "delivery-outcome"; record: DeliveryRecordView | null }
@@ -19,6 +20,7 @@ export interface DecisionTargetReadPorts {
   preview: typeof resourceCommands.preview;
   historyContent: typeof sourceCommands.historyContent;
   lineage: typeof sourceCommands.lineage;
+  compare: typeof sourceCommands.compare;
   attempt: typeof executionCommands.attempt;
   output: typeof executionCommands.output;
   eligibility: typeof reviewCommands.eligibility;
@@ -27,6 +29,7 @@ export interface DecisionTargetReadPorts {
 const ports: DecisionTargetReadPorts = {
   preview: request => resourceCommands.preview(request), historyContent: request => sourceCommands.historyContent(request),
   lineage: request => sourceCommands.lineage(request), attempt: request => executionCommands.attempt(request),
+  compare: request => sourceCommands.compare(request),
   output: request => executionCommands.output(request), eligibility: request => reviewCommands.eligibility(request),
   deliveryRecord: request => releaseCommands.deliveryRecord(request),
 };
@@ -36,19 +39,34 @@ export class DecisionTargetReadError extends Error {
 }
 
 /** SessionReads prefixes this with the exact project and session. */
-export function decisionTargetKey(item: DecisionItem): QueryKey {
-  return ["workbench-decision-target", item.decisionId, structuredClone(item.action), item.locale, item.basis];
+export function decisionTargetKey(item: DecisionItem, sourceAfter = 0): QueryKey {
+  return ["workbench-decision-target", item.decisionId, structuredClone(item.action), item.locale, item.basis, sourceAfter];
 }
 
 /** These locators only read original records. They never authorize an action. */
 export async function readDecisionTarget(context: SessionRequest, item: DecisionItem, current: () => boolean,
-  commands: DecisionTargetReadPorts = ports,
+  commands: DecisionTargetReadPorts = ports, sourceAfter = 0,
 ): Promise<DecisionTargetDetails> {
   const fixed = structuredClone({ context, item }), ctx = fixed.context, action = fixed.item.action;
   function present() { if (!current()) throw new DecisionTargetReadError("changed"); }
   function match(condition: boolean) { if (!condition) throw new DecisionTargetReadError("mismatch"); }
   present();
   switch (action.kind) {
+    case "compare-source-mapping": {
+      match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "source-result"
+        && target.attemptId === action.attemptId && target.resultId === action.resultId));
+      const page = await commands.compare({ ...ctx, attemptId: action.attemptId, resultId: action.resultId,
+        base: action.previousSnapshotId, filter: "", after: sourceAfter, limit: 50 });
+      present();
+      const end = sourceAfter + page.rows.length;
+      match(page.attemptId === action.attemptId && page.resultId === action.resultId && page.previousSnapshotId === action.previousSnapshotId
+        && page.scope.currentSnapshot === action.previousSnapshotId && page.scope.revision === action.expectedContentRevision
+        && page.confirmation.expectedCurrentSnapshot === page.scope.currentSnapshot
+        && page.confirmation.expectedContentRevision === page.scope.revision && page.rows.length <= 50
+        && end <= page.filteredTotal && page.filteredTotal <= page.total
+        && (page.nextOrdinal === null ? end === page.filteredTotal : page.rows.length > 0 && page.nextOrdinal === end && end < page.filteredTotal));
+      return { kind: "source-comparison", page };
+    }
     case "review-resource": {
       const preview = await commands.preview({ ...ctx, captureId: action.captureId });
       present();

@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { conversationCommands, isConversationMessageText } from "../../../conversationCommands";
@@ -18,11 +18,12 @@ import { locallyReplayableConversationRequest, type ConversationDraftPending } f
 import { isRunPending } from "./conversationRun";
 import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
+import type { ConversationProposalTarget } from "./conversationNavigation";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
 export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
-interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; decisionTray?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null }
+interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; decisionTray?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
 const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending?.kind === "planning" ? pending.request.consent.actionId : pending?.request.actionId;
 
@@ -54,7 +55,7 @@ function PlanningResult({ owner, input, attemptId, visible, disabled, gate, view
   </section>;
 }
 
-function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput }) {
+function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, proposalTarget, proposalFocusTargets }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>> }) {
   const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
@@ -89,19 +90,20 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
       attemptId={run.attemptId} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} savedResultIds={savedResultIds}/>)}</section> : null}
     {attempts.hasNextPage ? <Button pending={attempts.isFetchingNextPage} onClick={() => void attempts.fetchNextPage()}>{t("moreReplies")}</Button> : null}
     {proposals.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void proposals.refetch()}>{t("retryRead")}</Button>}>{t("proposalReadFailed")}</Banner> : null}
-    <ConversationProposals owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} revisions={revisions}/>
+    <ConversationProposals owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} revisions={revisions} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets}/>
     <ConversationWorkPlanPanel onOpenCandidate={onOpenCandidate} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/>
     {proposals.hasNextPage ? <Button pending={proposals.isFetchingNextPage} onClick={() => void proposals.fetchNextPage()}>{t("moreProposalVersions")}</Button> : null}
   </>;
 }
 
-export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, decisionTray, recoveryTarget }: Props) {
+export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, decisionTray, recoveryTarget, proposalTarget }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const activeId = state.activeId, input = activeId ? state.inputs.get(activeId) : undefined;
   const composer = useRef<HTMLTextAreaElement>(null), composing = useRef(false);
+  const proposalFocusTargets = useRef(new WeakSet<ConversationProposalTarget>());
   const threads = useSessionInfiniteQuery({ key: ["conversations"], scopes: ["project"], enabled: visible,
     initialPageParam: null as string | null, nextPage: noNext,
     read: after => conversationCommands.list({ ...owner.context, after, limit: 50 }) });
@@ -172,12 +174,13 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {state.next ? <Button size="sm" pending={state.hydration === "loading"} onClick={() => void owner.initialize(true)}>{t("moreDrafts")}</Button> : null}
     </div>
     <div className={styles.messages}>
+      {proposalTarget && proposalTarget.conversationId !== activeId ? <Banner tone="warning" role="status">{t("proposalTargetConversationChanged")}</Banner> : null}
       {threads.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void threads.refetch()}>{t("retryRead")}</Button>}>{t("threadsReadFailed")}</Banner> : null}
       {state.hydration === "failed" ? <Banner tone="error" action={<Button size="sm" onClick={() => void owner.initialize()}>{t("retryRead")}</Button>}>{t("draftsReadFailed")}<CommandFailureDetails failure={state.failure}/></Banner> : null}
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={blocked || state.hydration !== "ready"} onClick={() => void owner.create()}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory onOpenCandidate={onOpenCandidate} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : <p role="status">{t("creatingThread")}</p>}
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory onOpenCandidate={onOpenCandidate} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
     {decisionTray}
     {input ? <div className={styles.composer}>
