@@ -143,6 +143,14 @@
         "total": 0,
         "reason": null,
         "errorCode": null
+      },
+      {
+        "source": "delivery-unknown",
+        "state": "complete",
+        "knownCount": 0,
+        "total": 0,
+        "reason": null,
+        "errorCode": null
       }
     ],
     "executionActivity": [
@@ -151,6 +159,7 @@
         "active": false
       }
     ],
-    "localActions": null
+    "localActions": null,
+    "deliveryActivity": []
   }
 }

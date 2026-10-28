@@ -44,7 +44,7 @@ fn registered_decision_inbox_pages_original_facts_and_rechecks_after_owner_decis
     let repeated = call(&window, "read_decision_page", request.clone()).unwrap();
     assert_eq!(first, repeated, "reading does not advance a source or resolve a request");
     assert_eq!(first["total"], Value::Null, "unconnected sources are not global zero");
-    assert_eq!(first["coverage"].as_array().unwrap().len(), 9);
+    assert_eq!(first["coverage"].as_array().unwrap().len(), 10);
     assert_eq!(first["coverage"].as_array().unwrap().iter().filter(|source| source["state"] == "unavailable").count(), 2);
     let mut ids = Vec::new();
     let mut page = first.clone();
@@ -141,4 +141,153 @@ fn registered_local_inbox_checks_receipts_and_lifecycle_without_resolving_origin
     let mut malformed = request.clone();
     malformed["activity"] = json!([{"ownerId":writer,"revision":"1","actions":[]},{"ownerId":writer,"revision":"2","actions":[]}]);
     assert!(call(&window, "read_decision_page", malformed).is_err());
+}
+
+/// Use the same source, qualification and build owners as the release receipt
+/// fixture. No release or delivery row is inserted directly into SQLite.
+fn release_for_decision_inbox(store: &mut ProjectStore) -> ExecutionId {
+    use std::{sync::Arc, time::{Duration, Instant}};
+    use tsumugi_core::{BuildLocaleChoice, ReleaseAdoptionHandler, ReviewDecisionKind, ReviewWrite,
+        SaveTranslationRevision, content::{BuildRunner, SourceAdoptionHandler, SourceBundle, SourceRunner},
+        execution::{ExecutionRuntime, FixedInput}};
+    fn run(store: &mut ProjectStore, runtime: &mut ExecutionRuntime, input: &FixedInput) -> ExecutionId {
+        runtime.submit(store, input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            runtime.tick(store).unwrap();
+            if let Some(result) = store.execution_current_result(input.envelope().attempt_id,
+                input.envelope().items[0].item_id).unwrap() {
+                if !runtime.has_active_work(store).unwrap() { return result; }
+            }
+            assert!(Instant::now() < deadline, "synthetic release did not complete");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    let metadata = store.metadata().unwrap();
+    let project = ExecutionId::parse(&metadata.project_id().to_string()).unwrap();
+    let mut runtime = ExecutionRuntime::new(store).unwrap();
+    runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
+    runtime.register_read_only(Arc::new(BuildRunner)).unwrap();
+    let source = SourceBundle::capture(
+        br#"{"UniqueID":"Delivery.Inbox","Name":"Delivery","Version":"1.0.0","EntryDll":"Delivery.dll"}"#,
+        br#"{"hello":"Hello"}"#, "en").unwrap().fixed_input(metadata.project_id()).unwrap();
+    let result = run(store, &mut runtime, &source);
+    let preview = store.source_preview(source.envelope().attempt_id, result, 0, 10).unwrap();
+    let source_action = store.prepare_adoption(source.envelope().attempt_id,
+        source.envelope().units[0].unit_id, vec![result], serde_json::to_value(preview.confirmation).unwrap()).unwrap();
+    store.adopt_execution(&source_action, &SourceAdoptionHandler).unwrap();
+    let target = store.review_page(project, "zh-CN", 0, 10).unwrap().rows.remove(0);
+    store.save_translation_revision(&SaveTranslationRevision { project_id: project, action_id: ExecutionId::new(),
+        unit_id: target.unit_id, locale: "zh-CN".into(), source_revision_id: target.source_revision_id,
+        expected_selection_id: None, text: "Synthetic translation".into() }).unwrap();
+    let target = store.review_target(project, target.unit_id, "zh-CN").unwrap();
+    store.run_review_checks(project, target.unit_id, "zh-CN", &target.basis, ExecutionId::new()).unwrap();
+    let target = store.review_target(project, target.unit_id, "zh-CN").unwrap();
+    store.write_review(&ReviewWrite { project_id: project, action_id: ExecutionId::new(), unit_id: target.unit_id,
+        locale: "zh-CN".into(), expected_basis: target.basis, expected_decision_id: None,
+        actor: "Synthetic reviewer".into(), kind: ReviewDecisionKind::Approve, reason: String::new() }).unwrap();
+    let eligibility = store.review_eligibility(project, &["zh-CN".into()]).unwrap();
+    assert!(eligibility.ready);
+    let build = store.prepare_locale_build(project, ExecutionId::new(),
+        &[BuildLocaleChoice { locale: "zh-CN".into(), file_name: "i18n/zh.json".into() }], &eligibility.basis).unwrap();
+    let result = run(store, &mut runtime, &build);
+    store.validate_execution_result(build.envelope().attempt_id, result).unwrap();
+    let action = store.prepare_adoption(build.envelope().attempt_id, build.envelope().units[0].unit_id,
+        vec![result], Value::Null).unwrap();
+    let receipt = store.adopt_execution(&action, &ReleaseAdoptionHandler).unwrap();
+    ExecutionId::parse(&receipt.changes[0].id).unwrap()
+}
+
+#[test]
+fn registered_delivery_unknown_inbox_reads_original_receipts_without_destination_authority() {
+    use tauri::Manager;
+    use tsumugi_core::{DecisionAction, DecisionEvidence, DecisionState, DecisionTarget,
+        DeliveryFileState, DeliveryState, ProjectMetadata};
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("project");
+    let mut core = ProjectStore::create(&project_path,
+        ProjectMetadata::create("Delivery inbox", "en", ["zh-CN"]).unwrap()).unwrap();
+    let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
+    let release = release_for_decision_inbox(&mut core);
+    let pending = core.begin_delivery(ExecutionId::new(), release,
+        &directory.path().join("pending-destination").to_string_lossy(), false).unwrap();
+    let original = core.begin_delivery(ExecutionId::new(), release,
+        &directory.path().join("unknown-destination").to_string_lossy(), false).unwrap();
+    let unknown = core.finish_delivery(original.action_id, original.files.into_iter().map(|mut file| {
+        file.state = DeliveryFileState::Unknown; file
+    }).collect()).unwrap();
+    assert_eq!(unknown.state, DeliveryState::Unknown);
+    core.set_target_locales(core.metadata().unwrap().metadata_revision(), &["fr-FR".into()]).unwrap();
+    core.close().unwrap();
+
+    let app = tauri::test::mock_builder().manage(AppState::default()).invoke_handler(super::super::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let opened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+    let observer = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+    let data_version = || observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+    let before = data_version();
+    let mut request = json!({"sessionToken":opened["sessionToken"],"projectId":project,
+        "query":{"locale":null,"sources":["delivery-unknown"]},"cursor":null,"limit":100});
+    let read = call(&window, "read_decision_page", request.clone()).unwrap();
+    assert_eq!(call(&window, "read_decision_page", request.clone()).unwrap(), read);
+    let page: DecisionPage = serde_json::from_value(read.clone()).unwrap();
+    assert_eq!(page.total, Some(2));
+    assert!(page.delivery_activity.is_empty());
+    for delivery in [&pending, &unknown] {
+        let item = page.items.iter().find(|item| item.source_action_id == Some(delivery.action_id)).unwrap();
+        assert_eq!(item.state, DecisionState::AwaitingRecheck);
+        assert_eq!(item.locale.as_deref(), Some("zh-CN"), "locale comes from immutable delivered files");
+        assert_eq!(item.targets, vec![DecisionTarget::Delivery { release_id: release, delivery_id: delivery.delivery_id }]);
+        assert_eq!(item.action, DecisionAction::InspectDeliveryOutcome { release_id: release,
+            delivery_id: delivery.delivery_id, action_id: delivery.action_id });
+        match item.evidence.as_ref().unwrap() {
+            DecisionEvidence::DeliveryOutcome { state, locales, file_count, unknown_file_count } => {
+                assert_eq!(*state, delivery.state);
+                assert_eq!(locales, &["zh-CN".to_owned()]);
+                assert_eq!(*file_count, 1);
+                assert_eq!(*unknown_file_count, u32::from(delivery.state == DeliveryState::Unknown));
+            }
+            evidence => panic!("unexpected delivery evidence: {evidence:?}"),
+        }
+    }
+    let wire = serde_json::to_string(&page.items).unwrap();
+    assert!(!wire.contains("directory") && !wire.contains("pending-destination") && !wire.contains("unknown-destination"));
+    assert_eq!(data_version(), before, "registered inbox reads cannot write the project database");
+    let original_pending = pending.clone();
+    let original_unknown = unknown.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none());
+        assert!(!active.store.is_reconciling());
+        assert_eq!(active.store.delivery_by_action(original_pending.action_id).unwrap().as_ref(), Some(&original_pending));
+        assert_eq!(active.store.delivery_by_action(original_unknown.action_id).unwrap().as_ref(), Some(&original_unknown));
+    });
+    let mut old_locale = request.clone(); old_locale["query"]["locale"] = json!("zh-CN");
+    assert_eq!(call(&window, "read_decision_page", old_locale).unwrap()["total"], 2);
+    let lookup = json!({"sessionToken":opened["sessionToken"],"projectId":project,
+        "selectionId":ExecutionId::new(),"actionId":unknown.action_id});
+    assert_eq!(call(&window, "read_delivery_action", lookup.clone()).unwrap_err()["code"], "session-invalid");
+    call(&window, "close_project", json!({"sessionToken":opened["sessionToken"]})).unwrap();
+    let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+    request["sessionToken"] = reopened["sessionToken"].clone();
+    let reopened_page: DecisionPage = serde_json::from_value(call(&window, "read_decision_page", request.clone()).unwrap()).unwrap();
+    assert_eq!(reopened_page.items, page.items);
+    let mut reopened_lookup = lookup; reopened_lookup["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&window, "read_delivery_action", reopened_lookup).unwrap_err()["code"], "session-invalid");
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        assert!(active.execution.is_none(), "reopen and history reads restore no native selection or runtime");
+        // Explicit original-owner settlement over synthetic file observations.
+        // This is not native destination IO or an inbox-triggered mutation.
+        let observed = unknown.files.iter().cloned().map(|mut file| {
+            file.state = DeliveryFileState::Succeeded; file.actual_sha256 = Some(file.expected_sha256.clone()); file
+        }).collect();
+        active.store.reconcile_delivery(unknown.action_id, observed).unwrap();
+    });
+    let resolved = call(&window, "read_decision_page", request).unwrap();
+    assert_eq!(resolved["total"], 1);
+    assert_eq!(resolved["items"][0]["sourceActionId"], json!(pending.action_id));
+    assert!(!directory.path().join("pending-destination").exists());
+    assert!(!directory.path().join("unknown-destination").exists());
 }

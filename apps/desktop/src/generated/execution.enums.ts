@@ -7,6 +7,7 @@ export const CommandOutcomeValues = ["rejected","unknown"] as const;
 export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","model-connections","draft-storage","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
 export const ComponentScopeValues = ["application","project","attempt"] as const;
 export const ContinuationKindValues = ["resume-undispatched","retry-safe-failure"] as const;
+export const DecisionDeliveryJobKindValues = ["preview","export","reconcile"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;
 export const NativeHostProfileValues = ["native-application-host-v1"] as const;

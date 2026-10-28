@@ -2,6 +2,7 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+export type DecisionDeliveryJobKind = "preview" | "export" | "reconcile";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -138,9 +139,24 @@ export interface ProjectChanges {
 }
 export interface RuntimeStatus {
   active: boolean;
+  /**
+   * Present only while the original native delivery job is owned. The shared
+   * runtime snapshot can invalidate readers even if outcome persistence fails.
+   */
+  deliveryActivity?: DecisionDeliveryActivity | null;
   error: CommandError | null;
   queryCount: number;
   quiescing: boolean;
+}
+/**
+ * The original Host job owns native IO. This observation does not recreate
+ * its directory selection or permit access to the destination.
+ */
+export interface DecisionDeliveryActivity {
+  actionId: ExecutionId | null;
+  jobId: ExecutionId;
+  kind: DecisionDeliveryJobKind;
+  releaseId: ExecutionId;
 }
 export interface CommandError {
   code: CommandErrorCode;

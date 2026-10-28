@@ -195,7 +195,8 @@
           "local-action-recovery",
           "human-review",
           "review-finding",
-          "delivery-blocker"
+          "delivery-blocker",
+          "delivery-unknown"
         ],
         "type": "string"
       },
@@ -914,6 +915,31 @@
           {
             "additionalProperties": false,
             "properties": {
+              "actionId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "deliveryId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "inspect-delivery-outcome",
+                "type": "string"
+              },
+              "releaseId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "releaseId",
+              "deliveryId",
+              "actionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "kind": {
                 "const": "inspect-local-request",
                 "type": "string"
@@ -1066,6 +1092,46 @@
         ],
         "type": "object"
       },
+      "DecisionDeliveryActivity": {
+        "additionalProperties": false,
+        "description": "The original Host job owns native IO. This observation does not recreate\nits directory selection or permit access to the destination.",
+        "properties": {
+          "actionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jobId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/DecisionDeliveryJobKind"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "jobId",
+          "kind",
+          "releaseId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "DecisionDeliveryJobKind": {
+        "enum": [
+          "preview",
+          "export",
+          "reconcile"
+        ],
+        "type": "string"
+      },
       "DecisionEvidence": {
         "oneOf": [
           {
@@ -1124,6 +1190,44 @@
               "kind",
               "outcome",
               "errorCode"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "fileCount": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "delivery-outcome",
+                "type": "string"
+              },
+              "locales": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "state": {
+                "$ref": "#/definitions/DeliveryState"
+              },
+              "unknownFileCount": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "state",
+              "locales",
+              "fileCount",
+              "unknownFileCount"
             ],
             "type": "object"
           }
@@ -1389,6 +1493,12 @@
             },
             "type": "array"
           },
+          "deliveryActivity": {
+            "items": {
+              "$ref": "#/definitions/DecisionDeliveryActivity"
+            },
+            "type": "array"
+          },
           "executionActivity": {
             "items": {
               "$ref": "#/definitions/DecisionExecutionActivity"
@@ -1455,6 +1565,7 @@
           "total",
           "coverage",
           "executionActivity",
+          "deliveryActivity",
           "localActions"
         ],
         "type": "object"
@@ -1493,7 +1604,8 @@
           "local-action-recovery",
           "human-review",
           "review-finding",
-          "delivery-blocker"
+          "delivery-blocker",
+          "delivery-unknown"
         ],
         "type": "string"
       },
@@ -1603,6 +1715,27 @@
           {
             "additionalProperties": false,
             "properties": {
+              "deliveryId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "delivery",
+                "type": "string"
+              },
+              "releaseId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "releaseId",
+              "deliveryId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "kind": {
                 "const": "project",
                 "type": "string"
@@ -1614,6 +1747,16 @@
             "type": "object"
           }
         ]
+      },
+      "DeliveryState": {
+        "enum": [
+          "pending",
+          "succeeded",
+          "partial",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
       },
       "EligibilityReason": {
         "additionalProperties": false,

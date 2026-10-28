@@ -136,8 +136,10 @@ export type DecisionSource =
   | "local-action-recovery"
   | "human-review"
   | "review-finding"
-  | "delivery-blocker";
+  | "delivery-blocker"
+  | "delivery-unknown";
 export type DecisionCoverageState = "complete" | "partial" | "unavailable";
+export type DecisionDeliveryJobKind = "preview" | "export" | "reconcile";
 /**
  * These are original read/navigation locators, never permission to mutate.
  */
@@ -183,6 +185,12 @@ export type DecisionAction =
       locale: string;
     }
   | {
+      actionId: ExecutionId;
+      deliveryId: ExecutionId;
+      kind: "inspect-delivery-outcome";
+      releaseId: ExecutionId;
+    }
+  | {
       kind: "inspect-local-request";
       reference: DecisionLocalRequestRef;
     };
@@ -220,9 +228,17 @@ export type DecisionEvidence =
       errorCode: ErrorCode | null;
       kind: "local-request";
       outcome: DecisionLocalOutcome;
+    }
+  | {
+      fileCount: number;
+      kind: "delivery-outcome";
+      locales: string[];
+      state: DeliveryState;
+      unknownFileCount: number;
     };
 export type DecisionLocalOutcome =
   "recorded" | "fenced-not-applied" | "receipt-absent" | "in-flight" | "mismatch" | "unavailable";
+export type DeliveryState = "pending" | "succeeded" | "partial" | "failed" | "unknown";
 export type DecisionState = "pending" | "stale" | "awaiting-recheck";
 export type DecisionTarget =
   | {
@@ -246,6 +262,11 @@ export type DecisionTarget =
       captureId: ExecutionId;
       entryId: string;
       kind: "resource";
+    }
+  | {
+      deliveryId: ExecutionId;
+      kind: "delivery";
+      releaseId: ExecutionId;
     }
   | {
       kind: "project";
@@ -272,6 +293,7 @@ export interface CommandError {
 export interface DecisionPage {
   basis: string;
   coverage: DecisionCoverage[];
+  deliveryActivity: DecisionDeliveryActivity[];
   executionActivity: DecisionExecutionActivity[];
   items: DecisionItem[];
   /**
@@ -294,6 +316,16 @@ export interface DecisionCoverage {
   source: DecisionSource;
   state: DecisionCoverageState;
   total: number | null;
+}
+/**
+ * The original Host job owns native IO. This observation does not recreate
+ * its directory selection or permit access to the destination.
+ */
+export interface DecisionDeliveryActivity {
+  actionId: ExecutionId | null;
+  jobId: ExecutionId;
+  kind: DecisionDeliveryJobKind;
+  releaseId: ExecutionId;
 }
 /**
  * Runtime observations supplement the single SQLite snapshot. Each attempt is

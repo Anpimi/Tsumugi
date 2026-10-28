@@ -10,7 +10,8 @@ use std::{
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::BuildLocaleChoice;
 use tsumugi_core::content::artifact_digest;
-use tsumugi_core::{DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, ReleaseView};
+use tsumugi_core::{DecisionDeliveryActivity, DecisionDeliveryJobKind, DeliveryFile, DeliveryFileState,
+    DeliveryState, DeliveryView, ReleaseView};
 
 pub(in crate::commands) mod plugin;
 
@@ -19,8 +20,12 @@ pub(super) struct ReleaseSession {
     picker: Option<ExecutionId>,
     selection: Option<(ExecutionId, Arc<source::capture::Selection>)>,
     preview: Option<DeliveryPreview>,
-    delivery: Option<(ExecutionId, Cancellation)>,
+    delivery: Option<DeliveryJob>,
     pub(super) plugin: plugin::PluginBuildSession,
+}
+struct DeliveryJob {
+    activity: DecisionDeliveryActivity,
+    cancel: Cancellation,
 }
 impl ReleaseSession {
     pub(super) fn stop_package(
@@ -42,12 +47,16 @@ impl ReleaseSession {
     pub(super) fn delivery_is_active(&self) -> bool {
         self.delivery.is_some()
     }
+    /// Describe only this existing job. No runtime or destination permission is created.
+    pub(super) fn delivery_activity(&self) -> Option<DecisionDeliveryActivity> {
+        self.delivery.as_ref().map(|job| job.activity.clone())
+    }
     pub(super) fn is_active(&self) -> bool {
         self.plugin.is_active() || self.delivery.is_some() || self.picker.is_some()
     }
     pub fn stop(&mut self) {
-        if let Some((_, cancel)) = &self.delivery {
-            cancel.request();
+        if let Some(job) = &self.delivery {
+            job.cancel.request();
         }
         // Accepted file IO keeps its slot until its outcome is recorded.
         self.plugin.stop();
@@ -374,6 +383,9 @@ fn selected(
 
 fn begin_delivery_job(
     host: &mut ExecutionHost,
+    kind: DecisionDeliveryJobKind,
+    release_id: ExecutionId,
+    action_id: Option<ExecutionId>,
 ) -> Result<(ExecutionId, Cancellation), CommandError> {
     host.allow_mutation()?;
     if host.release.delivery.is_some() || host.release.picker.is_some() {
@@ -384,7 +396,10 @@ fn begin_delivery_job(
     }
     let job = ExecutionId::new();
     let cancel = Cancellation::default();
-    host.release.delivery = Some((job, cancel.clone()));
+    host.release.delivery = Some(DeliveryJob {
+        activity: DecisionDeliveryActivity { job_id: job, kind, release_id, action_id },
+        cancel: cancel.clone(),
+    });
     Ok((job, cancel))
 }
 fn finish_delivery_job<'a>(
@@ -396,7 +411,7 @@ fn finish_delivery_job<'a>(
 ) -> Result<&'a mut ActiveSession, CommandError> {
     let active = authorized(sessions, token, project, stage)?;
     let (host, _) = active.execution_parts()?;
-    if host.release.delivery.as_ref().map(|entry| entry.0) != Some(job) {
+    if host.release.delivery.as_ref().map(|entry| entry.activity.job_id) != Some(job) {
         return Err(CommandError::simple(
             CommandErrorCode::SessionInvalid,
             stage,
@@ -469,7 +484,8 @@ pub async fn preview_delivery(
             let (host, store) = active.execution_parts()?;
             let selection = selected(host, initial.selection_id)?.clone();
             let release = store.release_view(initial.release_id).map_err(map_read)?;
-            let (job, cancel) = begin_delivery_job(host)?;
+            let (job, cancel) = begin_delivery_job(host, DecisionDeliveryJobKind::Preview,
+                initial.release_id, None)?;
             // An accepted refresh supersedes the prior preview, including on failure.
             host.release.preview = None;
             Ok((job, cancel, selection, release))
@@ -984,7 +1000,8 @@ pub async fn export_release(
                     initial.overwrite_conflicts,
                 )
                 .map_err(map_adopt)?;
-            let (job, cancel) = begin_delivery_job(host)?;
+            let (job, cancel) = begin_delivery_job(host, DecisionDeliveryJobKind::Export,
+                initial.release_id, Some(initial.action_id))?;
             host.release.preview = None;
             Ok(Ok((
                 job,
@@ -1147,7 +1164,8 @@ pub async fn reconcile_delivery(
             ) {
                 return Ok(Err(current));
             }
-            let (job, cancel) = begin_delivery_job(host)?;
+            let (job, cancel) = begin_delivery_job(host, DecisionDeliveryJobKind::Reconcile,
+                current.release_id, Some(initial.action_id))?;
             Ok(Ok((job, cancel, selection, current)))
         },
     )?;
@@ -1604,6 +1622,42 @@ mod tests {
     }
 
     #[test]
+    fn delivery_activity_preserves_exact_job_kind_and_identity_until_release() {
+        let root = tempfile::tempdir().unwrap();
+        let mut sessions = SessionManager::default();
+        let view = sessions.create(CreateProjectRequest {
+            destination: root.path().join("project").to_string_lossy().into(),
+            display_name: "Delivery descriptors".into(), source_locale: "en".into(),
+            target_locales: vec!["zh-CN".into()],
+        }).unwrap();
+        let project = ExecutionId::parse(&view.metadata.project_id).unwrap();
+        assert!(sessions.active.as_ref().unwrap().execution.is_none());
+        for (kind, action_id) in [
+            (DecisionDeliveryJobKind::Preview, None),
+            (DecisionDeliveryJobKind::Export, Some(ExecutionId::new())),
+            (DecisionDeliveryJobKind::Reconcile, Some(ExecutionId::new())),
+        ] {
+            let release_id = ExecutionId::new();
+            let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            assert_eq!(host.release.delivery_activity(), None);
+            let (job, cancel) = begin_delivery_job(host, kind.clone(), release_id, action_id).unwrap();
+            let expected = DecisionDeliveryActivity { job_id: job, kind, release_id, action_id };
+            assert_eq!(host.release.delivery_activity(), Some(expected.clone()));
+            assert!(begin_delivery_job(host, DecisionDeliveryJobKind::Preview, ExecutionId::new(), None).is_err());
+            assert_eq!(host.release.delivery_activity(), Some(expected.clone()), "another operation cannot replace the owned identity");
+            host.release.stop();
+            assert!(cancel.is_requested());
+            assert!(host.release.delivery_is_active());
+            assert_eq!(host.release.delivery_activity(), Some(expected));
+            assert!(host.release.selection.is_none(), "observation cannot restore destination authority");
+            finish_delivery_job(&mut sessions, &view.session_token, project, job, CommandStage::ExecutionRead).unwrap();
+            let host = sessions.active.as_ref().unwrap().execution.as_ref().unwrap();
+            assert_eq!(host.release.delivery_activity(), None);
+            assert!(!host.release.delivery_is_active());
+        }
+    }
+
+    #[test]
     fn quiescing_delivery_keeps_its_owned_job_until_outcome_commit() {
         let root = tempfile::tempdir().unwrap();
         let mut sessions = SessionManager::default();
@@ -1617,11 +1671,18 @@ mod tests {
             .unwrap();
         let project = ExecutionId::parse(&view.metadata.project_id).unwrap();
         let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-        let (job, cancel) = begin_delivery_job(host).unwrap();
-        assert!(begin_delivery_job(host).is_err());
+        let release_id = ExecutionId::new();
+        let action_id = ExecutionId::new();
+        let (job, cancel) = begin_delivery_job(host, DecisionDeliveryJobKind::Export,
+            release_id, Some(action_id)).unwrap();
+        let expected = DecisionDeliveryActivity { job_id: job, kind: DecisionDeliveryJobKind::Export,
+            release_id, action_id: Some(action_id) };
+        assert!(begin_delivery_job(host, DecisionDeliveryJobKind::Reconcile,
+            release_id, Some(action_id)).is_err());
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         host.begin_quiesce(store).unwrap();
         assert!(cancel.is_requested());
+        assert_eq!(host.release.delivery_activity(), Some(expected.clone()));
         assert!(host.active(store).unwrap());
         assert_eq!(
             host.finish_quiesce(store).unwrap_err().code,
@@ -1637,6 +1698,8 @@ mod tests {
             )
             .is_err()
         );
+        assert_eq!(sessions.active.as_ref().unwrap().execution.as_ref().unwrap()
+            .release.delivery_activity(), Some(expected));
         assert!(
             sessions
                 .close(CloseProjectRequest {
@@ -1653,6 +1716,7 @@ mod tests {
         )
         .unwrap();
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        assert_eq!(host.release.delivery_activity(), None);
         host.tick(store).unwrap();
         assert!(!host.active(store).unwrap());
         sessions
@@ -1677,7 +1741,7 @@ mod tests {
         host.release.picker = Some(ExecutionId::new());
         assert!(host.active(store).unwrap());
         assert!(
-            matches!(begin_delivery_job(host), Err(error) if error.code == CommandErrorCode::Busy)
+            matches!(begin_delivery_job(host, DecisionDeliveryJobKind::Preview, ExecutionId::new(), None), Err(error) if error.code == CommandErrorCode::Busy)
         );
         assert!(
             sessions

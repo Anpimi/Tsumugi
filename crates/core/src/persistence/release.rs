@@ -13,13 +13,15 @@ use crate::{
         FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
     },
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 mod plan;
 mod record;
 mod saved;
+mod delivery;
+pub(super) use delivery::project_observations_in as project_delivery_observations_in;
 pub use plan::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub(super) use plan::{VerifiedBuildInput, prepare_input, verify_prepared_input};
 pub use saved::{
@@ -146,94 +148,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         let id = parse_id(id).map_err(|_| rusqlite::Error::InvalidQuery)?;
         record::load(connection, id).map_err(|_| rusqlite::Error::InvalidQuery)?;
     }
-    let mut deliveries = connection.prepare(
-        "SELECT release_id,directory,state,expected_json,results_json FROM release_deliveries",
-    )?;
-    let rows = deliveries.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-        ))
-    })?;
-    for row in rows {
-        let (release, directory, state, expected, results) = row?;
-        if directory.is_empty() || directory.len() > 4096 {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        let expected: Vec<DeliveryFile> =
-            serde_json::from_str(&expected).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let mut statement = connection.prepare(
-            "SELECT locale,file_name,sha256 FROM release_artifacts WHERE release_id=?1 ORDER BY locale,file_name",
-        )?;
-        let artifacts = statement
-            .query_map([&release], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        if expected.is_empty()
-            || expected.len() != artifacts.len()
-            || expected.iter().zip(&artifacts).any(|(file, artifact)| {
-                file.locale != artifact.0
-                    || file.file_name != artifact.1
-                    || file.expected_sha256 != artifact.2
-                    || file.actual_sha256.is_some()
-                    || file.state != DeliveryFileState::Pending
-            })
-        {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        match results {
-            None if state == "pending" => {}
-            Some(encoded) if state != "pending" => {
-                let files: Vec<DeliveryFile> =
-                    serde_json::from_str(&encoded).map_err(|_| rusqlite::Error::InvalidQuery)?;
-                if files.len() != expected.len()
-                    || files.iter().zip(&expected).any(|(file, prior)| {
-                        file.locale != prior.locale
-                            || file.file_name != prior.file_name
-                            || file.expected_sha256 != prior.expected_sha256
-                            || !matches!(
-                                file.state,
-                                DeliveryFileState::Succeeded
-                                    | DeliveryFileState::Failed
-                                    | DeliveryFileState::Unknown
-                            )
-                            || (file.state == DeliveryFileState::Succeeded
-                                && file.actual_sha256.as_deref() != Some(&file.expected_sha256))
-                    })
-                {
-                    return Err(rusqlite::Error::InvalidQuery);
-                }
-                let success = files
-                    .iter()
-                    .filter(|file| file.state == DeliveryFileState::Succeeded)
-                    .count();
-                let actual_state = if success == files.len() {
-                    "succeeded"
-                } else if files
-                    .iter()
-                    .any(|file| file.state == DeliveryFileState::Unknown)
-                {
-                    "unknown"
-                } else if success > 0 {
-                    "partial"
-                } else {
-                    "failed"
-                };
-                if state != actual_state {
-                    return Err(rusqlite::Error::InvalidQuery);
-                }
-            }
-            _ => return Err(rusqlite::Error::InvalidQuery),
-        }
-    }
+    delivery::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
     Ok(())
 }
 
@@ -416,19 +331,6 @@ impl ProjectStore {
             return Err(failure(ErrorCode::InvalidInput, "delivery-directory"));
         }
         let release = self.release_view(release_id)?;
-        let unresolved = self
-            .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-read"))?
-            .prepare(
-                "SELECT 1 FROM release_deliveries WHERE release_id=?1 AND directory=?2
-                      AND state IN ('pending','unknown') LIMIT 1",
-            )
-            .map_err(sql)?
-            .exists(params![release_id.to_string(), directory])
-            .map_err(sql)?;
-        if unresolved {
-            return Err(failure(ErrorCode::OutcomeUnknown, "delivery-unresolved"));
-        }
         let files: Vec<_> = release
             .artifacts
             .into_iter()
@@ -443,13 +345,31 @@ impl ProjectStore {
         let delivery_id = ExecutionId::new();
         let encoded = serde_json::to_string(&files)
             .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-encode"))?;
-        self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
-            .execute(
+        let changes = self.changes.clone();
+        let unknown = self.execution_unknown.clone();
+        let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
+            .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+        let observer = changes.observe(&tx, super::ChangeScope::Release);
+        if let Some(existing) = delivery::by_action_in(&tx, action_id)? {
+            return if existing.release_id == release_id && existing.directory == directory
+                && existing.overwrite_conflicts == overwrite_conflicts {
+                Ok(existing)
+            } else { Err(failure(ErrorCode::DependencyConflict, "delivery-action")) };
+        }
+        let unresolved = tx.prepare("SELECT 1 FROM release_deliveries WHERE release_id=?1 AND directory=?2
+            AND state IN ('pending','unknown') LIMIT 1").map_err(sql)?
+            .exists(params![release_id.to_string(), directory]).map_err(sql)?;
+        if unresolved { return Err(failure(ErrorCode::OutcomeUnknown, "delivery-unresolved")); }
+        tx.execute(
                 "INSERT INTO release_deliveries
                  (delivery_id,action_id,release_id,directory,overwrite_conflicts,state,expected_json)
                  VALUES (?1,?2,?3,?4,?5,'pending',?6)",
                 params![delivery_id.to_string(),action_id.to_string(),release_id.to_string(),directory,overwrite_conflicts,encoded],
             ).map_err(sql)?;
+        observer.commit(tx).map_err(|_| {
+            unknown.store(true, std::sync::atomic::Ordering::Release);
+            failure(ErrorCode::OutcomeUnknown, "delivery-begin-commit")
+        })?;
         self.delivery_by_action(action_id)?
             .ok_or_else(|| failure(ErrorCode::StorageFailed, "delivery-write"))
     }
@@ -461,32 +381,7 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-read"))?;
-        let row = connection.query_row(
-            "SELECT delivery_id,release_id,directory,overwrite_conflicts,state,expected_json,results_json,created_at
-             FROM release_deliveries WHERE action_id=?1",
-            [action_id.to_string()],
-            |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?,
-                row.get::<_, bool>(3)?,row.get::<_, String>(4)?,row.get::<_, String>(5)?,
-                row.get::<_, Option<String>>(6)?,row.get::<_, String>(7)?)),
-        );
-        let (id, release, directory, overwrite_conflicts, state, expected, results, created_at) =
-            match row {
-                Ok(row) => row,
-                Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-                Err(error) => return Err(sql(error)),
-            };
-        let files = serde_json::from_str(results.as_deref().unwrap_or(&expected))
-            .map_err(|_| failure(ErrorCode::CorruptLedger, "delivery-files"))?;
-        Ok(Some(DeliveryView {
-            delivery_id: parse_id(id)?,
-            action_id,
-            release_id: parse_id(release)?,
-            directory,
-            overwrite_conflicts,
-            state: DeliveryState::from_stored(&state)?,
-            files,
-            created_at,
-        }))
+        super::review::read_snapshot(connection, |connection| delivery::by_action_in(connection, action_id))
     }
 
     pub fn finish_delivery(
@@ -535,13 +430,24 @@ impl ProjectStore {
         };
         let encoded = serde_json::to_string(&files)
             .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-encode"))?;
-        self.connection_mut()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
-            .execute(
-                "UPDATE release_deliveries SET state=?2,results_json=?3 WHERE action_id=?1",
+        let changes = self.changes.clone();
+        let unknown = self.execution_unknown.clone();
+        let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
+            .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+        let observer = changes.observe(&tx, super::ChangeScope::Release);
+        if delivery::by_action_in(&tx, action_id)?.as_ref() != Some(&current) {
+            return Err(failure(ErrorCode::DependencyConflict, "delivery-finish-race"));
+        }
+        let updated = tx.execute(
+                "UPDATE release_deliveries SET state=?2,results_json=?3 WHERE action_id=?1 AND state='pending'",
                 params![action_id.to_string(), state, encoded],
             )
             .map_err(sql)?;
+        if updated != 1 { return Err(failure(ErrorCode::DependencyConflict, "delivery-finish-race")); }
+        observer.commit(tx).map_err(|_| {
+            unknown.store(true, std::sync::atomic::Ordering::Release);
+            failure(ErrorCode::OutcomeUnknown, "delivery-finish-commit")
+        })?;
         self.delivery_by_action(action_id)?
             .ok_or_else(|| failure(ErrorCode::StorageFailed, "delivery-write"))
     }
@@ -588,6 +494,7 @@ impl ProjectStore {
                 "delivery-reconcile-results",
             ));
         }
+        if files == current.files { return Ok(current); }
         let success = files
             .iter()
             .filter(|file| file.state == DeliveryFileState::Succeeded)
@@ -606,10 +513,15 @@ impl ProjectStore {
         };
         let encoded = serde_json::to_string(&files)
             .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-encode"))?;
-        let updated = self
-            .connection_mut()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
-            .execute(
+        let changes = self.changes.clone();
+        let unknown = self.execution_unknown.clone();
+        let tx = self.connection_mut().map_err(|_| failure(ErrorCode::StorageFailed, "delivery-write"))?
+            .transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql)?;
+        let observer = changes.observe(&tx, super::ChangeScope::Release);
+        if delivery::by_action_in(&tx, action_id)?.as_ref() != Some(&current) {
+            return Err(failure(ErrorCode::DependencyConflict, "delivery-reconcile-race"));
+        }
+        let updated = tx.execute(
                 "UPDATE release_deliveries SET state=?2,results_json=?3
                  WHERE action_id=?1 AND state='unknown'",
                 params![action_id.to_string(), state, encoded],
@@ -621,6 +533,10 @@ impl ProjectStore {
                 "delivery-reconcile-race",
             ));
         }
+        observer.commit(tx).map_err(|_| {
+            unknown.store(true, std::sync::atomic::Ordering::Release);
+            failure(ErrorCode::OutcomeUnknown, "delivery-reconcile-commit")
+        })?;
         self.delivery_by_action(action_id)?
             .ok_or_else(|| failure(ErrorCode::StorageFailed, "delivery-write"))
     }

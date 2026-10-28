@@ -8,6 +8,7 @@ use std::{cell::RefCell, collections::{BTreeMap, BTreeSet}};
 mod content;
 mod recovery;
 mod local;
+mod delivery;
 pub use local::*;
 #[cfg(test)]
 mod tests;
@@ -19,13 +20,13 @@ pub(super) const SOURCE_LIMIT: usize = 1_000;
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DecisionSource {
     TranslationCandidate, ResourceProposal, AgentQuestion, SourceMapping,
-    ExecutionUnknown, LocalActionRecovery, HumanReview, ReviewFinding, DeliveryBlocker,
+    ExecutionUnknown, LocalActionRecovery, HumanReview, ReviewFinding, DeliveryBlocker, DeliveryUnknown,
 }
 
 impl DecisionSource {
-    const ALL: [Self; 9] = [Self::TranslationCandidate, Self::ResourceProposal,
+    const ALL: [Self; 10] = [Self::TranslationCandidate, Self::ResourceProposal,
         Self::AgentQuestion, Self::SourceMapping, Self::ExecutionUnknown,
-        Self::LocalActionRecovery, Self::HumanReview, Self::ReviewFinding, Self::DeliveryBlocker];
+        Self::LocalActionRecovery, Self::HumanReview, Self::ReviewFinding, Self::DeliveryBlocker, Self::DeliveryUnknown];
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -37,6 +38,7 @@ pub enum DecisionTarget {
     Conversation { conversation_id: ExecutionId },
     SourceOccurrence { snapshot_id: ExecutionId, occurrence_id: ExecutionId },
     Resource { capture_id: ExecutionId, entry_id: String },
+    Delivery { release_id: ExecutionId, delivery_id: ExecutionId },
     Project,
 }
 
@@ -53,6 +55,7 @@ pub enum DecisionAction {
     ResolveSourceMapping { snapshot_id: ExecutionId, occurrence_id: ExecutionId, ordinal: u32 },
     InspectExecution { task_id: ExecutionId, attempt_id: ExecutionId, item_id: ExecutionId },
     InspectDelivery { locale: String },
+    InspectDeliveryOutcome { release_id: ExecutionId, delivery_id: ExecutionId, action_id: ExecutionId },
     InspectLocalRequest { reference: DecisionLocalRequestRef },
 }
 
@@ -67,6 +70,7 @@ pub enum DecisionState { Pending, Stale, AwaitingRecheck }
 pub enum DecisionEvidence {
     Delivery { blocker_count: u32, reasons: Vec<super::EligibilityReason>, reasons_complete: bool },
     LocalRequest { outcome: DecisionLocalOutcome, error_code: Option<ErrorCode> },
+    DeliveryOutcome { state: super::DeliveryState, locales: Vec<String>, file_count: u32, unknown_file_count: u32 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -134,6 +138,23 @@ pub struct DecisionCursor { pub basis: String, pub after_id: String }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct DecisionExecutionActivity { pub attempt_id: ExecutionId, pub active: bool }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum DecisionDeliveryJobKind { Preview, Export, Reconcile }
+
+/// The original Host job owns native IO. This observation does not recreate
+/// its directory selection or permit access to the destination.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct DecisionDeliveryActivity {
+    pub job_id: ExecutionId,
+    pub kind: DecisionDeliveryJobKind,
+    pub release_id: ExecutionId,
+    pub action_id: Option<ExecutionId>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -149,6 +170,7 @@ pub struct DecisionPage {
     pub total: Option<u32>,
     pub coverage: Vec<DecisionCoverage>,
     pub execution_activity: Vec<DecisionExecutionActivity>,
+    pub delivery_activity: Vec<DecisionDeliveryActivity>,
     pub local_actions: Option<DecisionLocalBasis>,
 }
 
@@ -160,11 +182,12 @@ impl ProjectStore {
     pub fn decision_page(&self, project: ExecutionId, query: &DecisionQuery,
         cursor: Option<&DecisionCursor>, limit: u32, active: impl Fn(ExecutionId) -> bool,
     ) -> Result<DecisionPage, ExecutionError> {
-        self.decision_page_with_local_actions(project, query, cursor, limit, active, |_| Ok(None))
+        self.decision_page_with_host_observations(project, query, cursor, limit, active, &[], |_| Ok(None))
     }
 
-    pub fn decision_page_with_local_actions(&self, project: ExecutionId, query: &DecisionQuery,
+    pub fn decision_page_with_host_observations(&self, project: ExecutionId, query: &DecisionQuery,
         cursor: Option<&DecisionCursor>, limit: u32, active: impl Fn(ExecutionId) -> bool,
+        delivery_activity: &[DecisionDeliveryActivity],
         local: impl FnOnce(&ProjectStore) -> Result<Option<DecisionLocalProjection>, ExecutionError>,
     ) -> Result<DecisionPage, ExecutionError> {
         if limit == 0 || limit > 100 || query.sources.len() > DecisionSource::ALL.len()
@@ -184,6 +207,9 @@ impl ProjectStore {
             let mut coverage = Vec::new();
             let mut local = Some(local);
             let mut local_actions = None;
+            let delivery_activity = if query.sources.is_empty() || query.sources.contains(&DecisionSource::DeliveryUnknown) {
+                delivery_activity.to_vec()
+            } else { Vec::new() };
             let activity = RefCell::new(BTreeMap::new());
             let observe = |attempt| *activity.borrow_mut().entry(attempt).or_insert_with(|| active(attempt));
             for source in DecisionSource::ALL {
@@ -196,6 +222,7 @@ impl ProjectStore {
                 let mut local_reason = None;
                 let mut local_error = None;
                 let projections = match source {
+                    DecisionSource::DeliveryUnknown => vec![delivery::project(self, c, project, query.locale.as_deref(), &delivery_activity)],
                     DecisionSource::LocalActionRecovery => match local.take().expect("one local source")(self) {
                         Ok(Some(projection)) => {
                             local_reason = projection.reason; local_error = projection.error_code;
@@ -246,7 +273,7 @@ impl ProjectStore {
             let changes = self.changes_since(Revision::new(0)?);
             let external: i64 = c.query_row("PRAGMA data_version", [], |row| row.get(0)).map_err(super::ledger::sql_error)?;
             let execution_activity = activity.into_inner().into_iter().map(|(attempt_id, active)| DecisionExecutionActivity { attempt_id, active }).collect::<Vec<_>>();
-            let basis = codec::digest(&codec::encode(&(project, query, changes.epoch, changes.sequence, external, &items, &coverage, &execution_activity, &local_actions), 16 * 1024 * 1024)?);
+            let basis = codec::digest(&codec::encode(&(project, query, changes.epoch, changes.sequence, external, &items, &coverage, &execution_activity, &delivery_activity, &local_actions), 16 * 1024 * 1024)?);
             if cursor.is_some_and(|cursor| cursor.basis != basis) {
                 return Err(failure(ErrorCode::DependencyConflict, "decision-read-changed"));
             }
@@ -260,7 +287,7 @@ impl ProjectStore {
             let page = items[start..end].to_vec();
             let next = (end < items.len()).then(|| DecisionCursor { basis: basis.clone(), after_id: page.last().expect("nonempty page").decision_id.clone() });
             Ok(DecisionPage { project_id: project, query: query.clone(), basis, items: page, next,
-                known_count, total: complete.then_some(known_count), coverage, execution_activity, local_actions })
+                known_count, total: complete.then_some(known_count), coverage, execution_activity, delivery_activity, local_actions })
         })
     }
 }

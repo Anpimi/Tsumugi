@@ -118,3 +118,121 @@ it.each(["wrong-activity", "recorded-still-counted", "missing-lifecycle", "wrong
   invoke.mockResolvedValueOnce(page);
   await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
 });
+
+type DecisionRow = DecisionPage["items"][number];
+type DeliveryEvidence = Extract<NonNullable<DecisionRow["evidence"]>, { kind: "delivery-outcome" }>;
+type DeliveryActivity = DecisionPage["deliveryActivity"][number];
+
+function deliveryFixture() {
+  const input = request(), page = response();
+  const action: Extract<DecisionRow["action"], { kind: "inspect-delivery-outcome" }> = {
+    kind: "inspect-delivery-outcome", releaseId: "00000000-0000-4000-8000-000000000005",
+    deliveryId: "00000000-0000-4000-8000-000000000006", actionId: "00000000-0000-4000-8000-000000000007",
+  };
+  const target: Extract<DecisionRow["targets"][number], { kind: "delivery" }> = {
+    kind: "delivery", releaseId: action.releaseId, deliveryId: action.deliveryId,
+  };
+  const evidence: DeliveryEvidence = { kind: "delivery-outcome", state: "pending",
+    locales: ["fr-FR", "zh-CN"], fileCount: 3, unknownFileCount: 0 };
+  const item: DecisionRow = { decisionId: `delivery-unknown:${action.deliveryId}`, source: "delivery-unknown",
+    state: "awaiting-recheck", locale: null, targets: [target], targetsComplete: true,
+    basis: "e".repeat(64), sourceActionId: action.actionId, action, evidence };
+  input.query = { locale: null, sources: ["delivery-unknown"] }; input.activity = [];
+  page.query = { locale: input.query.locale ?? null, sources: [...input.query.sources] };
+  page.items = [item]; page.knownCount = 1; page.total = 1; page.next = null;
+  page.coverage = [{ source: "delivery-unknown", state: "complete", knownCount: 1, total: 1, reason: null, errorCode: null }];
+  page.executionActivity = []; page.deliveryActivity = []; page.localActions = null;
+  const job = (kind: DeliveryActivity["kind"], actionId: string | null): DeliveryActivity => ({
+    jobId: "00000000-0000-4000-8000-000000000008", kind, releaseId: action.releaseId, actionId,
+  });
+  return { input, page, item, action, target, evidence, job };
+}
+
+it("keeps the original typed delivery, release, action and complete language set", async () => {
+  const { input, page, action, evidence } = deliveryFixture();
+  input.query.locale = "fr-FR"; page.query.locale = "fr-FR";
+  invoke.mockResolvedValueOnce(page);
+  const found = await decisionCommands.page(input);
+  expect(found.items[0]?.decisionId).toBe(`delivery-unknown:${action.deliveryId}`);
+  expect(found.items[0]?.locale).toBeNull();
+  expect(found.items[0]?.evidence).toEqual(evidence);
+  expect(found.items[0]?.targets).toEqual([{ kind: "delivery", releaseId: action.releaseId, deliveryId: action.deliveryId }]);
+});
+
+it("uses the original single file language when a delivery has one language", async () => {
+  const { input, page, item, evidence } = deliveryFixture();
+  evidence.locales = ["zh-CN"]; item.locale = "zh-CN";
+  input.query.locale = "zh-CN"; page.query.locale = "zh-CN";
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).items[0]?.locale).toBe("zh-CN");
+});
+
+it.each(["wrong-decision-id", "wrong-release", "wrong-delivery", "wrong-source-action", "project-target", "incomplete-targets",
+  "wrong-locale-filter", "fabricated-single-locale", "duplicate-locales", "empty-files", "unknown-without-unknown-files",
+  "pending-with-unknown-files", "too-many-unknown-files", "final-state", "wrong-state", "missing-evidence"])("rejects %s delivery outcome projections", async kind => {
+  const { input, page, item, target, evidence } = deliveryFixture();
+  const other = "00000000-0000-4000-8000-000000000099";
+  if (kind === "wrong-decision-id") item.decisionId = `delivery-unknown:${other}`;
+  if (kind === "wrong-release") target.releaseId = other;
+  if (kind === "wrong-delivery") target.deliveryId = other;
+  if (kind === "wrong-source-action") item.sourceActionId = other;
+  if (kind === "project-target") item.targets = [{ kind: "project" }];
+  if (kind === "incomplete-targets") item.targetsComplete = false;
+  if (kind === "wrong-locale-filter") { input.query.locale = "ja"; page.query.locale = "ja"; }
+  if (kind === "fabricated-single-locale") item.locale = "fr-FR";
+  if (kind === "duplicate-locales") evidence.locales = ["zh-CN", "zh-CN"];
+  if (kind === "empty-files") evidence.fileCount = 0;
+  if (kind === "unknown-without-unknown-files") evidence.state = "unknown";
+  if (kind === "pending-with-unknown-files") evidence.unknownFileCount = 1;
+  if (kind === "too-many-unknown-files") { evidence.state = "unknown"; evidence.unknownFileCount = 4; }
+  if (kind === "final-state") evidence.state = "failed";
+  if (kind === "wrong-state") item.state = "pending";
+  if (kind === "missing-evidence") item.evidence = null;
+  invoke.mockResolvedValueOnce(page);
+  await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+});
+
+it.each(["preview", "reconcile", "different-action", "different-release"] as const)("retains pending delivery checks alongside %s activity", async kind => {
+  const { input, page, action, job } = deliveryFixture();
+  const active = job(kind === "preview" ? "preview" : kind === "reconcile" ? "reconcile" : "export",
+    kind === "preview" ? null : action.actionId);
+  if (kind === "different-action") active.actionId = "00000000-0000-4000-8000-000000000099";
+  if (kind === "different-release") active.releaseId = "00000000-0000-4000-8000-000000000099";
+  page.deliveryActivity = [active];
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).items).toHaveLength(1);
+});
+
+it("excludes only a pending delivery owned by the exact active export", async () => {
+  const { input, page, action, job } = deliveryFixture();
+  page.deliveryActivity = [job("export", action.actionId)];
+  invoke.mockResolvedValueOnce(structuredClone(page));
+  await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+  page.items = []; page.knownCount = 0; page.total = 0; page.coverage[0]!.knownCount = 0; page.coverage[0]!.total = 0;
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).deliveryActivity).toEqual(page.deliveryActivity);
+});
+
+it.each(["export", "reconcile"] as const)("retains a persisted unknown even while its exact %s is active", async kind => {
+  const { input, page, action, evidence, job } = deliveryFixture();
+  evidence.state = "unknown"; evidence.unknownFileCount = 1;
+  page.deliveryActivity = [job(kind, action.actionId)];
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).items).toHaveLength(1);
+});
+
+it.each(["preview-with-action", "export-without-action", "reconcile-without-action", "duplicate-job", "unselected-source"])("rejects %s delivery activity", async kind => {
+  const { input, page, action, job } = deliveryFixture();
+  page.deliveryActivity = [job("reconcile", action.actionId)];
+  if (kind === "preview-with-action") page.deliveryActivity[0]!.kind = "preview";
+  if (kind === "export-without-action") { page.deliveryActivity[0]!.kind = "export"; page.deliveryActivity[0]!.actionId = null; }
+  if (kind === "reconcile-without-action") page.deliveryActivity[0]!.actionId = null;
+  if (kind === "duplicate-job") page.deliveryActivity.push(structuredClone(page.deliveryActivity[0]!));
+  if (kind === "unselected-source") {
+    input.query.sources = ["execution-unknown"]; page.query.sources = ["execution-unknown"];
+    page.items = []; page.knownCount = 0; page.total = 0;
+    page.coverage = [{ source: "execution-unknown", state: "complete", knownCount: 0, total: 0, reason: null, errorCode: null }];
+  }
+  invoke.mockResolvedValueOnce(page);
+  await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+});

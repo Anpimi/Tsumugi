@@ -726,6 +726,7 @@ impl ActiveSession {
             quiescing: host.quiescing,
             query_count: host.queries.len() as u32,
             error: host.last_error.clone(),
+            delivery_activity: host.release.delivery_activity(),
         })
     }
     fn execution_parts(&mut self) -> Result<(&mut ExecutionHost, &mut ProjectStore), CommandError> {
@@ -1087,6 +1088,10 @@ pub struct RuntimeStatus {
     #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub query_count: u32,
     pub error: Option<CommandError>,
+    /// Present only while the original native delivery job is owned. The shared
+    /// runtime snapshot can invalidate readers even if outcome persistence fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_activity: Option<tsumugi_core::DecisionDeliveryActivity>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1172,6 +1177,7 @@ pub async fn execution_status(
                     quiescing: host.quiescing,
                     query_count: host.queries.len() as u32,
                     error: host.last_error.clone(),
+                    delivery_activity: host.release.delivery_activity(),
                 })
             },
         )
@@ -1930,6 +1936,7 @@ pub async fn quiesce_execution(
                     quiescing: host.quiescing || hook_active || retrieval_active,
                     query_count: 0,
                     error: host.last_error.clone(),
+                    delivery_activity: host.release.delivery_activity(),
                 })
             },
         )

@@ -22,7 +22,8 @@ export type DecisionSource =
   | "local-action-recovery"
   | "human-review"
   | "review-finding"
-  | "delivery-blocker";
+  | "delivery-blocker"
+  | "delivery-unknown";
 
 export interface Requests {
   page: DecisionPageRequest;

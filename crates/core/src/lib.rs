@@ -25,7 +25,7 @@ mod persistence;
 mod project;
 mod review;
 pub use persistence::{DecisionAction, DecisionCoverage, DecisionCoverageReason, DecisionCoverageState,
-    DecisionClientAction, DecisionClientActivity, DecisionJournalKey, DecisionJournalSlot, DecisionLocalBasis, DecisionLocalObservation, DecisionLocalOutcome, DecisionLocalProjection, DecisionLocalRequestKind, DecisionLocalRequestRef, DecisionCursor, DecisionEvidence, DecisionExecutionActivity, DecisionItem, DecisionPage, DecisionQuery, DecisionSource, DecisionState, DecisionTarget};
+    DecisionClientAction, DecisionClientActivity, DecisionJournalKey, DecisionJournalSlot, DecisionLocalBasis, DecisionLocalObservation, DecisionLocalOutcome, DecisionLocalProjection, DecisionLocalRequestKind, DecisionLocalRequestRef, DecisionCursor, DecisionDeliveryActivity, DecisionDeliveryJobKind, DecisionEvidence, DecisionExecutionActivity, DecisionItem, DecisionPage, DecisionQuery, DecisionSource, DecisionState, DecisionTarget};
 
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub use persistence::{BuildLocaleChoice, LocaleBuildStartReceipt};

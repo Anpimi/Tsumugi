@@ -27,8 +27,9 @@ pub async fn read_decision_page(
         let local_selected = request.query.sources.is_empty() || request.query.sources.contains(&tsumugi_core::DecisionSource::LocalActionRecovery);
         let snapshot = if local_selected { Some(drafts.ok_or_else(|| ExecutionError::new(ErrorCode::StorageFailed, "decision-local-store"))
             .and_then(|drafts| drafts.pending_snapshot(request.project_id, request.query.locale.as_deref()))) } else { None };
-        active.store.decision_page_with_local_actions(request.project_id, &request.query, request.cursor.as_ref(), request.limit,
-            |attempt| active.execution.as_ref().is_some_and(|host| host.runtime.is_active(attempt)),
+        let delivery_activity = active.execution.as_ref().and_then(|host| host.release.delivery_activity()).into_iter().collect::<Vec<_>>();
+        active.store.decision_page_with_host_observations(request.project_id, &request.query, request.cursor.as_ref(), request.limit,
+            |attempt| active.execution.as_ref().is_some_and(|host| host.runtime.is_active(attempt)), &delivery_activity,
             |store| snapshot.expect("selected local source").and_then(|snapshot| local::project(store, request.project_id, snapshot, request.activity)).map(Some))
             .map_err(|error| map_execution(error, CommandStage::ExecutionRead))
     }).await

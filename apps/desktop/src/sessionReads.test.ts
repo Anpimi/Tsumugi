@@ -30,6 +30,28 @@ function observe<T>(reads: SessionReads, key: string, scope: ChangeScope, read: 
   const stop = observer.subscribe(() => {}); stops.push(stop);
   return observer;
 }
+it("refreshes delivery readers when a native job ends even while other work and durable versions are unchanged", async () => {
+  const fixture = setup(); await settle();
+  const read = vi.fn().mockResolvedValue("pending outcomes");
+  observe(fixture.reads, "decisions", "execution", read); await settle();
+  const live = snapshot(); live.runtime.active = true;
+  live.runtime.deliveryActivity = { jobId: "00000000-0000-4000-8000-000000000001", kind: "export",
+    releaseId: "00000000-0000-4000-8000-000000000002", actionId: "00000000-0000-4000-8000-000000000003" };
+  fixture.set(live); await fixture.reads.synchronize(); await settle();
+  expect(fixture.reads.client.getQueryData(fixture.reads.key(["runtime"]))).toMatchObject({ deliveryActivity: live.runtime.deliveryActivity });
+  const before = read.mock.calls.length;
+  const finished = snapshot(); finished.runtime.active = true;
+  fixture.set(finished); await fixture.reads.synchronize(); await settle();
+  expect(read).toHaveBeenCalledTimes(before + 1);
+  expect(fixture.reads.client.getQueryData(fixture.reads.key(["runtime"]))).not.toHaveProperty("deliveryActivity");
+});
+
+it("rejects a runtime delivery descriptor without its original action binding", () => {
+  const invalid = snapshot();
+  invalid.runtime.deliveryActivity = { jobId: "00000000-0000-4000-8000-000000000001", kind: "export",
+    releaseId: "00000000-0000-4000-8000-000000000002", actionId: null };
+  expect(() => validateChanges(invalid, context)).toThrow("Invalid project change snapshot");
+});
 it("deduplicates observers and coalesces invalidations arriving during a slow read", async () => {
   const { reads } = setup(); await settle();
   let finish: (value: number) => void = () => {};

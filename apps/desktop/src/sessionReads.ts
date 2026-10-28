@@ -1,4 +1,5 @@
 import { isCommandError } from "./projectCommands";
+import { validDeliveryActivity } from "./deliveryActivity";
 import { QueryClient, matchQuery, type QueryKey, type Query } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { validateResponseChanges, validateResponseNotification } from "./generated/validators";
@@ -19,9 +20,11 @@ const transport: ReadTransport = {
 };
 function contextMatches(value: SessionRequest, context: SessionRequest) { return value.projectId === context.projectId && value.sessionToken === context.sessionToken; }
 export function validateChanges(value: unknown, context: SessionRequest): ProjectChanges {
-  if (!validateResponseChanges(value) || !contextMatches(value, context) || (value.runtime.error !== null && !isCommandError(value.runtime.error))) throw new Error("Invalid project change snapshot");
+  if (!validateResponseChanges(value) || !contextMatches(value, context) || (value.runtime.error !== null && !isCommandError(value.runtime.error))
+    || (value.runtime.deliveryActivity != null && !validDeliveryActivity(value.runtime.deliveryActivity))) throw new Error("Invalid project change snapshot");
   return { projectId: context.projectId, sessionToken: context.sessionToken, epoch: value.epoch, sequence: value.sequence, progressSequence: value.progressSequence, scopes: value.scopes,
-    runtime: { active: value.runtime.active, quiescing: value.runtime.quiescing, queryCount: Number(value.runtime.queryCount), error: value.runtime.error } };
+    runtime: { active: value.runtime.active, quiescing: value.runtime.quiescing, queryCount: Number(value.runtime.queryCount), error: value.runtime.error,
+      ...(value.runtime.deliveryActivity ? { deliveryActivity: value.runtime.deliveryActivity } : {}) } };
 }
 function notification(value: unknown, context: SessionRequest): ChangeNotification | null {
   if (!validateResponseNotification(value) || !contextMatches(value, context)) return null;

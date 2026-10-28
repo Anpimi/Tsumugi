@@ -1,4 +1,5 @@
 import { checkedInvoke } from "./ipc";
+import { validDeliveryActivity } from "./deliveryActivity";
 import type { DecisionClientAction, DecisionClientActivity, DecisionPageRequest } from "./generated/decisions.requests";
 import type { DecisionItem, DecisionPage } from "./generated/decisions.responses";
 import { DecisionSourceValues } from "./generated/decisions.enums";
@@ -70,6 +71,19 @@ function relatedItem(item: DecisionItem): boolean {
           : !["save", "selection", "merge"].includes(reference.requestKind) && (pending.slot !== "revocation" || reference.requestKind === "work-plan-control")
             && item.locale === null && item.targets.some(target => target.kind === "conversation" && pending.key.kind === "conversation" && target.conversationId === pending.key.conversationId));
     }
+    case "inspect-delivery-outcome": {
+      const evidence = item.evidence;
+      return item.source === "delivery-unknown" && item.sourceActionId === action.actionId
+        && item.decisionId === `delivery-unknown:${action.deliveryId}`
+        && item.state === "awaiting-recheck" && item.targetsComplete
+        && item.targets.some(target => target.kind === "delivery" && target.releaseId === action.releaseId && target.deliveryId === action.deliveryId)
+        && evidence?.kind === "delivery-outcome" && ["pending", "unknown"].includes(evidence.state)
+        && evidence.fileCount > 0 && evidence.unknownFileCount <= evidence.fileCount
+        && (evidence.state === "pending" ? evidence.unknownFileCount === 0 : evidence.unknownFileCount > 0)
+        && evidence.locales.length > 0 && evidence.locales.length <= evidence.fileCount
+        && new Set(evidence.locales).size === evidence.locales.length
+        && item.locale === (evidence.locales.length === 1 ? evidence.locales[0] : null);
+    }
     case "inspect-delivery": {
       const evidence = item.evidence;
       return item.source === "delivery-blocker" && item.locale === action.locale
@@ -103,6 +117,13 @@ function relatedPage(page: DecisionPage, request: DecisionPageRequest): boolean 
       && (request.query.locale == null || item.locale === null || item.locale === request.query.locale)
       && (index === 0 ? !request.cursor || item.decisionId > request.cursor.afterId : item.decisionId > page.items[index - 1]!.decisionId))
     && page.coverage.every(source => page.items.filter(item => item.source === source.source).length <= source.knownCount)
+    && new Set(page.deliveryActivity.map(job => job.jobId)).size === page.deliveryActivity.length
+    && (sources.includes("delivery-unknown") || page.deliveryActivity.length === 0)
+    && page.deliveryActivity.every(validDeliveryActivity)
+    && page.items.every(item => item.action.kind !== "inspect-delivery-outcome" || item.evidence?.kind === "delivery-outcome"
+      && (request.query.locale == null || item.evidence.locales.includes(request.query.locale))
+      && (item.evidence.state !== "pending" || !page.deliveryActivity.some(job => job.kind === "export"
+        && item.action.kind === "inspect-delivery-outcome" && job.actionId === item.action.actionId && job.releaseId === item.action.releaseId)))
     && new Set(page.executionActivity.map(item => item.attemptId)).size === page.executionActivity.length
     && page.items.every(item => item.action.kind !== "inspect-execution"
       || page.executionActivity.some(activity => item.action.kind === "inspect-execution" && activity.attemptId === item.action.attemptId))

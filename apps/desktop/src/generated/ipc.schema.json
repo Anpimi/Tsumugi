@@ -782,6 +782,46 @@
           }
         ]
       },
+      "DecisionDeliveryActivity": {
+        "additionalProperties": false,
+        "description": "The original Host job owns native IO. This observation does not recreate\nits directory selection or permit access to the destination.",
+        "properties": {
+          "actionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jobId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/DecisionDeliveryJobKind"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "jobId",
+          "kind",
+          "releaseId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "DecisionDeliveryJobKind": {
+        "enum": [
+          "preview",
+          "export",
+          "reconcile"
+        ],
+        "type": "string"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
@@ -957,6 +997,17 @@
         "properties": {
           "active": {
             "type": "boolean"
+          },
+          "deliveryActivity": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/DecisionDeliveryActivity"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Present only while the original native delivery job is owned. The shared\nruntime snapshot can invalidate readers even if outcome persistence fails."
           },
           "error": {
             "anyOf": [
