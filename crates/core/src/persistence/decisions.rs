@@ -7,6 +7,8 @@ use std::{cell::RefCell, collections::{BTreeMap, BTreeSet}};
 
 mod content;
 mod recovery;
+mod local;
+pub use local::*;
 #[cfg(test)]
 mod tests;
 
@@ -51,6 +53,7 @@ pub enum DecisionAction {
     ResolveSourceMapping { snapshot_id: ExecutionId, occurrence_id: ExecutionId, ordinal: u32 },
     InspectExecution { task_id: ExecutionId, attempt_id: ExecutionId, item_id: ExecutionId },
     InspectDelivery { locale: String },
+    InspectLocalRequest { reference: DecisionLocalRequestRef },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -63,6 +66,7 @@ pub enum DecisionState { Pending, Stale, AwaitingRecheck }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DecisionEvidence {
     Delivery { blocker_count: u32, reasons: Vec<super::EligibilityReason>, reasons_complete: bool },
+    LocalRequest { outcome: DecisionLocalOutcome, error_code: Option<ErrorCode> },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -92,7 +96,7 @@ pub enum DecisionCoverageState { Complete, Partial, Unavailable }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub enum DecisionCoverageReason { SourceLimit, SourceUnavailable, SourceNotImplemented }
+pub enum DecisionCoverageReason { SourceLimit, SourceUnavailable, SourceNotImplemented, LifecycleUnavailable }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -145,6 +149,7 @@ pub struct DecisionPage {
     pub total: Option<u32>,
     pub coverage: Vec<DecisionCoverage>,
     pub execution_activity: Vec<DecisionExecutionActivity>,
+    pub local_actions: Option<DecisionLocalBasis>,
 }
 
 pub(super) struct SourceProjection { pub items: Vec<DecisionItem>, pub complete: bool }
@@ -154,6 +159,13 @@ fn failure(code: ErrorCode, stage: &str) -> ExecutionError { ExecutionError::new
 impl ProjectStore {
     pub fn decision_page(&self, project: ExecutionId, query: &DecisionQuery,
         cursor: Option<&DecisionCursor>, limit: u32, active: impl Fn(ExecutionId) -> bool,
+    ) -> Result<DecisionPage, ExecutionError> {
+        self.decision_page_with_local_actions(project, query, cursor, limit, active, |_| Ok(None))
+    }
+
+    pub fn decision_page_with_local_actions(&self, project: ExecutionId, query: &DecisionQuery,
+        cursor: Option<&DecisionCursor>, limit: u32, active: impl Fn(ExecutionId) -> bool,
+        local: impl FnOnce(&ProjectStore) -> Result<Option<DecisionLocalProjection>, ExecutionError>,
     ) -> Result<DecisionPage, ExecutionError> {
         if limit == 0 || limit > 100 || query.sources.len() > DecisionSource::ALL.len()
             || query.sources.iter().collect::<BTreeSet<_>>().len() != query.sources.len()
@@ -170,16 +182,33 @@ impl ProjectStore {
             }
             let mut items = Vec::new();
             let mut coverage = Vec::new();
+            let mut local = Some(local);
+            let mut local_actions = None;
             let activity = RefCell::new(BTreeMap::new());
             let observe = |attempt| *activity.borrow_mut().entry(attempt).or_insert_with(|| active(attempt));
             for source in DecisionSource::ALL {
                 if !query.sources.is_empty() && !query.sources.contains(&source) { continue; }
-                if matches!(source, DecisionSource::AgentQuestion | DecisionSource::LocalActionRecovery) {
+                if source == DecisionSource::AgentQuestion {
                     coverage.push(DecisionCoverage { source, state: DecisionCoverageState::Unavailable,
                         known_count: 0, total: None, reason: Some(DecisionCoverageReason::SourceNotImplemented), error_code: None });
                     continue;
                 }
+                let mut local_reason = None;
+                let mut local_error = None;
                 let projections = match source {
+                    DecisionSource::LocalActionRecovery => match local.take().expect("one local source")(self) {
+                        Ok(Some(projection)) => {
+                            local_reason = projection.reason; local_error = projection.error_code;
+                            local_actions = Some(projection.basis);
+                            vec![Ok(SourceProjection { items: projection.items, complete: projection.complete })]
+                        }
+                        Ok(None) => {
+                            coverage.push(DecisionCoverage { source, state: DecisionCoverageState::Unavailable,
+                                known_count: 0, total: None, reason: Some(DecisionCoverageReason::SourceNotImplemented), error_code: None });
+                            continue;
+                        }
+                        Err(error) => vec![Err(error)],
+                    },
                     DecisionSource::TranslationCandidate | DecisionSource::ResourceProposal |
                     DecisionSource::HumanReview | DecisionSource::ReviewFinding => {
                         let locales = query.locale.clone().map(|locale| vec![locale]).unwrap_or_else(||
@@ -191,7 +220,7 @@ impl ProjectStore {
                 let mut rows = Vec::new();
                 let mut complete = true;
                 let mut available = false;
-                let mut error_code = None;
+                let mut error_code = local_error;
                 for projection in projections {
                     match projection {
                         Ok(projection) => { available = true; complete &= projection.complete; rows.extend(projection.items); }
@@ -208,7 +237,8 @@ impl ProjectStore {
                 coverage.push(DecisionCoverage { source,
                     state: if complete { DecisionCoverageState::Complete } else if available { DecisionCoverageState::Partial } else { DecisionCoverageState::Unavailable },
                     known_count, total: complete.then_some(known_count),
-                    reason: if error_code.is_some() { Some(DecisionCoverageReason::SourceUnavailable) }
+                    reason: if local_reason.is_some() { local_reason }
+                        else if error_code.is_some() { Some(DecisionCoverageReason::SourceUnavailable) }
                         else { (!complete).then_some(DecisionCoverageReason::SourceLimit) }, error_code });
                 items.extend(rows);
             }
@@ -216,7 +246,7 @@ impl ProjectStore {
             let changes = self.changes_since(Revision::new(0)?);
             let external: i64 = c.query_row("PRAGMA data_version", [], |row| row.get(0)).map_err(super::ledger::sql_error)?;
             let execution_activity = activity.into_inner().into_iter().map(|(attempt_id, active)| DecisionExecutionActivity { attempt_id, active }).collect::<Vec<_>>();
-            let basis = codec::digest(&codec::encode(&(project, query, changes.epoch, changes.sequence, external, &items, &coverage, &execution_activity), 16 * 1024 * 1024)?);
+            let basis = codec::digest(&codec::encode(&(project, query, changes.epoch, changes.sequence, external, &items, &coverage, &execution_activity, &local_actions), 16 * 1024 * 1024)?);
             if cursor.is_some_and(|cursor| cursor.basis != basis) {
                 return Err(failure(ErrorCode::DependencyConflict, "decision-read-changed"));
             }
@@ -230,7 +260,7 @@ impl ProjectStore {
             let page = items[start..end].to_vec();
             let next = (end < items.len()).then(|| DecisionCursor { basis: basis.clone(), after_id: page.last().expect("nonempty page").decision_id.clone() });
             Ok(DecisionPage { project_id: project, query: query.clone(), basis, items: page, next,
-                known_count, total: complete.then_some(known_count), coverage, execution_activity })
+                known_count, total: complete.then_some(known_count), coverage, execution_activity, local_actions })
         })
     }
 }

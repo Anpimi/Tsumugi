@@ -124,6 +124,59 @@ function harness() {
 
 describe("ConversationSession", () => {
   const confirmation: ProposalWorkPlanConfirmation = { effects: ["save-candidate"], checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] };
+  it("observes decision activity before dispatch and through resolution without replacing newer message input", async () => {
+    const h = harness(); await h.owner.initialize(); await h.owner.create(); const id = h.current().key.conversationId;
+    h.owner.edit(id, "Submitted A"); await h.owner.flush();
+    const idle = h.owner.getDecisionActivity(), business = deferred<void>(), resolving = deferred<void>(), resolveAck = deferred<void>();
+    const append = h.ports.append.getMockImplementation()!;
+    h.ports.append.mockImplementationOnce(async request => { await business.promise; return append(request); });
+    h.journal.acknowledge.mockImplementation(async kind => { if (kind === "resolve") { resolving.resolve(); await resolveAck.promise; } });
+    let acknowledgedBeforeDispatch = false;
+    const unsubscribe = h.owner.subscribe(() => {
+      const input = h.current();
+      if (!input.journalBusy && input.head.value?.pending && h.ports.append.mock.calls.length === 0) {
+        acknowledgedBeforeDispatch = true;
+        expect(h.owner.getDecisionActivity().actions).toEqual([{ key: { kind: "conversation", conversationId: id },
+          slot: "primary", actionId: input.head.value.pending.kind === "planning" ? input.head.value.pending.request.consent.actionId : input.head.value.pending.request.actionId,
+          submittedSeq: input.head.value.pending.submittedSeq }]);
+      }
+    });
+    const saving = h.owner.append(id); await vi.waitFor(() => expect(h.ports.append).toHaveBeenCalledOnce());
+    expect(acknowledgedBeforeDispatch).toBe(true);
+    const active = h.owner.getDecisionActivity();
+    expect(BigInt(active.revision)).toBeGreaterThan(BigInt(idle.revision)); expect(active.ownerId).toBe(h.current().head.writerId);
+    h.owner.edit(id, "Newer B"); expect(h.owner.getDecisionActivity()).toBe(active);
+    business.resolve(); await resolving.promise;
+    expect(h.owner.getDecisionActivity()).toBe(active); expect(h.current().value.text).toBe("Newer B");
+    expect(h.heads.get(id)?.value?.pending).toBeNull();
+    resolveAck.resolve(); await saving;
+    expect(h.owner.getDecisionActivity().actions).toEqual([]);
+    expect(h.current().value).toMatchObject({ text: "Newer B", pending: null }); unsubscribe();
+  });
+
+  it("retires decision activity while a late old submission leaves reopened unknown input visible during pure checks", async () => {
+    const h = harness(); await h.owner.initialize(); await h.owner.create(); const id = h.current().key.conversationId;
+    h.owner.edit(id, "Submitted A"); await h.owner.flush();
+    const business = deferred<void>(), append = h.ports.append.getMockImplementation()!;
+    h.ports.append.mockImplementationOnce(async request => { await business.promise; return append(request); });
+    const saving = h.owner.append(id); await vi.waitFor(() => expect(h.ports.append).toHaveBeenCalledOnce());
+    const active = h.owner.getDecisionActivity(); h.owner.retire(); const retired = h.owner.getDecisionActivity();
+    expect(retired.actions).toEqual([]); expect(BigInt(retired.revision)).toBeGreaterThan(BigInt(active.revision));
+    expect(h.current().busy).toBe("submit");
+    const reopened = h.make(); await reopened.initialize(); await reopened.open(id);
+    const unknown = reopened.getDecisionActivity();
+    expect(unknown.ownerId).not.toBe(retired.ownerId); expect(unknown.actions).toEqual([]);
+    expect(reopened.getSnapshot().inputs.get(id)?.outcome).toBe("unknown");
+    const checking = reopened.check(id);
+    expect(reopened.getSnapshot().inputs.get(id)?.busy).toBe("check");
+    expect(reopened.getDecisionActivity()).toBe(unknown); await checking;
+    expect(reopened.getDecisionActivity()).toBe(unknown);
+    business.resolve(); await saving;
+    expect(h.owner.getDecisionActivity()).toBe(retired); expect(reopened.getDecisionActivity()).toBe(unknown);
+    expect(reopened.getSnapshot().inputs.get(id)?.value.pending?.kind).toBe("append");
+    expect(h.ports.append).toHaveBeenCalledOnce(); reopened.retire();
+  });
+
   async function readyWorkPlan(prepare = true) {
     const h = harness(); await h.owner.initialize(); await h.owner.create();
     const conversationId = h.current().key.conversationId, fixture = conversationWorkPlanFixture({ ...context, conversationId });
@@ -342,6 +395,31 @@ describe("ConversationSession", () => {
   describe("independent run revocations", () => {
     const completeControl = (slot: ConversationDraftRevocation) => ({ ...context, ...slot.request, confirmed: false,
       checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], expiresAt: null });
+    it("observes primary and revocation decision activity independently through concurrent submissions", async () => {
+      const h = await readyRun(), started = deferred<string>(), paused = deferred<void>();
+      const control = h.ports.controlPlan.getMockImplementation()!;
+      h.ports.startPlan.mockReturnValueOnce(started.promise);
+      h.ports.controlPlan.mockImplementationOnce(async request => { await paused.promise; return control(request); });
+      const starting = h.owner.startRun(h.link, h.status);
+      await vi.waitFor(() => expect(h.ports.startPlan).toHaveBeenCalledOnce());
+      const pausing = h.owner.controlRun(h.link, h.status, "pause");
+      await vi.waitFor(() => expect(h.ports.controlPlan).toHaveBeenCalledOnce());
+      const pending = h.current().value.pending, slot = h.current().value.revocations?.[0];
+      if (pending?.kind !== "work-plan-start" || !slot) throw new Error("Missing simultaneous original requests");
+      const active = h.owner.getDecisionActivity();
+      expect(active.actions).toEqual(expect.arrayContaining([
+        { key: { kind: "conversation", conversationId: h.conversationId }, slot: "primary", actionId: pending.request.actionId, submittedSeq: pending.submittedSeq },
+        { key: { kind: "conversation", conversationId: h.conversationId }, slot: "revocation", actionId: slot.request.actionId, submittedSeq: slot.submittedSeq },
+      ]));
+      expect(active.actions).toHaveLength(2);
+      h.owner.edit(h.conversationId, "B while both actions are submitting"); expect(h.owner.getDecisionActivity()).toBe(active);
+      started.resolve(h.runAttemptId); await starting;
+      expect(h.owner.getDecisionActivity().actions).toEqual([{ key: { kind: "conversation", conversationId: h.conversationId },
+        slot: "revocation", actionId: slot.request.actionId, submittedSeq: slot.submittedSeq }]);
+      paused.resolve(); await pausing;
+      expect(h.owner.getDecisionActivity().actions).toEqual([]);
+      expect(h.current().value).toMatchObject({ text: "B while both actions are submitting", pending: null });
+    });
     it.each(["pause", "stop", "take-over"] as const)("dispatches %s only after its durable acknowledgement while the original start is still awaiting a response", async command => {
       const h = await readyRun(), started = deferred<string>(), durable = deferred<void>();
       h.ports.startPlan.mockReturnValueOnce(started.promise);

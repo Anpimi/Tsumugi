@@ -140,6 +140,7 @@ fn all_languages_delivery_keeps_exact_counts_and_marks_reason_samples() {
                 assert_eq!(reasons, expected.blockers);
                 assert!(!reasons_complete);
             }
+            other => panic!("Expected delivery evidence, got {other:?}"),
         }
     }
 }

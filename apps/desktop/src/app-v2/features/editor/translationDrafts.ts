@@ -9,6 +9,7 @@ import { translationCommands, type TranslationCandidateSliceRow, type Translatio
 import { readCandidateSliceRows } from "../candidates/candidateBatchReads";
 import type { LeaveIntent, LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
+import { DecisionActivityMemo } from "../../workspace/decisionActivity";
 
 export interface DraftFailure {
   kind: "read" | "journal" | "journal-conflict" | "confirmation" | "recovery" | "basis-conflict";
@@ -70,6 +71,7 @@ export interface CandidateBatchStage { row: TranslationCandidateSliceRow; captur
 export interface CandidateBatchStageResult extends RevisionStageResult { key: DraftKey }
 interface RecordState {
   entry: DraftEntry;
+  submitting: DraftPending | null;
   needsWrite: boolean;
   writing: boolean;
   scheduled: boolean;
@@ -122,6 +124,7 @@ export class TranslationDrafts {
   private readonly context: SessionRequest;
   private readonly ports: TranslationDraftPorts;
   private readonly writerId: string;
+  private readonly decisionActivity: DecisionActivityMemo;
   private readonly kernel = new DraftKernel();
   private readonly records = new Map<string, RecordState>();
   private readonly opening = new Map<string, Promise<DraftEntry | undefined>>();
@@ -141,9 +144,11 @@ export class TranslationDrafts {
       comparison: arenaCommands.comparison, merge: arenaCommands.merge, recoverMerge: arenaCommands.recoverMerge,
       writerId: () => crypto.randomUUID(), ...options.ports };
     this.writerId = this.ports.writerId();
+    this.decisionActivity = new DecisionActivityMemo(this.writerId);
   }
 
   getSnapshot = () => this.state;
+  getDecisionActivity = () => this.decisionActivity.getSnapshot();
   /** Existing input generation; opening a retained Host draft does not advance it. */
   inputVersion = () => this.inputRevision;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -164,9 +169,16 @@ export class TranslationDrafts {
   }
   private notify(patch: Partial<TranslationDraftSnapshot> = {}) {
     if (!this.kernel.live) return;
+    this.observeDecisionActivity();
     this.state = { ...this.state, ...patch, summaries: this.summaries(patch.summaries ?? this.state.summaries),
       revision: this.state.revision + 1, mutationReserved: this.kernel.reserved };
     this.listeners.forEach(listener => listener());
+  }
+  private observeDecisionActivity() {
+    this.decisionActivity.observe(this.kernel.live ? [...this.records.values()].flatMap(record => record.submitting ? [{
+      key: { kind: "translation" as const, unitId: record.entry.key.unitId, locale: record.entry.key.locale },
+      slot: "primary" as const, actionId: record.submitting.request.actionId, submittedSeq: record.submitting.submittedSeq,
+    }] : []) : [], !this.kernel.live);
   }
   private update(record: RecordState, patch: Partial<DraftEntry> = {}) {
     if (!this.kernel.live) return;
@@ -200,7 +212,7 @@ export class TranslationDrafts {
     if (record) { this.observe(record, view); return record.entry; }
     const value = view.head.value ?? (view.current.kind === "current"
       ? { basis: view.current.basis, text: view.current.basis.text ?? "", editSeq: "0", pending: null } : null);
-    const created: RecordState = { needsWrite: false, writing: false, scheduled: false, flush: null, reading: null, writeAttempt: null, clearAttempt: null,
+    const created: RecordState = { submitting: null, needsWrite: false, writing: false, scheduled: false, flush: null, reading: null, writeAttempt: null, clearAttempt: null,
       entry: { key: { ...key }, head: view.head, value, current: view.current,
         durableSeq: view.head.value?.editSeq ?? null, journalPending: false, busy: false, checking: false,
         recovery: value?.pending ? "unchecked" : null, replayAllowed: false, failure: null, currentFailure: null,
@@ -538,11 +550,12 @@ export class TranslationDrafts {
         : start.merge ? { kind: "merge", request: { ...request, text: start.text }, merge: { contributors: [...start.merge.contributors], expectedBasis: start.merge.expectedBasis }, submittedSeq: start.editSeq }
           : { kind: "save", request: { ...request, text: start.text }, submittedSeq: start.editSeq };
       record.needsWrite = true;
+      record.submitting = pending;
       this.update(record, { value: { ...record.entry.value!, pending }, recovery: "unchecked" });
       if (!await this.flush(key) || !this.kernel.owns(token)) return unconfirmed();
       return await this.dispatch(record, pending, false);
-    } catch (cause) { this.update(record, { failure: { kind: "confirmation", cause } }); return unconfirmed(); }
-    finally { this.releaseMutation(token); this.update(record, { busy: false }); }
+    } catch (cause) { record.submitting = null; this.update(record, { failure: { kind: "confirmation", cause } }); return unconfirmed(); }
+    finally { record.submitting = null; this.releaseMutation(token); this.update(record, { busy: false }); }
   }
 
   private async dispatch(record: RecordState, pending: DraftPending, recovering: boolean): Promise<ConfirmationResult> {
@@ -555,6 +568,7 @@ export class TranslationDrafts {
           : await this.ports.select({ ...pending.request, sessionToken: this.context.sessionToken });
     } catch (cause) {
       if (!this.kernel.live || record.entry.value?.pending !== pending) return unconfirmed();
+      record.submitting = null;
       if (!recovering && !hasUnknownOutcome(cause)) {
         record.needsWrite = true;
         this.update(record, { value: { ...record.entry.value, pending: null }, recovery: null, failure: { kind: "confirmation", cause } });
@@ -595,11 +609,12 @@ export class TranslationDrafts {
     const record = this.records.get(identity(key)), pending = record?.entry.value?.pending;
     if (!this.kernel.live || !record || !pending || record.entry.busy || !record.entry.replayAllowed) return unconfirmed();
     const token = this.kernel.reserve(); if (!token) return unconfirmed();
+    record.submitting = pending;
     this.update(record, { busy: true, replayAllowed: false });
     try {
       if (!await this.flush(key) || !this.kernel.owns(token)) return unconfirmed();
       return await this.dispatch(record, pending, true);
-    } finally { this.releaseMutation(token); this.update(record, { busy: false }); }
+    } finally { record.submitting = null; this.releaseMutation(token); this.update(record, { busy: false }); }
   }
 
   private async settle(record: RecordState, pending: DraftPending, receipt: TranslationSaveReceipt | TranslationSelection): Promise<ConfirmationResult> {
@@ -707,6 +722,7 @@ export class TranslationDrafts {
     this.retiredReservation = this.kernel.reserved;
     this.navigationReservation = null;
     this.kernel.retire();
+    this.observeDecisionActivity();
     this.state = { ...this.state, retired: true, revision: this.state.revision + 1, mutationReserved: false };
     this.listeners.forEach(listener => listener());
   }

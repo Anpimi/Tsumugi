@@ -13,6 +13,8 @@ use std::collections::BTreeSet;
 mod candidates;
 mod candidate_slice;
 mod recovery;
+#[cfg(test)]
+mod observation_tests;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
 pub use candidate_slice::{TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext, TranslationCandidateState};
 pub(super) use candidate_slice::pending_candidates_in;
@@ -1647,16 +1649,16 @@ impl ProjectStore {
         Ok(selection)
     }
 
-    /// Confirm a manual save using its complete original request, without
-    /// requiring the old source or target locale to remain current.
-    pub fn translation_save_receipt_by_request(
+    /// Observe an exact original manual save without reconciling uncertainty or
+    /// changing planning authority. Historical source and locale remain valid.
+    pub fn translation_save_request_observation(
         &self,
         request: &SaveTranslationRevision,
     ) -> Result<Option<TranslationSaveReceipt>, ExecutionError> {
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
-        let receipt = super::review::read_snapshot(connection, |connection| {
+        super::review::read_snapshot(connection, |connection| {
             if !super::content::unit_owned_by_project(
                 connection,
                 request.project_id,
@@ -1676,23 +1678,32 @@ impl ProjectStore {
                 return Err(error(ErrorCode::ResultMismatch, "translation-action"));
             }
             save_receipt_for_request_in(connection, request, &selection).map(Some)
-        });
+        })
+    }
+
+    /// Explicit recovery retains its original reconciliation behavior after a
+    /// successful exact request observation, including an absent receipt.
+    pub fn translation_save_receipt_by_request(
+        &self,
+        request: &SaveTranslationRevision,
+    ) -> Result<Option<TranslationSaveReceipt>, ExecutionError> {
+        let receipt = self.translation_save_request_observation(request);
         if receipt.is_ok() && self.is_reconciling() {
             self.reconcile_execution()?;
         }
         receipt
     }
 
-    /// Confirm a selection using its complete original request, even when a
-    /// newer selection has since become current.
-    pub fn translation_selection_by_request(
+    /// Observe an exact original selection without settling uncertainty,
+    /// including when a newer selection has since become current.
+    pub fn translation_selection_request_observation(
         &self,
         request: &SelectTranslationRevision,
     ) -> Result<Option<TranslationSelection>, ExecutionError> {
         let connection = self
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
-        let selection = super::review::read_snapshot(connection, |connection| {
+        super::review::read_snapshot(connection, |connection| {
             if !super::content::unit_owned_by_project(
                 connection,
                 request.project_id,
@@ -1718,7 +1729,16 @@ impl ProjectStore {
                 return Err(error(ErrorCode::CorruptLedger, "translation-selection-receipt"));
             }
             Ok(Some(selection))
-        });
+        })
+    }
+
+    /// Explicit recovery shares the pure receipt checks and then reconciles an
+    /// uncertain session only when those checks succeeded.
+    pub fn translation_selection_by_request(
+        &self,
+        request: &SelectTranslationRevision,
+    ) -> Result<Option<TranslationSelection>, ExecutionError> {
+        let selection = self.translation_selection_request_observation(request);
         if selection.is_ok() && self.is_reconciling() {
             self.reconcile_execution()?;
         }
@@ -1740,12 +1760,13 @@ impl ProjectStore {
             save_receipt_for_request_in(connection, request, selection)
         })
     }
-    /// Read a historical merge without repeating current target/basis admission.
-    pub fn arena_merge_action_read(
+    /// Observe a historical merge and its exact original contributor binding,
+    /// without reconciling uncertainty or repeating current target admission.
+    pub fn arena_merge_request_observation(
         &self, request: &SaveTranslationRevision, merge: &super::arena::MergeBasis,
     ) -> Result<Option<ArenaMergeActionRead>, ExecutionError> {
         let connection=self.connection().map_err(|_|error(ErrorCode::StorageFailed,"translation-read"))?;
-        let found=super::review::read_snapshot(connection,|c| {
+        super::review::read_snapshot(connection,|c| {
             if !super::content::unit_owned_by_project(c,request.project_id,request.unit_id)? {
                 return Err(error(ErrorCode::Unauthorized,"translation-project"));
             }
@@ -1799,7 +1820,14 @@ impl ProjectStore {
                 return Err(error(ErrorCode::CorruptLedger,"arena-merge-contributor"));
             }
             Ok(Some(ArenaMergeActionRead {request:request.clone(),merge:merge.clone(),receipt:selection}))
-        })?;
+        })
+    }
+    /// Explicit historical merge recovery keeps its original reconciliation
+    /// behavior after the same pure request and receipt-chain checks.
+    pub fn arena_merge_action_read(
+        &self, request: &SaveTranslationRevision, merge: &super::arena::MergeBasis,
+    ) -> Result<Option<ArenaMergeActionRead>, ExecutionError> {
+        let found=self.arena_merge_request_observation(request,merge)?;
         if self.is_reconciling() {self.reconcile_execution()?;}
         Ok(found)
     }

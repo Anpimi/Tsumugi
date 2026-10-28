@@ -1,11 +1,42 @@
 import { checkedInvoke } from "./ipc";
-import type { DecisionPageRequest } from "./generated/decisions.requests";
+import type { DecisionClientAction, DecisionClientActivity, DecisionPageRequest } from "./generated/decisions.requests";
 import type { DecisionItem, DecisionPage } from "./generated/decisions.responses";
 import { DecisionSourceValues } from "./generated/decisions.enums";
 import { validateRequestPage, validateResponsePage } from "./generated/decisions.validators";
 
 export type { DecisionPageRequest } from "./generated/decisions.requests";
 export type { DecisionAction, DecisionCoverage, DecisionItem, DecisionPage, DecisionSource, DecisionTarget } from "./generated/decisions.responses";
+
+const actionIdentity = (action: DecisionClientAction) => JSON.stringify([action.key.kind,
+  action.key.kind === "translation" ? [action.key.unitId, action.key.locale] : action.key.conversationId,
+  action.slot, action.actionId, action.submittedSeq]);
+export const decisionActivityIdentity = (activity: readonly DecisionClientActivity[] | null | undefined) => activity == null ? "unavailable"
+  : JSON.stringify(activity.map(owner => [owner.ownerId, owner.revision, owner.actions.map(actionIdentity)]));
+
+function relatedLocalActions(page: DecisionPage, request: DecisionPageRequest): boolean {
+  const basis = page.localActions, coverage = page.coverage.find(source => source.source === "local-action-recovery");
+  if (basis === null) return !coverage || coverage.state === "unavailable";
+  if (!coverage || basis.journalBasis.length !== 64
+    || decisionActivityIdentity(basis.activity) !== decisionActivityIdentity(request.activity)
+    || new Set(basis.observations.map(row => actionIdentity(row.reference.action))).size !== basis.observations.length
+    || (!basis.journalComplete && coverage.state === "complete")
+    || (basis.activity === null && basis.observations.some(row => row.outcome === "receipt-absent") && coverage.state === "complete")) return false;
+  const active = new Set(basis.activity?.flatMap(owner => owner.actions.map(actionIdentity)) ?? []);
+  const actionable = basis.observations.filter(row => ["mismatch", "unavailable"].includes(row.outcome)
+    || row.outcome === "receipt-absent" && basis.activity !== null);
+  return coverage.knownCount === actionable.length
+    && basis.observations.every(row => ((row.outcome === "mismatch" || row.outcome === "unavailable") === (row.errorCode !== null))
+      && (row.outcome !== "in-flight" || active.has(actionIdentity(row.reference.action)))
+      && (row.outcome !== "receipt-absent" || !active.has(actionIdentity(row.reference.action))))
+    && page.items.every(item => {
+      if (item.action.kind !== "inspect-local-request") return true;
+      const key = actionIdentity(item.action.reference.action);
+      const observation = actionable.find(row => actionIdentity(row.reference.action) === key);
+      return observation !== undefined && observation.reference.requestKind === item.action.reference.requestKind
+        && item.evidence?.kind === "local-request" && item.evidence.outcome === observation.outcome
+        && item.evidence.errorCode === observation.errorCode;
+    });
+}
 
 function relatedItem(item: DecisionItem): boolean {
   if (!item.decisionId.startsWith(`${item.source}:`) || item.basis.length !== 64 || item.targets.length === 0) return false;
@@ -28,6 +59,17 @@ function relatedItem(item: DecisionItem): boolean {
         && item.targets.some(target => target.kind === "source-occurrence" && target.snapshotId === action.snapshotId && target.occurrenceId === action.occurrenceId);
     case "inspect-execution":
       return item.source === "execution-unknown" && item.evidence === null;
+    case "inspect-local-request": {
+      const reference = action.reference, pending = reference.action;
+      return item.source === "local-action-recovery" && item.sourceActionId === pending.actionId
+        && item.evidence?.kind === "local-request" && ["receipt-absent", "mismatch", "unavailable"].includes(item.evidence.outcome)
+        && item.state === (item.evidence.outcome === "receipt-absent" ? "awaiting-recheck" : "stale")
+        && (pending.key.kind === "translation"
+          ? pending.slot === "primary" && ["save", "selection", "merge"].includes(reference.requestKind)
+            && item.locale === pending.key.locale && item.targets.some(target => target.kind === "entry" && pending.key.kind === "translation" && target.unitId === pending.key.unitId)
+          : !["save", "selection", "merge"].includes(reference.requestKind) && (pending.slot !== "revocation" || reference.requestKind === "work-plan-control")
+            && item.locale === null && item.targets.some(target => target.kind === "conversation" && pending.key.kind === "conversation" && target.conversationId === pending.key.conversationId));
+    }
     case "inspect-delivery": {
       const evidence = item.evidence;
       return item.source === "delivery-blocker" && item.locale === action.locale
@@ -56,6 +98,7 @@ function relatedPage(page: DecisionPage, request: DecisionPageRequest): boolean 
           && (source.state !== "unavailable" || source.knownCount === 0)))
     && page.knownCount === page.coverage.reduce((sum, source) => sum + source.knownCount, 0)
     && page.total === (complete ? page.knownCount : null)
+    && relatedLocalActions(page, request)
     && page.items.every((item, index) => sources.includes(item.source) && relatedItem(item)
       && (request.query.locale == null || item.locale === null || item.locale === request.query.locale)
       && (index === 0 ? !request.cursor || item.decisionId > request.cursor.afterId : item.decisionId > page.items[index - 1]!.decisionId))

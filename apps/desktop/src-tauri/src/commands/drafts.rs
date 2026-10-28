@@ -2,8 +2,10 @@
 mod store;
 mod types;
 mod conversation;
+mod settlement;
+pub(super) use settlement::observe_conversation_target;
 
-pub(super) use store::DraftStore;
+pub(super) use store::{DraftStore, PendingActionRef, PendingJournalKey, PendingJournalSlot, PendingSnapshot};
 pub use types::*;
 pub use conversation::*;
 

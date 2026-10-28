@@ -6,6 +6,7 @@ import type { SessionRequest } from "../../../executionCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
+import { DecisionActivityMemo, type DecisionClientAction } from "../../workspace/decisionActivity";
 import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { checkPlanningSelection, planningSelectionMatchesPreview, planningSelectionScope } from "./planningSelection";
 import { reviewCommands } from "../../../reviewCommands";
@@ -75,13 +76,14 @@ export interface ConversationSessionSnapshot {
   next: ConversationDraftKey | null;
   retired: boolean;
 }
-interface RecordState { input: ConversationInput; job: JournalJob | null; writing: Promise<boolean> | null; action: boolean; revoking: Set<string>; revocationEpoch: Map<string, number> }
+interface RecordState { input: ConversationInput; job: JournalJob | null; writing: Promise<boolean> | null; action: boolean; submitting: ConversationDraftPending | null; revoking: Set<string>; revocationEpoch: Map<string, number> }
 const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
 
 /** Retains local input and original requests for one project session. It never restores permission. */
 export class ConversationSession {
   private readonly ports: Ports;
   private readonly writerId: string;
+  private readonly decisionActivity: DecisionActivityMemo;
   private readonly kernel = new DraftKernel();
   private readonly records = new Map<string, RecordState>();
   private readonly listeners = new Set<() => void>();
@@ -103,10 +105,22 @@ export class ConversationSession {
       captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
+    this.decisionActivity = new DecisionActivityMemo(this.writerId);
   }
   getSnapshot = () => this.state;
+  getDecisionActivity = () => this.decisionActivity.getSnapshot();
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(patch: Partial<ConversationSessionSnapshot> = {}) {
+    const actions: DecisionClientAction[] = [];
+    if (this.kernel.live) for (const record of this.records.values()) {
+      const key = { kind: "conversation" as const, conversationId: record.input.key.conversationId }, pending = record.submitting;
+      if (pending) actions.push({ key, slot: "primary", actionId: pending.kind === "planning" ? pending.request.consent.actionId : pending.request.actionId,
+        submittedSeq: pending.submittedSeq });
+      for (const slot of record.input.value.revocations ?? []) if (record.revoking.has(slot.request.actionId)
+        && record.input.revocationStates.get(slot.request.actionId)?.busy === "submit")
+        actions.push({ key, slot: "revocation", actionId: slot.request.actionId, submittedSeq: slot.submittedSeq });
+    }
+    this.decisionActivity.observe(actions, !this.kernel.live);
     this.state = { ...this.state, ...patch, inputs: new Map([...this.records].map(([id, record]) => [id, record.input])) };
     this.listeners.forEach(listener => listener());
   }
@@ -138,7 +152,7 @@ export class ConversationSession {
       const value = head.value ?? { text: "", editSeq: "0", pending: null };
       this.records.set(conversationId, { input: { key, head, value, dirty: false, journalBusy: false, revocationStates: new Map((value.revocations ?? []).map(slot => [slot.request.actionId, { busy: null, outcome: "unknown", failure: null }])), busy: null, outcome: value.pending ? "unknown" : null, notice: null, failure: null, planning: planningInput(),
         proposalEditorId: value.proposalEdits?.[0]?.proposalId ?? null, proposalFailure: null, capturedResultIds: [], workPlan: workPlanInput(),
-        readyRuns: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, revoking: new Set(), revocationEpoch: new Map() });
+        readyRuns: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, submitting: null, revoking: new Set(), revocationEpoch: new Map() });
       this.publish(this.state.activeId === conversationId ? { inputFailure: null } : {}); return true;
     }).catch(error => { if (this.kernel.live && this.state.activeId === conversationId) this.publish({ inputFailure: { conversationId, cause: commandFailure(error) } }); return false;
     }).finally(() => { this.opening.delete(conversationId); });
@@ -150,7 +164,7 @@ export class ConversationSession {
     const pending: ConversationDraftPending = { kind: "create", submittedSeq: "1", request: { ...key, actionId: this.ports.identity(), title: null } };
     const record: RecordState = { input: { key, head: { key, revision: "0", writerId: null, value: null }, value: { text: "", editSeq: "1", pending },
       dirty: true, journalBusy: false, revocationStates: new Map(), busy: null, outcome: null, notice: null, failure: null, planning: planningInput(), proposalEditorId: null, proposalFailure: null, capturedResultIds: [], workPlan: workPlanInput(),
-      readyRuns: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, revoking: new Set(), revocationEpoch: new Map() };
+      readyRuns: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, submitting: null, revoking: new Set(), revocationEpoch: new Map() };
     this.records.set(conversationId, record); this.changed++; this.publish({ activeId: conversationId });
     await this.submit(record);
   }
@@ -235,10 +249,11 @@ export class ConversationSession {
       await this.performLocal(record);
     } catch (error) {
       if (!this.kernel.live) return;
+      record.submitting = null;
       if (record.input.value.pending) this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
       else if (live()) this.update(record, { proposalFailure: { proposalId, cause: commandFailure(error) } });
     } finally {
-      record.action = false; if (this.kernel.live) { this.update(record, { busy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+      record.action = false; record.submitting = null; if (this.kernel.live) { this.update(record, { busy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
     }
   }
   beginWorkPlan(revision: ConversationProposalRevision) {
@@ -330,6 +345,7 @@ export class ConversationSession {
       const pending: ConversationDraftPending = { kind: "proposal-work-plan", submittedSeq: editSeq, request: {
         actionId: this.ports.identity(), proposal: structuredClone(prepared.proposal), planId: prepared.plan.planId, planDigest: prepared.plan.digest,
         confirmed: true, ...structuredClone(confirmation), expiresAt: String(Math.floor(this.ports.now() / 1000) + before.minutes * 60) } };
+      record.submitting = pending;
       this.changed++;
       this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending },
         dirty: true, outcome: null, notice: null, workPlan: { ...record.input.workPlan, consent: false } });
@@ -343,10 +359,11 @@ export class ConversationSession {
       await this.resolve(record, pending);
     } catch (error) {
       if (!this.kernel.live) return;
+      record.submitting = null;
       if (record.input.value.pending) this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
       else if (live()) this.update(record, { workPlan: { ...record.input.workPlan, failure: commandFailure(error) } });
     } finally {
-      record.action = false;
+      record.action = false; record.submitting = null;
       if (this.kernel.live) { this.update(record, { workPlan: { ...record.input.workPlan, busy: null } }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
     }
   }
@@ -451,9 +468,9 @@ export class ConversationSession {
     } finally { this.finishRevocation(record, actionId); }
   }
   private async performRevocation(record: RecordState, slot: ConversationDraftRevocation, current: () => boolean) {
+    this.updateRevocation(record, slot.request.actionId, { busy: "submit", failure: null });
     if (!await this.persist(record) || !this.kernel.live || !current()) return;
     if (!(record.input.value.revocations ?? []).some(value => same(value, slot))) return;
-    this.updateRevocation(record, slot.request.actionId, { busy: "submit", failure: null });
     await this.ports.controlPlan({ ...this.context, ...revocationControlRequest(slot.request) });
     if (!this.kernel.live) return;
     this.onRecorded();
@@ -494,6 +511,7 @@ export class ConversationSession {
     } finally { this.finishRevocation(record, actionId); }
   }
   private queueRun(record: RecordState, pending: ConversationRunPending, editSeq: string) {
+    record.submitting = pending;
     this.changed++;
     this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending },
       dirty: true, outcome: null, notice: null, failure: null });
@@ -514,11 +532,12 @@ export class ConversationSession {
   }
   private runFailed(record: RecordState, planId: string, error: unknown) {
     if (!this.kernel.live) return;
+    record.submitting = null;
     if (isRunPending(record.input.value.pending)) this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
     else this.update(record, { runFailure: { planId, cause: commandFailure(error) } });
   }
   private finishRun(record: RecordState) {
-    record.action = false;
+    record.action = false; record.submitting = null;
     if (this.kernel.live) { this.update(record, { busy: null, runBusy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
   }
   canRetryRun(conversationId: string) {
@@ -550,6 +569,7 @@ export class ConversationSession {
       if (found.outcome.kind !== "pending" || found.outcome.replay !== "explicit-same-request") {
         this.update(record, { outcome: "blocked" }); return;
       }
+      record.submitting = pending; this.publish();
       await this.performRun(record, pending, current);
     } catch (error) { this.runFailed(record, pending.request.planId, error);
     } finally { this.finishRun(record); }
@@ -639,6 +659,7 @@ export class ConversationSession {
         expiresAtMs: String(this.ports.now() + Math.min(prepared.preview.config.timeoutSeconds, 120) * 1000), shareMessages: true, shareUnits: prepared.preview.scope.kind === "units" };
       const pending: ConversationDraftPending = { kind: "planning", preparationId: prepared.preparationId, submittedSeq: editSeq,
         request: { ...record.input.key, consent } };
+      record.submitting = pending;
       this.changed++;
       this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending }, dirty: true, outcome: null, notice: null,
         planning: { ...record.input.planning, prepared: null, consent: false } });
@@ -650,10 +671,11 @@ export class ConversationSession {
       await this.resolve(record, pending);
     } catch (error) {
       if (!this.kernel.live) return;
+      record.submitting = null;
       if (record.input.value.pending?.kind === "planning") this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
       else if (record.input.planning.sequence === before.sequence) this.update(record, { planning: { ...record.input.planning, prepared: null, consent: false, failure: { kind: "request", cause: commandFailure(error) } } });
     } finally {
-      record.action = false;
+      record.action = false; record.submitting = null;
       if (this.kernel.live) {
         this.update(record, { planning: { ...record.input.planning, busy: null } });
         if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record);
@@ -745,6 +767,7 @@ export class ConversationSession {
     return this.resolveTarget(record, { kind: "pending", pending }, disposition);
   }
   private async performLocal(record: RecordState) {
+    record.submitting = record.input.value.pending; this.publish();
     if (!await this.persist(record) || !this.kernel.live) return;
     const pending = record.input.value.pending; if (!pending || !locallyReplayableConversationRequest(pending)) return;
     this.update(record, { busy: "submit", failure: null });
@@ -762,8 +785,8 @@ export class ConversationSession {
     record.action = true;
     try {
       await this.performLocal(record);
-    } catch (error) { this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
-    } finally { record.action = false; if (this.kernel.live && record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+    } catch (error) { record.submitting = null; this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
+    } finally { record.action = false; record.submitting = null; if (this.kernel.live) { this.publish(); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); } }
   }
   async check(conversationId: string) {
     const record = this.records.get(conversationId), pending = record?.input.value.pending;

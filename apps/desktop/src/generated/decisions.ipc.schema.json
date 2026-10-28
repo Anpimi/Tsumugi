@@ -2,6 +2,54 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "DecisionClientAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "key": {
+            "$ref": "#/definitions/DecisionJournalKey"
+          },
+          "slot": {
+            "$ref": "#/definitions/DecisionJournalSlot"
+          },
+          "submittedSeq": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "key",
+          "slot",
+          "actionId",
+          "submittedSeq"
+        ],
+        "type": "object"
+      },
+      "DecisionClientActivity": {
+        "additionalProperties": false,
+        "description": "Captured from the original live Session owners. Consumers discard a response\nif these observations have changed; these are not permissions or receipts.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/definitions/DecisionClientAction"
+            },
+            "type": "array"
+          },
+          "ownerId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "ownerId",
+          "revision",
+          "actions"
+        ],
+        "type": "object"
+      },
       "DecisionCursor": {
         "additionalProperties": false,
         "properties": {
@@ -18,9 +66,68 @@
         ],
         "type": "object"
       },
+      "DecisionJournalKey": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation",
+                "type": "string"
+              },
+              "locale": {
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId",
+              "locale"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "conversation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DecisionJournalSlot": {
+        "enum": [
+          "primary",
+          "revocation"
+        ],
+        "type": "string"
+      },
       "DecisionPageRequest": {
         "additionalProperties": false,
         "properties": {
+          "activity": {
+            "description": "None means no current Session lifecycle observation is available.",
+            "items": {
+              "$ref": "#/definitions/DecisionClientActivity"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "cursor": {
             "anyOf": [
               {
@@ -93,6 +200,10 @@
         "type": "string"
       },
       "ExecutionId": {
+        "type": "string"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
         "type": "string"
       }
     },
@@ -799,8 +910,73 @@
               "locale"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "inspect-local-request",
+                "type": "string"
+              },
+              "reference": {
+                "$ref": "#/definitions/DecisionLocalRequestRef"
+              }
+            },
+            "required": [
+              "kind",
+              "reference"
+            ],
+            "type": "object"
           }
         ]
+      },
+      "DecisionClientAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "key": {
+            "$ref": "#/definitions/DecisionJournalKey"
+          },
+          "slot": {
+            "$ref": "#/definitions/DecisionJournalSlot"
+          },
+          "submittedSeq": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "key",
+          "slot",
+          "actionId",
+          "submittedSeq"
+        ],
+        "type": "object"
+      },
+      "DecisionClientActivity": {
+        "additionalProperties": false,
+        "description": "Captured from the original live Session owners. Consumers discard a response\nif these observations have changed; these are not permissions or receipts.",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/definitions/DecisionClientAction"
+            },
+            "type": "array"
+          },
+          "ownerId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "ownerId",
+          "revision",
+          "actions"
+        ],
+        "type": "object"
       },
       "DecisionCoverage": {
         "additionalProperties": false,
@@ -861,7 +1037,8 @@
         "enum": [
           "source-limit",
           "source-unavailable",
-          "source-not-implemented"
+          "source-not-implemented",
+          "lifecycle-unavailable"
         ],
         "type": "string"
       },
@@ -919,6 +1096,34 @@
               "blockerCount",
               "reasons",
               "reasonsComplete"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "errorCode": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/ErrorCode"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "local-request",
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/definitions/DecisionLocalOutcome"
+              }
+            },
+            "required": [
+              "kind",
+              "outcome",
+              "errorCode"
             ],
             "type": "object"
           }
@@ -1011,6 +1216,167 @@
         ],
         "type": "object"
       },
+      "DecisionJournalKey": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation",
+                "type": "string"
+              },
+              "locale": {
+                "type": "string"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "unitId",
+              "locale"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "conversation",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "DecisionJournalSlot": {
+        "enum": [
+          "primary",
+          "revocation"
+        ],
+        "type": "string"
+      },
+      "DecisionLocalBasis": {
+        "additionalProperties": false,
+        "description": "This journal snapshot and the Core snapshot are separate observations.",
+        "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/definitions/DecisionClientActivity"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "journalBasis": {
+            "type": "string"
+          },
+          "journalComplete": {
+            "type": "boolean"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/definitions/DecisionLocalObservation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "journalBasis",
+          "journalComplete",
+          "activity",
+          "observations"
+        ],
+        "type": "object"
+      },
+      "DecisionLocalObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "errorCode": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ErrorCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "headRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "outcome": {
+            "$ref": "#/definitions/DecisionLocalOutcome"
+          },
+          "reference": {
+            "$ref": "#/definitions/DecisionLocalRequestRef"
+          },
+          "writerId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "reference",
+          "headRevision",
+          "writerId",
+          "outcome",
+          "errorCode"
+        ],
+        "type": "object"
+      },
+      "DecisionLocalOutcome": {
+        "enum": [
+          "recorded",
+          "fenced-not-applied",
+          "receipt-absent",
+          "in-flight",
+          "mismatch",
+          "unavailable"
+        ],
+        "type": "string"
+      },
+      "DecisionLocalRequestKind": {
+        "enum": [
+          "save",
+          "selection",
+          "merge",
+          "create",
+          "append",
+          "planning",
+          "proposal-capture",
+          "proposal-revision",
+          "proposal-work-plan",
+          "work-plan-start",
+          "work-plan-control"
+        ],
+        "type": "string"
+      },
+      "DecisionLocalRequestRef": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/DecisionClientAction"
+          },
+          "requestKind": {
+            "$ref": "#/definitions/DecisionLocalRequestKind"
+          }
+        },
+        "required": [
+          "action",
+          "requestKind"
+        ],
+        "type": "object"
+      },
       "DecisionPage": {
         "additionalProperties": false,
         "properties": {
@@ -1041,6 +1407,16 @@
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
+          },
+          "localActions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/DecisionLocalBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "next": {
             "anyOf": [
@@ -1078,7 +1454,8 @@
           "knownCount",
           "total",
           "coverage",
-          "executionActivity"
+          "executionActivity",
+          "localActions"
         ],
         "type": "object"
       },

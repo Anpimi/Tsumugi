@@ -3,6 +3,8 @@
 
 use super::types::*;
 mod conversations;
+mod pending;
+pub use pending::{PendingActionRef, PendingJournalKey, PendingJournalSlot, PendingSnapshot};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use std::{

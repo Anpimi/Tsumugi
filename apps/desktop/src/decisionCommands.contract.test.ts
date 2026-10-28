@@ -73,3 +73,48 @@ it("captures nested filters before an awaiting caller changes them", async () =>
   expect(await reading).toEqual(response());
   expect(invoke).toHaveBeenCalledWith("read_decision_page", { request: captured });
 });
+
+function localFixture() {
+  const input = request(), page = response();
+  input.query.sources = ["local-action-recovery"]; input.activity = [];
+  const action = { key: { kind: "translation" as const, unitId: "00000000-0000-4000-8000-000000000002", locale: "zh-CN" },
+    slot: "primary" as const, actionId: "00000000-0000-4000-8000-000000000003", submittedSeq: "1" };
+  const reference = { action, requestKind: "save" as const };
+  page.query = { locale: null, sources: ["local-action-recovery"] };
+  page.knownCount = 1; page.total = 1; page.executionActivity = [];
+  page.coverage = [{ source: "local-action-recovery", state: "complete", knownCount: 1, total: 1, reason: null, errorCode: null }];
+  page.localActions = { journalBasis: "d".repeat(64), journalComplete: true, activity: [], observations: [{ reference,
+    headRevision: "1", writerId: "00000000-0000-4000-8000-000000000004", outcome: "receipt-absent", errorCode: null }] };
+  page.items = [{ decisionId: `local-action-recovery:${action.actionId}`, source: "local-action-recovery", state: "awaiting-recheck", locale: "zh-CN",
+    targets: [{ kind: "entry", unitId: action.key.unitId }], targetsComplete: true, basis: "e".repeat(64), sourceActionId: action.actionId,
+    action: { kind: "inspect-local-request", reference }, evidence: { kind: "local-request", outcome: "receipt-absent", errorCode: null } }];
+  return { input, page, action };
+}
+
+it("binds a local request to its original slot, source observation and typed target", async () => {
+  const { input, page } = localFixture();
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).items[0]?.source).toBe("local-action-recovery");
+});
+
+it.each(["recorded", "in-flight"] as const)("excludes %s local requests while retaining their observed identity", async outcome => {
+  const { input, page, action } = localFixture();
+  const activity = outcome === "in-flight" ? [{ ownerId: "00000000-0000-4000-8000-000000000004", revision: "1", actions: [action] }] : [];
+  input.activity = activity; page.localActions!.activity = activity;
+  page.localActions!.observations[0]!.outcome = outcome;
+  page.items = []; page.knownCount = 0; page.total = 0; page.coverage[0]!.knownCount = 0; page.coverage[0]!.total = 0;
+  invoke.mockResolvedValueOnce(page);
+  expect((await decisionCommands.page(input)).items).toEqual([]);
+});
+
+it.each(["wrong-activity", "recorded-still-counted", "missing-lifecycle", "wrong-slot", "incomplete-journal"])("rejects %s local recovery projections", async kind => {
+  const { input, page } = localFixture();
+  if (kind === "wrong-activity") page.localActions!.activity = [{ ownerId: "00000000-0000-4000-8000-000000000004", revision: "2", actions: [] }];
+  if (kind === "recorded-still-counted") page.localActions!.observations[0]!.outcome = "recorded";
+  if (kind === "missing-lifecycle") { input.activity = null; page.localActions!.activity = null; }
+  if (kind === "wrong-slot") page.localActions!.observations[0]!.reference = { ...page.localActions!.observations[0]!.reference,
+    action: { ...page.localActions!.observations[0]!.reference.action, slot: "revocation" } };
+  if (kind === "incomplete-journal") page.localActions!.journalComplete = false;
+  invoke.mockResolvedValueOnce(page);
+  await expect(decisionCommands.page(input)).rejects.toThrow("Invalid IPC response");
+});

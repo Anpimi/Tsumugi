@@ -125,7 +125,8 @@ export type ErrorCode =
   | "busy"
   | "storage-failed"
   | "corrupt-ledger";
-export type DecisionCoverageReason = "source-limit" | "source-unavailable" | "source-not-implemented";
+export type DecisionCoverageReason =
+  "source-limit" | "source-unavailable" | "source-not-implemented" | "lifecycle-unavailable";
 export type DecisionSource =
   | "translation-candidate"
   | "resource-proposal"
@@ -180,13 +181,48 @@ export type DecisionAction =
   | {
       kind: "inspect-delivery";
       locale: string;
+    }
+  | {
+      kind: "inspect-local-request";
+      reference: DecisionLocalRequestRef;
     };
-export type DecisionEvidence = {
-  blockerCount: number;
-  kind: "delivery";
-  reasons: EligibilityReason[];
-  reasonsComplete: boolean;
-};
+export type DecisionJournalKey =
+  | {
+      kind: "translation";
+      locale: string;
+      unitId: ExecutionId;
+    }
+  | {
+      conversationId: ExecutionId;
+      kind: "conversation";
+    };
+export type DecisionJournalSlot = "primary" | "revocation";
+export type DecisionLocalRequestKind =
+  | "save"
+  | "selection"
+  | "merge"
+  | "create"
+  | "append"
+  | "planning"
+  | "proposal-capture"
+  | "proposal-revision"
+  | "proposal-work-plan"
+  | "work-plan-start"
+  | "work-plan-control";
+export type DecisionEvidence =
+  | {
+      blockerCount: number;
+      kind: "delivery";
+      reasons: EligibilityReason[];
+      reasonsComplete: boolean;
+    }
+  | {
+      errorCode: ErrorCode | null;
+      kind: "local-request";
+      outcome: DecisionLocalOutcome;
+    };
+export type DecisionLocalOutcome =
+  "recorded" | "fenced-not-applied" | "receipt-absent" | "in-flight" | "mismatch" | "unavailable";
 export type DecisionState = "pending" | "stale" | "awaiting-recheck";
 export type DecisionTarget =
   | {
@@ -242,6 +278,7 @@ export interface DecisionPage {
    * Number of known decisions across the bounded sources, before pagination.
    */
   knownCount: number;
+  localActions: DecisionLocalBasis | null;
   next: DecisionCursor | null;
   projectId: ExecutionId;
   query: DecisionQuery;
@@ -285,11 +322,46 @@ export interface DecisionItem {
    */
   targetsComplete: boolean;
 }
+export interface DecisionLocalRequestRef {
+  action: DecisionClientAction;
+  requestKind: DecisionLocalRequestKind;
+}
+export interface DecisionClientAction {
+  actionId: ExecutionId;
+  key: DecisionJournalKey;
+  slot: DecisionJournalSlot;
+  submittedSeq: Revision;
+}
 export interface EligibilityReason {
   code: string;
   nativeKey: string;
   reference: string | null;
   unitId: ExecutionId;
+}
+/**
+ * This journal snapshot and the Core snapshot are separate observations.
+ */
+export interface DecisionLocalBasis {
+  activity: DecisionClientActivity[] | null;
+  journalBasis: string;
+  journalComplete: boolean;
+  observations: DecisionLocalObservation[];
+}
+/**
+ * Captured from the original live Session owners. Consumers discard a response
+ * if these observations have changed; these are not permissions or receipts.
+ */
+export interface DecisionClientActivity {
+  actions: DecisionClientAction[];
+  ownerId: ExecutionId;
+  revision: Revision;
+}
+export interface DecisionLocalObservation {
+  errorCode: ErrorCode | null;
+  headRevision: Revision;
+  outcome: DecisionLocalOutcome;
+  reference: DecisionLocalRequestRef;
+  writerId: ExecutionId;
 }
 export interface DecisionCursor {
   afterId: string;

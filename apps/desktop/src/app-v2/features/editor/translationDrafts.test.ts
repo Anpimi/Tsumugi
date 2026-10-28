@@ -93,6 +93,69 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
     ready: async () => { expect(await owner.initialize()).toBe(true); expect(await owner.open(key)).toBeDefined(); } };
 }
 
+it("observes decision activity across the durable dispatch gap and receipt resolution while retaining newer input", async () => {
+  const h = harness(); await h.ready(); h.owner.edit(key, "Submitted A"); await h.owner.flush(key);
+  const idle = h.owner.getDecisionActivity(), business = deferred<void>(), resolving = deferred<void>(), resolveAck = deferred<void>();
+  const save = h.ports.save.getMockImplementation()!;
+  h.ports.save.mockImplementationOnce(async request => { await business.promise; return save(request); });
+  h.ports.write.mockImplementation(async request => {
+    const head = await h.commitWrite(request);
+    if (!request.write.value.pending) { resolving.resolve(); await resolveAck.promise; }
+    return head;
+  });
+  let acknowledgedBeforeDispatch = false;
+  const unsubscribe = h.owner.subscribe(() => {
+    const entry = h.owner.getEntry(key);
+    if (entry?.value?.pending && entry.head.value?.pending && h.ports.save.mock.calls.length === 0) {
+      acknowledgedBeforeDispatch = true;
+      expect(h.owner.getDecisionActivity().actions).toEqual([{ key: { kind: "translation", unitId: key.unitId, locale: key.locale },
+        slot: "primary", actionId: entry.value.pending.request.actionId, submittedSeq: entry.value.pending.submittedSeq }]);
+    }
+  });
+  const saving = h.owner.confirm(key);
+  await vi.waitFor(() => expect(h.ports.save).toHaveBeenCalledOnce());
+  expect(acknowledgedBeforeDispatch).toBe(true);
+  const active = h.owner.getDecisionActivity();
+  expect(active.ownerId).toBe(writerId); expect(BigInt(active.revision)).toBeGreaterThan(BigInt(idle.revision));
+  h.owner.edit(key, "Newer B"); expect(h.owner.getDecisionActivity()).toBe(active);
+  business.resolve(); await resolving.promise;
+  expect(h.owner.getEntry(key)?.value).toMatchObject({ text: "Newer B", pending: null });
+  expect(h.owner.getDecisionActivity()).toBe(active);
+  resolveAck.resolve(); await saving;
+  expect(h.owner.getDecisionActivity().actions).toEqual([]);
+  expect(h.owner.getEntry(key)?.value?.text).toBe("Newer B");
+  expect(h.disk().value?.text).toBe("Newer B"); unsubscribe();
+});
+
+it("keeps hydrated unknown requests out of decision activity during a pure check", async () => {
+  const h = harness(retained(originalPending())); await h.ready();
+  const initialActivity = h.owner.getDecisionActivity(), recovery = deferred<Awaited<ReturnType<TranslationDraftPorts["recoverSave"]>>>();
+  h.ports.recoverSave.mockReturnValueOnce(recovery.promise);
+  const checking = h.owner.recover(key);
+  expect(h.owner.getEntry(key)?.checking).toBe(true);
+  expect(h.owner.getDecisionActivity()).toBe(initialActivity);
+  expect(initialActivity.actions).toEqual([]);
+  const pending = originalPending();
+  if (pending.kind !== "save") throw new Error("Expected an original save request");
+  recovery.resolve({ request: pending.request, outcome: { kind: "pending", replay: "explicit-same-request" } }); await checking;
+  expect(h.owner.getDecisionActivity()).toBe(initialActivity);
+  expect(h.owner.getEntry(key)?.value?.pending).toEqual(pending);
+  expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.write).not.toHaveBeenCalled();
+});
+
+it("retires decision activity immediately and ignores a late old submission acknowledgement", async () => {
+  const h = harness(); await h.ready(); h.owner.edit(key, "A"); await h.owner.flush(key);
+  const reply = deferred<TranslationSaveReceipt>(); h.ports.save.mockReturnValueOnce(reply.promise);
+  const saving = h.owner.confirm(key); await vi.waitFor(() => expect(h.ports.save).toHaveBeenCalledOnce());
+  const active = h.owner.getDecisionActivity(), request = h.ports.save.mock.calls[0][0];
+  h.owner.retire(); const retired = h.owner.getDecisionActivity();
+  expect(retired.actions).toEqual([]); expect(BigInt(retired.revision)).toBeGreaterThan(BigInt(active.revision));
+  expect(h.owner.getEntry(key)?.busy).toBe(true);
+  reply.resolve(saved(request)); await saving;
+  expect(h.owner.getDecisionActivity()).toBe(retired);
+  expect(h.owner.getEntry(key)?.value?.pending?.request.actionId).toBe(request.actionId);
+});
+
 it("shares one immutable entity across views and never acknowledges B with A's delayed journal acknowledgement", async () => {
   const h = harness(); await h.ready();
   const viewA = h.owner.getEntry(key), viewB = h.owner.getEntry({ ...key });

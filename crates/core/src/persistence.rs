@@ -26,7 +26,7 @@ mod current_tests;
 mod disclosure;
 mod decisions;
 pub use decisions::{DecisionAction, DecisionCoverage, DecisionCoverageReason, DecisionCoverageState,
-    DecisionCursor, DecisionEvidence, DecisionExecutionActivity, DecisionItem, DecisionPage, DecisionQuery, DecisionSource, DecisionState, DecisionTarget};
+    DecisionClientAction, DecisionClientActivity, DecisionJournalKey, DecisionJournalSlot, DecisionLocalBasis, DecisionLocalObservation, DecisionLocalOutcome, DecisionLocalProjection, DecisionLocalRequestKind, DecisionLocalRequestRef, DecisionCursor, DecisionEvidence, DecisionExecutionActivity, DecisionItem, DecisionPage, DecisionQuery, DecisionSource, DecisionState, DecisionTarget};
 pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;

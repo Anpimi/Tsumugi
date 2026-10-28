@@ -259,7 +259,7 @@ fn apply_write(
     })
 }
 
-type Stored = (i64, Option<i64>, i64, Option<Vec<u8>>);
+pub(super) type Stored = (i64, Option<i64>, i64, Option<Vec<u8>>);
 fn stored(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Stored> {
     Ok((
         row.get(offset)?,
@@ -268,7 +268,7 @@ fn stored(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Stored> {
         row.get(offset + 3)?,
     ))
 }
-fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<ConversationDraftHead> {
+pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<ConversationDraftHead> {
     let (revision, seq, pending, payload) = row;
     let payload =
         payload.ok_or_else(|| fail(ErrorCode::CorruptLedger, "conversation-drafts-record"))?;

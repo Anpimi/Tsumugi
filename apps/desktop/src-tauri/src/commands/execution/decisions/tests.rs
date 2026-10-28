@@ -86,3 +86,59 @@ fn registered_decision_inbox_pages_original_facts_and_rechecks_after_owner_decis
     after_reopen["query"] = json!({"locale": "zh-CN", "sources": ["translation-candidate"]});
     assert_eq!(call(&window, "read_decision_page", after_reopen).unwrap()["total"], 0);
 }
+
+#[test]
+fn registered_local_inbox_checks_receipts_and_lifecycle_without_resolving_original_input() {
+    use crate::commands::drafts::{ConversationDraftWrite, DraftStore, DraftWrite};
+    let (directory, mut core, rows) = fixture::source_fixture();
+    let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
+    let unit = rows[0].unit_id.unwrap();
+    let action = ExecutionId::new();
+    let original = tsumugi_core::SaveTranslationRevision { project_id: project, action_id: action, unit_id: unit,
+        locale: "zh-CN".into(), source_revision_id: rows[0].source_revision_id.unwrap(), expected_selection_id: None, text: "Submitted A".into() };
+    core.close().unwrap();
+    let profile = tempfile::tempdir().unwrap();
+    let journal = DraftStore::at(profile.path().join("drafts")).unwrap();
+    let writer = ExecutionId::new();
+    let write: DraftWrite = serde_json::from_value(json!({"key":{"projectId":project,"unitId":unit,"locale":"zh-CN"},
+        "expectedRevision":"0","writerId":writer,"value":{"basis":{"sourceRevisionId":original.source_revision_id,"selectionId":null,"revisionId":null,"text":null},
+            "text":"Newer B","editSeq":"2","pending":{"kind":"save","request":original,"submittedSeq":"1"}}})).unwrap();
+    let before = journal.write(&write).unwrap();
+    let thread = ExecutionId::new();
+    let create_action = ExecutionId::new();
+    let conversation: ConversationDraftWrite = serde_json::from_value(json!({"key":{"projectId":project,"conversationId":thread},
+        "expectedRevision":"0","writerId":writer,"value":{"text":"New message input","editSeq":"1","pending":{"kind":"create","submittedSeq":"1",
+            "request":{"projectId":project,"actionId":create_action,"conversationId":thread,"title":"Synthetic thread"}}}})).unwrap();
+    journal.write_conversation(&conversation).unwrap();
+    let state = AppState::default(); state.local_drafts.set(journal.clone()).ok().unwrap();
+    let app = tauri::test::mock_builder().manage(state).invoke_handler(super::super::handler())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let opened = call(&window, "open_project", json!({"locator":directory.path().join("project")})).unwrap();
+    let mut request = json!({"sessionToken":opened["sessionToken"],"projectId":project,
+        "query":{"locale":null,"sources":["local-action-recovery"]},"cursor":null,"limit":100,"activity":null});
+    let unobserved = call(&window, "read_decision_page", request.clone()).unwrap();
+    assert_eq!(unobserved["knownCount"], 0);
+    assert_eq!(unobserved["total"], Value::Null);
+    assert_eq!(unobserved["coverage"][0]["reason"], "lifecycle-unavailable");
+    assert_eq!(unobserved["localActions"]["observations"].as_array().unwrap().len(), 2);
+    request["activity"] = json!([{"ownerId":writer,"revision":"1","actions":[{"key":{"kind":"translation","unitId":unit,"locale":"zh-CN"},
+        "slot":"primary","actionId":action,"submittedSeq":"1"}]}]);
+    let running = call(&window, "read_decision_page", request.clone()).unwrap();
+    assert_eq!(running["total"], 1, "the live save is progress; the unowned conversation needs a check");
+    assert_eq!(running["items"][0]["targets"][0]["kind"], "conversation");
+    assert!(running["localActions"]["observations"].as_array().unwrap().iter().any(|row| row["outcome"] == "in-flight"));
+    request["activity"] = json!([]);
+    let unknown = call(&window, "read_decision_page", request.clone()).unwrap();
+    assert_eq!(unknown["total"], 2);
+    let mut save = serde_json::to_value(&original).unwrap(); save["sessionToken"] = opened["sessionToken"].clone();
+    call(&window, "save_translation_revision", save).unwrap();
+    let recorded = call(&window, "read_decision_page", request.clone()).unwrap();
+    assert_eq!(recorded["total"], 1);
+    assert!(recorded["localActions"]["observations"].as_array().unwrap().iter().any(|row| row["outcome"] == "recorded"));
+    let after = journal.read(&write.key).unwrap();
+    assert_eq!(after, before, "inbox reads leave B and the exact original pending request intact");
+    let mut malformed = request.clone();
+    malformed["activity"] = json!([{"ownerId":writer,"revision":"1","actions":[]},{"ownerId":writer,"revision":"2","actions":[]}]);
+    assert!(call(&window, "read_decision_page", malformed).is_err());
+}
