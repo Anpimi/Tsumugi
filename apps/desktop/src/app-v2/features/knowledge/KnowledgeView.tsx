@@ -1,0 +1,148 @@
+import { Fragment, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
+import { Plus } from "lucide-react";
+import { Button } from "../../../design-system/Button";
+import { Field, TextInput } from "../../../design-system/Field";
+import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-system/Feedback";
+import { CommandFailureDetails } from "../../../CommandFailure";
+import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
+import { executionContext } from "../../../executionCommands";
+import type { ProjectView } from "../../../projectCommands";
+import type { TermRevision } from "../../../resourceCommands";
+import { sourceCommands } from "../../../sourceCommands";
+import type { WorkspaceView, ViewPatch } from "../../workspace/workspaceStore";
+import type { InteractionGate } from "../../workspace/interactionGate";
+import { knowledgeKinds, type KnowledgeOwner, type KnowledgeKind } from "./knowledgeTypes";
+import { knowledgeBlocked, knowledgeHasDraft } from "./knowledgeState";
+import { knowledgeCurrentKey, knowledgeTermsKey, useKnowledgeCurrent, useKnowledgeScope, useKnowledgeTerms } from "./knowledgeReads";
+import TermScopePicker from "./TermScopePicker";
+import TermProposalPanel from "./TermProposalPanel";
+import styles from "./Knowledge.module.css";
+
+export interface KnowledgeViewProps {
+  project: ProjectView; owner: KnowledgeOwner; view: WorkspaceView; disabled: boolean;
+  gate: InteractionGate; current: (dialogId?: string) => boolean; patch: (patch: ViewPatch) => void;
+  onDetails: () => void;
+}
+export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails }: KnowledgeViewProps) {
+  const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
+  const { selectedTerm, termDraft, aliasInput, locale, pending, busyMutation, notice, failure } = owner.state;
+  const sourceInput = useRef<HTMLInputElement>(null), focusTicket = useRef<{ termId: string | null; origin: HTMLElement | null } | null>(null);
+  useLayoutEffect(() => {
+    const ticket = focusTicket.current;
+    if (!ticket || (selectedTerm?.termId ?? null) !== ticket.termId || !sourceInput.current) return;
+    focusTicket.current = null;
+    if (!disabled && (document.activeElement === ticket.origin || document.activeElement === document.body)) sourceInput.current.focus();
+  });
+  const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
+  const inputOwner = `knowledge-term-${view.id}`;
+  useEffect(() => () => gate.releaseOwner(inputOwner), [gate, inputOwner]);
+  const kind: KnowledgeKind = knowledgeKinds.find(kind => kind === view.preset) ?? "terms";
+  const session = executionContext(project), reads = useSessionReads();
+  const localeAvailable = project.metadata.targetLocales.includes(locale), localeMatches = locale === view.locale;
+  const active = kind === "terms" && localeAvailable;
+  const terms = useKnowledgeTerms(project, locale, active);
+  const rows = terms.data?.pages.flat() ?? [];
+  const currentTerm = useKnowledgeCurrent(project, locale, selectedTerm?.termId ?? null, active);
+  const saved = currentTerm.data;
+  const fresh = terms.isSuccess && !terms.isFetching && !terms.error;
+  const currentFresh = !selectedTerm || currentTerm.isSuccess && !currentTerm.isFetching && !currentTerm.error;
+  const changed = !!selectedTerm && currentFresh && saved?.revisionId !== selectedTerm.revisionId;
+  const source = useSessionQuery({ key: ["resource-source-scope"], scopes: ["source"], enabled: active,
+    read: () => sourceCommands.scope(session) });
+  const scope = useKnowledgeScope(project, locale, termDraft.scopeUnitId ?? null, active);
+  const dirty = owner.termDirty(), blocked = knowledgeBlocked(owner), editorVisible = !!selectedTerm || dirty || view.focus === "new";
+  const fieldError = (value: string) => new TextEncoder().encode(value).length > 16384 ? t("tooLong") : value.length > 0 && !value.trim() ? t("requiredValue") : undefined;
+  const valid = [termDraft.source, termDraft.target, termDraft.reason].every(value => !!value.trim() && !fieldError(value))
+    && termDraft.aliases.length <= 16 && termDraft.aliases.every(value => !!value.trim() && !fieldError(value));
+  useEffect(() => {
+    if (!localeMatches && project.metadata.targetLocales.includes(view.locale) && !knowledgeBlocked(owner) && !knowledgeHasDraft(owner)) owner.setLocale(view.locale);
+  }, [localeMatches, view.locale, owner, project.metadata.targetLocales]);
+  function proof() {
+    const table = reads.client.getQueryState(reads.key(knowledgeTermsKey(locale)));
+    const basis = reads.client.getQueryState(reads.key(["resource-source-scope"]));
+    const selected = selectedTerm ? reads.client.getQueryState(reads.key(knowledgeCurrentKey(selectedTerm.termId, locale))) : null;
+    return current() && !disabled && localeMatches && localeAvailable && !changed && (!selectedTerm || selected?.status === "success" && !selected.isInvalidated && selected.fetchStatus === "idle") && table?.status === "success" && !table.isInvalidated && table.fetchStatus === "idle"
+      && basis?.status === "success" && !basis.isInvalidated && basis.fetchStatus === "idle" && !!source.data?.currentSnapshot;
+  }
+  const canSave = !disabled && interaction.composingOwners.length === 0 && localeMatches && localeAvailable && dirty && valid && !blocked && fresh && currentFresh && !changed && source.isSuccess && !source.isFetching && !source.error && !!source.data?.currentSnapshot;
+  function select(term: TermRevision, details = false) {
+    if (!current() || disabled || !fresh || blocked || !localeMatches) return;
+    if (owner.current().selectedTerm?.termId !== term.termId || !owner.termDirty()) {
+      if (!owner.beginTerm(term)) return;
+    }
+    if (!details) focusTicket.current = { termId: term.termId, origin: document.activeElement instanceof HTMLElement ? document.activeElement : null };
+    patch({ focus: term.termId });
+    if (details) onDetails();
+  }
+  function newTerm() {
+    if (!current() || disabled || !owner.beginTerm(null)) return;
+    focusTicket.current = { termId: null, origin: document.activeElement instanceof HTMLElement ? document.activeElement : null };
+    patch({ focus: "new" });
+  }
+  function discard() {
+    if (!current() || disabled || blocked) return;
+    owner.discardTerm();
+    if (currentFresh && saved && !saved.removed) owner.beginTerm(saved);
+  }
+  function values(term: TermRevision | null) {
+    const editing = term === null || term.termId === selectedTerm?.termId;
+    return <>
+      <tr data-selected={editing || undefined}>
+        <td>{editing ? <Field label={t("sourceTerm")} required error={fieldError(termDraft.source)}><TextInput ref={sourceInput} readOnly={disabled || !localeMatches} value={termDraft.source} onChange={event => owner.editTerm({ ...owner.current().termDraft, source: event.target.value })}/></Field>
+          : <Button variant="link" disabled={disabled || blocked || dirty || !fresh || !localeMatches} onClick={() => select(term)}>{term.source}</Button>}</td>
+        <td>{editing ? <Field label={t("targetTerm")} required error={fieldError(termDraft.target)}><TextInput readOnly={disabled || !localeMatches} value={termDraft.target} onChange={event => owner.editTerm({ ...owner.current().termDraft, target: event.target.value })}/></Field> : term?.target}</td>
+        <td>{t((editing ? termDraft.scopeUnitId : term?.scopeUnitId) ? "entryScope" : "projectScope")}</td>
+        <td>{term ? <><span>{t(term.originKind === "manual" ? "manual" : "imported")}</span><Button size="xs" disabled={disabled || blocked || !fresh || dirty && !editing || !localeMatches} onClick={() => select(term, true)}>{t("details")}</Button></> : t("newTerm")}</td>
+      </tr>
+      {editing ? <tr><td colSpan={4}><div className={styles.rowEditor} aria-label={t("termEditor")}>
+        <div className={styles.fields}>
+          <Field label={t("aliases")} description={t("aliasesHelp")} error={termDraft.aliases.length > 16 ? t("aliasesInvalid") : termDraft.aliases.map(fieldError).find(Boolean)}><TextInput value={aliasInput} readOnly={disabled || !localeMatches} onChange={event => { const value = event.target.value; owner.editTerm({ ...owner.current().termDraft, aliases: value.split(",").map(alias => alias.trim()).filter(Boolean) }, value); }}/></Field>
+          <Field label={t("protected")} description={t("protectedHelp")}><TextInput type="checkbox" checked={termDraft.protected} disabled={disabled || !localeMatches} onChange={event => owner.editTerm({ ...owner.current().termDraft, protected: event.target.checked })}/></Field>
+          <Field label={t("reason")} required error={fieldError(termDraft.reason)}><TextInput value={termDraft.reason} readOnly={disabled || !localeMatches} onChange={event => owner.editTerm({ ...owner.current().termDraft, reason: event.target.value })}/></Field>
+        </div>
+        <p>{t("scope")}: {termDraft.scopeUnitId ? scope.data && !scope.error && !scope.isFetching ? scope.data.nativeKey : t("entryScope") : t("projectScope")}</p>
+        {termDraft.scopeUnitId && (scope.error || scope.isFetching) ? <p className={styles.meta}>{t(scope.error ? "scopeUnavailable" : "readingEntries")}</p> : null}
+        <div className={styles.actions}>
+          <Button disabled={disabled || !localeMatches || !termDraft.scopeUnitId} onClick={() => { if (current()) owner.editTerm({ ...owner.current().termDraft, scopeUnitId: null }); }}>{t("changeScope")}</Button>
+          <TermScopePicker project={project} locale={locale} disabled={disabled || !localeMatches} gate={gate} current={current} onSelect={scopeUnitId => owner.editTerm({ ...owner.current().termDraft, scopeUnitId })}/>
+        </div>
+        <div className={styles.actions}><Button variant="primary" pending={busyMutation && pending?.kind === "term"} disabled={!canSave} onClick={() => { if (proof()) void owner.saveTerm(proof); }}>{t("save")}</Button>
+          <Button disabled={disabled || blocked || !dirty} onClick={discard}>{t("discard")}</Button>
+          {selectedTerm ? <Button disabled={disabled} onClick={onDetails}>{t("details")}</Button> : null}</div>
+        {changed ? <Banner tone="warning" action={<Button onClick={onDetails}>{t("compare")}</Button>}>{t("changed")}</Banner> : null}
+      </div></td></tr> : null}
+    </>;
+  }
+  return <div className={styles.workspace}>
+    <nav className={styles.categories} aria-label={t("categories")}>{knowledgeKinds.map(item => <Button key={item} aria-current={kind === item ? "page" : undefined} onClick={() => { if (current()) patch({ preset: item }); }}>{t(`kinds.${item}`)}</Button>)}</nav>
+    <section className={styles.body} aria-label={t(`kinds.${kind}`)} onFocusCapture={() => gate.setInputOwner(view.id, inputOwner)}
+      onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.setInputOwner(view.id, null); }}
+      onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
+      {kind !== "terms" ? <EmptyState title={t(`kinds.${kind}`)} description={t(`unavailable.${kind}`)}/> : <>
+        <div className={styles.toolbar}><h1>{t("kinds.terms")}</h1><Button disabled={disabled || blocked || dirty || !localeMatches || !source.data?.currentSnapshot} onClick={newTerm}><Plus/>{t("newTerm")}</Button><Button disabled={terms.isFetching} onClick={() => void terms.refetch()}>{t("refresh")}</Button></div>
+        {!localeMatches ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ locale }); }}>{t("returnToLanguage", { locale })}</Button>}>{t("retainedLanguage", { locale })}</Banner> : null}
+        {!localeAvailable ? <Banner tone="warning">{t("localeUnavailable", { locale })}</Banner> : null}
+        {failure ? <Banner tone="error">{t("saveFailed")}<CommandFailureDetails failure={failure}/></Banner> : null}
+        {selectedTerm && currentTerm.error ? <Banner tone="warning" action={<Button onClick={() => void currentTerm.refetch()}>{t("refresh")}</Button>}>{t("currentFailed")}</Banner> : null}
+        {notice === "saved" || notice === "savedNewer" || notice === "decisionSaved" ? <Banner tone="success" role="status">{t(notice === "savedNewer" && dirty ? "savedNewer" : notice === "decisionSaved" ? "decisionSaved" : "saved")}</Banner> : null}
+        {pending?.kind === "term" ? <Banner tone="warning" role="status" action={<div className={styles.actions}>
+          <Button disabled={disabled || busyMutation} onClick={() => { if (current()) void owner.checkPending(); }}>{t("checkAction")}</Button>
+          {owner.state.pendingCheckedMissing ? <Button disabled={disabled || busyMutation} onClick={() => { if (current()) void owner.retryPending(); }}>{t("retryAction")}</Button> : null}</div>}>{t(busyMutation ? "saving" : "unknown")}</Banner> : null}
+        <div className={styles.scroll}>
+          {terms.isPending && terms.isFetching ? <LoadingState label={t("readingTerms")}/> : terms.error ? <ErrorState title={t("termsFailed")} action={<Button onClick={() => void (terms.isFetchNextPageError ? terms.fetchNextPage() : terms.refetch())}>{t("refresh")}</Button>}/> : null}
+          {terms.isSuccess || editorVisible ? <table className={styles.table} aria-label={t("termTable")}><thead><tr><th>{t("sourceTerm")}</th><th>{t("targetTerm")}</th><th>{t("scope")}</th><th>{t("source")}</th></tr></thead><tbody>
+            {editorVisible && (!selectedTerm || !!terms.error || !rows.some(row => row.termId === selectedTerm.termId && !row.removed)) ? values(selectedTerm) : null}
+            {!terms.error ? rows.filter(row => !row.removed).map(row => <Fragment key={row.termId}>{values(row)}</Fragment>) : null}
+          </tbody></table> : null}
+          {fresh && rows.filter(row => !row.removed).length === 0 && !editorVisible ? <EmptyState title={t("noTerms")} description={t("noTermsHelp")}/> : null}
+          <p className={styles.help}>{t("referencesUnknown")}</p>
+          {source.isSuccess && !source.data?.currentSnapshot ? <p className={styles.help}>{t("noSource")}</p> : source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("refresh")}</Button>}>{t("sourceFailed")}</Banner> : null}
+          {terms.hasNextPage ? <div className={styles.toolbar}><Button disabled={terms.isFetching} onClick={() => void terms.fetchNextPage()}>{t("moreTerms")}</Button></div> : null}
+          <TermProposalPanel project={project} owner={owner} disabled={disabled} gate={gate} viewId={view.id} current={current}/>
+        </div>
+      </>}
+      {kind !== "terms" && (dirty || pending) ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ preset: "terms" }); }}>{t("backToDraft")}</Button>}>{t("draftKept")}</Banner> : null}
+    </section>
+  </div>;
+}

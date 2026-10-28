@@ -19,6 +19,10 @@ mod exchange_tests;
 #[path = "resource_correction_tests.rs"]
 mod correction_tests;
 
+#[cfg(test)]
+#[path = "resource_current_tests.rs"]
+mod current_tests;
+
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TmxPreviewRequest { locale: String }
@@ -93,6 +97,10 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Term
     after_term_id: Option<String>,
     limit: u32
 });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TermCurrentRequest { term_id: String }
+);
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     TermHistoryRequest {
@@ -868,6 +876,18 @@ pub async fn read_terms(
 }
 
 #[tauri::command]
+pub async fn read_term_current(
+    state: State<'_, AppState>,
+    request: TermCurrentRequest,
+) -> Result<Option<TermRevision>, CommandError> {
+    state.sessions.run("read_term_current", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.current_term_revision(request.project_id, &request.term_id)
+            .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    }).await
+}
+
+#[tauri::command]
 pub async fn read_term_history(
     state: State<'_, AppState>,
     request: TermHistoryRequest,
@@ -1123,6 +1143,7 @@ mod contracts {
         round_trip!("requests", "resourceAction", ResourceActionRequest);
         round_trip!("requests", "terms", TermListRequest);
         round_trip!("requests", "termHistory", TermHistoryRequest);
+        round_trip!("requests", "currentTerm", TermCurrentRequest);
         round_trip!("requests", "unitLocale", UnitLocaleRequest);
         round_trip!("requests", "context", ContextWriteRequest);
         round_trip!("requests", "contextCapture", ContextCaptureRequest);
@@ -1147,6 +1168,7 @@ mod contracts {
             Option<ResourceDecisionActionRead>
         );
         round_trip!("responses", "term", TermRevision);
+        round_trip!("responses", "currentTerm", Option<TermRevision>);
         round_trip!("responses", "terms", Vec<TermRevision>);
         round_trip!("responses", "resolution", TermResolution);
         round_trip!("responses", "context", Option<ContextRevision>);

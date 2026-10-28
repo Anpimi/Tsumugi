@@ -2971,6 +2971,24 @@ impl ProjectStore {
             .collect()
     }
 
+    /// Read the current pointer directly, including a stopped term. A paged list
+    /// or the first history row cannot establish the current editing basis.
+    pub fn current_term_revision(
+        &self,
+        project_id: ExecutionId,
+        term_id: &str,
+    ) -> Result<Option<TermRevision>, ExecutionError> {
+        validate_text(term_id, false)?;
+        let connection = self.connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
+        let metadata = super::read_metadata_from(connection)
+            .map_err(|_| failure(ErrorCode::StorageFailed, "resource-read"))?;
+        if metadata.project_id().to_string() != project_id.to_string() {
+            return Err(failure(ErrorCode::Unauthorized, "resource-project"));
+        }
+        current_term(connection, project_id, term_id)
+    }
+
     pub fn term_history(
         &self,
         project_id: ExecutionId,

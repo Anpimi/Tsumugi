@@ -154,6 +154,11 @@
       "sessionToken": "isolated-resource-session",
       "projectId": "30000000-0000-4000-8000-000000000001",
       "actionId": "30000000-0000-4000-8000-000000000036"
+    },
+    "currentTerm": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "termId": "30000000-0000-4000-8000-000000000005"
     }
   },
   "responses": {
@@ -851,6 +856,25 @@
           "decision": "adopt"
         }
       }
+    },
+    "currentTerm": {
+      "revisionId": "30000000-0000-4000-8000-000000000004",
+      "termId": "30000000-0000-4000-8000-000000000005",
+      "locale": "zh-CN",
+      "source": "Barrel",
+      "aliases": [
+        "Cask",
+        "Drum"
+      ],
+      "target": "木桶 👩🏽‍💻 é",
+      "protected": true,
+      "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+      "reason": "Reviewed 世界",
+      "originKind": "manual",
+      "captureId": null,
+      "externalEntryId": null,
+      "previousRevisionId": null,
+      "removed": false
     }
   }
 }

@@ -4,6 +4,16 @@ Open a project with an imported source snapshot and at least one target language
 
 The query workspace can also retrieve term proposals from a compatible external MCP server under separate discovery and data-sharing consent; saved results enter the standard resource preview and decision flow with their external provenance intact. See [MCP terminology retrieval](mcp-retrieval.md) for supported profiles, limits, and recovery behavior.
 
+## Knowledge in the opt-in workspace
+
+Open **Knowledge** to read and maintain terms for a project language. Terms load in pages. You can edit a term in its row, add a term, choose the whole project or a specific entry as its scope, and read earlier versions in the details dock. Saving preserves earlier versions and checks for changes made elsewhere. If another version has been saved, compare it before continuing; your input stays available.
+
+Unsaved term input stays in the project session while you switch tabs. Save it or explicitly discard it before closing the project or window. An unconfirmed save or proposal decision stays available for checking its original action; a retry uses that same request. A late save response keeps any newer input.
+
+Term proposals retain their saved sources. Read a terminology file in the JSON format below, or open a previously captured source, then review each proposed translation against the saved value. You can use the proposed value, keep the saved value, or reject the proposal. Replacing a manual override or stopping use of a removed term requires confirmation. Source or term changes invalidate the old comparison; read it again before making another decision. Outdated correction or MCP evidence remains readable without restoring permission to adopt it.
+
+The other knowledge categories still need their own editing capabilities. Existing source observations, per-entry context, context strategies and translation memory keep the behavior described below. Precise term-reference counts and complete TMX/TBX import and export are not available in this view yet.
+
 ## Managing terms and per-entry context
 
 ### Project glossary terms

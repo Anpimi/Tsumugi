@@ -12,13 +12,15 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- **Knowledge** in the opt-in workspace now connects term lists, inline editing, entry scope selection and version history to the saved project terms. Newer input survives a save, and changed terms require comparison before another save. Saved term proposals can be reviewed and handled through their original actions, with confirmation for replacing manual values or stopping use of removed terms. Unconfirmed results retain the original request for checking. Other knowledge categories and complete exchange import/export are still being connected.
+
 - **Your decisions** in the opt-in workspace brings together pending candidates, resource proposals, saved proposal questions, reviews, source matches, uncertain results and delivery blockers. The activity badge, grouped list and Agent tray share project-wide reads and counts. When a source is bounded or unavailable, the total stays incomplete.
 
   Items open their exact original records and keep other tabs and input. Saved proposal questions stay grouped by proposal until a newer saved version no longer lists them; ordinary chat messages do not count as answers. Exact proposal versions can be opened beyond the first history page. Team-member questions still report incomplete coverage.
 
   Source results awaiting adoption keep their original result identity and paged comparison evidence. Expired producer or checker permission marks that evidence stale without renewing permission. Local requests are checked against their original receipts without clearing input or resubmitting work. In-flight requests and active exports remain progress. Interrupted or uncertain deliveries keep the original release, action and affected languages; older records can be read without choosing a directory. Checking actual destination files still requires fresh directory permission through the delivery workflow. The shared refresh notices when a delivery job ends even if its final result could not be saved.
 
-  These reads do not store a separate approval or resolved state. Resource adoption, source correction and full delivery controls are still being connected.
+  These reads do not store a separate approval or resolved state. Term proposals can be handled in Knowledge. Source correction and full delivery controls are still being connected.
 
 - Project planning IPC can run one explicitly permitted model request against the original material preview, model destination, sharing scope, budget and expiry. It uses the existing execution and usage records; cancellation, uncertain writes, stopping and reopening cannot restore an old permission. Results are checked explanations or plan suggestions, without creating or authorizing a work plan.
 

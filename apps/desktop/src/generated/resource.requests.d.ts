@@ -119,6 +119,7 @@ export interface Requests {
   contextFacts: ContextFactsRequest;
   correctionBasis: CorrectionBasisRequest;
   correctionCapture: CorrectionCaptureRequest;
+  currentTerm: TermCurrentRequest;
   decision: DecisionRequest;
   decisionAction: DecisionRequest;
   impacts: ImpactRequest;
@@ -294,6 +295,11 @@ export interface CorrectionTermBasis {
 export interface RevisionSelectionRef {
   revisionId: ExecutionId;
   selectionId: ExecutionId;
+}
+export interface TermCurrentRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  termId: string;
 }
 export interface DecisionRequest {
   decision: ResourceDecision;

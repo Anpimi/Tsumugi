@@ -44,7 +44,8 @@ export function isContextFactCasRejection(value:unknown) {
  * They prove non-commit even when an earlier acknowledgement was lost. */
 function isReceiptFirstRejection(action: ResourcePending, value: unknown) {
   if (!isCommandError(value) || value.code !== "dependency-conflict" || value.stage !== "execution-adopt" || value.outcome !== "rejected") return false;
-  return action.kind === "correction" ? value.reason === "correction-stale" || value.reason === "correction-existing"
+  return action.kind === "term" ? value.reason === "resource-current"
+    : action.kind === "correction" ? value.reason === "correction-stale" || value.reason === "correction-existing"
     : action.kind === "decision" && (value.reason === "correction-stale" || value.reason === "resource-current");
 }
 export interface ResourceDraftState {
@@ -109,6 +110,7 @@ interface ResourceSession {
   localeAvailable: (locale: string) => boolean;
   setLocale: (locale: string) => boolean;
   beginTerm: (term: TermRevision | null) => boolean;
+  adoptTerm: (term: TermRevision, expectedRevisionId: string, editSeq: number) => boolean;
   editTerm: (draft: ResourceTermDraft, aliases?: string) => void;
   discardTerm: () => void;
   beginContext: (row: ContentRow, revision: ContextRevision | null) => boolean;
@@ -197,6 +199,15 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     update(before => ({ ...before, selectedTerm: term, termDraft: resourceTermDraftFor(term), aliasInput: term?.aliases.join(", ") ?? "", termSeq: before.termSeq + 1, newerTerm: false })); return true;
   }
   function editTerm(termDraft: ResourceTermDraft, aliases?: string) { update(before => ({ ...before, termDraft, aliasInput: aliases ?? before.aliasInput, termSeq: before.termSeq + 1, newerTerm: false })); }
+  function adoptTerm(term: TermRevision, expectedRevisionId: string, editSeq: number) {
+    const before = current();
+    if (reserved() || !localeAvailable(before.locale) || term.removed || term.locale !== before.locale
+      || term.termId !== before.selectedTerm?.termId || before.selectedTerm.revisionId !== expectedRevisionId || before.termSeq !== editSeq) return false;
+    const keepEdits = termDirty();
+    update(value => ({ ...value, selectedTerm: term, termDraft: keepEdits ? value.termDraft : resourceTermDraftFor(term),
+      aliasInput: keepEdits ? value.aliasInput : term.aliases.join(", "), termSeq: value.termSeq + 1, newerTerm: keepEdits, failure: null, notice: null }));
+    return true;
+  }
   function discardTerm() { if (!reserved()) update(before => ({ ...before, termDraft: resourceTermDraftFor(before.selectedTerm), aliasInput: before.selectedTerm?.aliases.join(", ") ?? "", termSeq: before.termSeq + 1, newerTerm: false })); }
   function beginContext(row: ContentRow, revision: ContextRevision | null) {
     const locale = current().locale;
@@ -542,7 +553,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     finally { release(); }
   }
   return <ResourceContext.Provider value={{ canReceiveMcp, openMcpPreview, correctionDirty,canReceiveCorrection,receiveCorrection,editCorrection,discardCorrection,captureCorrection,checkPending, factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
-    setLocale, beginTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
+    setLocale, beginTerm, adoptTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     canReadCapture, saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
 }

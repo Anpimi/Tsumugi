@@ -1076,6 +1076,26 @@
         ],
         "type": "object"
       },
+      "TermCurrentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "termId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "termId"
+        ],
+        "type": "object"
+      },
       "TermHistoryRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1281,6 +1301,9 @@
       "correctionCapture": {
         "$ref": "#/definitions/CorrectionCaptureRequest"
       },
+      "currentTerm": {
+        "$ref": "#/definitions/TermCurrentRequest"
+      },
       "decision": {
         "$ref": "#/definitions/DecisionRequest"
       },
@@ -1335,6 +1358,7 @@
       "correctionCapture",
       "resourceAction",
       "terms",
+      "currentTerm",
       "termHistory",
       "unitLocale",
       "context",
@@ -3917,6 +3941,16 @@
       "correctionCapture": {
         "$ref": "#/definitions/CorrectionTermReceipt"
       },
+      "currentTerm": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TermRevision"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "decision": {
         "$ref": "#/definitions/ResourceDecisionResult"
       },
@@ -4004,6 +4038,7 @@
       "decisionAction",
       "term",
       "terms",
+      "currentTerm",
       "resolution",
       "context",
       "savedContext",

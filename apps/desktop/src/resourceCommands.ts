@@ -10,6 +10,8 @@ export type { ContextFactWrite, ContextFactDisposition, SourceFactBasis } from "
 export type { ContextFactDecision, ContextFactHistory } from "./generated/resource.responses";
 import type { ContextFactDecision, ContextFactHistory } from "./generated/resource.responses";
 import type { SessionRequest } from "./executionCommands";
+import type { TermCurrentRequest } from "./generated/resource.requests";
+import { validateResponseCurrentTerm } from "./generated/resource.validators";
 import { checkedInvoke } from "./ipc";
 import type { TbxPreviewRequest, TmxPreviewRequest, CaptureListRequest, CaptureRequest, TermRequest, DecisionRequest, TermListRequest, TermHistoryRequest, UnitLocaleRequest, ContextWriteRequest, ContextCaptureRequest, SuggestionRequest, ImpactRequest } from "./generated/resource.requests";
 import { validateResponseTbxPreview, validateResponseTmxPreview, validateResponseCaptures, validateResponseCapture, validateResponsePreview, validateResponseDecision, validateResponseTerm, validateResponseTermAction, validateResponseContextAction, validateResponseContextCaptureAction, validateResponseTerms, validateResponseResolution, validateResponseContext, validateResponseSavedContext, validateResponseContextCapture, validateResponseSuggestions, validateResponseImpacts } from "./generated/resource.validators";
@@ -87,6 +89,8 @@ export const resourceCommands = {
     (value): value is Responses["termAction"] => validateResponseTermAction(value)
       && (value === null || sameOriginal(value.request, request.term))),
   terms: (request: TermListRequest) => checkedInvoke("read_terms", request, validateResponseTerms),
+  termCurrent: (request: TermCurrentRequest) => checkedInvoke("read_term_current", request,
+    (value): value is Responses["currentTerm"] => validateResponseCurrentTerm(value) && (value === null || value.termId === request.termId)),
   termHistory: (request: TermHistoryRequest) => checkedInvoke("read_term_history", request, validateResponseTerms),
   resolve: (request: UnitLocaleRequest) => checkedInvoke("resolve_terms", request, validateResponseResolution),
   context: (request: UnitLocaleRequest) => checkedInvoke("read_context_revision", request, validateResponseContext),

@@ -48,6 +48,8 @@ import type { ConversationSession } from "./features/assistant/ConversationSessi
 import type { ConversationRecoveryTarget } from "./features/assistant/ConversationPanel";
 import type { ConversationProposalTarget } from "./features/assistant/conversationNavigation";
 import type { DecisionItem } from "../decisionCommands";
+import type { KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
+import { knowledgeBlocked, knowledgeHasDraft } from "./features/knowledge/knowledgeState";
 import { useDecisionFeed } from "./features/decisions/useDecisionFeed";
 import { DecisionBadge, DecisionTray } from "./features/decisions/DecisionList";
 import { TokenizedText } from "../design-system/TokenizedText";
@@ -74,6 +76,9 @@ const ComparisonOwnerHost = lazy(() => import("./features/comparison/ComparisonO
 const ComparisonRecovery = lazy(() => import("./features/comparison/ComparisonRecovery"));
 const ConversationPanel = lazy(() => import("./features/assistant/ConversationPanel"));
 const DecisionWorkspace = lazy(() => import("./features/decisions/DecisionWorkspace"));
+const KnowledgeOwnerHost = lazy(() => import("./features/knowledge/KnowledgeOwnerHost"));
+const KnowledgeView = lazy(() => import("./features/knowledge/KnowledgeView"));
+const KnowledgeDetails = lazy(() => import("./features/knowledge/KnowledgeDetails"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
@@ -86,6 +91,7 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   reviewBatchOpen: boolean; setReviewBatchOpen: (open: boolean) => void; reviewBatchSelection: WorkspaceSelection | null; prepareReviewBatch: (selection: WorkspaceSelection) => void;
   candidateBatchOpen: boolean; setCandidateBatchOpen: (open: boolean) => void;
   comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
+  knowledgeOwner: KnowledgeOwner | null; requestKnowledge: () => void; knowledgeReveal: number; revealKnowledge: () => void;
   conversations: ConversationSession | null; conversationLoadFailed: boolean; retryConversations: () => void; conversationReveal: number;
   conversationRecovery: ConversationRecoveryTarget | null; conversationProposal: ConversationProposalTarget | null;
   revealConversation: (target?: ConversationRecoveryTarget) => void; revealConversationProposal: (target: ConversationProposalTarget) => void };
@@ -138,6 +144,17 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const comparisonStatus = useRef({ requested: false, owner: null as ComparisonSession | null });
   const requestComparisons = useCallback(() => { comparisonStatus.current.requested = true; setComparisonsRequested(true); }, []);
   const publishComparisonOwner = useCallback((owner: ComparisonSession | null) => { comparisonStatus.current.owner = owner; setComparisonOwner(owner); }, []);
+  const [knowledgeRequested, setKnowledgeRequested] = useState(false), [knowledgeOwner, setKnowledgeOwner] = useState<KnowledgeOwner | null>(null), [knowledgeReveal, setKnowledgeReveal] = useState(0);
+  const knowledgeStatus = useRef({ requested: false, owner: null as KnowledgeOwner | null });
+  const requestKnowledge = useCallback(() => { knowledgeStatus.current.requested = true; setKnowledgeRequested(true); }, []);
+  const revealKnowledge = useCallback(() => { requestKnowledge(); setKnowledgeReveal(value => value + 1); }, [requestKnowledge]);
+  const publishKnowledgeOwner = useCallback((owner: KnowledgeOwner | null) => { knowledgeStatus.current.owner = owner; setKnowledgeOwner(owner); }, []);
+  useLayoutEffect(() => lifecycle.register({ id: "knowledge-resources-loading", area: "resources", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-knowledge-presentation" }
+      : { status: knowledgeStatus.current.requested && !knowledgeStatus.current.owner ? "blocked" : "ready",
+        revision: knowledgeStatus.current.requested ? knowledgeStatus.current.owner ? "knowledge-owner-ready" : "knowledge-owner-loading" : "knowledge-not-requested" },
+    prepareLeave: async () => false, reveal: revealKnowledge,
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealKnowledge]);
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   const [conversations, setConversations] = useState<ConversationSession | null>(null), [conversationLoadFailed, setConversationLoadFailed] = useState(false);
   const [conversationAttempt, setConversationAttempt] = useState(0), [conversationReveal, setConversationReveal] = useState(0);
@@ -232,18 +249,22 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
     reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
+    knowledgeOwner: executionTasks ? knowledgeOwner : null, requestKnowledge, knowledgeReveal, revealKnowledge,
     conversations, conversationLoadFailed, retryConversations: () => setConversationAttempt(value => value + 1), conversationReveal,
     conversationRecovery: conversationTarget?.kind === "request" ? conversationTarget.value : null,
     conversationProposal: conversationTarget?.kind === "proposal" ? conversationTarget.value : null,
     revealConversation: target => { setConversationTarget(target ? { kind: "request", value: { ...target } } : null); setConversationReveal(value => value + 1); },
     revealConversationProposal: target => { setConversationTarget({ kind: "proposal", value: { ...target } }); setConversationReveal(value => value + 1); } }}>
-    {(importRequested || reviewRequested) && drafts ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
+    {(importRequested || reviewRequested || knowledgeRequested) && drafts ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
       <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
           <ImportOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwners={publishImportOwners} onReveal={revealImport}/>
         </Suspense></FeatureBoundary> : null}
         {reviewRequested ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
           <ReviewOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishReviewOwner} onReveal={revealReview}/>
+        </Suspense></FeatureBoundary> : null}
+        {knowledgeRequested ? <FeatureBoundary fallback={<ErrorState title={t("featureFailed")} />}><Suspense fallback={null}>
+          <KnowledgeOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishKnowledgeOwner} onReveal={revealKnowledge}/>
         </Suspense></FeatureBoundary> : null}
       </ExecutionOwnerHost>
     </Suspense></FeatureBoundary> : null}
@@ -264,11 +285,13 @@ function WorkspaceShell() {
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
+    knowledgeOwner, requestKnowledge, knowledgeReveal, revealKnowledge,
     conversations, conversationLoadFailed, retryConversations, conversationReveal, conversationRecovery, conversationProposal, revealConversation, revealConversationProposal } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
   const lifecycleState = useProjectLifecycle(lifecycle);
+  useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
   const candidateBatchState = useSyncExternalStore<CandidateBatchSnapshot | null>(candidateOwners?.batch.subscribe ?? noDraftSubscription,
@@ -661,6 +684,22 @@ function WorkspaceShell() {
       </Suspense>
     </FeatureBoundary>;
   }
+  function knowledgeCurrent(dialogId?: string) {
+    const latest = lifecycle.getSnapshot(), active = store.getState().activeViewId;
+    return !readOnly && latest.phase === "idle" && !latest.pending && latest.session?.project.sessionToken === session.project.sessionToken
+      && view?.kind === "knowledge" && active === view.id && gate.canDispatch({ viewId: active, source: "button", dialogId });
+  }
+  async function openKnowledge(newView = false, restoreDraft = false) {
+    requestKnowledge();
+    const state = store.getState(), existing = state.viewOrder.map(id => state.views[id]).find(item => item.kind === "knowledge");
+    const locale = knowledgeOwner?.state.locale ?? activeLocale;
+    if (existing && !newView) {
+      if (restoreDraft) await runtime.navigation.update(existing.id, { locale, preset: "terms" });
+      else await runtime.navigation.activate(existing.id);
+    }
+    else await runtime.navigation.open({ kind: "knowledge", locale, preset: "terms" });
+  }
+  const openKnowledgeDraft = () => openKnowledge(false, true);
   function panel() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
@@ -669,12 +708,13 @@ function WorkspaceShell() {
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
-      <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}><EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
+      <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
+        visible={view.dock === "details" && (!narrow || drawer)} current={() => knowledgeCurrent(narrow && drawer ? "workspace-dock" : undefined)}/> : <LoadingState label={t("knowledge.readingTerms")}/> : <EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         comparisonOwner={comparisonOwner} requestComparisons={requestComparisons} onOpenComparison={comparison => openSavedComparison(comparison, narrow && drawer ? "workspace-dock" : undefined)}
         reviewOwner={reviewOwner}
-        parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/></Suspense></FeatureBoundary></TabsContent>
+        parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/>}</Suspense></FeatureBoundary></TabsContent>
     </TabsRoot>;
   }
   return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
@@ -690,6 +730,8 @@ function WorkspaceShell() {
     {readStatus ? <Banner tone={readStatus.message === "execution.updatesUnavailable" ? "warning" : "info"} role={readStatus.message === "execution.updatesUnavailable" ? "alert" : "status"}
       action={<Button disabled={disabled || !commandsReady || !gate.canDispatch({ viewId: currentId, source: "button" })} onClick={() => dispatch("workspace.refresh")}>{t("execution.refresh")}</Button>}>{t(readStatus.message)}<CommandFailureDetails failure={readStatus.failure}/></Banner> : null}
     {commandFailed ? <Banner tone="error">{message("actionFailed")}</Banner> : null}
+    {knowledgeOwner && (knowledgeBlocked(knowledgeOwner) || knowledgeHasDraft(knowledgeOwner)) && view?.kind !== "knowledge" || !knowledgeOwner && knowledgeReveal > 0 && view?.kind !== "knowledge" ? <Banner tone="warning"
+      action={<Button disabled={disabled} onClick={() => { void openKnowledgeDraft().catch(() => setCommandFailed(true)); }}>{t("knowledge.backToDraft")}</Button>}>{t(knowledgeOwner ? "knowledge.draftKept" : "knowledge.readingTerms")}</Banner> : null}
     {pendingImport && !importOwners ? <Banner>{message("importLoading")}</Banner> : null}
     {draftLoadFailed || draftState.hydration === "failed" ? <Banner tone="error" action={<Button onClick={retryDrafts}>{message("draftIndexRetry")}</Button>}>{message("draftIndexFailed")}</Banner>
       : !drafts || draftState.hydration === "idle" || draftState.hydration === "loading" ? <Banner>{message("draftIndexLoading")}</Banner> : null}
@@ -725,8 +767,9 @@ function WorkspaceShell() {
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
         {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined}><IconButton ref={id === "decisions" ? decisionTrigger : undefined} label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} aria-describedby={id === "decisions" ? decisionBadgeId : undefined}
-          disabled={id !== "entries" && id !== "decisions" || disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} title={id !== "entries" && id !== "decisions" ? message("comingLater") : undefined} onClick={event => {
+          disabled={id !== "entries" && id !== "knowledge" && id !== "decisions" || disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} title={id !== "entries" && id !== "knowledge" && id !== "decisions" ? message("comingLater") : undefined} onClick={event => {
           if (id === "decisions") { if (event.metaKey || event.ctrlKey) void openDecisions(true); else dispatch("workspace.decisions"); return; }
+          if (id === "knowledge") { void openKnowledge(event.metaKey || event.ctrlKey).catch(() => setCommandFailed(true)); return; }
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
         }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}/></span> : null}</div>)}
@@ -758,6 +801,10 @@ function WorkspaceShell() {
           }} /></Suspense></FeatureBoundary> : view.kind === "decisions" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")}/>}><Suspense fallback={<LoadingState label={message("decisionsLoading")}/>}>
             <DecisionWorkspace view={view} feed={decisionFeed} disabled={disabled} patch={patch => store.getState().patch(view.id, patch)} current={decisionCurrent} onNavigate={navigateDecision}
               onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}/>
+          </Suspense></FeatureBoundary> : view.kind === "knowledge" ? <FeatureBoundary key="knowledge-presentation" fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")}/>}><Suspense fallback={<LoadingState label={t("knowledge.readingTerms")}/>}>
+            {knowledgeOwner ? <KnowledgeView project={session.project} owner={knowledgeOwner} view={view} disabled={disabled} gate={gate} current={knowledgeCurrent}
+              patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }}/>
+              : <LoadingState label={t("knowledge.readingTerms")}/>}
           </Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
         </main></SplitPanel>
         {!narrow ? <><SplitHandle label={message("resizeDock")} elementRef={splitHandle} /><SplitPanel id="workspace-dock" key={wide ? "wide" : "compact"} groupResizeBehavior="preserve-pixel-size" defaultSize={view?.dockSize ?? (wide ? 380 : 340)} minSize={300} maxSize="45%"><aside className={styles.dock} ref={dock} tabIndex={-1} aria-label={message("agent")}>{panel()}</aside></SplitPanel></> : null}

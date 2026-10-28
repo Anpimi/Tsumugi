@@ -119,8 +119,8 @@ export type ContextFactDisposition =
   | {
       kind: "restore";
     };
-export type ResourceDecisionKind = "adopt" | "keep" | "ignore" | "override";
 export type TermOrigin = "manual" | "external";
+export type ResourceDecisionKind = "adopt" | "keep" | "ignore" | "override";
 export type ResourceImpactConfidence = "explicit-unit" | "literal-possible";
 export type ResourceImpactKind = "term" | "context" | "context-fact";
 export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
@@ -201,6 +201,7 @@ export interface Responses {
   correctionAction: CorrectionTermReceipt | null;
   correctionBasis: CorrectionTermEvidence;
   correctionCapture: CorrectionTermReceipt;
+  currentTerm: TermRevision | null;
   decision: ResourceDecisionResult;
   decisionAction: ResourceDecisionActionRead | null;
   impacts: ImpactPage;
@@ -416,20 +417,6 @@ export interface CorrectionTermEvidence {
   current: boolean;
   sourceText: string;
 }
-export interface ResourceDecisionResult {
-  actionId: ExecutionId;
-  decision: ResourceDecisionKind;
-  request: ResourceDecision;
-  revision: TermRevision | null;
-}
-export interface ResourceDecision {
-  actionId: ExecutionId;
-  captureId: ExecutionId;
-  decision: ResourceDecisionKind;
-  entryId: string;
-  expectedRevisionId: ExecutionId | null;
-  projectId: ExecutionId;
-}
 export interface TermRevision {
   aliases: string[];
   captureId: ExecutionId | null;
@@ -445,6 +432,20 @@ export interface TermRevision {
   source: string;
   target: string;
   termId: string;
+}
+export interface ResourceDecisionResult {
+  actionId: ExecutionId;
+  decision: ResourceDecisionKind;
+  request: ResourceDecision;
+  revision: TermRevision | null;
+}
+export interface ResourceDecision {
+  actionId: ExecutionId;
+  captureId: ExecutionId;
+  decision: ResourceDecisionKind;
+  entryId: string;
+  expectedRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
 }
 export interface ResourceDecisionActionRead {
   receipt: ResourceDecisionResult;

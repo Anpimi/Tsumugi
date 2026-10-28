@@ -14,6 +14,7 @@ export declare function validateRequestContextFactHistory(value: unknown): value
 export declare function validateRequestContextFacts(value: unknown): value is Requests["contextFacts"];
 export declare function validateRequestCorrectionBasis(value: unknown): value is Requests["correctionBasis"];
 export declare function validateRequestCorrectionCapture(value: unknown): value is Requests["correctionCapture"];
+export declare function validateRequestCurrentTerm(value: unknown): value is Requests["currentTerm"];
 export declare function validateRequestDecision(value: unknown): value is Requests["decision"];
 export declare function validateRequestDecisionAction(value: unknown): value is Requests["decisionAction"];
 export declare function validateRequestImpacts(value: unknown): value is Requests["impacts"];
@@ -41,6 +42,7 @@ export declare function validateResponseContextFacts(value: unknown): value is R
 export declare function validateResponseCorrectionAction(value: unknown): value is Responses["correctionAction"];
 export declare function validateResponseCorrectionBasis(value: unknown): value is Responses["correctionBasis"];
 export declare function validateResponseCorrectionCapture(value: unknown): value is Responses["correctionCapture"];
+export declare function validateResponseCurrentTerm(value: unknown): value is Responses["currentTerm"];
 export declare function validateResponseDecision(value: unknown): value is Responses["decision"];
 export declare function validateResponseDecisionAction(value: unknown): value is Responses["decisionAction"];
 export declare function validateResponseImpacts(value: unknown): value is Responses["impacts"];

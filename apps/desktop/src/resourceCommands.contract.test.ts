@@ -23,6 +23,8 @@ it("validates both directions of every shared resource contract", async () => {
     [validators.validateRequestCapture, fixture.requests.capture], [validators.validateRequestTerm, fixture.requests.term],
     [validators.validateRequestDecision, fixture.requests.decision], [validators.validateRequestTerms, fixture.requests.terms],
     [validators.validateRequestTermHistory, fixture.requests.termHistory], [validators.validateRequestUnitLocale, fixture.requests.unitLocale],
+    [validators.validateRequestCurrentTerm, fixture.requests.currentTerm], [validators.validateResponseCurrentTerm, fixture.responses.currentTerm],
+    [validators.validateResponseCurrentTerm, null],
     [validators.validateRequestContext, fixture.requests.context], [validators.validateRequestContextCapture, fixture.requests.contextCapture],
     [validators.validateRequestSuggestions, fixture.requests.suggestions], [validators.validateRequestImpacts, fixture.requests.impacts],
     [validators.validateResponseCaptures, fixture.responses.captures], [validators.validateResponseCapture, fixture.responses.capture],
@@ -39,6 +41,7 @@ it("validates both directions of every shared resource contract", async () => {
     ["preview_tmx_exchange", fixture.requests.tmxPreview, fixture.responses.tmxPreview, () => resourceCommands.previewTmx(fixture.requests.tmxPreview)],
     ["preview_tbx_exchange", fixture.requests.tbxPreview, fixture.responses.tbxPreview, () => resourceCommands.previewTbx(fixture.requests.tbxPreview)],
     ["list_resource_captures", fixture.requests.captures, fixture.responses.captures, () => resourceCommands.captures(fixture.requests.captures)],
+    ["read_term_current", fixture.requests.currentTerm, fixture.responses.currentTerm, () => resourceCommands.termCurrent(fixture.requests.currentTerm)],
     ["choose_resource_file", fixture.requests.session, null, () => resourceCommands.chooseFile(fixture.requests.session)],
     ["read_resource_preview", fixture.requests.capture, fixture.responses.preview, () => resourceCommands.preview(fixture.requests.capture)],
     ["decide_resource_entry", decision, fixture.responses.decision, () => resourceCommands.decide(decision)],
@@ -57,6 +60,14 @@ it("validates both directions of every shared resource contract", async () => {
     expect(await run()).toEqual(response);
     expect(invoke).toHaveBeenLastCalledWith(command, { request });
   }
+});
+
+it("checks the exact current term identity and preserves a missing result", async () => {
+  const request = fixture.requests.currentTerm;
+  invoke.mockResolvedValueOnce(null);
+  await expect(resourceCommands.termCurrent(request)).resolves.toBeNull();
+  invoke.mockResolvedValueOnce({ ...fixture.responses.currentTerm, termId: "another-term" });
+  await expect(resourceCommands.termCurrent(request)).rejects.toThrow();
 });
 
 it("checks TMX report scope and treats picker cancellation as a read without granting file authority", async () => {
