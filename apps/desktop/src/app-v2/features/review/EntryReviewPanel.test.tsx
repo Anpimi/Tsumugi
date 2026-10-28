@@ -1,4 +1,5 @@
 import { useLayoutEffect } from "react";
+import { canonicalTranslationReuse } from "../../../translationReuse";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -57,8 +58,8 @@ async function harness(target = reviewTargetFixture(), parentDialogId?: string) 
     const input = copy(request.write.value), original = input.pending;
     const pending: DraftValue["pending"] = original == null ? null : original.kind === "selection"
       ? { ...original, request: { ...original.request, expectedSelectionId: original.request.expectedSelectionId ?? null } }
-      : { ...original, request: { ...original.request, expectedSelectionId: original.request.expectedSelectionId ?? null } };
-    const value: DraftValue = { ...input, basis: { ...input.basis, selectionId: input.basis.selectionId ?? null,
+      : { ...original, request: { ...original.request, reuseOrigin: canonicalTranslationReuse(original.request.reuseOrigin), expectedSelectionId: original.request.expectedSelectionId ?? null } };
+    const value: DraftValue = { ...input, reuseOrigin: canonicalTranslationReuse(input.reuseOrigin), basis: { ...input.basis, selectionId: input.basis.selectionId ?? null,
       revisionId: input.basis.revisionId ?? null, text: input.basis.text ?? null }, pending, merge: input.merge ?? null };
     const head: DraftHead = { key: request.write.key, revision: String(BigInt(heads.get(request.write.key.unitId)?.revision ?? "0") + 1n),
       writerId: request.write.writerId, value };

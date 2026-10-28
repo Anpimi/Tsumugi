@@ -299,7 +299,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
 
 #[cfg(test)]
 #[path = "candidates/summary_tests.rs"]
-mod summary_tests;
+pub(super) mod summary_tests;
 impl ProjectStore {
     pub fn translation_candidate_decision(
         &self,

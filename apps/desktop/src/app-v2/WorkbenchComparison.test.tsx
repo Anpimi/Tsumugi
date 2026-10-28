@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import { canonicalTranslationReuse } from "../translationReuse";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import arenaFixture from "../../test/fixtures/arenaCommands.contract.json";
@@ -92,11 +93,11 @@ beforeEach(async () => {
     if (journalWait) await journalWait;
     const value = copy(write.value), pending = value.pending;
     disk = { key: copy(write.key), revision: (BigInt(disk.revision) + 1n).toString(), writerId: write.writerId,
-      value: { ...value, basis: { ...value.basis, selectionId: value.basis.selectionId ?? null,
+      value: { ...value, reuseOrigin: canonicalTranslationReuse(value.reuseOrigin), basis: { ...value.basis, selectionId: value.basis.selectionId ?? null,
         revisionId: value.basis.revisionId ?? null, text: value.basis.text ?? null }, merge: value.merge ?? null,
         pending: pending == null ? null : pending.kind === "selection"
           ? { ...pending, request: { ...pending.request, expectedSelectionId: pending.request.expectedSelectionId ?? null } }
-          : { ...pending, request: { ...pending.request, expectedSelectionId: pending.request.expectedSelectionId ?? null } } } };
+          : { ...pending, request: { ...pending.request, reuseOrigin: canonicalTranslationReuse(pending.request.reuseOrigin), expectedSelectionId: pending.request.expectedSelectionId ?? null } } } };
     return copy(disk);
   });
   vi.spyOn(translationCommands, "history").mockImplementation(async request => {

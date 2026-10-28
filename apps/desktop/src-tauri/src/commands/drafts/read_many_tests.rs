@@ -16,7 +16,7 @@ fn call(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, command: &str, 
 fn draft_read_many_ipc_keeps_full_pending_heads_and_bounded_current_member_order() {
     let (directory,mut core,rows) = fixture::source_fixture();
     let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
-    core.save_translation_revision(&SaveTranslationRevision { project_id:project,action_id:ExecutionId::new(),unit_id:rows[0].unit_id.unwrap(),locale:"zh-CN".into(),
+    core.save_translation_revision(&SaveTranslationRevision { reuse_origin: None, project_id:project,action_id:ExecutionId::new(),unit_id:rows[0].unit_id.unwrap(),locale:"zh-CN".into(),
         source_revision_id:rows[0].source_revision_id.unwrap(),expected_selection_id:None,text:String::new() }).unwrap();
     core.close().unwrap();
     let application = tempfile::tempdir().unwrap(); let journal = application.path().join("drafts");
@@ -36,9 +36,9 @@ fn draft_read_many_ipc_keeps_full_pending_heads_and_bounded_current_member_order
     let text = "界e\u{301}👩🏽‍💻".repeat(7000);
     for (index,unit) in units.iter().enumerate() {
         let basis: DraftBasis = serde_json::from_value(initial["items"][index]["current"]["basis"].clone()).unwrap();
-        let pending = (index == 0).then(|| DraftPending::Save { request:SaveTranslationRevision { project_id:project,action_id:ExecutionId::new(),unit_id:*unit,
+        let pending = (index == 0).then(|| DraftPending::Save { request:SaveTranslationRevision { reuse_origin: None, project_id:project,action_id:ExecutionId::new(),unit_id:*unit,
             locale:"zh-CN".into(),source_revision_id:basis.source_revision_id,expected_selection_id:basis.selection_id,text:"Original A".into() },submitted_seq:Revision::new(1).unwrap() });
-        let value = DraftValue { basis,text:text.clone(),edit_seq:Revision::new(2).unwrap(),pending,merge:None };
+        let value = DraftValue { reuse_origin: None, basis,text:text.clone(),edit_seq:Revision::new(2).unwrap(),pending,merge:None };
         call(&window,"write_local_draft",json!({"sessionToken":token,"write":{"key":{"projectId":project,"unitId":unit,"locale":"zh-CN"},
             "expectedRevision":"0","writerId":ExecutionId::new(),"value":value}})).unwrap();
     }

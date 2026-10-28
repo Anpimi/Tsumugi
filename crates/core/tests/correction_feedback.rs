@@ -21,6 +21,7 @@ fn save(
 ) -> TranslationSaveReceipt {
     store
         .save_translation_edit(&SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project(store),
             action_id: ExecutionId::new(),
             unit_id: row.unit_id.unwrap(),

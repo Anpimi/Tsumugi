@@ -24,6 +24,12 @@ export type { ContextResourceRevision, ContextResourceActionRead, ContextResourc
 import type { ContextResourceAction } from "./generated/resource.requests";
 import type { ContextResourcePage, ContextResourceRevision } from "./generated/resource.responses";
 import { checkedInvoke } from "./ipc";
+import type { TranslationMemoryPageRequest, TranslationMemoryEntryRequest, TranslationMemoryReuseRequest } from "./generated/resource.requests";
+import type { TranslationMemoryEntry } from "./generated/resource.responses";
+import { validateResponseTranslationMemoryPage, validateResponseTranslationMemoryEntry, validateResponseTranslationMemoryReuse } from "./generated/resource.validators";
+export type { TranslationMemoryFilter, PrepareTranslationMemoryReuse } from "./generated/resource.requests";
+export type { TranslationMemoryEntry, TranslationMemoryPage, TranslationMemoryReusePreview,
+  TranslationMemoryQuality, TranslationMemorySourceLabel } from "./generated/resource.responses";
 import type { TbxPreviewRequest, TmxPreviewRequest, CaptureListRequest, CaptureRequest, TermRequest, DecisionRequest, TermListRequest, TermHistoryRequest, UnitLocaleRequest, ContextWriteRequest, ContextCaptureRequest, SuggestionRequest, ImpactRequest } from "./generated/resource.requests";
 import { validateResponseTbxPreview, validateResponseTmxPreview, validateResponseCaptures, validateResponseCapture, validateResponsePreview, validateResponseDecision, validateResponseTerm, validateResponseTermAction, validateResponseContextAction, validateResponseContextCaptureAction, validateResponseTerms, validateResponseResolution, validateResponseContext, validateResponseSavedContext, validateResponseContextCapture, validateResponseSuggestions, validateResponseImpacts } from "./generated/resource.validators";
 
@@ -80,7 +86,59 @@ function contextPageMatches(value: ContextResourcePage, request: { projectId: st
     && (value.nextOffset === null || value.rows.length > 0 && value.nextOffset === request.offset + value.rows.length);
 }
 
+function memoryEntry(value: TranslationMemoryEntry, projectId: string, locale: string) {
+  const revision = value.revision, quality = value.quality;
+  return value.projectId === projectId && revision.locale === locale && BigInt(revision.ordinal) > 0n
+    && /^[0-9a-f]{64}$/.test(value.basis) && value.sourceLabel.occurrenceCount > 0
+    && [quality.latestDecision, quality.pastApproval, quality.currentApproval].every(decision => decision === null
+      || decision.unitId === revision.unitId && decision.locale === locale && decision.revisionId === revision.revisionId
+        && decision.sourceRevisionId === revision.sourceRevisionId && /^[0-9a-f]{64}$/.test(decision.basis))
+    && (quality.pastApproval === null || quality.pastApproval.kind === "approve")
+    && (quality.currentApproval === null || quality.currentApproval.kind === "approve" && quality.pastApproval !== null
+      && value.isCurrentSelection && value.isCurrentSource)
+    && (revision.reuseOrigin == null || revision.reuseOrigin.targetUnitId === revision.unitId && /^[0-9a-f]{64}$/.test(revision.reuseOrigin.donorBasis));
+}
+function memoryFilterIdentity(filter: TranslationMemoryPageRequest["filter"]) {
+  return jsonIdentity({ ...filter, sourceText: filter.sourceText ?? null, translationText: filter.translationText ?? null, origin: filter.origin ?? null });
+}
+
 export const resourceCommands = {
+  translationMemoryPage: (request: TranslationMemoryPageRequest) => {
+    const captured = structuredClone(request), filter = captured.filter;
+    return checkedInvoke("list_translation_memory", captured,
+      (value): value is Responses["translationMemoryPage"] => validateResponseTranslationMemoryPage(value)
+        && value.projectId === captured.projectId && memoryFilterIdentity(value.filter) === memoryFilterIdentity(filter)
+        && /^[0-9a-f]{64}$/.test(value.basis) && value.rows.length <= captured.limit
+        && new Set(value.rows.map(entry => entry.revision.revisionId)).size === value.rows.length
+        && value.rows.every(entry => memoryEntry(entry, captured.projectId, filter.targetLocale) && entry.sourceLocale === filter.sourceLocale
+          && (filter.sourceText == null || entry.sourceText.includes(filter.sourceText))
+          && (filter.translationText == null || entry.revision.text.includes(filter.translationText))
+          && (filter.origin == null || entry.revision.originKind === filter.origin)
+          && (filter.selection === "all" || entry.isCurrentSelection === (filter.selection === "current")))
+        && (value.nextCursor === null || value.rows.length > 0 && value.nextCursor !== captured.cursor)
+        && new TextEncoder().encode(JSON.stringify(value)).length <= 1024 * 1024);
+  },
+  translationMemoryEntry: (request: TranslationMemoryEntryRequest) => {
+    const captured = structuredClone(request);
+    return checkedInvoke("read_translation_memory_entry", captured,
+      (value): value is Responses["translationMemoryEntry"] => validateResponseTranslationMemoryEntry(value)
+        && memoryEntry(value, captured.projectId, captured.locale) && value.revision.unitId === captured.unitId
+        && value.revision.revisionId === captured.revisionId);
+  },
+  prepareTranslationMemoryReuse: (request: TranslationMemoryReuseRequest) => {
+    const captured = structuredClone(request), reuse = captured.reuse;
+    return checkedInvoke("prepare_translation_memory_reuse", captured,
+      (value): value is Responses["translationMemoryReuse"] => validateResponseTranslationMemoryReuse(value)
+        && captured.projectId === reuse.projectId && memoryEntry(value.donor, captured.projectId, reuse.locale)
+        && value.donor.revision.unitId === reuse.donorUnitId && value.donor.revision.revisionId === reuse.donorRevisionId
+        && value.donor.basis === reuse.donorBasis && value.donor.revision.candidateDecision?.request.disposition !== "rejected"
+        && value.target.unitId === reuse.unitId && value.target.locale === reuse.locale
+        && value.target.sourceRevisionId === reuse.sourceRevisionId && value.target.selectionId === (reuse.expectedSelectionId ?? null)
+        && value.reuseOrigin.targetUnitId === reuse.unitId && value.reuseOrigin.targetSourceSnapshotId === value.target.sourceSnapshotId
+        && value.reuseOrigin.targetSourceRevisionId === reuse.sourceRevisionId && value.reuseOrigin.targetSelectionId === (reuse.expectedSelectionId ?? null)
+        && value.reuseOrigin.donorUnitId === reuse.donorUnitId && value.reuseOrigin.donorSourceRevisionId === value.donor.revision.sourceRevisionId
+        && value.reuseOrigin.donorTranslationRevisionId === reuse.donorRevisionId && value.reuseOrigin.donorBasis === reuse.donorBasis);
+  },
   saveContextResource: (request: ContextResourceSaveRequest) => checkedInvoke("save_context_resource", request,
     (value): value is Responses["contextResourceSaved"] => validateResponseContextResourceSaved(value)
       && value.projectId === request.projectId && contextReceiptMatches(value, { kind: "save", request: request.resource })),

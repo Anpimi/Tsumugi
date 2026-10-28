@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode, createRef } from "react";
+import { canonicalTranslationReuse } from "../../../translationReuse";
 import { afterEach, expect, it, vi } from "vitest";
 import fixture from "../../../../test/fixtures/translation-commands.json";
 import type { DraftBasis, DraftHead, DraftKey, DraftReadView, DraftValue } from "../../../draftCommands";
@@ -59,7 +60,7 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
     save: vi.fn<TranslationDraftPorts["save"]>(async request => saved(request)),
     recoverSave: vi.fn<TranslationDraftPorts["recoverSave"]>(async request => {
       const { sessionToken: _token, ...business } = request;
-      return { request: { ...business, expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
+      return { request: { ...business, reuseOrigin: canonicalTranslationReuse(business.reuseOrigin), expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
     }),
     writerId: () => writerId,
   };
@@ -252,7 +253,7 @@ it.each(["mismatch", "read-failed"] as const)("preserves unknown input after %s 
   if (outcome === "read-failed") h.ports.recoverSave.mockRejectedValueOnce(new Error("Lookup failed"));
   else h.ports.recoverSave.mockImplementationOnce(async request => {
     const { sessionToken: _token, ...business } = request;
-    return { request: { ...business, expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "mismatch" } };
+    return { request: { ...business, reuseOrigin: canonicalTranslationReuse(business.reuseOrigin), expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "mismatch" } };
   });
   render(<SegmentEditor {...h.props} />);
   fireEvent.click(screen.getByRole("button", { name: "editorCheckResult" }));

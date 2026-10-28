@@ -298,7 +298,7 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
                     )
                 })
         || format < REVOCATION_FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
-        || format < FORMAT && value.is_some_and(|value| {
+        || format < KNOWLEDGE_PROPOSAL_FORMAT && value.is_some_and(|value| {
             value.proposal_edits.iter().any(|draft| matches!(draft.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))
                 || matches!(&value.pending, Some(ConversationDraftPending::ProposalRevision { request, .. })
                     if matches!(request.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))

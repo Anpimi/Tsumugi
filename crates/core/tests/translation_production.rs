@@ -88,6 +88,7 @@ fn production_translation_manual_history_and_original_receipts_survive_reopen() 
     let (directory, mut store, rows) = source_fixture();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let first = SaveTranslationRevision {
+        reuse_origin: None,
         project_id: project,
         action_id: ExecutionId::new(),
         unit_id: rows[0].unit_id.unwrap(),
@@ -105,6 +106,7 @@ fn production_translation_manual_history_and_original_receipts_survive_reopen() 
     };
     let latest = store.save_translation_edit(&next).unwrap();
     let empty = SaveTranslationRevision {
+        reuse_origin: None,
         project_id: project,
         action_id: ExecutionId::new(),
         unit_id: rows[1].unit_id.unwrap(),

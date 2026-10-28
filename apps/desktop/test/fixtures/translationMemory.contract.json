@@ -1,0 +1,495 @@
+{
+  "requests": {
+    "page": {
+      "sessionToken": "synthetic-memory-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "filter": {
+        "sourceLocale": "en",
+        "targetLocale": "zh-CN",
+        "sourceText": null,
+        "translationText": null,
+        "origin": null,
+        "selection": "all"
+      },
+      "cursor": null,
+      "limit": 20
+    },
+    "entry": {
+      "sessionToken": "synthetic-memory-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "unitId": "00000000-0000-4000-8000-000000080002",
+      "locale": "zh-CN",
+      "revisionId": "00000000-0000-4000-8000-000000080001"
+    },
+    "reuse": {
+      "sessionToken": "synthetic-memory-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "reuse": {
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "expectedSelectionId": "40000000-0000-4000-8000-000000000005",
+        "donorUnitId": "00000000-0000-4000-8000-000000080002",
+        "donorRevisionId": "00000000-0000-4000-8000-000000080001",
+        "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "save": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "actionId": "00000000-0000-4000-8000-000000080006",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+      "expectedSelectionId": "40000000-0000-4000-8000-000000000005",
+      "text": "Reviewed target A {{name}} é 👩🏽‍💻",
+      "reuseOrigin": {
+        "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+        "targetUnitId": "40000000-0000-4000-8000-000000000002",
+        "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+        "donorUnitId": "00000000-0000-4000-8000-000000080002",
+        "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+        "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+        "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "sessionToken": "synthetic-memory-session"
+    }
+  },
+  "responses": {
+    "page": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "filter": {
+        "sourceLocale": "en",
+        "targetLocale": "zh-CN",
+        "sourceText": null,
+        "translationText": null,
+        "origin": null,
+        "selection": "all"
+      },
+      "basis": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "rows": [
+        {
+          "projectId": "40000000-0000-4000-8000-000000000001",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "sourceLocale": "en",
+          "sourceText": "A historical donor source",
+          "sourceLabel": {
+            "namespace": "Synthetic.Project",
+            "nativeKey": "dialogue.donor",
+            "occurrenceCount": 1
+          },
+          "isCurrentSource": true,
+          "revision": {
+            "revisionId": "00000000-0000-4000-8000-000000080001",
+            "unitId": "00000000-0000-4000-8000-000000080002",
+            "locale": "zh-CN",
+            "ordinal": "1",
+            "text": "Donor {{name}} é 👩🏽‍💻",
+            "sourceSnapshotId": "00000000-0000-4000-8000-000000080003",
+            "sourceRevisionId": "00000000-0000-4000-8000-000000080004",
+            "originKind": "manual",
+            "actionId": "00000000-0000-4000-8000-000000080005",
+            "attemptId": null,
+            "resultId": null,
+            "itemId": null,
+            "artifactId": null,
+            "logicalPath": null,
+            "declaredLocale": null,
+            "nativeKey": null,
+            "fileDigest": null,
+            "contributors": []
+          },
+          "isCurrentSelection": true,
+          "quality": {
+            "latestDecision": null,
+            "pastApproval": null,
+            "currentApproval": null
+          }
+        }
+      ],
+      "nextCursor": null
+    },
+    "entry": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sourceLocale": "en",
+      "sourceText": "A historical donor source",
+      "sourceLabel": {
+        "namespace": "Synthetic.Project",
+        "nativeKey": "dialogue.donor",
+        "occurrenceCount": 1
+      },
+      "isCurrentSource": true,
+      "revision": {
+        "revisionId": "00000000-0000-4000-8000-000000080001",
+        "unitId": "00000000-0000-4000-8000-000000080002",
+        "locale": "zh-CN",
+        "ordinal": "1",
+        "text": "Donor {{name}} é 👩🏽‍💻",
+        "sourceSnapshotId": "00000000-0000-4000-8000-000000080003",
+        "sourceRevisionId": "00000000-0000-4000-8000-000000080004",
+        "originKind": "manual",
+        "actionId": "00000000-0000-4000-8000-000000080005",
+        "attemptId": null,
+        "resultId": null,
+        "itemId": null,
+        "artifactId": null,
+        "logicalPath": null,
+        "declaredLocale": null,
+        "nativeKey": null,
+        "fileDigest": null,
+        "contributors": []
+      },
+      "isCurrentSelection": true,
+      "quality": {
+        "latestDecision": null,
+        "pastApproval": null,
+        "currentApproval": null
+      }
+    },
+    "reuse": {
+      "target": {
+        "termConflict": false,
+        "sourceText": "Wooden barrel",
+        "currentFallback": {
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "policyVersion": "balanced-1",
+          "allow": true,
+          "fallbackId": "40000000-0000-4000-8000-000000000012",
+          "previousFallbackId": null,
+          "actionId": "40000000-0000-4000-8000-000000000024",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "actor": "Synthetic reviewer"
+        },
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "currentWaivers": [
+          {
+            "locale": "zh-CN",
+            "previousWaiverId": null,
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "policyVersion": "balanced-1",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "grant": true,
+            "waiverId": "40000000-0000-4000-8000-000000000011",
+            "actionId": "40000000-0000-4000-8000-000000000023",
+            "createdAt": "2026-10-03T00:00:00Z",
+            "reason": "需要核对 👩🏽‍💻 é",
+            "actor": "Synthetic reviewer",
+            "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+        "currentDecision": {
+          "decisionId": "40000000-0000-4000-8000-000000000009",
+          "actor": "Synthetic reviewer",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "kind": "request-changes",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "actionId": "40000000-0000-4000-8000-000000000021",
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004"
+        },
+        "currentCheck": {
+          "outcome": "completed",
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "createdAt": "2026-10-03T00:00:00Z",
+          "rules": [
+            {
+              "status": "findings",
+              "findings": [
+                {
+                  "waivable": true,
+                  "code": "protected-term",
+                  "severity": "error",
+                  "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "rule": "terms",
+                  "detail": "保留 木桶 👩🏽‍💻 é"
+                }
+              ],
+              "rule": "terms",
+              "reason": null,
+              "key": {
+                "rule": {
+                  "id": "terms",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "core",
+                  "validator": {
+                    "id": "tsumugi.core-review",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  }
+                }
+              },
+              "mandatory": true
+            }
+          ],
+          "actionId": "40000000-0000-4000-8000-000000000022",
+          "validatorVersion": "smapi-prebuild-2",
+          "runId": "40000000-0000-4000-8000-000000000010",
+          "locale": "zh-CN",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": null
+        },
+        "basisEvidence": {
+          "termRevisionIds": [
+            "40000000-0000-4000-8000-000000000008"
+          ],
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+        },
+        "translationText": "木桶 👩🏽‍💻 é",
+        "selectionId": "40000000-0000-4000-8000-000000000005",
+        "locale": "zh-CN",
+        "revisionId": "40000000-0000-4000-8000-000000000006",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "nativeKey": "wooden-barrel"
+      },
+      "donor": {
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sourceLocale": "en",
+        "sourceText": "A historical donor source",
+        "sourceLabel": {
+          "namespace": "Synthetic.Project",
+          "nativeKey": "dialogue.donor",
+          "occurrenceCount": 1
+        },
+        "isCurrentSource": true,
+        "revision": {
+          "revisionId": "00000000-0000-4000-8000-000000080001",
+          "unitId": "00000000-0000-4000-8000-000000080002",
+          "locale": "zh-CN",
+          "ordinal": "1",
+          "text": "Donor {{name}} é 👩🏽‍💻",
+          "sourceSnapshotId": "00000000-0000-4000-8000-000000080003",
+          "sourceRevisionId": "00000000-0000-4000-8000-000000080004",
+          "originKind": "manual",
+          "actionId": "00000000-0000-4000-8000-000000080005",
+          "attemptId": null,
+          "resultId": null,
+          "itemId": null,
+          "artifactId": null,
+          "logicalPath": null,
+          "declaredLocale": null,
+          "nativeKey": null,
+          "fileDigest": null,
+          "contributors": []
+        },
+        "isCurrentSelection": true,
+        "quality": {
+          "latestDecision": null,
+          "pastApproval": null,
+          "currentApproval": null
+        }
+      },
+      "reuseOrigin": {
+        "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+        "targetUnitId": "40000000-0000-4000-8000-000000000002",
+        "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+        "donorUnitId": "00000000-0000-4000-8000-000000080002",
+        "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+        "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+        "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "saved": {
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "actionId": "00000000-0000-4000-8000-000000080006",
+      "basis": {
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "selectionId": "00000000-0000-4000-8000-000000080008"
+      },
+      "selection": {
+        "eventId": "00000000-0000-4000-8000-000000080008",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sequence": "2",
+        "revisionId": "00000000-0000-4000-8000-000000080007",
+        "actionId": "00000000-0000-4000-8000-000000080006",
+        "previousEventId": "40000000-0000-4000-8000-000000000005"
+      },
+      "revision": {
+        "revisionId": "00000000-0000-4000-8000-000000080007",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "ordinal": "9007199254740993",
+        "text": "Reviewed target A {{name}} é 👩🏽‍💻",
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "originKind": "manual",
+        "actionId": "00000000-0000-4000-8000-000000080006",
+        "attemptId": null,
+        "resultId": null,
+        "itemId": null,
+        "artifactId": null,
+        "logicalPath": null,
+        "declaredLocale": null,
+        "nativeKey": null,
+        "fileDigest": null,
+        "contributors": [],
+        "reuseOrigin": {
+          "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+          "targetUnitId": "40000000-0000-4000-8000-000000000002",
+          "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+          "donorUnitId": "00000000-0000-4000-8000-000000080002",
+          "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+          "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+          "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    "recovery": {
+      "request": {
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "actionId": "00000000-0000-4000-8000-000000080006",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "expectedSelectionId": "40000000-0000-4000-8000-000000000005",
+        "text": "Reviewed target A {{name}} é 👩🏽‍💻",
+        "reuseOrigin": {
+          "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+          "targetUnitId": "40000000-0000-4000-8000-000000000002",
+          "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+          "donorUnitId": "00000000-0000-4000-8000-000000080002",
+          "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+          "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+          "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "outcome": {
+        "kind": "recorded",
+        "receipt": {
+          "projectId": "40000000-0000-4000-8000-000000000001",
+          "actionId": "00000000-0000-4000-8000-000000080006",
+          "basis": {
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "selectionId": "00000000-0000-4000-8000-000000080008"
+          },
+          "selection": {
+            "eventId": "00000000-0000-4000-8000-000000080008",
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "sequence": "2",
+            "revisionId": "00000000-0000-4000-8000-000000080007",
+            "actionId": "00000000-0000-4000-8000-000000080006",
+            "previousEventId": "40000000-0000-4000-8000-000000000005"
+          },
+          "revision": {
+            "revisionId": "00000000-0000-4000-8000-000000080007",
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "ordinal": "9007199254740993",
+            "text": "Reviewed target A {{name}} é 👩🏽‍💻",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "originKind": "manual",
+            "actionId": "00000000-0000-4000-8000-000000080006",
+            "attemptId": null,
+            "resultId": null,
+            "itemId": null,
+            "artifactId": null,
+            "logicalPath": null,
+            "declaredLocale": null,
+            "nativeKey": null,
+            "fileDigest": null,
+            "contributors": [],
+            "reuseOrigin": {
+              "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+              "targetUnitId": "40000000-0000-4000-8000-000000000002",
+              "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+              "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+              "donorUnitId": "00000000-0000-4000-8000-000000080002",
+              "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+              "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+              "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        }
+      }
+    }
+  },
+  "draft": {
+    "basis": {
+      "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+      "selectionId": "40000000-0000-4000-8000-000000000005",
+      "revisionId": "40000000-0000-4000-8000-000000000006",
+      "text": "木桶 👩🏽‍💻 é"
+    },
+    "text": "Reviewed target A {{name}} é 👩🏽‍💻",
+    "editSeq": "1",
+    "pending": {
+      "kind": "save",
+      "request": {
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "actionId": "00000000-0000-4000-8000-000000080006",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "expectedSelectionId": "40000000-0000-4000-8000-000000000005",
+        "text": "Reviewed target A {{name}} é 👩🏽‍💻",
+        "reuseOrigin": {
+          "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+          "targetUnitId": "40000000-0000-4000-8000-000000000002",
+          "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+          "donorUnitId": "00000000-0000-4000-8000-000000080002",
+          "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+          "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+          "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "submittedSeq": "1"
+    },
+    "reuseOrigin": {
+      "targetSourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+      "targetUnitId": "40000000-0000-4000-8000-000000000002",
+      "targetSourceRevisionId": "40000000-0000-4000-8000-000000000004",
+      "targetSelectionId": "40000000-0000-4000-8000-000000000005",
+      "donorUnitId": "00000000-0000-4000-8000-000000080002",
+      "donorSourceRevisionId": "00000000-0000-4000-8000-000000080004",
+      "donorTranslationRevisionId": "00000000-0000-4000-8000-000000080001",
+      "donorBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+}

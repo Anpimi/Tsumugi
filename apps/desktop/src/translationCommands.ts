@@ -4,6 +4,7 @@ import type { TranslationCaptureRequest, TranslationStartRequest } from "./gener
 import { validateResponsePreflight, validateResponseStartAction } from "./generated/translation.validators";
 import type { AdoptionAction, Receipt } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
+import { sameTranslationReuse } from "./translationReuse";
 import type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, TranslationProjectionPrepareRequest, TranslationProjectionStartRequest, PluginStartRequest, TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationFilesRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
 import type { TranslationSaveReceipt, Responses } from "./generated/translation.responses";
 import type { Requests } from "./generated/translation.requests";
@@ -25,7 +26,7 @@ export type { TranslationCheckPrepareRequest, TranslationCheckFinishRequest, Tra
 export type { TranslationCheckReview, TranslationProjectionReview, TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
 export type { TranslationSaveRecovery, TranslationSelectionRecovery } from "./generated/translation.responses";
 export type { TranslationCandidateSlice, TranslationCandidateSliceRow, TranslationCandidateSliceNext } from "./generated/translation.responses";
-export type { TranslationCandidateState } from "./generated/translation.requests";
+export type { TranslationCandidateState, TranslationReuseOrigin } from "./generated/translation.requests";
 type TranslationCandidateSliceRequest = Omit<Requests["candidateSlice"], "unitIds"> & { unitIds: string[] };
 
 function relatedCandidateSlice(request: TranslationCandidateSliceRequest, page: Responses["candidateSlice"]) {
@@ -141,7 +142,7 @@ function sameRecoveryRequest(
     && actual.sourceRevisionId === expected.sourceRevisionId
     && (actual.expectedSelectionId ?? null) === (expected.expectedSelectionId ?? null)
     && ("text" in expected
-      ? "text" in actual && actual.text === expected.text
+      ? "text" in actual && actual.text === expected.text && sameTranslationReuse(actual.reuseOrigin, expected.reuseOrigin)
       : "revisionId" in actual && actual.revisionId === expected.revisionId);
 }
 
@@ -227,7 +228,9 @@ export function validateSaveReceipt(value: unknown, request: TranslationSaveRequ
     || basis.sourceRevisionId !== revision.sourceRevisionId || basis.selectionId !== selection.eventId
     || ![revision.attemptId, revision.resultId, revision.itemId, revision.artifactId,
       revision.logicalPath, revision.declaredLocale, revision.nativeKey, revision.fileDigest].every(field => field === null)
-    || revision.contributors.length !== 0) throw invalidSaveReceipt();
+    || revision.contributors.length !== 0
+    || (request.reuseOrigin != null && !sameTranslationReuse(revision.reuseOrigin, request.reuseOrigin))
+    || (revision.reuseOrigin != null && (revision.reuseOrigin.targetUnitId !== request.unitId || !/^[0-9a-f]{64}$/.test(revision.reuseOrigin.donorBasis)))) throw invalidSaveReceipt();
   return value;
 }
 

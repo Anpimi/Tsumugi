@@ -30,7 +30,7 @@ fn registered_decision_inbox_pages_original_facts_and_rechecks_after_owner_decis
     let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
     let unit = rows[0].unit_id.unwrap();
     let candidate = automatic::candidate_request(&mut core, unit, "A candidate", tsumugi_core::application::SelectionPolicy::CandidatesOnly);
-    core.save_translation_revision(&tsumugi_core::SaveTranslationRevision { project_id: project, action_id: ExecutionId::new(),
+    core.save_translation_revision(&tsumugi_core::SaveTranslationRevision { reuse_origin: None, project_id: project, action_id: ExecutionId::new(),
         unit_id: unit, locale: "zh-CN".into(), source_revision_id: rows[0].source_revision_id.unwrap(),
         expected_selection_id: None, text: "Saved translation".into() }).unwrap();
     core.close().unwrap();
@@ -94,7 +94,7 @@ fn registered_local_inbox_checks_receipts_and_lifecycle_without_resolving_origin
     let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
     let unit = rows[0].unit_id.unwrap();
     let action = ExecutionId::new();
-    let original = tsumugi_core::SaveTranslationRevision { project_id: project, action_id: action, unit_id: unit,
+    let original = tsumugi_core::SaveTranslationRevision { reuse_origin: None, project_id: project, action_id: action, unit_id: unit,
         locale: "zh-CN".into(), source_revision_id: rows[0].source_revision_id.unwrap(), expected_selection_id: None, text: "Submitted A".into() };
     core.close().unwrap();
     let profile = tempfile::tempdir().unwrap();
@@ -177,7 +177,7 @@ fn release_for_decision_inbox(store: &mut ProjectStore) -> ExecutionId {
         source.envelope().units[0].unit_id, vec![result], serde_json::to_value(preview.confirmation).unwrap()).unwrap();
     store.adopt_execution(&source_action, &SourceAdoptionHandler).unwrap();
     let target = store.review_page(project, "zh-CN", 0, 10).unwrap().rows.remove(0);
-    store.save_translation_revision(&SaveTranslationRevision { project_id: project, action_id: ExecutionId::new(),
+    store.save_translation_revision(&SaveTranslationRevision { reuse_origin: None, project_id: project, action_id: ExecutionId::new(),
         unit_id: target.unit_id, locale: "zh-CN".into(), source_revision_id: target.source_revision_id,
         expected_selection_id: None, text: "Synthetic translation".into() }).unwrap();
     let target = store.review_target(project, target.unit_id, "zh-CN").unwrap();

@@ -158,6 +158,7 @@ export type ResourceImpactStatus = "needs-revalidation" | "unresolved";
 export type ResourceChangeKind = "added" | "edited" | "removed" | "unchanged" | "override";
 export type TmMatchKind = "exact" | "fuzzy";
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type ReviewDecisionKind = "approve" | "request-changes";
 export type TbxLicenseStatus = "unknown";
 export type TbxLossKind =
   | "unmapped-metadata"
@@ -216,6 +217,102 @@ export type TmxRowReason =
   | "inline-markup"
   | "unknown-structure";
 export type TmxRowStatus = "eligible" | "excluded";
+export type CandidateDisposition = "rejected" | "restored";
+export type TranslationMemorySelection = "all" | "current" | "historical";
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+/**
+ * Selecting a check is not adopting its resource or requiring its findings.
+ * Blocking checks continue to use the original mandatory Review contract.
+ */
+export type TextReviewDisposition = "advisory";
+export type ComponentScope = "application" | "project" | "attempt";
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux" | "windows";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
+export type CheckImplementation =
+  | {
+      kind: "core";
+      validator: ContractRef;
+    }
+  | {
+      kind: "plugin";
+      provider: ProviderSelectionBinding;
+    };
+export type TextReviewField = "source" | "translation";
+export type ReviewInvocationOutcome = "succeeded" | "failed" | "unknown";
+export type CheckOutcome =
+  | {
+      findings: CheckFinding2[];
+      kind: "completed";
+    }
+  | {
+      basis: NotApplicableBasis;
+      kind: "not-applicable";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unavailable";
+    };
+export type FindingSeverity = "warning" | "error";
+export type ReviewCheckOutcome = "completed" | "failed" | "cancelled" | "unknown";
 
 export interface Responses {
   capture: GlossaryCapture | null;
@@ -253,6 +350,9 @@ export interface Responses {
   termAction: TermSaveActionRead | null;
   terms: TermRevision[];
   tmxPreview: TmxFilePreview | null;
+  translationMemoryEntry: TranslationMemoryEntry;
+  translationMemoryPage: TranslationMemoryPage;
+  translationMemoryReuse: TranslationMemoryReusePreview;
 }
 export interface GlossaryCapture {
   captureId: ExecutionId;
@@ -664,6 +764,7 @@ export interface TmSuggestion {
   isCurrentSelection: boolean;
   matchKind: TmMatchKind;
   originKind: TranslationOrigin;
+  quality?: TranslationMemoryQuality | null;
   scorePercent: number;
   sourceRevisionId: ExecutionId;
   sourceText: string;
@@ -671,6 +772,43 @@ export interface TmSuggestion {
   translationRevisionId: ExecutionId;
   translationText: string;
   unitId: ExecutionId;
+}
+export interface TranslationMemoryQuality {
+  /**
+   * Present only when the original review owner still admits this exact basis.
+   */
+  currentApproval: ReviewDecision | null;
+  /**
+   * Latest decision on this exact donor revision, including request-changes.
+   */
+  latestDecision: ReviewDecision | null;
+  /**
+   * A historical approval does not grant current applicability or target approval.
+   */
+  pastApproval: ReviewDecision | null;
+}
+export interface ReviewDecision {
+  actionId: ExecutionId;
+  actor: string;
+  basis: string;
+  basisEvidence: ReviewBasis;
+  createdAt: string;
+  decisionId: ExecutionId;
+  kind: ReviewDecisionKind;
+  locale: string;
+  reason: string;
+  revisionId: ExecutionId;
+  selectionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ReviewBasis {
+  contextRevisionId: ExecutionId | null;
+  revisionId: ExecutionId | null;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  termRevisionIds: ExecutionId[];
 }
 export interface TbxFilePreview {
   fileName: string;
@@ -784,4 +922,434 @@ export interface TmxExchangeRow {
   targetText: string | null;
   tuProvenance: TmxProvenance;
   tuid: string | null;
+}
+export interface TranslationMemoryEntry {
+  /**
+   * Identity and immutable content only; changing review/selection is independent.
+   */
+  basis: string;
+  isCurrentSelection: boolean;
+  isCurrentSource: boolean;
+  projectId: ExecutionId;
+  quality: TranslationMemoryQuality;
+  revision: TranslationRevision;
+  sourceLabel: TranslationMemorySourceLabel;
+  sourceLocale: string;
+  sourceText: string;
+}
+export interface TranslationRevision {
+  actionId: ExecutionId;
+  artifactId: ExecutionId | null;
+  attemptId: ExecutionId | null;
+  candidateDecision?: CandidateDecision | null;
+  contributors: ExecutionId[];
+  declaredLocale: string | null;
+  fileDigest: string | null;
+  itemId: ExecutionId | null;
+  locale: string;
+  logicalPath: string | null;
+  nativeKey: string | null;
+  ordinal: Revision;
+  originKind: TranslationOrigin;
+  resultId: ExecutionId | null;
+  reuseOrigin?: TranslationReuseOrigin | null;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface CandidateDecision {
+  request: CandidateDecisionWrite;
+  sourceSnapshotId: ExecutionId;
+}
+export interface CandidateDecisionWrite {
+  actionId: ExecutionId;
+  actor: string;
+  disposition: CandidateDisposition;
+  expectedDecisionId: ExecutionId | null;
+  expectedSelectionId: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+/**
+ * Reuse is provenance, not a selection, approval, or dependency on future donor edits.
+ */
+export interface TranslationReuseOrigin {
+  donorBasis: string;
+  donorSourceRevisionId: ExecutionId;
+  donorTranslationRevisionId: ExecutionId;
+  donorUnitId: ExecutionId;
+  targetSelectionId: ExecutionId | null;
+  targetSourceRevisionId: ExecutionId;
+  targetSourceSnapshotId: ExecutionId;
+  targetUnitId: ExecutionId;
+}
+export interface TranslationMemorySourceLabel {
+  /**
+   * Representative first occurrence in the donor revision's original snapshot.
+   */
+  namespace: string;
+  nativeKey: string;
+  occurrenceCount: number;
+}
+export interface TranslationMemoryPage {
+  basis: string;
+  filter: TranslationMemoryFilter;
+  nextCursor: string | null;
+  projectId: ExecutionId;
+  rows: TranslationMemoryEntry[];
+}
+export interface TranslationMemoryFilter {
+  origin: TranslationOrigin | null;
+  selection: TranslationMemorySelection;
+  sourceLocale: string;
+  sourceText: string | null;
+  targetLocale: string;
+  translationText: string | null;
+}
+export interface TranslationMemoryReusePreview {
+  donor: TranslationMemoryEntry;
+  reuseOrigin: TranslationReuseOrigin;
+  target: ReviewTarget;
+}
+export interface ReviewTarget {
+  basis: string;
+  basisEvidence: ReviewBasis;
+  currentCheck: CheckRun | null;
+  currentDecision: ReviewDecision | null;
+  currentFallback: FallbackDecision | null;
+  currentWaivers: Waiver[];
+  locale: string;
+  nativeKey: string;
+  revisionId: ExecutionId | null;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  sourceText: string;
+  termConflict: boolean;
+  translationText: string | null;
+  unitId: ExecutionId;
+}
+export interface CheckRun {
+  actionId: ExecutionId;
+  basis: string;
+  basisEvidence: ReviewBasis;
+  createdAt: string;
+  evidence: ReviewCheckEvidence | null;
+  locale: string;
+  outcome: ReviewCheckOutcome;
+  rules: CheckRuleResult[];
+  runId: ExecutionId;
+  unitId: ExecutionId;
+  validatorVersion: string;
+}
+export interface ReviewCheckEvidence {
+  advisoryChecks: AdvisoryReviewCheck[];
+  diagnostics: TextReviewDiagnostic[];
+  origins: ReviewCheckOriginEvidence[];
+  qaBasis: string;
+  requiredChecks: RequiredCheckSet;
+  results: CheckResult[];
+  sourceBinding: SourceReviewBinding;
+}
+/**
+ * Captured by the trusted package adapter. Selecting these rules neither
+ * adopts Resource entries nor grants permission to run the checker.
+ */
+export interface AdvisoryReviewCheck {
+  binding: TextReviewBinding;
+  declarationResourceId: string;
+  execution: PluginExecutionBinding;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+}
+export interface TextReviewBinding {
+  checker: CapabilityBinding;
+  declaration: TextReviewDeclaration;
+  resources: TextReviewResourceBinding[];
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * One provider's available rules. An invocation must use an explicitly chosen
+ * nonempty subset; installation and a matching spelling do not select rules.
+ */
+export interface TextReviewDeclaration {
+  checker: string;
+  disposition: TextReviewDisposition;
+  profile: ContractRef;
+  rules: TextReviewRuleDeclaration[];
+  supportingResources: string[];
+}
+export interface TextReviewRuleDeclaration {
+  description: string;
+  requiresTranslation: boolean;
+  rule: ContractRef;
+  title: string;
+}
+/**
+ * A declared Resource contribution in the exact same package as the checker.
+ * This mirrors Resource metadata, without coupling review to tool declarations.
+ */
+export interface TextReviewResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+export interface PluginExecutionBinding {
+  applicationScope: ApplicationScopeBasis | null;
+  capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile: ContractRef | null;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+/**
+ * Exact package Resource bytes captured by the Host, never a plugin's mutable
+ * lookup or a claim that the referenced resource has been adopted by a project.
+ */
+export interface TextReviewResourcePin {
+  contributionId: string;
+  schema: ContractRef;
+  sha256: string;
+}
+/**
+ * Optional public presentation associated with one actual finding. Diagnostic
+ * prose is not authenticated or sanitized by these structural checks.
+ */
+export interface TextReviewDiagnostic {
+  code: string;
+  detail: string | null;
+  key: CheckKey;
+  location: TextReviewLocation | null;
+  resourceEntry: TextReviewResourceEntry | null;
+  suggestion: string | null;
+  target: string;
+}
+export interface CheckKey {
+  implementation: CheckImplementation;
+  rule: ContractRef;
+}
+export interface TextReviewLocation {
+  field: TextReviewField;
+  range: TextRange;
+}
+export interface TextReviewResourceEntry {
+  contributionId: string;
+  entryId: string;
+}
+export interface ReviewCheckOriginEvidence {
+  attemptId: ExecutionId;
+  checker: ReviewCheckerKey;
+  inputDigest: string;
+  outcome: ReviewInvocationOutcome;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ReviewCheckerKey {
+  profile: ContractRef;
+  provider: ProviderSelectionBinding;
+}
+/**
+ * Wire projection of the host's captured union. Receiving this from a plugin
+ * does not make it a trusted policy or permit it to replace the expected set.
+ */
+export interface RequiredCheckSet {
+  policy: ContractRef;
+  requirements: CheckRequirement[];
+}
+export interface CheckRequirement {
+  inputDigest: string;
+  key: CheckKey;
+  mandatory: boolean;
+  notApplicable: NotApplicableBasis | null;
+  scopeDigest: string;
+  targets: string[];
+  waivable: boolean;
+}
+/**
+ * A trusted capture of an allowed reason and its exact scope basis, not a
+ * plugin's claim that it is safe to skip a required check.
+ */
+export interface NotApplicableBasis {
+  basisDigest: string;
+  code: string;
+}
+export interface CheckResult {
+  coveredTargets: string[];
+  inputDigest: string;
+  key: CheckKey;
+  outcome: CheckOutcome;
+  scopeDigest: string;
+}
+export interface CheckFinding2 {
+  code: string;
+  severity: FindingSeverity;
+  target: string;
+}
+export interface SourceReviewBinding {
+  checker: PluginExecutionBinding;
+  declaration: ReviewDeclaration;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
+export interface CheckRuleResult {
+  findings: CheckFinding[];
+  key: CheckKey;
+  mandatory: boolean;
+  reason: string | null;
+  rule: string;
+  status: string;
+}
+export interface CheckFinding {
+  code: string;
+  detail: string;
+  issueId: string;
+  rule: string;
+  severity: string;
+  waivable: boolean;
+}
+export interface FallbackDecision {
+  actionId: ExecutionId;
+  actor: string;
+  allow: boolean;
+  createdAt: string;
+  fallbackId: ExecutionId;
+  locale: string;
+  policyVersion: string;
+  previousFallbackId: ExecutionId | null;
+  reason: string;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface Waiver {
+  actionId: ExecutionId;
+  actor: string;
+  basis: string;
+  createdAt: string;
+  grant: boolean;
+  issueId: string;
+  locale: string;
+  policyVersion: string;
+  previousWaiverId: ExecutionId | null;
+  reason: string;
+  unitId: ExecutionId;
+  waiverId: ExecutionId;
 }

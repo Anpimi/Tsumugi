@@ -132,6 +132,8 @@ export type ContextResourceScope =
     };
 export type Revision = string;
 export type ResourceDecisionKind = "adopt" | "keep" | "ignore" | "override";
+export type TranslationOrigin = "import" | "manual" | "ai";
+export type TranslationMemorySelection = "all" | "current" | "historical";
 
 export interface Requests {
   capture: CaptureRequest;
@@ -168,6 +170,9 @@ export interface Requests {
   termHistory: TermHistoryRequest;
   terms: TermListRequest;
   tmxPreview: TmxPreviewRequest;
+  translationMemoryEntry: TranslationMemoryEntryRequest;
+  translationMemoryPage: TranslationMemoryPageRequest;
+  translationMemoryReuse: TranslationMemoryReuseRequest;
   unitLocale: UnitLocaleRequest;
 }
 export interface CaptureRequest {
@@ -503,6 +508,43 @@ export interface TmxPreviewRequest {
   locale: string;
   projectId: ExecutionId;
   sessionToken: string;
+}
+export interface TranslationMemoryEntryRequest {
+  locale: string;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+  sessionToken: string;
+  unitId: ExecutionId;
+}
+export interface TranslationMemoryPageRequest {
+  cursor?: string | null;
+  filter: TranslationMemoryFilter;
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface TranslationMemoryFilter {
+  origin?: TranslationOrigin | null;
+  selection: TranslationMemorySelection;
+  sourceLocale: string;
+  sourceText?: string | null;
+  targetLocale: string;
+  translationText?: string | null;
+}
+export interface TranslationMemoryReuseRequest {
+  projectId: ExecutionId;
+  reuse: PrepareTranslationMemoryReuse;
+  sessionToken: string;
+}
+export interface PrepareTranslationMemoryReuse {
+  donorBasis: string;
+  donorRevisionId: ExecutionId;
+  donorUnitId: ExecutionId;
+  expectedSelectionId?: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
 }
 export interface UnitLocaleRequest {
   locale: string;

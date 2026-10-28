@@ -729,6 +729,7 @@ mod tests {
             .unwrap();
         store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: plan.project_id,
                 action_id: ExecutionId::new(),
                 unit_id: units[0],
@@ -1466,6 +1467,7 @@ mod tests {
         assert_eq!(store.set_work_protection(&request).unwrap(), released);
         let saved = store
             .save_translation_revision(&crate::SaveTranslationRevision {
+                reuse_origin: None,
                 action_id: ExecutionId::new(),
                 project_id: project,
                 unit_id: unit,
@@ -2296,6 +2298,7 @@ mod tests {
             .unwrap();
         store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: plan.project_id,
                 action_id: ExecutionId::new(),
                 unit_id: units[0],

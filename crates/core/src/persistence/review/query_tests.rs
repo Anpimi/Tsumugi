@@ -638,6 +638,7 @@ fn maintenance_reads_only_window_targets_while_preserving_original_impact_reason
     let first = store.source_content(snapshot, 0, 1).unwrap().rows.remove(0);
     let saved = store
         .save_translation_edit(&crate::SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: first.unit_id.unwrap(),
@@ -1213,6 +1214,7 @@ fn segment_row_facts_keep_resource_history_review_qa_and_protection_independent(
     let (_directory, mut store, project, units) = fixture();
     let target = store.review_target(project, units[0], "zh-CN").unwrap();
     store.save_translation_edit(&crate::SaveTranslationRevision {
+        reuse_origin: None,
         project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
         source_revision_id: target.source_revision_id, expected_selection_id: None, text: "Term {{name}}".into(),
     }).unwrap();

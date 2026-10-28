@@ -159,6 +159,8 @@ request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] Tran
     source_revision_id: ExecutionId,
     expected_selection_id: Option<ExecutionId>,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reuse_origin: Option<tsumugi_core::TranslationReuseOrigin>,
 });
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -187,6 +189,7 @@ impl TranslationSaveRequest {
             source_revision_id: self.source_revision_id,
             expected_selection_id: self.expected_selection_id,
             text: self.text.clone(),
+            reuse_origin: self.reuse_origin.clone(),
         }
     }
 }

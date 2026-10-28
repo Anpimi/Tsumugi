@@ -823,6 +823,7 @@ export interface TranslationRevision {
   ordinal: Revision;
   originKind: TranslationOrigin;
   resultId: ExecutionId | null;
+  reuseOrigin?: TranslationReuseOrigin | null;
   revisionId: ExecutionId;
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
@@ -845,6 +846,19 @@ export interface CandidateDecisionWrite {
   revisionId: ExecutionId;
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
+}
+/**
+ * Reuse is provenance, not a selection, approval, or dependency on future donor edits.
+ */
+export interface TranslationReuseOrigin {
+  donorBasis: string;
+  donorSourceRevisionId: ExecutionId;
+  donorTranslationRevisionId: ExecutionId;
+  donorUnitId: ExecutionId;
+  targetSelectionId: ExecutionId | null;
+  targetSourceRevisionId: ExecutionId;
+  targetSourceSnapshotId: ExecutionId;
+  targetUnitId: ExecutionId;
 }
 export interface Eligibility {
   basis: string;

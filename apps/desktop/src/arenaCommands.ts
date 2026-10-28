@@ -1,5 +1,6 @@
 import {checkedInvoke} from "./ipc";
 import {defaultAiConfig} from "./aiCommands";
+import {sameDraftReuse} from "./draftCommands";
 import type {ArenaConfig,PreviewRequest,StartRequest,ReadRequest,ComparisonCommand,ComparisonRead,SessionRequest,RevealRequest,MergeRequest} from "./generated/arena.requests";
 import * as validators from "./generated/arena.validators";
 export type {ArenaConfig,ComparisonCommand as CompareRequest,MergeRequest} from "./generated/arena.requests";
@@ -34,7 +35,7 @@ export function confirmArenaMergeAction(request:MergeRequest,value:unknown){
   const saved=value.request,basis=value.merge;
   requireConfirmation(saved.projectId===request.projectId&&saved.actionId===request.actionId&&saved.unitId===request.unitId
    &&saved.locale===request.locale&&saved.sourceRevisionId===request.sourceRevisionId
-   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&saved.text===request.text
+   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&saved.text===request.text&&sameDraftReuse(saved.reuseOrigin,request.reuseOrigin)
    &&basis.expectedBasis===request.merge.expectedBasis&&basis.contributors.length===request.merge.contributors.length
    &&basis.contributors.every((id,index)=>id===request.merge.contributors[index]));
   confirmArenaMerge(request,value.receipt);
@@ -83,7 +84,7 @@ export const arenaCommands={
   const value=await checkedInvoke("recover_arena_merge",request,validators.validateResponseRecoverMerge),saved=value.request;
   requireConfirmation(saved.projectId===request.projectId&&saved.actionId===request.actionId&&saved.unitId===request.unitId
    &&saved.locale===request.locale&&saved.sourceRevisionId===request.sourceRevisionId&&saved.text===request.text
-   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&value.merge.expectedBasis===request.merge.expectedBasis
+   &&saved.expectedSelectionId===(request.expectedSelectionId??null)&&sameDraftReuse(saved.reuseOrigin,request.reuseOrigin)&&value.merge.expectedBasis===request.merge.expectedBasis
    &&value.merge.contributors.length===request.merge.contributors.length
    &&value.merge.contributors.every((id,index)=>id===request.merge.contributors[index]));
   if(value.outcome.kind==="recorded")confirmArenaMerge(request,value.outcome.receipt);

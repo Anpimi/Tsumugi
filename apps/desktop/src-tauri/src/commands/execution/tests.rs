@@ -1092,7 +1092,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let guard = state.sessions.pause();
     let mut save = Box::pin(source::translation::save_translation_revision(
         app.state::<AppState>(),
-        source::translation::TranslationSaveRequest {
+        source::translation::TranslationSaveRequest { reuse_origin: None,
             session_token: context["sessionToken"].as_str().unwrap().to_owned(),
             project_id,
             action_id: ExecutionId::new(),
@@ -1112,7 +1112,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let guard = state.sessions.pause();
     let mut merge = Box::pin(arena::save_arena_merge(
         app.state::<AppState>(),
-        arena::MergeRequest {
+        arena::MergeRequest { reuse_origin: None,
             session_token: context["sessionToken"].as_str().unwrap().to_owned(),
             project_id,
             action_id: ExecutionId::new(),
@@ -2116,7 +2116,7 @@ fn arena_receipt_candidates(
     app.state::<AppState>().sessions.with(move |sessions| {
         let store = &mut sessions.active.as_mut().unwrap().store;
         let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
-        let first = tsumugi_core::SaveTranslationRevision {
+        let first = tsumugi_core::SaveTranslationRevision { reuse_origin: None,
             project_id: project, action_id: ExecutionId::new(), unit_id: unit, locale: "zh-CN".into(),
             source_revision_id: source, expected_selection_id: None, text: "First".into(),
         };

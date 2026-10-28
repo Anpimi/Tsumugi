@@ -981,6 +981,7 @@ mod tests {
         let revision = candidate(&mut store, &input, units[0], "你好 {{name}}");
         let target = store.review_target(project, units[0], "zh-CN").unwrap();
         let manual = store.save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project, action_id: ExecutionId::new(), unit_id: units[0], locale: "zh-CN".into(),
             source_revision_id: target.source_revision_id, expected_selection_id: None, text: "人工 {{name}}".into(),
         }).unwrap();
@@ -1449,6 +1450,7 @@ mod tests {
         let target = store.review_target(project, units[1], "zh-CN").unwrap();
         let saved = store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: units[1],

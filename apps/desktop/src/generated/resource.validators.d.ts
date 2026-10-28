@@ -35,6 +35,9 @@ export declare function validateRequestTermAction(value: unknown): value is Requ
 export declare function validateRequestTermHistory(value: unknown): value is Requests["termHistory"];
 export declare function validateRequestTerms(value: unknown): value is Requests["terms"];
 export declare function validateRequestTmxPreview(value: unknown): value is Requests["tmxPreview"];
+export declare function validateRequestTranslationMemoryEntry(value: unknown): value is Requests["translationMemoryEntry"];
+export declare function validateRequestTranslationMemoryPage(value: unknown): value is Requests["translationMemoryPage"];
+export declare function validateRequestTranslationMemoryReuse(value: unknown): value is Requests["translationMemoryReuse"];
 export declare function validateRequestUnitLocale(value: unknown): value is Requests["unitLocale"];
 export declare function validateResponseCapture(value: unknown): value is Responses["capture"];
 export declare function validateResponseCaptureAction(value: unknown): value is Responses["captureAction"];
@@ -71,3 +74,6 @@ export declare function validateResponseTerm(value: unknown): value is Responses
 export declare function validateResponseTermAction(value: unknown): value is Responses["termAction"];
 export declare function validateResponseTerms(value: unknown): value is Responses["terms"];
 export declare function validateResponseTmxPreview(value: unknown): value is Responses["tmxPreview"];
+export declare function validateResponseTranslationMemoryEntry(value: unknown): value is Responses["translationMemoryEntry"];
+export declare function validateResponseTranslationMemoryPage(value: unknown): value is Responses["translationMemoryPage"];
+export declare function validateResponseTranslationMemoryReuse(value: unknown): value is Responses["translationMemoryReuse"];

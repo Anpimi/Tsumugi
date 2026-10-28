@@ -434,6 +434,9 @@ struct TranslationResponses {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceRequests {
+    translation_memory_page: execution::translation_memory::TranslationMemoryPageRequest,
+    translation_memory_entry: execution::translation_memory::TranslationMemoryEntryRequest,
+    translation_memory_reuse: execution::translation_memory::TranslationMemoryReuseRequest,
     context_resource_save: execution::resource::context_resources::ContextResourceSaveRequest,
     context_resource_withdraw: execution::resource::context_resources::ContextResourceWithdrawRequest,
     context_resource_current: execution::resource::context_resources::ContextResourceCurrentRequest,
@@ -474,6 +477,9 @@ struct ResourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ResourceResponses {
+    translation_memory_page: tsumugi_core::TranslationMemoryPage,
+    translation_memory_entry: tsumugi_core::TranslationMemoryEntry,
+    translation_memory_reuse: tsumugi_core::TranslationMemoryReusePreview,
     context_resource_saved: tsumugi_core::ContextResourceRevision,
     context_resource_withdrawn: tsumugi_core::ContextResourceRevision,
     context_resource_current: Option<tsumugi_core::ContextResourceRevision>,

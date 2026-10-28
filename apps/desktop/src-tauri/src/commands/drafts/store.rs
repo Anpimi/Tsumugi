@@ -27,7 +27,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 8;
+const FORMAT: i64 = 9;
+const KNOWLEDGE_PROPOSAL_FORMAT: i64 = 8;
 const REVOCATION_FORMAT: i64 = 7;
 const RUN_FORMAT: i64 = 6;
 const PROPOSAL_FORMAT: i64 = 5;
@@ -466,7 +467,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -548,6 +549,9 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
     if let Some(origin) = &value.merge {
         validate_merge(&origin.contributors, &origin.expected_basis)?;
     }
+    if let Some(origin) = &value.reuse_origin {
+        validate_reuse_origin(key, origin)?;
+    }
     let Some(pending) = &value.pending else {
         return Ok(());
     };
@@ -556,6 +560,7 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
             request,
             submitted_seq,
         } => {
+            if let Some(origin) = &request.reuse_origin { validate_reuse_origin(key, origin)?; }
             if value.merge.is_some() {
                 return Err(fail(ErrorCode::InvalidInput, "drafts-merge-pending"));
             }
@@ -590,6 +595,7 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
             merge,
             submitted_seq,
         } => {
+            if let Some(origin) = &request.reuse_origin { validate_reuse_origin(key, origin)?; }
             validate_merge(&merge.contributors, &merge.expected_basis)?;
             let origin = value
                 .merge
@@ -619,6 +625,14 @@ fn validate_value(key: &DraftKey, value: &DraftValue) -> Result<()> {
         || *submitted > value.edit_seq
     {
         return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
+    }
+    Ok(())
+}
+
+fn validate_reuse_origin(key: &DraftKey, origin: &tsumugi_core::TranslationReuseOrigin) -> Result<()> {
+    if origin.target_unit_id != key.unit_id || origin.donor_basis.len() != 64
+        || !origin.donor_basis.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+        return Err(fail(ErrorCode::InvalidInput, "drafts-reuse-origin"));
     }
     Ok(())
 }
@@ -763,6 +777,8 @@ fn decode_head(key: &DraftKey, stored: StoredHead, format: i64) -> Result<DraftH
         || source != value.map(|value| value.basis.source_revision_id.to_string())
         || pending != i64::from(value.is_some_and(|value| value.pending.is_some()))
         || value.is_some_and(|value| validate_value(key, value).is_err())
+        || format < FORMAT && value.is_some_and(|value| value.reuse_origin.is_some()
+            || matches!(&value.pending, Some(DraftPending::Save { request, .. } | DraftPending::Merge { request, .. }) if request.reuse_origin.is_some()))
         || format == LEGACY_FORMAT
             && value.is_some_and(|value| {
                 value.merge.is_some() || matches!(value.pending, Some(DraftPending::Merge { .. }))

@@ -41,7 +41,7 @@ fn seed(store: &mut ProjectStore) -> (Value, ExecutionId, Value) {
     store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
     let unit = store.review_page(project, "zh-CN", 0, 10).unwrap().rows.remove(0).unit_id;
     let target = store.review_target(project, unit, "zh-CN").unwrap();
-    store.save_translation_revision(&SaveTranslationRevision {
+    store.save_translation_revision(&SaveTranslationRevision { reuse_origin: None,
         project_id: project, action_id: ExecutionId::new(), unit_id: unit, locale: "zh-CN".into(),
         source_revision_id: target.source_revision_id, expected_selection_id: None, text: "你好".into(),
     }).unwrap();

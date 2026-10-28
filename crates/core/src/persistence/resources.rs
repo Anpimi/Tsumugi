@@ -472,6 +472,8 @@ pub struct ContextCapture {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TmSuggestion {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<super::translation::TranslationMemoryQuality>,
     pub unit_id: ExecutionId,
     pub source_revision_id: ExecutionId,
     pub source_text: String,
@@ -783,6 +785,7 @@ pub(super) fn migrate_context_resources(connection: &Connection) -> rusqlite::Re
 #[cfg(test)]
 pub(in crate::persistence) fn make_legacy_context_schema(c:&Connection)->rusqlite::Result<()> {
     assert!(c.is_autocommit());
+    super::translation::make_legacy_memory_schema(c)?;
     let foreign_keys:bool=c.pragma_query_value(None,"foreign_keys",|r|r.get(0))?;
     c.pragma_update(None,"foreign_keys",false)?;
     let result=c.execute_batch("BEGIN IMMEDIATE;
@@ -2114,6 +2117,7 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "tm-read"))?;
+        super::review::read_snapshot(connection, |connection| {
         check_project(connection, project_id, locale)?;
         let (_, _, _, current_text) = source_fact(connection, project_id, unit_id)?;
         let mut statement = connection
@@ -2170,6 +2174,7 @@ impl ProjectStore {
                 continue;
             }
             suggestions.push(TmSuggestion {
+                quality: None,
                 unit_id: id(unit)?,
                 source_revision_id: id(source_revision)?,
                 source_text,
@@ -2197,11 +2202,19 @@ impl ProjectStore {
                         .cmp(&right.translation_revision_id)
                 })
         });
-        Ok(suggestions
+        let mut page: Vec<_> = suggestions
             .into_iter()
             .skip(offset as usize)
             .take(limit as usize)
-            .collect())
+            .collect();
+        for row in &mut page {
+            let revision = super::translation::revision_in(connection, project_id, row.translation_revision_id)?;
+            let quality = super::translation::memory_quality_in(connection, project_id, &revision)?;
+            row.has_human_approval = quality.current_approval.is_some();
+            row.quality = Some(quality);
+        }
+        Ok(page)
+        })
     }
     pub fn context_revision(
         &self,
@@ -3404,6 +3417,7 @@ mod tests {
             source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
         store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 unit_id,
@@ -3423,6 +3437,7 @@ mod tests {
             source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
         let before = store
             .save_translation_edit(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 unit_id,
@@ -3434,6 +3449,7 @@ mod tests {
             .unwrap();
         let after = store
             .save_translation_edit(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 unit_id,

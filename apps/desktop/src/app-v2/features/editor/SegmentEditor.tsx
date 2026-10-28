@@ -7,6 +7,7 @@ import { Button } from "../../../design-system/Button";
 import { Banner, ErrorState, LoadingState } from "../../../design-system/Feedback";
 import { Field, TextArea } from "../../../design-system/Field";
 import { TokenizedText } from "../../../design-system/TokenizedText";
+import TranslationReuseReference from "./TranslationReuseReference";
 import type { InteractionGate, InteractionIntent } from "../../workspace/interactionGate";
 import type { TranslationDrafts } from "./translationDrafts";
 import type { EntryDiagnosticFocus } from "../review/navigationTypes";
@@ -61,6 +62,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
   const snapshot = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const entry = drafts.getEntry(draftKey), value = entry?.value;
+  const reuseOrigin = value?.reuseOrigin ?? (value && entry?.current.kind === "current" && sameDraftBasis(value.basis, entry.current.basis) ? entry.current.reuseOrigin : null);
   const identity = JSON.stringify([draftKey.projectId, draftKey.unitId, draftKey.locale]);
   const ownerId = `segment-editor-${useId()}`;
   const field = useRef<HTMLTextAreaElement>(null), composing = useRef(false), mounted = useRef(false), copySequence = useRef(0);
@@ -257,6 +259,7 @@ export default function SegmentEditor({ drafts, draftKey, viewId, gate, disabled
     {snapshot.retired ? <Banner tone="warning">{t("editorSessionRetired")}</Banner> : null}
     {entry.current.kind === "unavailable" ? <Banner tone="warning">{t(entry.current.reason === "source-missing" ? "editorSourceMissing" : "editorLocaleRemoved")}</Banner> : null}
     {entry.currentFailure !== null ? <Banner tone="error" role="alert" action={<Button size="sm" disabled={readonly || entry.busy} onClick={retryRead}>{t("editorRetryRead")}</Button>}>{t("editorReadFailedHelp")}</Banner> : null}
+    {reuseOrigin ? <TranslationReuseReference origin={reuseOrigin} locale={draftKey.locale} disabled={readonly}/> : null}
     {value?.merge ? <Banner tone={mergeChanged ? "warning" : "info"} action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict} onClick={() => { void drafts.refreshMerge(draftKey); }}>{t("editorMergeRefresh")}</Button>}>{t(mergeChanged ? "editorMergeChanged" : "editorMergeDraft")}</Banner> : null}
     {basisChanged ? <>
       <Banner tone="warning" action={<Button size="sm" disabled={blocked || pending || entry.busy || journalConflict || entry.currentFailure !== null} onClick={() => { void drafts.rebase(draftKey); }}>{t(value?.merge ? "editorMergeRefresh" : "editorRebase")}</Button>}>{t("editorBasisChanged")}</Banner>

@@ -7,11 +7,11 @@ fn setup() -> (tempfile::TempDir, DraftStore, DraftWrite) {
     let directory = tempfile::tempdir().unwrap();
     let store = DraftStore::at(directory.path().join("drafts")).unwrap();
     let key = DraftKey { project_id: ExecutionId::new(), unit_id: ExecutionId::new(), locale: "zh-CN".into() };
-    let request = SaveTranslationRevision { project_id: key.project_id, action_id: ExecutionId::new(),
+    let request = SaveTranslationRevision { reuse_origin: None, project_id: key.project_id, action_id: ExecutionId::new(),
         unit_id: key.unit_id, locale: key.locale.clone(), source_revision_id: ExecutionId::new(),
         expected_selection_id: None, text: "Original A".into() };
     let write = DraftWrite { key, expected_revision: rev(0), writer_id: ExecutionId::new(),
-        value: DraftValue { basis: DraftBasis { source_revision_id: request.source_revision_id,
+        value: DraftValue { reuse_origin: None, basis: DraftBasis { source_revision_id: request.source_revision_id,
             selection_id: None, revision_id: None, text: None }, text: "Newer unrelated B".into(),
             edit_seq: rev(2), pending: Some(DraftPending::Save { request, submitted_seq: rev(1) }), merge: None } };
     (directory, store, write)

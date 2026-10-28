@@ -9,6 +9,7 @@ use std::{
 
 fn save_request(store: &ProjectStore, row: &crate::content::ContentRow) -> SaveTranslationRevision {
     SaveTranslationRevision {
+        reuse_origin: None,
         project_id: ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
             .unwrap(),
         action_id: ExecutionId::new(),

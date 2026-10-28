@@ -1,6 +1,8 @@
 import { contextKnowledgeEn, contextKnowledgeZh } from "./contextKnowledge";
 import { knowledgeProposalEn, knowledgeProposalZh } from "./knowledgeProposal";
+import { translationMemoryEn, translationMemoryZh } from "./translationMemory";
 export const knowledgeEn = {
+  ...translationMemoryEn,
   ...contextKnowledgeEn,
   ...knowledgeProposalEn,
   "categories": "Knowledge categories",
@@ -150,6 +152,7 @@ export const knowledgeEn = {
 };
 
 export const knowledgeZh = {
+  ...translationMemoryZh,
   ...contextKnowledgeZh,
   ...knowledgeProposalZh,
   "categories": "知识分类",

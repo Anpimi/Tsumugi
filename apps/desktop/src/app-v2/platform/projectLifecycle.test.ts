@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { canonicalTranslationReuse } from "../../translationReuse";
 import type { ProjectView } from "../../projectCommands";
 import type { ApplicationShutdownView } from "../../executionCommands";
 import { ProjectLifecycle, type LifecycleParticipant, type ProjectLifecyclePorts } from "./projectLifecycle";
@@ -122,7 +123,7 @@ async function actualDraftOwner(controller: ProjectLifecycle, pending = false) {
       sourceRevisionId: head.value.basis.sourceRevisionId, hasPending: head.value.pending !== null }] : [], next: null }),
     recoverSave: async request => {
       const { sessionToken: _credential, ...business } = request;
-      return { request: { ...business, expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
+      return { request: { ...business, reuseOrigin: canonicalTranslationReuse(business.reuseOrigin), expectedSelectionId: business.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
     },
   } });
   expect(await drafts.initialize()).toBe(true); expect(await drafts.open(head.key)).toBeDefined();

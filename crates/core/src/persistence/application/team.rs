@@ -1519,6 +1519,7 @@ mod tests {
             .current;
         store
             .save_translation_revision(&crate::SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: plan.project_id,
                 action_id: ExecutionId::new(),
                 unit_id: target.unit_id,

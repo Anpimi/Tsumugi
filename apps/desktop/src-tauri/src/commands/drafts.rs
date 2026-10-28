@@ -72,7 +72,9 @@ pub enum DraftUnavailableReason {
 #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DraftCurrent {
-    Current { basis: DraftBasis, native_key: String, source_text: String },
+    Current { basis: DraftBasis, native_key: String, source_text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reuse_origin: Option<tsumugi_core::TranslationReuseOrigin> },
     Unavailable { reason: DraftUnavailableReason },
 }
 
@@ -135,6 +137,11 @@ fn validate_target(store: &ProjectStore, key: &DraftKey) -> Result<(), CommandEr
         .map_err(map_error)
 }
 
+fn selected_reuse_origin(store: &ProjectStore, key: &DraftKey, revision: Option<ExecutionId>) -> Result<Option<tsumugi_core::TranslationReuseOrigin>, CommandError> {
+    revision.map(|revision| store.translation_revision(key.project_id, key.unit_id, &key.locale, revision)
+        .map(|value| value.reuse_origin).map_err(map_error)).transpose().map(Option::flatten)
+}
+
 fn current_basis(store: &ProjectStore, key: &DraftKey) -> Result<DraftCurrent, CommandError> {
     let metadata = store
         .metadata()
@@ -150,6 +157,7 @@ fn current_basis(store: &ProjectStore, key: &DraftKey) -> Result<DraftCurrent, C
     }
     match store.review_target(key.project_id, key.unit_id, &key.locale) {
         Ok(target) => Ok(DraftCurrent::Current {
+            reuse_origin: selected_reuse_origin(store, key, target.revision_id)?,
             native_key: target.native_key,
             source_text: target.source_text,
             basis: DraftBasis {
@@ -222,7 +230,8 @@ pub async fn read_local_drafts(
             if head.key.project_id != request.project_id || head.key.locale != request.locale || head.key.unit_id != request.unit_ids[index] || target.unit_id != head.key.unit_id {
                 return Err(map_error(ExecutionError::new(ErrorCode::CorruptLedger,"drafts-read-many")));
             }
-            page.items.push(DraftReadView { head, current: DraftCurrent::Current { native_key: target.native_key, source_text: target.source_text,
+            let reuse_origin = selected_reuse_origin(&active.store, &head.key, target.revision_id)?;
+            page.items.push(DraftReadView { head, current: DraftCurrent::Current { reuse_origin, native_key: target.native_key, source_text: target.source_text,
                 basis: DraftBasis { source_revision_id: target.source_revision_id, selection_id: target.selection_id, revision_id: target.revision_id, text: target.translation_text } } });
             page.next_after = (index + 1 < request.unit_ids.len()).then_some((index+1) as u32);
             if !fits(&page)? {

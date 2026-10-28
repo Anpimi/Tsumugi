@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import { canonicalTranslationReuse } from "../translationReuse";
 import userEvent from "@testing-library/user-event";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -90,7 +91,7 @@ beforeEach(async () => {
   });
   vi.spyOn(translationCommands, "recoverSave").mockImplementation(async request => {
     const { sessionToken: _session, ...original } = request;
-    return { request: { ...original, expectedSelectionId: original.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
+    return { request: { ...original, reuseOrigin: canonicalTranslationReuse(original.reuseOrigin), expectedSelectionId: original.expectedSelectionId ?? null }, outcome: { kind: "pending", replay: "explicit-same-request" } };
   });
   vi.spyOn(reviewCommands, "check").mockRejectedValue(new Error("No QA execution"));
   vi.spyOn(reviewCommands, "prepareCheck").mockRejectedValue(new Error("No QA preparation"));

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { canonicalTranslationReuse } from "../../../translationReuse";
 import arenaFixture from "../../../../test/fixtures/arenaCommands.contract.json";
 import type { ComparisonView, MergeRequest } from "../../../arenaCommands";
 import { sameDraftMerge, sameDraftValue, type DraftBasis, type DraftHead, type DraftKey, type DraftMergeOrigin, type DraftReadView, type DraftValue } from "../../../draftCommands";
@@ -23,7 +24,7 @@ function deferred<T>() {
 type MergeRecovery = Awaited<ReturnType<TranslationDraftPorts["recoverMerge"]>>;
 function recovery(request: MergeRequest, outcome: MergeRecovery["outcome"]): MergeRecovery {
   const { sessionToken: _session, merge, ...business } = request;
-  return { request: { ...business, expectedSelectionId: business.expectedSelectionId ?? null }, merge: copy(merge), outcome };
+  return { request: { ...business, reuseOrigin: canonicalTranslationReuse(business.reuseOrigin), expectedSelectionId: business.expectedSelectionId ?? null }, merge: copy(merge), outcome };
 }
 const rejected = { code: "dependency-conflict", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "arena-basis" };
 

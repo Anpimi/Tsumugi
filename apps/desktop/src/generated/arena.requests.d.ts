@@ -38,6 +38,7 @@ export interface MergeRequest {
   locale: string;
   merge: MergeBasis;
   projectId: ExecutionId;
+  reuseOrigin?: TranslationReuseOrigin | null;
   sessionToken: string;
   sourceRevisionId: ExecutionId;
   text: string;
@@ -46,6 +47,19 @@ export interface MergeRequest {
 export interface MergeBasis {
   contributors: ExecutionId[];
   expectedBasis: string;
+}
+/**
+ * Reuse is provenance, not a selection, approval, or dependency on future donor edits.
+ */
+export interface TranslationReuseOrigin {
+  donorBasis: string;
+  donorSourceRevisionId: ExecutionId;
+  donorTranslationRevisionId: ExecutionId;
+  donorUnitId: ExecutionId;
+  targetSelectionId?: ExecutionId | null;
+  targetSourceRevisionId: ExecutionId;
+  targetSourceSnapshotId: ExecutionId;
+  targetUnitId: ExecutionId;
 }
 export interface PreviewRequest {
   config: ArenaConfig;

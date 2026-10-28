@@ -260,9 +260,23 @@ export interface SaveTranslationRevision {
   expectedSelectionId: ExecutionId | null;
   locale: string;
   projectId: ExecutionId;
+  reuseOrigin?: TranslationReuseOrigin | null;
   sourceRevisionId: ExecutionId;
   text: string;
   unitId: ExecutionId;
+}
+/**
+ * Reuse is provenance, not a selection, approval, or dependency on future donor edits.
+ */
+export interface TranslationReuseOrigin {
+  donorBasis: string;
+  donorSourceRevisionId: ExecutionId;
+  donorTranslationRevisionId: ExecutionId;
+  donorUnitId: ExecutionId;
+  targetSelectionId: ExecutionId | null;
+  targetSourceRevisionId: ExecutionId;
+  targetSourceSnapshotId: ExecutionId;
+  targetUnitId: ExecutionId;
 }
 export interface Prepared {
   attemptId: ExecutionId;

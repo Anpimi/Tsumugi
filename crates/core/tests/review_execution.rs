@@ -228,6 +228,7 @@ fn save(store: &mut ProjectStore, unit: ExecutionId, text: &str) {
     let target = store.review_target(project, unit, "zh-CN").unwrap();
     store
         .save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: unit,

@@ -7,7 +7,8 @@ use crate::{ComparisonRequest, MergeBasis};
 use std::sync::atomic::Ordering;
 
 fn request(store: &ProjectStore, row: &crate::content::ContentRow) -> SaveTranslationRevision {
-    SaveTranslationRevision { project_id: ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap(),
+    SaveTranslationRevision {
+        reuse_origin: None, project_id: ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap(),
         action_id: ExecutionId::new(), unit_id: row.unit_id.unwrap(), locale: "zh-CN".into(),
         source_revision_id: row.source_revision_id.unwrap(), expected_selection_id: None,
         text: "Original e\u{301} 👩🏽‍💻".into() }

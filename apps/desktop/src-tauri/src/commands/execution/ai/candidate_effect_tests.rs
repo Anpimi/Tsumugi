@@ -424,7 +424,7 @@ fn ai_candidate_effect_exact_ipc_keeps_original_receipt_after_pause_and_later_ca
             assert!(receipt.selection.is_some());
             let target = store.review_target(project, unit, "zh-CN").unwrap();
             let manual = store
-                .save_translation_revision(&SaveTranslationRevision {
+                .save_translation_revision(&SaveTranslationRevision { reuse_origin: None,
                     project_id: project,
                     action_id: ExecutionId::new(),
                     unit_id: unit,

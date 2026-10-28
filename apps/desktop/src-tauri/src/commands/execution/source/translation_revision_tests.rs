@@ -34,7 +34,7 @@ fn translation_revision_exact_ipc_preserves_full_history_metadata_and_rejects_fo
     let (directory, mut core, rows) = source_fixture::source_fixture();
     let project = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
     let unit = rows[0].unit_id.unwrap();
-    let first_request = SaveTranslationRevision {
+    let first_request = SaveTranslationRevision { reuse_origin: None,
         project_id: project,
         action_id: ExecutionId::new(),
         unit_id: unit,

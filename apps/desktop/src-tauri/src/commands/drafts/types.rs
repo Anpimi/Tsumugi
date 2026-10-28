@@ -77,6 +77,8 @@ pub struct DraftValue {
     pub pending: Option<DraftPending>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<DraftMergeOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_origin: Option<tsumugi_core::TranslationReuseOrigin>,
 }
 
 /// A tombstone retains its revision so an old writer cannot resurrect input.

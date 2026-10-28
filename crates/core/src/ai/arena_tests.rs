@@ -197,6 +197,7 @@ fn arena_wire_identity_order_partial_usage_and_saved_candidates_survive_reopen()
     let project = input.envelope().project_id;
     let chosen = store
         .save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: units[0],
@@ -534,6 +535,7 @@ fn arena_merge_commit_uncertainty_reconciles_before_same_action_retry() {
     for text in ["First {name}", "Second {name}"] {
         let saved = store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: unit,
@@ -550,6 +552,7 @@ fn arena_merge_commit_uncertainty_reconciles_before_same_action_retry() {
         .preview_comparison(project, unit, "zh-CN", &refs)
         .unwrap();
     let request = SaveTranslationRevision {
+        reuse_origin: None,
         project_id: project,
         action_id: ExecutionId::new(),
         unit_id: unit,
@@ -611,6 +614,7 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
     for text in ["First {name}", "Second {name}"] {
         let saved = store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: unit,
@@ -649,6 +653,7 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
         })
         .unwrap();
     let request = SaveTranslationRevision {
+        reuse_origin: None,
         project_id: project,
         action_id: ExecutionId::new(),
         unit_id: unit,
@@ -663,6 +668,7 @@ fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
     };
     store
         .save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: unit,
@@ -800,6 +806,7 @@ fn arena_history_summary_retains_removed_units_without_blocking_current_comparis
     for text in ["Alpha {name}", "Beta {name}"] {
         let saved = store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: unit,
@@ -949,6 +956,7 @@ fn arena_merge_process_interrupt_is_atomic_and_lost_response_reconciles_by_actio
         for text in ["Alpha {name}", "Beta {name}"] {
             let saved = store
                 .save_translation_revision(&SaveTranslationRevision {
+                    reuse_origin: None,
                     project_id: project,
                     action_id: ExecutionId::new(),
                     unit_id: unit,
@@ -972,6 +980,7 @@ fn arena_merge_process_interrupt_is_atomic_and_lost_response_reconciles_by_actio
             })
             .unwrap();
         let request = SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: unit,
@@ -1167,6 +1176,7 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
         drop(rt);
         let old_selection = store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: unit,
@@ -1265,6 +1275,7 @@ fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_
         let merged = store
             .save_merged_translation(
                 &SaveTranslationRevision {
+                    reuse_origin: None,
                     project_id: project,
                     action_id: merge_action,
                     unit_id: unit,

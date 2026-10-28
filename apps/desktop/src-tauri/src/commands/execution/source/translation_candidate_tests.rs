@@ -36,7 +36,7 @@ fn bounded_candidate_reads_ipc_keep_current_source_metadata_and_reject_foreign_o
     let first = automatic::candidate_request(&mut core,unit,"",tsumugi_core::application::SelectionPolicy::CandidatesOnly);
     let text = "Candidate {{name}}\ne\u{301} 👩🏽‍💻 日本語 العربية";
     let second = automatic::candidate_request(&mut core,unit,text,tsumugi_core::application::SelectionPolicy::CandidatesOnly);
-    core.save_translation_revision(&SaveTranslationRevision { project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+    core.save_translation_revision(&SaveTranslationRevision { reuse_origin: None, project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
         source_revision_id:rows[0].source_revision_id.unwrap(),expected_selection_id:None,text:String::new() }).unwrap();
     let snapshot = core.content_scope().unwrap().current_snapshot.unwrap();
     let expected = core.translation_revision(project,unit,"zh-CN",second.revision_id).unwrap();

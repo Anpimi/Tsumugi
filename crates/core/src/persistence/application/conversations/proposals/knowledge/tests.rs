@@ -507,6 +507,7 @@ fn schema_66_upgrade_keeps_the_exact_old_profile_and_original_proposal_bytes() {
     let path = store.directory().to_path_buf();
     drop(store);
     let c = Connection::open(path.join(crate::persistence::DATABASE_FILENAME)).unwrap();
+    crate::persistence::translation::make_legacy_memory_schema(&c).unwrap();
     c.pragma_update(None, "user_version", 66).unwrap();
     drop(c);
     let reopened = ProjectStore::open(path).unwrap();

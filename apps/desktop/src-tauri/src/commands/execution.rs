@@ -120,6 +120,8 @@ macro_rules! handlers {
         resource::read_context_revision,resource::save_context,resource::read_context_save_action,resource::capture_context,resource::read_context_capture_action,
         resource::decide_context_fact,resource::read_context_fact_decisions,resource::read_context_fact_action,resource::read_context_fact_history,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
+        translation_memory::list_translation_memory,translation_memory::read_translation_memory_entry,
+        translation_memory::prepare_translation_memory_reuse,
         review::read_review_findings,review::read_review_finding_action,review::write_review_finding,
         review::read_review_check_action,review::read_review_decision_action,review::read_review_waiver_action,review::read_review_fallback_action,
         review::semantic::prepare_ai_semantic_review,review::semantic::start_ai_semantic_review,review::semantic::read_ai_semantic_review,review::semantic::read_ai_semantic_review_start_action,
@@ -939,6 +941,7 @@ pub(super) mod ai_wire;
 pub(super) mod arena;
 pub(super) mod release;
 pub(super) mod resource;
+pub(super) mod translation_memory;
 pub(super) mod review;
 pub(super) mod decisions;
 #[cfg(test)]

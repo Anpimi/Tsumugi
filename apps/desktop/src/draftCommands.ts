@@ -1,9 +1,11 @@
 import { checkedInvoke } from "./ipc";
+import { sameTranslationReuse } from "./translationReuse";
 import type { Requests } from "./generated/draft.requests";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "./generated/draft.responses";
 import { validateResponseCleared, validateResponsePage, validateResponseRead, validateResponseReadMany, validateResponseWritten } from "./generated/draft.validators";
 
 export type { DraftBasis, DraftHead, DraftKey, DraftMergeOrigin, DraftPending, DraftValue, DraftPage, DraftSummary, DraftReadView, DraftReadMany } from "./generated/draft.responses";
+export type { TranslationReuseOrigin } from "./generated/draft.responses";
 type DraftReadManyRequest = Omit<Requests["readMany"], "unitIds"> & { unitIds: string[] };
 type DraftValueInput = Requests["write"]["write"]["value"];
 
@@ -19,6 +21,9 @@ export function sameDraftMerge(left: DraftValueInput["merge"], right: DraftValue
     : left.comparisonId === right.comparisonId && left.expectedBasis === right.expectedBasis
       && left.contributors.length === right.contributors.length && left.contributors.every((id, index) => id === right.contributors[index]);
 }
+export function sameDraftReuse(left: DraftValueInput["reuseOrigin"], right: DraftValueInput["reuseOrigin"]) {
+  return sameTranslationReuse(left, right);
+}
 function samePending(left: DraftValueInput["pending"], right: DraftValueInput["pending"]): boolean {
   if (left == null || right == null) return (left ?? null) === (right ?? null);
   const a = left.request, b = right.request;
@@ -26,24 +31,29 @@ function samePending(left: DraftValueInput["pending"], right: DraftValueInput["p
     && a.projectId === b.projectId && a.actionId === b.actionId && a.unitId === b.unitId
     && a.locale === b.locale && a.sourceRevisionId === b.sourceRevisionId
     && (a.expectedSelectionId ?? null) === (b.expectedSelectionId ?? null)
-    && (left.kind === "save" && right.kind === "save" ? left.request.text === right.request.text
+    && (left.kind === "save" && right.kind === "save" ? left.request.text === right.request.text && sameDraftReuse(left.request.reuseOrigin, right.request.reuseOrigin)
       : left.kind === "selection" && right.kind === "selection"
         ? left.request.revisionId === right.request.revisionId && left.text === right.text
-        : left.kind === "merge" && right.kind === "merge" && left.request.text === right.request.text
+        : left.kind === "merge" && right.kind === "merge" && left.request.text === right.request.text && sameDraftReuse(left.request.reuseOrigin, right.request.reuseOrigin)
           && left.merge.expectedBasis === right.merge.expectedBasis && left.merge.contributors.length === right.merge.contributors.length
           && left.merge.contributors.every((id, index) => id === right.merge.contributors[index]));
 }
 export function sameDraftValue(left: DraftValueInput, right: DraftValueInput) {
   return left.editSeq === right.editSeq && left.text === right.text && sameDraftBasis(left.basis, right.basis)
-    && sameDraftMerge(left.merge, right.merge) && samePending(left.pending, right.pending);
+    && sameDraftMerge(left.merge, right.merge) && sameDraftReuse(left.reuseOrigin, right.reuseOrigin) && samePending(left.pending, right.pending);
 }
 function relatedBasis(basis: DraftBasis) {
   return basis.selectionId === null ? basis.revisionId === null && basis.text === null
     : basis.revisionId !== null && basis.text !== null;
 }
+function relatedReuse(key: DraftKey, origin: DraftValueInput["reuseOrigin"]) {
+  return origin == null || origin.targetUnitId === key.unitId && /^[0-9a-f]{64}$/.test(origin.donorBasis);
+}
 function relatedValue(key: DraftKey, value: DraftValue) {
   const pending = value.pending;
-  return relatedBasis(value.basis) && (pending === null || (sameDraftKey(key, pending.request)
+  return relatedBasis(value.basis) && relatedReuse(key, value.reuseOrigin)
+    && (pending === null || (sameDraftKey(key, pending.request)
+    && (pending.kind === "selection" || relatedReuse(key, pending.request.reuseOrigin))
     && pending.request.sourceRevisionId === value.basis.sourceRevisionId
     && pending.request.expectedSelectionId === value.basis.selectionId
     && BigInt(pending.submittedSeq) <= BigInt(value.editSeq)
@@ -70,12 +80,12 @@ export const draftCommands = {
       && (page.nextAfter === null ? page.items.length === request.unitIds.length
         : page.nextAfter === page.items.length && page.items.length < request.unitIds.length)
       && page.items.every((value, index) => sameDraftKey(value.head.key, { projectId: request.projectId, locale: request.locale, unitId: request.unitIds[index] })
-        && relatedHead(value.head) && value.current.kind === "current" && relatedBasis(value.current.basis))
+        && relatedHead(value.head) && value.current.kind === "current" && relatedBasis(value.current.basis) && relatedReuse(value.head.key, value.current.reuseOrigin))
       && new TextEncoder().encode(JSON.stringify(page)).length <= 256 * 1024),
   read: (request: Requests["read"]) => checkedInvoke("read_local_draft", request,
     (value): value is import("./generated/draft.responses").DraftReadView => validateResponseRead(value)
       && sameDraftKey(value.head.key, request.key) && relatedHead(value.head)
-      && (value.current.kind !== "current" || relatedBasis(value.current.basis))),
+      && (value.current.kind !== "current" || relatedBasis(value.current.basis) && relatedReuse(value.head.key, value.current.reuseOrigin))),
   write: (request: Requests["write"]) => checkedInvoke("write_local_draft", request,
     (head): head is DraftHead => validateResponseWritten(head) && sameDraftKey(head.key, request.write.key)
       && relatedHead(head) && head.value !== null && head.writerId === request.write.writerId

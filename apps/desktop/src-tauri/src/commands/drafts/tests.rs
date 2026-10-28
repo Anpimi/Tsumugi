@@ -74,7 +74,7 @@ fn merge_draft_ipc_preserves_pending_source_and_recovers_original_merge_with_a_n
     let (source_directory, mut core, rows) = source_fixture::source_fixture();
     let project_id = ExecutionId::parse(&core.metadata().unwrap().project_id().to_string()).unwrap();
     let key = DraftKey { project_id, unit_id: rows[0].unit_id.unwrap(), locale: "zh-CN".into() };
-    let original = SaveTranslationRevision { project_id, action_id: ExecutionId::new(), unit_id: key.unit_id,
+    let original = SaveTranslationRevision { reuse_origin: None, project_id, action_id: ExecutionId::new(), unit_id: key.unit_id,
         locale: key.locale.clone(), source_revision_id: rows[0].source_revision_id.unwrap(), expected_selection_id: None, text: "First contributor".into() };
     let first = core.save_translation_revision(&original).unwrap();
     let second = core.save_translation_revision(&SaveTranslationRevision { action_id: ExecutionId::new(), expected_selection_id: Some(first.event_id), text: "Second contributor".into(), ..original.clone() }).unwrap();
@@ -95,7 +95,7 @@ fn merge_draft_ipc_preserves_pending_source_and_recovers_original_merge_with_a_n
     let origin = DraftMergeOrigin { comparison_id, contributors: vec![first.revision_id,second.revision_id], expected_basis: comparison["basis"].as_str().unwrap().into() };
     let merge = tsumugi_core::MergeBasis { contributors: origin.contributors.clone(), expected_basis: origin.expected_basis.clone() };
     let request = SaveTranslationRevision { action_id: ExecutionId::new(), expected_selection_id: Some(second.event_id), text: "Merged A {{name}} e\u{301} 👩🏽‍💻".into(), ..original };
-    let mut value = DraftValue { basis, text: request.text.clone(), edit_seq: Revision::new(1).unwrap(), merge: Some(origin),
+    let mut value = DraftValue { reuse_origin: None, basis, text: request.text.clone(), edit_seq: Revision::new(1).unwrap(), merge: Some(origin),
         pending: Some(DraftPending::Merge { request: request.clone(), merge: merge.clone(), submitted_seq: Revision::new(1).unwrap() }) };
     value.text = "Newer local B — kept with contributors".into(); value.edit_seq = Revision::new(2).unwrap();
     let writer = ExecutionId::new();
@@ -189,7 +189,7 @@ fn local_draft_ipc_preserves_input_across_real_confirmation_and_project_reopen()
             .is_none())
     );
 
-    let original = SaveTranslationRevision {
+    let original = SaveTranslationRevision { reuse_origin: None,
         project_id: key.project_id,
         action_id: ExecutionId::new(),
         unit_id: key.unit_id,
@@ -199,7 +199,7 @@ fn local_draft_ipc_preserves_input_across_real_confirmation_and_project_reopen()
         text: "Original A 👩🏽‍💻\ne\u{301}".into(),
     };
     let writer = ExecutionId::new();
-    let mut value = DraftValue {
+    let mut value = DraftValue { reuse_origin: None,
         basis: basis.clone(),
         text: original.text.clone(),
         edit_seq: Revision::new(1).unwrap(),

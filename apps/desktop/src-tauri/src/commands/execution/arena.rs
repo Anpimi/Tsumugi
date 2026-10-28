@@ -39,7 +39,9 @@ request!(
         action_id: ExecutionId
     }
 );
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] MergeRequest { action_id:ExecutionId, unit_id:ExecutionId, locale:String, source_revision_id:ExecutionId, expected_selection_id:Option<ExecutionId>, text:String, merge:MergeBasis });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] MergeRequest { action_id:ExecutionId, unit_id:ExecutionId, locale:String, source_revision_id:ExecutionId, expected_selection_id:Option<ExecutionId>, text:String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reuse_origin: Option<tsumugi_core::TranslationReuseOrigin>, merge:MergeBasis });
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize)]
@@ -499,7 +501,7 @@ pub async fn read_arena_merge_action(
         authorized(sessions,&request.session_token,request.project_id,CommandStage::ExecutionRead)?
             .store.arena_merge_action_read(&SaveTranslationRevision {project_id:request.project_id,action_id:request.action_id,
                 unit_id:request.unit_id,locale:request.locale,source_revision_id:request.source_revision_id,
-                expected_selection_id:request.expected_selection_id,text:request.text},&request.merge).map_err(map_read)
+                expected_selection_id:request.expected_selection_id,text:request.text,reuse_origin:request.reuse_origin},&request.merge).map_err(map_read)
     }).await
 }
 #[tauri::command]
@@ -512,6 +514,7 @@ pub async fn recover_arena_merge(
             project_id: request.project_id, action_id: request.action_id, unit_id: request.unit_id,
             locale: request.locale, source_revision_id: request.source_revision_id,
             expected_selection_id: request.expected_selection_id, text: request.text,
+            reuse_origin: request.reuse_origin,
         }, &request.merge).map_err(map_read)?;
         if active.execution.as_ref().is_some_and(ExecutionHost::is_quiescing) {
             if let tsumugi_core::TranslationActionOutcome::Pending { replay } = &mut recovery.outcome {
@@ -551,6 +554,7 @@ pub async fn save_arena_merge(
                             source_revision_id: request.source_revision_id,
                             expected_selection_id: request.expected_selection_id,
                             text: request.text,
+                            reuse_origin: request.reuse_origin,
                         },
                         &request.merge,
                     )

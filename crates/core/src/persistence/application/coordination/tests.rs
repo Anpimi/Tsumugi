@@ -772,6 +772,7 @@ fn team_coordination_new_text_and_reference_ids_do_not_reset_unconfirmed_complet
         revisions.push(
             store
                 .save_translation_revision(&crate::SaveTranslationRevision {
+                    reuse_origin: None,
                     project_id: plan.project_id,
                     action_id: ExecutionId::new(),
                     unit_id: translator.target().unit_id,

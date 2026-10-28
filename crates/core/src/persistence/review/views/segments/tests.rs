@@ -241,6 +241,7 @@ fn segment_queue_windows_read_current_facts_after_local_edits_without_refilterin
     let target = store.review_target(project, first, "zh-CN").unwrap();
     let saved = store
         .save_translation_edit(&crate::SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: first,

@@ -2,6 +2,17 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import type { EntryReviewNavigation } from "../features/review/navigationTypes";
 import type { DecisionCursor } from "../../generated/decisions.responses";
 import { copyWorkspaceSelection, type WorkspaceSelection } from "./workspaceSelection";
+import type { TranslationMemoryFilter } from "../../resourceCommands";
+
+export interface TranslationMemoryPresentation {
+  sourceInput: string;
+  translationInput: string;
+  filter: Omit<TranslationMemoryFilter, "sourceLocale" | "targetLocale">;
+  donor: { unitId: string; locale: string; revisionId: string } | null;
+  targetUnitId: string | null;
+}
+export const emptyTranslationMemoryPresentation = (): TranslationMemoryPresentation => ({ sourceInput: "", translationInput: "",
+  filter: { sourceText: null, translationText: null, origin: null, selection: "all" }, donor: null, targetUnitId: null });
 
 export const viewKinds = ["entries", "knowledge", "runs", "delivery", "decisions", "extensions", "settings"] as const;
 export type ViewKind = typeof viewKinds[number];
@@ -43,6 +54,7 @@ export interface WorkspaceView {
   afterOrdinal: number;
   cursor: string | null;
   pinned: boolean;
+  translationMemory?: TranslationMemoryPresentation;
 }
 
 export type NewWorkspaceView = Partial<Omit<WorkspaceView, "id" | "kind" | "locale">> & {
@@ -111,6 +123,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     afterOrdinal: input.afterOrdinal ?? 0,
     cursor: input.cursor ?? null,
     pinned: input.pinned ?? false,
+    ...(input.translationMemory ? { translationMemory: { ...input.translationMemory, filter: { ...input.translationMemory.filter }, donor: input.translationMemory.donor ? { ...input.translationMemory.donor } : null } } : {}),
   };
 }
 
@@ -172,6 +185,7 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
       const next = { ...view, ...patch,
+        ...(patch.translationMemory ? { translationMemory: { ...patch.translationMemory, filter: { ...patch.translationMemory.filter }, donor: patch.translationMemory.donor ? { ...patch.translationMemory.donor } : null } } : {}),
         ...(patch.decisionCursor !== undefined ? { decisionCursor: patch.decisionCursor ? { ...patch.decisionCursor } : null } : {}),
         ...(patch.decisionPrevious ? { decisionPrevious: patch.decisionPrevious.map(cursor => cursor ? { ...cursor } : null) } : {}),
         ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),

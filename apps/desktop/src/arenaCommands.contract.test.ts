@@ -5,6 +5,8 @@ import * as validators from "./generated/arena.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { unreportedTokenTotalsFixture } from "./testSupport/usageFixture";
+import { translationMemoryReuseFixture } from "./testSupport/translationMemoryFixture";
+import { reviewTargetFixture } from "./testSupport/reviewFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -69,6 +71,21 @@ it("binds a merge read to its entire original text, source, selection and ordere
   invoke.mockResolvedValueOnce({...noSelectionEcho,request:absent});await expect(arenaCommands.mergeAction(noSelection)).rejects.toThrow();
   invoke.mockResolvedValueOnce(noSelectionEcho);expect(await arenaCommands.mergeAction(noSelection)).toEqual(noSelectionEcho);
   expect(invoke.mock.calls.every(([command])=>command==="read_arena_merge_action")).toBe(true);
+});
+
+it("binds inherited reuse provenance in both exact merge reads and recovery", async () => {
+  const base = fixture.requests.merge, reuseOrigin = translationMemoryReuseFixture(reviewTargetFixture({ unitId: base.unitId,
+    locale: base.locale, sourceRevisionId: base.sourceRevisionId, selectionId: base.expectedSelectionId ?? null })).reuseOrigin;
+  const request = { ...base, reuseOrigin }, saved = { projectId: base.projectId, actionId: base.actionId, unitId: base.unitId,
+    locale: base.locale, sourceRevisionId: base.sourceRevisionId, expectedSelectionId: base.expectedSelectionId ?? null, text: base.text, reuseOrigin };
+  const echo = { request: saved, merge: base.merge, receipt: fixture.responses.selection };
+  invoke.mockResolvedValueOnce(echo); expect(await arenaCommands.mergeAction(request)).toEqual(echo);
+  const recovery = { request: saved, merge: base.merge, outcome: { kind: "pending", replay: "explicit-same-request" } };
+  invoke.mockResolvedValueOnce(recovery); expect(await arenaCommands.recoverMerge(request)).toEqual(recovery);
+  for (const origin of [null, { ...reuseOrigin, donorTranslationRevisionId: fixtureIdentity(709) }, { ...reuseOrigin, donorBasis: "f".repeat(64) }]) {
+    invoke.mockResolvedValueOnce({ ...echo, request: { ...saved, reuseOrigin: origin } }); await expect(arenaCommands.mergeAction(request)).rejects.toThrow();
+    invoke.mockResolvedValueOnce({ ...recovery, request: { ...saved, reuseOrigin: origin } }); await expect(arenaCommands.recoverMerge(request)).rejects.toThrow();
+  }
 });
 
 it("reads only the captured Arena start and distinguishes missing from invalid proof", async () => {

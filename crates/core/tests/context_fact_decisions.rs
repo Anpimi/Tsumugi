@@ -414,6 +414,7 @@ fn reject_and_restore_are_new_decisions_scoped_to_one_fact_unit_and_locale() {
     let ja = scope(&store, &rows[0], "ja");
     store
         .save_translation_edit(&SaveTranslationRevision {
+            reuse_origin: None,
             project_id: a.project_id,
             action_id: ExecutionId::new(),
             unit_id: a.unit_id,

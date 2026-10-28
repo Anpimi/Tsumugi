@@ -189,7 +189,8 @@ export default function EntriesCandidates({ project, target, drafts, owners, com
         <span>{memory ? t("candidateTmMatch", { score: memory.scorePercent, matchKind: legacy(`resource.match.${memory.matchKind}`) }) : t(selected ? "candidateCurrent" : sourceCurrent ? "candidateSameSource" : "candidateOldSource")}</span></header>
       {rejected ? <p className={styles.meta}>{t("candidateRejected")}</p> : null}
       {revision?.candidateDecision ? <p className={styles.meta}>{revision.candidateDecision.request.actor}: {revision.candidateDecision.request.reason}</p> : null}
-      {memory ? <><p className={styles.donor}><TokenizedText text={memory.sourceText} /></p><p className={styles.meta}>{memory.hasHumanApproval ? t("approved") : legacy("resource.noApproval")}</p></> : null}
+      {memory ? <><p className={styles.donor}><TokenizedText text={memory.sourceText} /></p><p className={styles.meta}>{legacy(memory.quality ? memory.quality.currentApproval ? "knowledge.memoryCurrentApproval"
+        : memory.quality.pastApproval ? "knowledge.memoryPastApproval" : "knowledge.memoryNeverApproved" : memory.hasHumanApproval ? "knowledge.memoryCurrentApproval" : "knowledge.memoryNoApprovalEvidence")}</p><p className={styles.meta}>{legacy("knowledge.memoryApprovalHelp")}</p></> : null}
       <div className={styles.text}>{text(revision?.text ?? memory?.translationText ?? null)}</div>
       {revision?.logicalPath ? <p className={styles.meta}>{revision.logicalPath}</p> : null}
       {revision?.attemptId ? <p className={styles.meta}>{t("candidateRun", { id: revision.attemptId })}</p> : null}

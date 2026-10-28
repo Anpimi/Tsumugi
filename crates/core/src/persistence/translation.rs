@@ -13,6 +13,11 @@ use std::collections::BTreeSet;
 mod candidates;
 mod candidate_slice;
 mod recovery;
+mod memory;
+pub use memory::{TranslationMemoryFilter, TranslationMemorySelection, TranslationMemoryQuality,
+    TranslationMemoryEntry, TranslationMemoryPage, TranslationMemorySourceLabel, PrepareTranslationMemoryReuse,
+    TranslationMemoryReusePreview, TranslationReuseOrigin};
+pub(in crate::persistence) use memory::quality_in as memory_quality_in;
 #[cfg(test)]
 mod observation_tests;
 pub use candidates::{CandidateDecision, CandidateDecisionWrite, CandidateDisposition};
@@ -212,6 +217,8 @@ pub struct ArenaMergeActionRead {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveTranslationRevision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_origin: Option<TranslationReuseOrigin>,
     pub project_id: ExecutionId,
     pub action_id: ExecutionId,
     pub unit_id: ExecutionId,
@@ -272,6 +279,8 @@ impl TranslationOrigin {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationRevision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_origin: Option<TranslationReuseOrigin>,
     pub revision_id: ExecutionId,
     pub unit_id: ExecutionId,
     pub locale: String,
@@ -390,13 +399,37 @@ fn current_sql(name: &str, sql: &str) -> String {
        .replace("file_digest IS NOT NULL)))", "file_digest IS NOT NULL) OR (origin_kind='ai' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)))")
 }
 
+fn version_sql(name: &str, sql: &str, version: i64) -> String {
+    let value = current_sql(name, sql);
+    if name == "translation_revisions" && version >= 68 {
+        // Match SQLite ADD COLUMN's insertion after the last column and before
+        // the existing table constraints, without rebuilding any original rows.
+        return value.replace("file_digest TEXT,", "file_digest TEXT, reuse_origin_json TEXT,");
+    }
+    value
+}
+
+pub(super) fn migrate_memory(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch("ALTER TABLE translation_revisions ADD COLUMN reuse_origin_json TEXT")
+}
+
+#[cfg(test)]
+pub(in crate::persistence) fn make_legacy_memory_schema(c: &Connection) -> rusqlite::Result<()> {
+    let present: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('translation_revisions')
+        WHERE name='reuse_origin_json')", [], |r| r.get(0))?;
+    if present {
+        c.execute_batch("ALTER TABLE translation_revisions DROP COLUMN reuse_origin_json")?;
+    }
+    Ok(())
+}
+
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     TABLES.iter().map(|(name, _)| (*name).to_owned())
 }
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (name, sql) in TABLES {
-        connection.execute_batch(&current_sql(name, sql))?;
+        connection.execute_batch(&version_sql(name, sql, super::SCHEMA_VERSION))?;
     }
     candidates::initialize(connection)
 }
@@ -596,7 +629,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             |row| row.get(0),
         )?;
         let expected = if version >= 10 {
-            current_sql(name, expected)
+            version_sql(name, expected, version)
         } else {
             (*expected).to_owned()
         };
@@ -740,6 +773,9 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         previous_events.insert(key, (sequence, id));
     }
     candidates::validate(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    if version >= 68 {
+        memory::validate_storage(connection).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    }
     Ok(())
 }
 
@@ -1789,6 +1825,7 @@ impl ProjectStore {
             let saved=save_receipt_in(c,request.project_id,&selection)?;
             let revision=&saved.revision;
             if revision.source_revision_id!=request.source_revision_id || revision.text!=request.text || revision.ordinal==0
+                || revision.reuse_origin!=memory::expected_origin(c,request)? || !memory::merge_origin_admitted(c,request)?
                 || revision.attempt_id.is_some() || revision.result_id.is_some() || revision.item_id.is_some()
                 || revision.artifact_id.is_some() || revision.logical_path.is_some() || revision.declared_locale.is_some()
                 || revision.native_key.is_some() || revision.file_digest.is_some() {
@@ -1866,6 +1903,9 @@ impl ProjectStore {
             selection_by_action(&transaction, request.action_id)?
         {
             return if saved_digest == digest {
+                if merge.is_none() {
+                    save_receipt_for_request_in(&transaction, request, &selection)?;
+                }
                 project_result(&transaction, &selection)
             } else {
                 Err(error(ErrorCode::ResultMismatch, "translation-action"))
@@ -1873,6 +1913,9 @@ impl ProjectStore {
         }
         check_target(&transaction, request.project_id, &request.locale)?;
         if let Some(merge) = merge {
+            if !memory::merge_origin_admitted(&transaction, request)? {
+                return Err(error(ErrorCode::InvalidInput, "tm-merge-origin"));
+            }
             super::arena::check_merge(&transaction, request, merge)?;
         }
         let (snapshot, current_source) =
@@ -1889,6 +1932,7 @@ impl ProjectStore {
         }
         let current = current_selection(&transaction, request.unit_id, &request.locale)?;
         let next_sequence = check_expected(&current, request.expected_selection_id)?;
+        let reuse_origin = memory::admit_reuse(&transaction, request, snapshot)?;
         let previous_ordinal: i64 = transaction
             .query_row(
                 "SELECT COALESCE(MAX(ordinal),0) FROM translation_revisions
@@ -1904,8 +1948,8 @@ impl ProjectStore {
         transaction
             .execute(
                 "INSERT INTO translation_revisions
-                 (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'manual',?9,?10)",
+                 (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,reuse_origin_json)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'manual',?9,?10,?11)",
                 params![
                     revision.to_string(),
                     request.project_id.to_string(),
@@ -1917,6 +1961,8 @@ impl ProjectStore {
                     current_source.to_string(),
                     request.action_id.to_string(),
                     digest,
+                    reuse_origin.as_ref().map(serde_json::to_string).transpose()
+                        .map_err(|_| error(ErrorCode::InvalidInput, "tm-reuse-origin"))?,
                 ],
             )
             .map_err(super::ledger::sql_error)?;
@@ -2074,6 +2120,7 @@ fn save_receipt_for_request_in(
     // The request digest proves identity, but the returned rows must still
     // describe that request before a recovery read can clear uncertainty.
     if receipt.revision.text != request.text
+        || receipt.revision.reuse_origin != memory::expected_origin(connection, request)?
         || receipt.revision.source_revision_id != request.source_revision_id
         || !receipt.revision.contributors.is_empty()
         || selection.previous_event_id != request.expected_selection_id
@@ -2116,7 +2163,7 @@ pub(super) fn revision_in(
     project_id: ExecutionId,
     revision_id: ExecutionId,
 ) -> Result<TranslationRevision, ExecutionError> {
-    connection
+    let mut revision = connection
         .query_row(
             "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
                     origin_kind,action_id,attempt_id,result_id,item_id,artifact_id,
@@ -2126,12 +2173,15 @@ pub(super) fn revision_in(
             RawRevision::from_row,
         )
         .map_err(super::ledger::sql_error)?
-        .parse()
+        .parse()?;
+    revision.reuse_origin = memory::read_origin(connection, revision_id)?;
+    Ok(revision)
 }
 
 /// History and exact reads expose the same original contribution and decision
 /// records. Receipt-only readers retain their original representation.
 fn revision_view_in(connection: &Connection, mut revision: TranslationRevision) -> Result<TranslationRevision, ExecutionError> {
+    revision.reuse_origin = memory::read_origin(connection, revision.revision_id)?;
     revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
     revision.candidate_decision = candidates::latest(connection, revision.revision_id)?;
     Ok(revision)
@@ -2182,6 +2232,7 @@ impl RawRevision {
 
     fn parse(self) -> Result<TranslationRevision, ExecutionError> {
         Ok(TranslationRevision {
+            reuse_origin: None,
             revision_id: id(self.revision_id)?,
             unit_id: id(self.unit_id)?,
             locale: self.locale,
@@ -2519,6 +2570,7 @@ mod tests {
         let project_id =
             ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
         let first = SaveTranslationRevision {
+            reuse_origin: None,
             project_id,
             action_id: ExecutionId::new(),
             unit_id: rows[0].unit_id.unwrap(),
@@ -2606,6 +2658,7 @@ mod tests {
         let project_id =
             ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
         let first = SaveTranslationRevision {
+            reuse_origin: None,
             project_id,
             action_id: ExecutionId::new(),
             unit_id: rows[0].unit_id.unwrap(),
@@ -2826,9 +2879,11 @@ mod tests {
         let (temp,mut store,rows)=project_with_source();
         let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
         let unit=rows[0].unit_id.unwrap();let source=rows[0].source_revision_id.unwrap();
-        let first=store.save_translation_revision(&SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+        let first=store.save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,project_id:project,action_id:ExecutionId::new(),unit_id:unit,
             locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:None,text:"First".into()}).unwrap();
-        let second=store.save_translation_revision(&SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+        let second=store.save_translation_revision(&SaveTranslationRevision {
+            reuse_origin: None,project_id:project,action_id:ExecutionId::new(),unit_id:unit,
             locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:Some(first.event_id),text:"Second".into()}).unwrap();
         assert_eq!(store.arena_reveal_target_read(project,ExecutionId::new()).unwrap(),None);
         let compare=ComparisonRequest {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
@@ -2876,7 +2931,8 @@ mod tests {
         let (temp,mut store,rows)=project_with_source();
         let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
         let unit=rows[0].unit_id.unwrap();let source=rows[0].source_revision_id.unwrap();
-        let first=SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+        let first=SaveTranslationRevision {
+            reuse_origin: None,project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
             source_revision_id:source,expected_selection_id:None,text:"First".into()};
         let saved_first=store.save_translation_revision(&first).unwrap();
         let second=SaveTranslationRevision {action_id:ExecutionId::new(),expected_selection_id:Some(saved_first.event_id),text:"Second".into(),..first.clone()};
@@ -2949,6 +3005,7 @@ mod tests {
         )
         .unwrap();
         let first = SaveTranslationRevision {
+            reuse_origin: None,
             project_id,
             action_id: ExecutionId::new(),
             unit_id: rows[0].unit_id.unwrap(),
@@ -3163,6 +3220,7 @@ mod tests {
         let unit = rows[0].unit_id.unwrap();
         let source = rows[0].source_revision_id.unwrap();
         let first = SaveTranslationRevision {
+            reuse_origin: None,
             project_id,
             action_id: ExecutionId::new(),
             unit_id: unit,
@@ -3267,6 +3325,7 @@ mod tests {
         let unit = rows[0].unit_id.unwrap();
         let source = rows[0].source_revision_id.unwrap();
         let first = SaveTranslationRevision {
+            reuse_origin: None,
             project_id,
             action_id: ExecutionId::new(),
             unit_id: unit,
@@ -3394,6 +3453,7 @@ mod tests {
             ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
         store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id,
                 action_id: ExecutionId::new(),
                 unit_id: first.rows[0].unit_id.unwrap(),

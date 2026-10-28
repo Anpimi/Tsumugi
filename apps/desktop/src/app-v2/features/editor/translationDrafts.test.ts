@@ -1,9 +1,12 @@
 import { expect, it, vi } from "vitest";
+import { canonicalTranslationReuse } from "../../../translationReuse";
 import fixture from "../../../../test/fixtures/translation-commands.json";
 import { type DraftBasis, type DraftHead, type DraftKey, type DraftPending, type DraftReadView, type DraftValue } from "../../../draftCommands";
 import type { TmSuggestion } from "../../../resourceCommands";
 import type { CandidateDecision, TranslationHistory, TranslationSaveRequest, TranslationSaveReceipt, TranslationSelectRequest, TranslationSelection, TranslationRevision } from "../../../translationCommands";
 import { TranslationDrafts, type TranslationDraftPorts } from "./translationDrafts";
+import { translationMemoryEntryFixture, translationMemoryReuseFixture } from "../../../testSupport/translationMemoryFixture";
+import { reviewTargetFixture } from "../../../testSupport/reviewFixture";
 
 const key: DraftKey = { projectId: fixture.save.projectId, unitId: fixture.save.unitId, locale: fixture.save.locale };
 const context = { projectId: key.projectId, sessionToken: "reopened-session" };
@@ -24,7 +27,8 @@ function saved(request: TranslationSaveRequest): TranslationSaveReceipt {
     previousEventId: request.expectedSelectionId ?? null, sequence: request.expectedSelectionId ? "2" : "1" };
   return { ...fixture.receipt, projectId: request.projectId, actionId: request.actionId, selection,
     revision: { ...fixture.receipt.revision, originKind: "manual", actionId: request.actionId,
-      unitId: request.unitId, locale: request.locale, sourceRevisionId: request.sourceRevisionId, text: request.text },
+      unitId: request.unitId, locale: request.locale, sourceRevisionId: request.sourceRevisionId, text: request.text,
+      ...(request.reuseOrigin ? { reuseOrigin: canonicalTranslationReuse(request.reuseOrigin) } : {}) },
     basis: { ...fixture.receipt.basis, sourceRevisionId: request.sourceRevisionId, selectionId: selection.eventId } };
 }
 function selected(request: TranslationSelectRequest): TranslationSelection {
@@ -57,6 +61,7 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
     disk = { key, revision: (BigInt(disk.revision) + 1n).toString(), writerId: null, value: null };
     return copy(disk);
   };
+  const memoryEntry = vi.fn<TranslationDraftPorts["memoryEntry"]>(async () => translationMemoryEntryFixture(suggestion));
   const ports = {
     read: vi.fn<TranslationDraftPorts["read"]>(async () => copy({ head: disk, current })),
     list: vi.fn<TranslationDraftPorts["list"]>(async () => ({ items: disk.value ? [{ key, revision: disk.revision,
@@ -66,18 +71,24 @@ function harness(head: DraftHead = { key, revision: "0", writerId: null, value: 
     identity: vi.fn<TranslationDraftPorts["identity"]>(async () => fixture.save.actionId),
     save: vi.fn<TranslationDraftPorts["save"]>(async request => {
       const receipt = saved(request); receipts.set(request.actionId, receipt);
-      current = currentView({ sourceRevisionId: request.sourceRevisionId,
-        selectionId: receipt.selection.eventId, revisionId: receipt.selection.revisionId, text: request.text });
+      current = { ...currentView({ sourceRevisionId: request.sourceRevisionId,
+        selectionId: receipt.selection.eventId, revisionId: receipt.selection.revisionId, text: request.text }), ...(receipt.revision.reuseOrigin ? { reuseOrigin: receipt.revision.reuseOrigin } : {}) };
       return receipt;
     }),
     select: vi.fn<TranslationDraftPorts["select"]>(async request => selected(request)),
     history: vi.fn<TranslationDraftPorts["history"]>(async () => ({ unitId: key.unitId, locale: key.locale,
       current: null, currentText: null, total: "1", rows: [copy(candidate)], nextOrdinal: null })),
     suggestions: vi.fn<TranslationDraftPorts["suggestions"]>(async () => [copy(suggestion)]),
+    memoryEntry,
+    prepareMemoryReuse: vi.fn<TranslationDraftPorts["prepareMemoryReuse"]>(async request => {
+      const donor = await memoryEntry({ ...context, unitId: request.reuse.donorUnitId, locale: request.reuse.locale, revisionId: request.reuse.donorRevisionId });
+      return translationMemoryReuseFixture(reviewTargetFixture({ unitId: key.unitId, locale: key.locale, sourceRevisionId: initial.sourceRevisionId,
+        selectionId: initial.selectionId, revisionId: initial.revisionId, translationText: initial.text, sourceText: "Original source text" }), donor);
+    }),
     recoverSave: vi.fn<TranslationDraftPorts["recoverSave"]>(async request => {
       const { sessionToken: _credential, ...business } = request;
       const receipt = receipts.get(request.actionId);
-      return { request: { ...business, expectedSelectionId: business.expectedSelectionId ?? null },
+      return { request: { ...business, reuseOrigin: canonicalTranslationReuse(business.reuseOrigin), expectedSelectionId: business.expectedSelectionId ?? null },
         outcome: receipt ? { kind: "recorded", receipt } : { kind: "pending", replay: "explicit-same-request" } };
     }),
     recoverSelection: vi.fn<TranslationDraftPorts["recoverSelection"]>(async request => {
@@ -504,12 +515,106 @@ it.each(["  TM 👩🏽‍💻 é {{name}}\nSecond line  ", ""])("adopts a real
   const h = harness(); await h.ready();
   const chosen = { ...suggestion, translationText: text }, { editSeq, basis } = h.owner.getEntry(key)!.value!;
   h.ports.suggestions.mockResolvedValueOnce([chosen]);
+  h.ports.memoryEntry.mockResolvedValue(translationMemoryEntryFixture(chosen));
   expect(await h.owner.stageSuggestion(key, chosen, { editSeq, basis }, () => true)).toEqual({ staged: true, durable: true });
   expect(h.ports.suggestions).toHaveBeenCalledWith({ ...context, unitId: key.unitId, locale: key.locale, offset: 0, limit: 20 });
   expect(chosen.unitId).not.toBe(key.unitId);
   expect(h.disk()).toMatchObject({ key, value: { basis: initial, text, editSeq: "1", pending: null } });
   expect(h.ports.history).not.toHaveBeenCalled(); expect(h.ports.identity).not.toHaveBeenCalled();
   expect(h.ports.save).not.toHaveBeenCalled(); expect(h.ports.select).not.toHaveBeenCalled();
+});
+
+function inventoryPreview() {
+  return translationMemoryReuseFixture(reviewTargetFixture({ unitId: key.unitId, locale: key.locale, sourceRevisionId: initial.sourceRevisionId,
+    sourceSnapshotId: fixture.receipt.revision.sourceSnapshotId, selectionId: null, revisionId: null, translationText: null, sourceText: "Original source text" }));
+}
+it("stages an exact inventory donor outside the suggestion page, preserves its origin through editing and save A while B stays in the journal", async () => {
+  const h = harness(); await h.ready();
+  h.owner.edit(key, "Existing B to explicitly replace"); await h.owner.flush();
+  const preview = inventoryPreview(), before = h.owner.getEntry(key)?.value;
+  if (!before) throw new Error("The synthetic target draft must be open");
+  h.ports.prepareMemoryReuse.mockResolvedValue(preview);
+  expect(await h.owner.stageMemoryReuse(key, preview, { editSeq: before.editSeq, basis: before.basis, text: before.text,
+    reuseOrigin: before.reuseOrigin, merge: before.merge }, () => true)).toEqual({ staged: true, durable: true });
+  expect(h.ports.suggestions).not.toHaveBeenCalled();
+  h.owner.edit(key, "Edited reference A"); await h.owner.flush();
+  expect(h.disk().value).toMatchObject({ text: "Edited reference A", reuseOrigin: preview.reuseOrigin });
+  const ack = deferred<TranslationSaveReceipt>(); h.ports.save.mockReturnValueOnce(ack.promise);
+  const saving = h.owner.confirm(key); await vi.waitFor(() => expect(h.ports.save).toHaveBeenCalledOnce());
+  const request = h.ports.save.mock.calls[0][0]; expect(request).toMatchObject({ text: "Edited reference A", reuseOrigin: preview.reuseOrigin });
+  h.owner.edit(key, "Newer B 人工输入");
+  const receipt = saved(request); h.setCurrent({ ...currentView({ sourceRevisionId: request.sourceRevisionId,
+    selectionId: receipt.selection.eventId, revisionId: receipt.selection.revisionId, text: request.text }), reuseOrigin: preview.reuseOrigin });
+  ack.resolve(receipt); await saving; await h.owner.flush();
+  expect(h.disk().value).toMatchObject({ text: "Newer B 人工输入", reuseOrigin: preview.reuseOrigin, pending: null });
+  h.owner.retire();
+  const reopened = new TranslationDrafts({ context, reads: h.reads, ports: h.ports }); await reopened.initialize(); await reopened.open(key);
+  expect(reopened.getEntry(key)?.value).toMatchObject({ text: "Newer B 人工输入", reuseOrigin: preview.reuseOrigin }); reopened.retire();
+});
+
+it("does not treat identical wording with a newly staged TM origin as a pristine draft for old candidate paths", async () => {
+  const selectedBasis: DraftBasis = { ...initial, selectionId: "20000000-0000-4000-8000-000000097040",
+    revisionId: "20000000-0000-4000-8000-000000097041", text: "Shared wording" };
+  const h = harness({ key, revision: "1", writerId, value: { basis: selectedBasis, text: "Shared wording", editSeq: "2", pending: null } });
+  h.setCurrent(currentView(selectedBasis)); await h.ready();
+  const donor = translationMemoryEntryFixture(); donor.revision.text = "Shared wording";
+  const preview = translationMemoryReuseFixture(reviewTargetFixture({ unitId: key.unitId, locale: key.locale,
+    sourceRevisionId: selectedBasis.sourceRevisionId, sourceSnapshotId: fixture.receipt.revision.sourceSnapshotId,
+    selectionId: selectedBasis.selectionId, revisionId: selectedBasis.revisionId, translationText: selectedBasis.text, sourceText: "Original source text" }), donor);
+  h.ports.prepareMemoryReuse.mockResolvedValue(preview);
+  const before = h.owner.getEntry(key)?.value; if (!before) throw new Error("The synthetic target draft must be open");
+  expect(await h.owner.stageMemoryReuse(key, preview, { editSeq: before.editSeq, basis: before.basis, text: before.text, reuseOrigin: before.reuseOrigin, merge: before.merge }, () => true)).toEqual({ staged: true, durable: true });
+  const staged = h.owner.getEntry(key)?.value; if (!staged) throw new Error("The synthetic reference draft must be retained");
+  const expected = { editSeq: staged.editSeq, basis: staged.basis };
+  expect(await h.owner.stageRevision(key, candidate, expected, () => true)).toEqual({ staged: false, durable: false });
+  expect(await h.owner.stageSuggestion(key, suggestion, expected, () => true)).toEqual({ staged: false, durable: false });
+  expect(h.ports.history).not.toHaveBeenCalled(); expect(h.ports.suggestions).not.toHaveBeenCalled();
+  expect(h.owner.getEntry(key)?.value).toEqual(staged); expect(h.disk().value?.reuseOrigin).toEqual(preview.reuseOrigin);
+});
+
+it.each(["input", "source", "selection"] as const)("refuses exact donor replacement after the target's %s changes during the read", async change => {
+  const h = harness(); await h.ready(); h.owner.edit(key, "B before comparison"); await h.owner.flush();
+  const preview = inventoryPreview(), before = h.owner.getEntry(key)?.value;
+  if (!before) throw new Error("The synthetic target draft must be open");
+  const reading = deferred<ReturnType<typeof inventoryPreview>>(); h.ports.prepareMemoryReuse.mockReturnValueOnce(reading.promise);
+  const staging = h.owner.stageMemoryReuse(key, preview, { editSeq: before.editSeq, basis: before.basis, text: before.text, reuseOrigin: before.reuseOrigin, merge: before.merge }, () => true);
+  expect(h.owner.lifecycleParticipant().inspect({ kind: "close-view", viewId: "memory-view" }).status).toBe("blocked");
+  if (change === "input") h.owner.edit(key, "New B during comparison");
+  else h.setCurrent(currentView(change === "source" ? { ...initial, sourceRevisionId: candidate.revisionId } : { ...initial,
+    selectionId: fixture.receipt.selection.eventId, revisionId: fixture.receipt.revision.revisionId, text: "External selection" }));
+  reading.resolve(preview);
+  expect(await staging).toEqual({ staged: false, durable: false });
+  expect(h.owner.getEntry(key)?.value?.text).toBe(change === "input" ? "New B during comparison" : "B before comparison");
+  expect(h.owner.getEntry(key)?.value?.reuseOrigin).toBeUndefined(); expect(h.ports.save).not.toHaveBeenCalled();
+});
+
+it("retains the same reuse origin and request through an unknown save while newer input remains separate", async () => {
+  const h = harness(); await h.ready(); const preview = inventoryPreview(), before = h.owner.getEntry(key)?.value;
+  if (!before) throw new Error("The synthetic target draft must be open");
+  h.ports.prepareMemoryReuse.mockResolvedValue(preview);
+  await h.owner.stageMemoryReuse(key, preview, { editSeq: before.editSeq, basis: before.basis, text: before.text, reuseOrigin: before.reuseOrigin, merge: before.merge }, () => true);
+  h.ports.save.mockRejectedValueOnce(new Error("Synthetic lost acknowledgement")); await h.owner.confirm(key);
+  const pending = copy(h.owner.getEntry(key)?.value?.pending);
+  expect(pending).toMatchObject({ kind: "save", request: { text: preview.donor.revision.text, reuseOrigin: preview.reuseOrigin } });
+  h.owner.edit(key, "B after unknown save"); await h.owner.flush(); await h.owner.recover(key);
+  expect(h.owner.getEntry(key)?.value).toMatchObject({ pending, text: "B after unknown save", reuseOrigin: preview.reuseOrigin });
+  expect(h.ports.save).toHaveBeenCalledOnce(); expect(h.ports.recoverSave.mock.calls.at(-1)?.[0]).toMatchObject({ reuseOrigin: preview.reuseOrigin, text: preview.donor.revision.text });
+  expect(h.owner.lifecycleParticipant().inspect({ kind: "close-window" }).status).toBe("blocked");
+});
+
+it("explicitly rechecks a staged reference against a changed target basis while retaining edited text", async () => {
+  const h = harness(); await h.ready(); const preview = inventoryPreview(), before = h.owner.getEntry(key)?.value;
+  if (!before) throw new Error("The synthetic target draft must be open");
+  h.ports.prepareMemoryReuse.mockResolvedValue(preview);
+  await h.owner.stageMemoryReuse(key, preview, { editSeq: before.editSeq, basis: before.basis, text: before.text, reuseOrigin: before.reuseOrigin, merge: before.merge }, () => true);
+  h.owner.edit(key, "Keep my edited reference B"); await h.owner.flush();
+  const current = { ...initial, sourceRevisionId: candidate.revisionId };
+  h.setCurrent({ ...currentView(current), sourceText: "Updated target source" });
+  const next = translationMemoryReuseFixture({ ...preview.target, sourceRevisionId: current.sourceRevisionId, sourceText: "Updated target source" }, preview.donor);
+  h.ports.prepareMemoryReuse.mockResolvedValue(next);
+  expect(await h.owner.rebase(key)).toBe(true);
+  expect(h.disk().value).toMatchObject({ text: "Keep my edited reference B", basis: current, reuseOrigin: next.reuseOrigin });
+  expect(h.ports.save).not.toHaveBeenCalled();
 });
 
 it.each(["input", "proof", "source-text", "source-revision", "locale", "selection", "retire"] as const)("refuses late TM adoption after the target's %s changes", async change => {

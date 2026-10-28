@@ -3314,7 +3314,7 @@ mod tests {
         let (decision,waiver)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
             let store=&mut sessions.active.as_mut().unwrap().store;let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
             let target=store.review_target(project,unit,"zh-CN").unwrap();
-            store.save_translation_revision(&tsumugi_core::SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+            store.save_translation_revision(&tsumugi_core::SaveTranslationRevision { reuse_origin: None,project_id:project,action_id:ExecutionId::new(),unit_id:unit,
                 locale:"zh-CN".into(),source_revision_id:target.source_revision_id,expected_selection_id:None,text:"你好 {{name}}".into()}).unwrap();
             store.save_term(&tsumugi_core::SaveTerm {project_id:project,action_id:ExecutionId::new(),term_id:None,locale:"zh-CN".into(),
                 source:"Hello".into(),aliases:vec![],target:"欢迎".into(),protected:true,scope_unit_id:Some(unit),expected_revision_id:None,reason:"Preferred term".into()}).unwrap();
@@ -3371,7 +3371,7 @@ mod tests {
         let (comparison,attempt,task)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
             let store=&mut sessions.active.as_mut().unwrap().store;
             let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
-            let original=tsumugi_core::SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
+            let original=tsumugi_core::SaveTranslationRevision { reuse_origin: None,project_id:project,action_id:ExecutionId::new(),unit_id:unit,locale:"zh-CN".into(),
                 source_revision_id:source,expected_selection_id:None,text:"First".into()};
             let first=store.save_translation_revision(&original).unwrap();
             let second=store.save_translation_revision(&tsumugi_core::SaveTranslationRevision {action_id:ExecutionId::new(),
@@ -3422,7 +3422,7 @@ mod tests {
         let (first,second)=fixture.app.state::<AppState>().sessions.with(move |sessions| {
             let store=&mut sessions.active.as_mut().unwrap().store;
             let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
-            let request=tsumugi_core::SaveTranslationRevision {project_id:project,action_id:ExecutionId::new(),unit_id:unit,
+            let request=tsumugi_core::SaveTranslationRevision { reuse_origin: None,project_id:project,action_id:ExecutionId::new(),unit_id:unit,
                 locale:"zh-CN".into(),source_revision_id:source,expected_selection_id:None,text:"First".into()};
             let first=store.save_translation_revision(&request).unwrap();
             let second=store.save_translation_revision(&tsumugi_core::SaveTranslationRevision {action_id:ExecutionId::new(),

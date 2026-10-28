@@ -2,6 +2,8 @@ import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../../../../test/fixtures/translation-commands.json";
+import { translationMemoryEntryFixture, translationMemoryReuseFixture } from "../../../testSupport/translationMemoryFixture";
+import { Button } from "../../../design-system/Button";
 import { i18n } from "../../../i18n";
 import type { workbenchEn } from "../../../i18n/workbench";
 import type { DraftBasis, DraftHead, DraftKey, DraftValue } from "../../../draftCommands";
@@ -68,6 +70,8 @@ async function harness(options: { inline?: boolean; page?: string } = {}) {
     write: vi.fn<TranslationDraftPorts["write"]>(async request => { disk = { key, revision: (BigInt(disk.revision) + 1n).toString(), writerId: request.write.writerId, value: copy(request.write.value) as DraftValue }; return copy(disk); }),
     history: vi.fn<TranslationDraftPorts["history"]>(async () => copy(baseHistory)),
     suggestions: vi.fn<TranslationDraftPorts["suggestions"]>(async () => [copy(memory)]),
+    memoryEntry: vi.fn<TranslationDraftPorts["memoryEntry"]>(async () => translationMemoryEntryFixture(memory)),
+    prepareMemoryReuse: vi.fn<TranslationDraftPorts["prepareMemoryReuse"]>(async () => translationMemoryReuseFixture(target, translationMemoryEntryFixture(memory))),
     save: vi.fn<TranslationDraftPorts["save"]>(), select: vi.fn<TranslationDraftPorts["select"]>(), writerId: () => fixtureIdentity(751),
   };
   const drafts = new TranslationDrafts({ context, reads, ports }), lifecycle = new ProjectLifecycle(); resources.push({ reads, drafts, lifecycle });
@@ -164,6 +168,18 @@ it("shows real TM provenance and adopts its donor text through the same local dr
   await waitFor(() => expect(h.drafts.getEntry(key)?.value?.text).toBe(memory.translationText));
   expect(h.ports.suggestions).toHaveBeenCalledWith({ ...context, unitId: target.unitId, locale: target.locale, offset: 0, limit: 20 });
   expect(h.ports.select).not.toHaveBeenCalled(); expect(h.ports.save).not.toHaveBeenCalled();
+  expect(h.drafts.getEntry(key)?.value?.reuseOrigin).toEqual(translationMemoryReuseFixture(target, translationMemoryEntryFixture(memory)).reuseOrigin);
+});
+
+it("distinguishes an earlier donor approval from current approval without granting either to the target", async () => {
+  const quality = translationMemoryEntryFixture(memory).quality;
+  vi.mocked(resourceCommands.suggestions).mockResolvedValue([{ ...memory, hasHumanApproval: false,
+    quality: { ...quality, currentApproval: null } }]);
+  await harness(); fireEvent.mouseDown(screen.getByRole("tab", { name: w("candidateTm") }), { button: 0, ctrlKey: false });
+  const item = (await screen.findByText(memory.translationText)).closest("li"); if (!item) throw new Error("Missing TM suggestion");
+  expect(within(item).getByText(i18n.t("knowledge.memoryPastApproval"))).toBeVisible();
+  expect(within(item).queryByText(i18n.t("knowledge.memoryCurrentApproval"))).toBeNull();
+  expect(within(item).getByText(i18n.t("knowledge.memoryApprovalHelp"))).toBeVisible();
 });
 
 it("requires real audit input, retains unknown requests with no tabs, and retries only the original decision after a missing-result check", async () => {
@@ -268,7 +284,7 @@ it("focuses the opened comparison, restores its exact Compare button, and never 
     fireEvent.click(within(region).getByRole("button", { name: w("candidateCloseCompare") }));
     expect(screen.queryByRole("region", { name: w("candidateComparison") })).not.toBeInTheDocument();
     expect(compare).toHaveFocus();
-    const other = render(<button>Other view destination</button>).getByRole("button", { name: "Other view destination" });
+    const other = render(<Button>Other view destination</Button>).getByRole("button", { name: "Other view destination" });
     act(() => { fireEvent.click(compare); h.gate.setVisibleOwner("other-view"); other.focus(); });
     expect(other).toHaveFocus(); expect(scroll).toHaveBeenCalledTimes(1);
   } finally {

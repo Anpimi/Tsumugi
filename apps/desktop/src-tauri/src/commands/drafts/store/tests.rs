@@ -8,6 +8,42 @@ use tsumugi_core::{SaveTranslationRevision, SelectTranslationRevision};
 fn revision(value: u64) -> Revision {
     Revision::new(value).unwrap()
 }
+
+#[test]
+fn reuse_origin_and_the_exact_pending_survive_newer_input_only_in_format_nine() {
+    let (_directory, store, mut write) = setup();
+    let origin = tsumugi_core::TranslationReuseOrigin {
+        target_source_snapshot_id: ExecutionId::new(), target_unit_id: write.key.unit_id,
+        target_source_revision_id: write.value.basis.source_revision_id, target_selection_id: None,
+        donor_unit_id: ExecutionId::new(), donor_source_revision_id: ExecutionId::new(),
+        donor_translation_revision_id: ExecutionId::new(), donor_basis: "a".repeat(64),
+    };
+    write.value.reuse_origin = Some(origin.clone());
+    write.value.pending = Some(DraftPending::Save { request: SaveTranslationRevision {
+        project_id: write.key.project_id, action_id: ExecutionId::new(), unit_id: write.key.unit_id,
+        locale: write.key.locale.clone(), source_revision_id: write.value.basis.source_revision_id,
+        expected_selection_id: None, text: write.value.text.clone(), reuse_origin: Some(origin.clone()),
+    }, submitted_seq: write.value.edit_seq });
+    let first = store.write(&write).unwrap();
+    let mut newer = write.clone(); newer.expected_revision = first.revision;
+    newer.value.edit_seq = revision(2); newer.value.text = "New B {{name}} é 👩🏽‍💻".into();
+    let saved = store.write(&newer).unwrap();
+    let path = store.directory.join(DATABASE);
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(DraftStore::at(store.directory.clone()).unwrap().read(&write.key).unwrap(), saved);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    assert_eq!(saved.value.as_ref().unwrap().pending, write.value.pending);
+    assert_eq!(saved.value.as_ref().unwrap().reuse_origin, Some(origin));
+    let mut wrong = newer.clone(); wrong.expected_revision = saved.revision; wrong.value.edit_seq = revision(3);
+    wrong.value.reuse_origin.as_mut().unwrap().target_unit_id = ExecutionId::new();
+    assert_eq!(store.write(&wrong).unwrap_err().code, ErrorCode::InvalidInput);
+    assert_eq!(store.read(&write.key).unwrap(), saved);
+    Connection::open(&path).unwrap().pragma_update(None, "user_version", KNOWLEDGE_PROPOSAL_FORMAT).unwrap();
+    let old = fs::read(&path).unwrap();
+    assert_eq!(store.read(&write.key).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert_eq!(store.list(write.key.project_id, None, 100).unwrap_err().code, ErrorCode::CorruptLedger);
+    assert_eq!(fs::read(&path).unwrap(), old);
+}
 fn setup() -> (tempfile::TempDir, DraftStore, DraftWrite) {
     let temp = tempfile::tempdir().unwrap();
     let store = DraftStore::at(temp.path().join("drafts")).unwrap();
@@ -19,7 +55,7 @@ fn setup() -> (tempfile::TempDir, DraftStore, DraftWrite) {
         },
         expected_revision: revision(0),
         writer_id: ExecutionId::new(),
-        value: DraftValue {
+        value: DraftValue { reuse_origin: None,
             basis: DraftBasis {
                 source_revision_id: ExecutionId::new(),
                 selection_id: None,
@@ -36,7 +72,7 @@ fn setup() -> (tempfile::TempDir, DraftStore, DraftWrite) {
 }
 fn pending(request: &DraftWrite) -> DraftPending {
     DraftPending::Save {
-        request: SaveTranslationRevision {
+        request: SaveTranslationRevision { reuse_origin: None,
             project_id: request.key.project_id,
             action_id: ExecutionId::new(),
             unit_id: request.key.unit_id,
@@ -91,7 +127,7 @@ fn merge_origin() -> DraftMergeOrigin {
 fn merge_pending(request: &DraftWrite) -> DraftPending {
     let origin = request.value.merge.as_ref().unwrap();
     DraftPending::Merge {
-        request: SaveTranslationRevision {
+        request: SaveTranslationRevision { reuse_origin: None,
             project_id: request.key.project_id,
             action_id: ExecutionId::new(),
             unit_id: request.key.unit_id,

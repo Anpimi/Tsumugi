@@ -12,9 +12,10 @@ import type { ProjectView } from "../../../projectCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import styles from "./Knowledge.module.css";
 
-export default function TermScopePicker({ project, locale, disabled, gate, current, onSelect }: {
+export default function TermScopePicker({ project, locale, disabled, gate, current, onSelect, title, help }: {
   project: ProjectView; locale: string; disabled: boolean; gate: InteractionGate;
   current: (dialogId?: string) => boolean; onSelect: (unitId: string) => void;
+  title?: string; help?: string;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   const [open, setOpen] = useState(false), [input, setInput] = useState(""), [search, setSearch] = useState("");
@@ -46,8 +47,8 @@ export default function TermScopePicker({ project, locale, disabled, gate, curre
   }
   function refresh() { if (disabled || !current(dialogId)) return; setPage(null); void Promise.all([first.refetch(), source.refetch()]); }
   return <>
-    <Button disabled={disabled} onClick={() => { if (current()) { setPage(null); setOpen(true); } }}>{t("chooseEntry")}</Button>
-    <Dialog open={open} onOpenChange={next => { if (next || gate.getSnapshot().composingOwners.length === 0) setOpen(next); }} title={t("chooseEntry")} description={t("scopePickerHelp")} closeLabel={t("close")}>
+    <Button disabled={disabled} onClick={() => { if (current()) { setPage(null); setOpen(true); } }}>{title ?? t("chooseEntry")}</Button>
+    <Dialog open={open} onOpenChange={next => { if (next || gate.getSnapshot().composingOwners.length === 0) setOpen(next); }} title={title ?? t("chooseEntry")} description={help ?? t("scopePickerHelp")} closeLabel={t("close")}>
       <div onFocusCapture={() => gate.setInputOwner(gate.getSnapshot().visibleViewId, dialogId)}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.setInputOwner(gate.getSnapshot().visibleViewId, null); }}
         onCompositionStartCapture={() => gate.setComposing(dialogId, true)} onCompositionEndCapture={() => gate.setComposing(dialogId, false)}>

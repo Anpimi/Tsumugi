@@ -168,7 +168,8 @@ fn release_legacy_domain(caption: bool) {
     for (row, text) in rows.iter().zip(values) {
         let unit = row.unit_id.unwrap();
         let target = store.review_target(project_id, unit, "zh-CN").unwrap();
-        let request = SaveTranslationRevision { project_id, action_id: ExecutionId::new(),
+        let request = SaveTranslationRevision {
+            reuse_origin: None, project_id, action_id: ExecutionId::new(),
             unit_id: unit, locale: "zh-CN".into(), source_revision_id: target.source_revision_id,
             expected_selection_id: target.selection_id, text: (*text).into() };
         let receipt = store.save_translation_edit(&request).unwrap();

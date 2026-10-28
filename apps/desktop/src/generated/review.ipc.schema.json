@@ -7968,6 +7968,54 @@
         ],
         "type": "string"
       },
+      "TranslationReuseOrigin": {
+        "additionalProperties": false,
+        "description": "Reuse is provenance, not a selection, approval, or dependency on future donor edits.",
+        "properties": {
+          "donorBasis": {
+            "type": "string"
+          },
+          "donorSourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "donorTranslationRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "donorUnitId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "targetSourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetUnitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "targetSourceSnapshotId",
+          "targetUnitId",
+          "targetSourceRevisionId",
+          "targetSelectionId",
+          "donorUnitId",
+          "donorSourceRevisionId",
+          "donorTranslationRevisionId",
+          "donorBasis"
+        ],
+        "type": "object"
+      },
       "TranslationRevision": {
         "additionalProperties": false,
         "properties": {
@@ -8057,6 +8105,16 @@
             "anyOf": [
               {
                 "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reuseOrigin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TranslationReuseOrigin"
               },
               {
                 "type": "null"

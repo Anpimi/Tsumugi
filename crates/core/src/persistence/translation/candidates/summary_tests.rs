@@ -54,7 +54,7 @@ fn update_source_with_continued_identity(store: &mut ProjectStore, units: &[Exec
     assert_ne!(store.content_scope().unwrap().current_snapshot.unwrap(), previous);
 }
 
-fn save_candidate(
+pub(in crate::persistence) fn save_candidate(
     store: &mut ProjectStore,
     unit: ExecutionId,
     text: &str,

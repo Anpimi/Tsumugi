@@ -629,6 +629,7 @@ fn scoped_changes_reach_existing_impact_and_locale_qualification_owners() {
     for (scope, locale) in [(&first, "zh-CN"), (&second, "zh-CN"), (&first, "ja")] {
         store
             .save_translation_edit(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: scope.project_id,
                 action_id: ExecutionId::new(),
                 unit_id: scope.unit_id,

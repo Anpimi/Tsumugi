@@ -81,7 +81,7 @@ fn seed(store: &mut ProjectStore) -> Vec<(&'static str, &'static str, Value, Val
     let unit = target.unit_id;
     let source = target.source_revision_id;
     store
-        .save_translation_revision(&SaveTranslationRevision {
+        .save_translation_revision(&SaveTranslationRevision { reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: unit,

@@ -12,6 +12,7 @@ import type { TermRevision } from "../../../resourceCommands";
 import { sourceCommands } from "../../../sourceCommands";
 import type { WorkspaceView, ViewPatch } from "../../workspace/workspaceStore";
 import type { InteractionGate } from "../../workspace/interactionGate";
+import type { TranslationDrafts } from "../editor/translationDrafts";
 import { contextKindForKnowledge, knowledgeKinds, type KnowledgeOwner, type KnowledgeKind } from "./knowledgeTypes";
 import { knowledgeBlocked } from "./knowledgeState";
 import { knowledgeCurrentKey, knowledgeTermsKey, useKnowledgeCurrent, useKnowledgeScope, useKnowledgeTerms } from "./knowledgeReads";
@@ -19,6 +20,7 @@ import TermScopePicker from "./TermScopePicker";
 import TermProposalPanel from "./TermProposalPanel";
 import ContextResourcesView from "./ContextResourcesView";
 import KnowledgeProposalPanel, { type KnowledgeReviewTarget } from "./KnowledgeProposalPanel";
+import TranslationMemoryView from "./TranslationMemoryView";
 import styles from "./Knowledge.module.css";
 
 export interface KnowledgeViewProps {
@@ -27,8 +29,11 @@ export interface KnowledgeViewProps {
   onDetails: () => void;
   reviewTarget?: KnowledgeReviewTarget | null;
   onReviewOpened?: () => void;
+  drafts?: TranslationDrafts | null;
+  onEditTranslation?: (unitId: string, locale: string) => Promise<boolean>;
+  onRevealTranslationDraft?: (unitId: string, locale: string) => void;
 }
-export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened }: KnowledgeViewProps) {
+export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened, drafts = null, onEditTranslation, onRevealTranslationDraft }: KnowledgeViewProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
   const { selectedTerm, termDraft, aliasInput, locale, pending, busyMutation, notice, failure } = owner.state;
   const sourceInput = useRef<HTMLInputElement>(null), focusTicket = useRef<{ termId: string | null; origin: HTMLElement | null } | null>(null);
@@ -128,7 +133,7 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
       {Object.values(owner.state.knowledgeDrafts).length ? <nav className={styles.toolbar} aria-label={t("reviewDrafts")}>{Object.values(owner.state.knowledgeDrafts).map(draft => <Button key={draft.key} aria-current={showReview && reviewDraft?.key === draft.key ? "page" : undefined}
         onClick={() => { if (current()) { owner.knowledgeProposals.activate(draft.key); patch({ locale: draft.locale, preset: draft.entry.kind === "character" ? "characters" : draft.entry.kind }); } }}>{draft.name || draft.entry.name}</Button>)}</nav> : null}
       {showReview ? <KnowledgeProposalPanel project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} target={reviewTarget} onOpened={onReviewOpened}/> : null}
-      {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <EmptyState title={t("kinds.memory")} description={t("unavailable.memory")}/> : <>
+      {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <TranslationMemoryView project={project} view={view} drafts={drafts} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} onEdit={onEditTranslation} onRevealDraft={onRevealTranslationDraft}/> : <>
         <div className={styles.toolbar}><h1>{t("kinds.terms")}</h1><Button disabled={disabled || blocked || dirty || !localeMatches || !source.data?.currentSnapshot} onClick={newTerm}><Plus/>{t("newTerm")}</Button><Button disabled={terms.isFetching} onClick={() => void terms.refetch()}>{t("refresh")}</Button></div>
         {!localeMatches ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ locale }); }}>{t("returnToLanguage", { locale })}</Button>}>{t("retainedLanguage", { locale })}</Banner> : null}
         {!localeAvailable ? <Banner tone="warning">{t("localeUnavailable", { locale })}</Banner> : null}

@@ -286,6 +286,7 @@ fn direct_ai_current_manual_history_reopens_and_schema_nine_is_refused() {
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let saved = store
         .save_translation_revision(&crate::SaveTranslationRevision {
+            reuse_origin: None,
             project_id: project,
             action_id: ExecutionId::new(),
             unit_id: rows[0].unit_id.unwrap(),
@@ -516,6 +517,7 @@ fn direct_ai_rejects_bad_configuration_and_preserves_manual_selection() {
         .unwrap();
     let selected = store
         .save_translation_revision(&crate::SaveTranslationRevision {
+            reuse_origin: None,
             project_id: input.envelope().project_id,
             action_id: ExecutionId::new(),
             unit_id: rows[0].unit_id.unwrap(),

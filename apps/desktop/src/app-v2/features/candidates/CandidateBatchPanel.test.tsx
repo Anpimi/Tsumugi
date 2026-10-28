@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { canonicalTranslationReuse } from "../../../translationReuse";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -40,10 +41,10 @@ const resources: { drafts: TranslationDrafts; reads: SessionReads; lifecycle: Pr
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function normalized(value: Parameters<TranslationDraftPorts["write"]>[0]["write"]["value"]): DraftValue {
   const pending = value.pending;
-  return { ...copy(value), basis: { ...value.basis, selectionId: value.basis.selectionId ?? null, revisionId: value.basis.revisionId ?? null,
+  return { ...copy(value), reuseOrigin: canonicalTranslationReuse(value.reuseOrigin), basis: { ...value.basis, selectionId: value.basis.selectionId ?? null, revisionId: value.basis.revisionId ?? null,
     text: value.basis.text ?? null }, merge: value.merge ?? null, pending: pending == null ? null : pending.kind === "selection"
     ? { ...copy(pending), request: { ...pending.request, expectedSelectionId: pending.request.expectedSelectionId ?? null } }
-    : { ...copy(pending), request: { ...pending.request, expectedSelectionId: pending.request.expectedSelectionId ?? null } } };
+    : { ...copy(pending), request: { ...pending.request, reuseOrigin: canonicalTranslationReuse(pending.request.reuseOrigin), expectedSelectionId: pending.request.expectedSelectionId ?? null } } };
 }
 function rowFixture(index: number): TranslationCandidateSliceRow {
   const target = reviewTargetFixture({ unitId: fixtureIdentity(1200 + index), sourceRevisionId: fixtureIdentity(1400 + index), sourceSnapshotId: snapshotId,

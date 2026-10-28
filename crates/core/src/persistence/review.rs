@@ -663,7 +663,7 @@ fn check_project(
     Ok(())
 }
 
-fn decision_by_action(
+pub(super) fn decision_by_action(
     connection: &Connection,
     project_id: ExecutionId,
     action_id: ExecutionId,
@@ -2087,6 +2087,7 @@ pub(super) mod tests {
         let target = store.review_target(project, unit, locale).unwrap();
         store
             .save_translation_revision(&SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: unit,
@@ -2477,6 +2478,7 @@ pub(super) mod tests {
         for text in ["你好 {{name}}", "您好 {{name}}"] {
             let target = store.review_target(project, removed, "zh-CN").unwrap();
             let request = SaveTranslationRevision {
+                reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: removed,

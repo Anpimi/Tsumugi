@@ -154,7 +154,7 @@ fn translation(project: ExecutionId) -> DraftWrite {
         },
         expected_revision: rev(0),
         writer_id: ExecutionId::new(),
-        value: DraftValue {
+        value: DraftValue { reuse_origin: None,
             basis: DraftBasis {
                 source_revision_id: ExecutionId::new(),
                 selection_id: None,
@@ -328,7 +328,7 @@ fn interrupted_format_upgrades_preserve_original_pending_and_new_head_atomically
             let (directory, store, write) = setup();
             let mut old = translation(write.key.project_id);
             old.value.pending = Some(DraftPending::Save {
-                request: tsumugi_core::SaveTranslationRevision {
+                request: tsumugi_core::SaveTranslationRevision { reuse_origin: None,
                     project_id: old.key.project_id,
                     action_id: ExecutionId::new(),
                     unit_id: old.key.unit_id,
@@ -852,7 +852,7 @@ fn format_seven_reads_keep_revocations_and_upgrade_only_with_a_successful_write(
 }
 
 #[test]
-fn unfinished_knowledge_edits_and_the_original_pending_survive_only_in_format_eight() {
+fn unfinished_knowledge_edits_and_the_original_pending_survive_from_format_eight() {
     for keep_editor in [true, false] {
         let (_directory, store, mut write) = setup();
         let mut draft = proposal_draft(1);
@@ -877,6 +877,42 @@ fn unfinished_knowledge_edits_and_the_original_pending_survive_only_in_format_ei
         assert_eq!(store.list_conversations(write.key.project_id, None, 50).unwrap_err().code, ErrorCode::CorruptLedger);
         assert_eq!(fs::read(&path).unwrap(), original, "a mismatched record version is rejected without rewriting input");
     }
+}
+
+#[test]
+fn format_eight_knowledge_requests_are_readable_and_upgrade_only_with_a_successful_write() {
+    let (_directory, store, mut write) = setup();
+    let mut draft = proposal_draft(1);
+    draft.content = ConversationPlanningModelOutput::KnowledgeProposal {
+        summary: String::new(), questions: vec![String::new()],
+        entries: vec![tsumugi_core::application::ConversationKnowledgeEntry {
+            kind: tsumugi_core::ContextResourceKind::Style, name: String::new(),
+            text: "Unfinished knowledge é 👩🏽‍💻".into(), unit_ids: vec![],
+        }],
+    };
+    write.value.pending = Some(ConversationDraftPending::ProposalRevision {
+        request: tsumugi_core::application::ReviseConversationProposal {
+            project_id: write.key.project_id, conversation_id: write.key.conversation_id,
+            action_id: ExecutionId::new(), proposal_id: draft.proposal_id, revision_id: ExecutionId::new(),
+            expected_revision_id: draft.expected_revision_id, content: draft.content.clone(),
+        }, submitted_seq: rev(1),
+    });
+    write.value.proposal_edits.push(draft);
+    let saved = store.write_conversation(&write).unwrap();
+    let path = store.directory.join(DATABASE);
+    Connection::open(&path).unwrap().pragma_update(None, "user_version", KNOWLEDGE_PROPOSAL_FORMAT).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert_eq!(store.read_conversation(&write.key).unwrap(), saved);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    write.value.edit_seq = rev(2); write.value.text = "Newer independent message B".into();
+    assert_eq!(store.write_conversation(&write).unwrap_err().code, ErrorCode::DependencyConflict);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    write.expected_revision = saved.revision;
+    let upgraded = store.write_conversation(&write).unwrap();
+    assert_eq!(upgraded.value.as_ref().unwrap().pending, write.value.pending);
+    assert_eq!(upgraded.value.as_ref().unwrap().proposal_edits, write.value.proposal_edits);
+    assert_eq!(upgraded.value.as_ref().unwrap().text, write.value.text);
+    assert_eq!(Connection::open(&path).unwrap().pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), FORMAT);
 }
 
 fn revision_pending(write: &ConversationDraftWrite) -> ConversationDraftPending {

@@ -327,7 +327,7 @@ fn installed_build_and_checks(workflow: bool, failure_outcome: Option<&str>) {
     for &locale in locales {
         let target = store.review_target(project, unit, locale).unwrap();
         store
-            .save_translation_revision(&SaveTranslationRevision {
+            .save_translation_revision(&SaveTranslationRevision { reuse_origin: None,
                 project_id: project,
                 action_id: ExecutionId::new(),
                 unit_id: unit,
