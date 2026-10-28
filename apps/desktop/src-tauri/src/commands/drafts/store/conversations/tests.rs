@@ -362,3 +362,187 @@ fn interrupted_format_upgrades_preserve_original_pending_and_new_head_atomically
         }
     }
 }
+
+fn format_three(store: &DraftStore) {
+    let c = Connection::open(store.directory.join(DATABASE)).unwrap();
+    c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE conversation_draft_heads RENAME TO conversation_draft_fixture_new").unwrap();
+    c.execute_batch(LEGACY_HEAD_SQL).unwrap();
+    c.execute_batch("INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
+}
+
+#[test]
+fn format_three_reads_do_not_upgrade_and_write_preserves_both_domains_and_pending() {
+    let (_directory, store, mut write) = setup();
+    write.value.pending = Some(pending(&write));
+    let first = store.write_conversation(&write).unwrap();
+    let translation = translation(write.key.project_id);
+    let translated = store.write(&translation).unwrap();
+    format_three(&store);
+    let path = store.directory.join(DATABASE);
+    let before = fs::read(&path).unwrap();
+    assert_eq!(store.read_conversation(&write.key).unwrap(), first);
+    assert_eq!(
+        store
+            .list_conversations(write.key.project_id, None, 50)
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    // Even an exact acknowledgement retry upgrades atomically and keeps old bytes.
+    assert_eq!(store.write_conversation(&write).unwrap(), first);
+    assert_eq!(store.read(&translation.key).unwrap(), translated);
+    assert_eq!(store.read_conversation(&write.key).unwrap(), first);
+    assert_eq!(
+        Connection::open(path)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        FORMAT
+    );
+}
+
+#[test]
+fn format_three_rebuild_is_atomic_at_rename_copy_and_commit_boundaries() {
+    for stage in [
+        "conversation-upgrade-after-rename",
+        "conversation-upgrade-after-copy",
+        "write-before-commit",
+        "write-after-commit",
+    ] {
+        let (directory, store, mut write) = setup();
+        write.value.pending = Some(pending(&write));
+        let conversation = store.write_conversation(&write).unwrap();
+        let old = translation(write.key.project_id);
+        let first = store.write(&old).unwrap();
+        format_three(&store);
+        let mut next = old.clone();
+        next.expected_revision = first.revision;
+        next.value.text = "New translation input alongside retained conversation".into();
+        next.value.edit_seq = rev(2);
+        super::super::tests::crash_child(directory.path(), &store, &next, stage);
+        assert_eq!(store.read_conversation(&write.key).unwrap(), conversation);
+        let restored = store.read(&old.key).unwrap();
+        assert_eq!(
+            restored.value,
+            if stage == "write-after-commit" {
+                Some(next.value)
+            } else {
+                first.value
+            }
+        );
+        let c = Connection::open(store.directory.join(DATABASE)).unwrap();
+        assert_eq!(
+            c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            if stage == "write-after-commit" {
+                FORMAT
+            } else {
+                CONVERSATION_FORMAT
+            }
+        );
+    }
+}
+
+#[test]
+fn large_formal_confirmation_keeps_the_complete_request_and_original_translation_limit() {
+    use tsumugi_core::{
+        application::{
+            AuthorizeConversationProposalWorkPlan, AutomationEffect, ConversationProposalRef,
+        },
+        execution::{ApplicationScopeBasis, UnsignedDecimal},
+    };
+    let (_directory, store, mut write) = setup();
+    let request = AuthorizeConversationProposalWorkPlan {
+        action_id: ExecutionId::new(),
+        proposal: ConversationProposalRef {
+            project_id: write.key.project_id,
+            conversation_id: write.key.conversation_id,
+            proposal_id: ExecutionId::new(),
+            revision_id: ExecutionId::new(),
+        },
+        plan_id: ExecutionId::new(),
+        plan_digest: "a".repeat(64),
+        confirmed: true,
+        effects: vec![AutomationEffect::SaveCandidate],
+        expires_at: UnsignedDecimal::from(1u64),
+        checker_executions: vec![],
+        tool_execution: true,
+        application_tool_executions: (0..5000)
+            .map(|_| ApplicationScopeBasis {
+                instance_id: ExecutionId::new(),
+                activation_generation: 1,
+            })
+            .collect(),
+    };
+    let original = serde_json::to_vec(&request).unwrap();
+    assert!(original.len() > MAX_DRAFT_RECORD_BYTES);
+    write.value.pending = Some(ConversationDraftPending::ProposalWorkPlan {
+        request: request.clone(),
+        submitted_seq: write.value.edit_seq,
+    });
+    let saved = store.write_conversation(&write).unwrap();
+    assert_eq!(store.read_conversation(&write.key).unwrap(), saved);
+    assert_eq!(store.write_conversation(&write).unwrap(), saved);
+    let Some(ConversationDraftPending::ProposalWorkPlan {
+        request: recovered, ..
+    }) = saved.value.unwrap().pending
+    else {
+        panic!("confirmation identity lost")
+    };
+    assert_eq!(serde_json::to_vec(&recovered).unwrap(), original);
+    let mut translation = translation(write.key.project_id);
+    translation.value.text = "x".repeat(MAX_DRAFT_RECORD_BYTES);
+    assert_eq!(
+        store.write(&translation).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+    let mut changed = write.clone();
+    changed.expected_revision = rev(1);
+    changed.value.edit_seq = rev(2);
+    changed.value.pending = None;
+    assert_eq!(
+        store.write_conversation(&changed).unwrap_err().stage,
+        "drafts-pending"
+    );
+}
+
+#[test]
+fn format_three_rejects_new_action_payloads_without_rewriting_either_domain() {
+    let (_directory, store, mut write) = setup();
+    write.value.pending = Some(pending(&write));
+    let mut head = store.write_conversation(&write).unwrap();
+    format_three(&store);
+    let action = ExecutionId::new();
+    let injected = serde_json::json!({"kind":"planning","preparationId":ExecutionId::new(),"submittedSeq":"1","request":{"projectId":write.key.project_id,"conversationId":write.key.conversation_id,"consent":{"actionId":action,"attemptId":action,"taskId":ExecutionId::new(),"previewDigest":"a".repeat(64),"expiresAtMs":"1","shareMessages":true,"shareUnits":false}}});
+    head.value.as_mut().unwrap().pending = Some(serde_json::from_value(injected).unwrap());
+    let path = store.directory.join(DATABASE);
+    let c = Connection::open(&path).unwrap();
+    c.execute(
+        "UPDATE conversation_draft_heads SET payload=?1",
+        [serde_json::to_vec(&head).unwrap()],
+    )
+    .unwrap();
+    drop(c);
+    let bytes = fs::read(&path).unwrap();
+    assert_eq!(
+        store.read_conversation(&write.key).unwrap_err().code,
+        ErrorCode::CorruptLedger
+    );
+    assert_eq!(
+        store
+            .list_conversations(write.key.project_id, None, 50)
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger
+    );
+    assert_eq!(
+        store
+            .write(&translation(write.key.project_id))
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger
+    );
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+}

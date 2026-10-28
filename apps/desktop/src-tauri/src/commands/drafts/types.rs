@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 use tsumugi_core::{
     MergeBasis, SaveTranslationRevision, SelectTranslationRevision,
-    application::{AppendProjectConversationMessage, CreateProjectConversation},
+    application::{
+        AppendProjectConversationMessage, AuthorizeConversationProposalWorkPlan,
+        CaptureConversationProposal, CreateProjectConversation, ReadConversationPlanningAction,
+        ReviseConversationProposal,
+    },
     execution::{ExecutionId, Revision},
 };
 
@@ -149,6 +153,23 @@ pub enum ConversationDraftPending {
     },
     Append {
         request: AppendProjectConversationMessage,
+        submitted_seq: Revision,
+    },
+    Planning {
+        request: ReadConversationPlanningAction,
+        preparation_id: ExecutionId,
+        submitted_seq: Revision,
+    },
+    ProposalCapture {
+        request: CaptureConversationProposal,
+        submitted_seq: Revision,
+    },
+    ProposalRevision {
+        request: ReviseConversationProposal,
+        submitted_seq: Revision,
+    },
+    ProposalWorkPlan {
+        request: AuthorizeConversationProposalWorkPlan,
         submitted_seq: Revision,
     },
 }

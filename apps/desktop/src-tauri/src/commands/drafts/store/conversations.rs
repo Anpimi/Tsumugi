@@ -2,7 +2,19 @@
 use super::*;
 use tsumugi_core::application::{MAX_CONVERSATION_MESSAGE_BYTES, MAX_CONVERSATION_TITLE_BYTES};
 
-pub(super) const HEAD_SQL: &str = "CREATE TABLE conversation_draft_heads (project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,conversation_id), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))";
+pub(super) const LEGACY_HEAD_SQL: &str = "CREATE TABLE conversation_draft_heads (project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,conversation_id), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))";
+pub(super) const HEAD_SQL: &str = "CREATE TABLE conversation_draft_heads (project_id TEXT NOT NULL, conversation_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=4456448), PRIMARY KEY(project_id,conversation_id), CHECK(edit_seq IS NOT NULL OR has_pending=0), CHECK(edit_seq IS NULL OR edit_seq>=0))";
+
+fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
+    super::encode_bounded(value, MAX_CONVERSATION_DRAFT_RECORD_BYTES)
+}
+fn record_limit(format: i64) -> usize {
+    if format == CONVERSATION_FORMAT {
+        MAX_DRAFT_RECORD_BYTES
+    } else {
+        MAX_CONVERSATION_DRAFT_RECORD_BYTES
+    }
+}
 
 fn empty(key: &ConversationDraftKey) -> ConversationDraftHead {
     ConversationDraftHead {
@@ -41,6 +53,38 @@ fn validate_pending(
                 return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-message"));
             }
             (request.project_id, request.conversation_id, *submitted_seq)
+        }
+        ConversationDraftPending::Planning {
+            request,
+            submitted_seq,
+            ..
+        } => {
+            if request.consent.action_id != request.consent.attempt_id {
+                return Err(fail(
+                    ErrorCode::InvalidInput,
+                    "conversation-drafts-planning",
+                ));
+            }
+            (request.project_id, request.conversation_id, *submitted_seq)
+        }
+        ConversationDraftPending::ProposalCapture {
+            request,
+            submitted_seq,
+        } => (request.project_id, request.conversation_id, *submitted_seq),
+        ConversationDraftPending::ProposalRevision {
+            request,
+            submitted_seq,
+        } => (request.project_id, request.conversation_id, *submitted_seq),
+        ConversationDraftPending::ProposalWorkPlan {
+            request,
+            submitted_seq,
+        } => {
+            super::encode_bounded(request, tsumugi_core::execution::MAX_INPUT_BYTES)?;
+            (
+                request.proposal.project_id,
+                request.proposal.conversation_id,
+                *submitted_seq,
+            )
         }
     };
     if project != key.project_id || thread != key.conversation_id || submitted > seq {
@@ -116,7 +160,7 @@ fn stored(row: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<Stored> {
         row.get(offset + 3)?,
     ))
 }
-fn decode(key: &ConversationDraftKey, row: Stored) -> Result<ConversationDraftHead> {
+fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<ConversationDraftHead> {
     let (revision, seq, pending, payload) = row;
     let payload =
         payload.ok_or_else(|| fail(ErrorCode::CorruptLedger, "conversation-drafts-record"))?;
@@ -130,6 +174,16 @@ fn decode(key: &ConversationDraftKey, row: Stored) -> Result<ConversationDraftHe
         || seq != value.map(|value| value.edit_seq.get() as i64)
         || pending != i64::from(value.is_some_and(|value| value.pending.is_some()))
         || value.is_some_and(|value| validate_value(key, value).is_err())
+        || format == CONVERSATION_FORMAT
+            && value
+                .and_then(|value| value.pending.as_ref())
+                .is_some_and(|pending| {
+                    !matches!(
+                        pending,
+                        ConversationDraftPending::Create { .. }
+                            | ConversationDraftPending::Append { .. }
+                    )
+                })
         || encode(&head)
             .map_err(|_| fail(ErrorCode::CorruptLedger, "conversation-drafts-record"))?
             != payload
@@ -143,14 +197,52 @@ fn read_head(
     key: &ConversationDraftKey,
     format: i64,
 ) -> Result<ConversationDraftHead> {
-    if format < FORMAT {
+    if format < CONVERSATION_FORMAT {
         return Ok(empty(key));
     }
-    let row=c.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?3 THEN payload END FROM conversation_draft_heads WHERE project_id=?1 AND conversation_id=?2",params![key.project_id.to_string(),key.conversation_id.to_string(),MAX_DRAFT_RECORD_BYTES as i64],|row|stored(row,0)).optional().map_err(sql)?;
+    let row=c.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?3 THEN payload END FROM conversation_draft_heads WHERE project_id=?1 AND conversation_id=?2",params![key.project_id.to_string(),key.conversation_id.to_string(),record_limit(format) as i64],|row|stored(row,0)).optional().map_err(sql)?;
     match row {
-        Some(row) => decode(key, row),
+        Some(row) => decode(key, row, format),
         None => Ok(empty(key)),
     }
+}
+
+/// Format 3 has no dependent tables. Validate every old head, then rebuild the
+/// payload constraint inside the caller's existing IMMEDIATE transaction.
+pub(super) fn upgrade(c: &Connection) -> Result<()> {
+    let mut query = c.prepare("SELECT project_id,conversation_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM conversation_draft_heads ORDER BY project_id,conversation_id").map_err(sql)?;
+    let rows = query
+        .query_map([MAX_DRAFT_RECORD_BYTES as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                stored(row, 2)?,
+            ))
+        })
+        .map_err(sql)?;
+    for row in rows {
+        let (project, thread, row) = row.map_err(sql)?;
+        let key = ConversationDraftKey {
+            project_id: stored_id(&project)?,
+            conversation_id: stored_id(&thread)?,
+        };
+        decode(&key, row, CONVERSATION_FORMAT)?;
+    }
+    drop(query);
+    c.execute_batch(
+        "ALTER TABLE conversation_draft_heads RENAME TO conversation_draft_heads_legacy",
+    )
+    .map_err(sql)?;
+    test_hook("conversation-upgrade-after-rename", Some(c));
+    c.execute_batch(HEAD_SQL).map_err(sql)?;
+    c.execute_batch(
+        "INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_heads_legacy",
+    )
+    .map_err(sql)?;
+    test_hook("conversation-upgrade-after-copy", Some(c));
+    c.execute_batch("DROP TABLE conversation_draft_heads_legacy")
+        .map_err(sql)?;
+    Ok(())
 }
 fn persist(c: &Connection, head: &ConversationDraftHead, payload: &[u8]) -> Result<()> {
     c.execute("INSERT INTO conversation_draft_heads VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project_id,conversation_id) DO UPDATE SET revision=excluded.revision,edit_seq=excluded.edit_seq,has_pending=excluded.has_pending,payload=excluded.payload",params![head.key.project_id.to_string(),head.key.conversation_id.to_string(),head.revision.get() as i64,head.value.as_ref().map(|value|value.edit_seq.get() as i64),i64::from(head.value.as_ref().is_some_and(|value|value.pending.is_some())),payload]).map_err(sql)?;
@@ -299,7 +391,7 @@ impl DraftStore {
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(sql)?;
         let format = verify_schema(&tx)?;
-        if format < FORMAT {
+        if format < CONVERSATION_FORMAT {
             return Ok(ConversationDraftPage {
                 items: vec![],
                 next: None,
@@ -312,7 +404,7 @@ impl DraftStore {
                     project.to_string(),
                     after.map(|key| key.conversation_id.to_string()),
                     limit + 1,
-                    MAX_DRAFT_RECORD_BYTES as i64
+                    record_limit(format) as i64
                 ],
                 |row| Ok((row.get::<_, String>(0)?, stored(row, 1)?)),
             )
@@ -326,7 +418,7 @@ impl DraftStore {
                 project_id: project,
                 conversation_id: stored_id(&thread)?,
             };
-            let head = decode(&key, row)?;
+            let head = decode(&key, row, format)?;
             if index == limit as usize {
                 more = true;
                 break;

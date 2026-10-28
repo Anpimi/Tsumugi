@@ -17,6 +17,7 @@ use tsumugi_core::{
 };
 
 pub const MAX_DRAFT_RECORD_BYTES: usize = 256 * 1024;
+pub const MAX_CONVERSATION_DRAFT_RECORD_BYTES: usize = 4 * 1024 * 1024 + MAX_DRAFT_RECORD_BYTES;
 pub const MAX_PROJECT_DRAFT_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_DRAFT_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_PROJECT_DRAFT_RECORDS: usize = 16_384;
@@ -24,7 +25,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 3;
+const FORMAT: i64 = 4;
+const CONVERSATION_FORMAT: i64 = 3;
 const MERGE_FORMAT: i64 = 2;
 const LEGACY_FORMAT: i64 = 1;
 const HEAD_SQL: &str = "CREATE TABLE draft_heads (project_id TEXT NOT NULL, locale TEXT NOT NULL, unit_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0), edit_seq INTEGER, source_revision_id TEXT, has_pending INTEGER NOT NULL CHECK(has_pending IN(0,1)), payload BLOB NOT NULL CHECK(length(payload)<=262144), PRIMARY KEY(project_id,locale,unit_id), CHECK((edit_seq IS NULL AND source_revision_id IS NULL AND has_pending=0) OR (edit_seq>=0 AND source_revision_id IS NOT NULL)))";
@@ -458,7 +460,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -478,8 +480,9 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(sql)?;
     let mut expected: Vec<(String,String,String)> = vec![("draft_heads".into(), "table".into(), HEAD_SQL.into())];
-    if format == FORMAT {
-        expected.push(("conversation_draft_heads".into(), "table".into(), conversations::HEAD_SQL.into()));
+    if format >= CONVERSATION_FORMAT {
+        let sql = if format == CONVERSATION_FORMAT { conversations::LEGACY_HEAD_SQL } else { conversations::HEAD_SQL };
+        expected.push(("conversation_draft_heads".into(), "table".into(), sql.into()));
         expected.sort();
     }
     if schema != expected {
@@ -503,14 +506,18 @@ fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
     }
     drop(statement);
     test_hook("conversation-upgrade-before-ddl", Some(connection));
-    connection.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
+    if format == CONVERSATION_FORMAT {
+        conversations::upgrade(connection)?;
+    } else {
+        connection.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
+    }
     connection.pragma_update(None,"user_version",FORMAT).map_err(sql)?;
     test_hook("conversation-upgrade-after-ddl", Some(connection));
     Ok(())
 }
 
 fn journal_usage(connection:&Connection,format:i64,project:ExecutionId) -> Result<(i64,i64,i64,i64)> {
-    let records = if format == FORMAT {
+    let records = if format >= CONVERSATION_FORMAT {
         "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads)"
     } else { "draft_heads" };
     connection.query_row(&format!("SELECT COALESCE(SUM(length(payload)),0),COUNT(*),COALESCE(SUM(CASE WHEN project_id=?1 THEN length(payload) ELSE 0 END),0),COALESCE(SUM(CASE WHEN project_id=?1 THEN 1 ELSE 0 END),0) FROM {records}"),[project.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(sql)
@@ -671,10 +678,13 @@ fn apply_write(before: &DraftHead, request: &DraftWrite) -> Result<DraftHead> {
 }
 
 fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
-    struct Bounded(Vec<u8>);
+    encode_bounded(value, MAX_DRAFT_RECORD_BYTES)
+}
+fn encode_bounded(value: &impl Serialize, limit: usize) -> Result<Vec<u8>> {
+    struct Bounded(Vec<u8>, usize);
     impl Write for Bounded {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > MAX_DRAFT_RECORD_BYTES.saturating_sub(self.0.len()) {
+            if bytes.len() > self.1.saturating_sub(self.0.len()) {
                 return Err(std::io::Error::other("draft record limit"));
             }
             self.0.extend_from_slice(bytes);
@@ -684,7 +694,7 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
             Ok(())
         }
     }
-    let mut bytes = Bounded(Vec::new());
+    let mut bytes = Bounded(Vec::new(), limit);
     serde_json::to_writer(&mut bytes, value)
         .map_err(|_| fail(ErrorCode::LimitExceeded, "drafts-record-size"))?;
     Ok(bytes.0)

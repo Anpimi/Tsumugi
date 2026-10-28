@@ -78,6 +78,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
   const blocked = disabled || state.retired;
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
   const pending = input?.value.pending;
+  const replayable = pending?.kind === "create" || pending?.kind === "append";
   const exists = pending?.kind !== "create" || input?.outcome === "recorded";
   useEffect(() => () => gate.releaseOwner("conversation-composer"), [gate]);
   useEffect(() => { if (!visible) { composing.current = false; gate.releaseOwner("conversation-composer"); } }, [gate, visible]);
@@ -105,10 +106,10 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
         <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
       {pending && !input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
-        <p>{t(input.outcome === "absent" ? "absent" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : "pending")}</p>
+        <p>{t(input.outcome === "absent" ? replayable ? "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : "pending")}</p>
         <CommandFailureDetails failure={input.failure?.cause ?? null}/>
         <div className={local.actions}><Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.check(activeId!)}>{t("check")}</Button>
-          {input.outcome === "absent" ? <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retry(activeId!)}>{t("retryOriginal")}</Button> : null}</div>
+          {input.outcome === "absent" && replayable ? <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retry(activeId!)}>{t("retryOriginal")}</Button> : null}</div>
       </Banner> : null}
       <Field label={t("message")} error={byteLength > 8192 ? t("messageTooLong") : undefined} description={t("localOnly")}>
         <TextArea ref={composer} rows={3} value={input.value.text} readOnly={blocked} placeholder={t("placeholder")}

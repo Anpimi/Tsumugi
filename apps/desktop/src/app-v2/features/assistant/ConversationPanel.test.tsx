@@ -72,11 +72,11 @@ it("shows saved messages and keeps composer input across presentation changes wi
     return result;
   });
   fireEvent.click(screen.getByRole("button", { name: "保存消息" }));
-  await screen.findByRole("button", { name: "核对保存结果" });
-  expect(screen.getAllByText("上一次保存还需要核对，当前输入已保留。")).toHaveLength(1);
+  await screen.findByRole("button", { name: "核对请求结果" });
+  expect(screen.getAllByText("上一次请求还需要核对，当前输入已保留。")).toHaveLength(1);
   fireEvent.change(screen.getByRole("textbox", { name: "消息" }), { target: { value: "核对期间继续写 C" } });
-  await waitFor(() => expect(screen.getByRole("button", { name: "核对保存结果" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "核对保存结果" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "核对请求结果" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "核对请求结果" }));
   await screen.findByText("消息已保存。");
   expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("核对期间继续写 C");
   expect(messages).toHaveLength(2);

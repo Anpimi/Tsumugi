@@ -153,6 +153,46 @@ pub async fn resolve_local_conversation_draft(
                             .map_err(map_error)?
                             .is_some()
                     }
+                    ConversationDraftPending::Planning { request, .. }
+                        if request.project_id == key.project_id
+                            && request.conversation_id == key.conversation_id =>
+                    {
+                        active
+                            .store
+                            .conversation_planning_receipt(request)
+                            .map_err(map_error)?
+                            .is_some()
+                    }
+                    ConversationDraftPending::ProposalCapture { request, .. }
+                        if request.project_id == key.project_id
+                            && request.conversation_id == key.conversation_id =>
+                    {
+                        active
+                            .store
+                            .conversation_proposal_capture_receipt(request)
+                            .map_err(map_error)?
+                            .is_some()
+                    }
+                    ConversationDraftPending::ProposalRevision { request, .. }
+                        if request.project_id == key.project_id
+                            && request.conversation_id == key.conversation_id =>
+                    {
+                        active
+                            .store
+                            .conversation_proposal_revision_receipt(request)
+                            .map_err(map_error)?
+                            .is_some()
+                    }
+                    ConversationDraftPending::ProposalWorkPlan { request, .. }
+                        if request.proposal.project_id == key.project_id
+                            && request.proposal.conversation_id == key.conversation_id =>
+                    {
+                        active
+                            .store
+                            .conversation_proposal_work_plan_receipt(request)
+                            .map_err(map_error)?
+                            .is_some()
+                    }
                     _ => {
                         return Err(map_error(ExecutionError::new(
                             ErrorCode::InvalidInput,

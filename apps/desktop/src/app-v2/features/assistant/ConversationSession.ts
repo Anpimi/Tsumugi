@@ -6,9 +6,10 @@ import { jsonIdentity } from "../../../pluginToolChoices";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
 
-type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage"> & { identity: () => string };
-type JournalJob = { kind: "write"; request: Parameters<Ports["write"]>[0] }
-  | { kind: "resolve"; request: Parameters<Ports["resolve"]>[0]; submitted: ConversationDraftPending };
+type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string };
+type JournalWrite = Omit<Parameters<Ports["write"]>[0]["write"], "value"> & { value: ConversationDraftValue };
+type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
+  | { kind: "resolve"; request: { sessionToken: string; resolve: { write: JournalWrite; pending: ConversationDraftPending } }; submitted: ConversationDraftPending };
 export interface ConversationInput {
   key: ConversationDraftKey;
   head: ConversationDraftHead;
@@ -16,7 +17,7 @@ export interface ConversationInput {
   dirty: boolean;
   busy: "journal" | "submit" | "check" | null;
   outcome: "recorded" | "unknown" | "absent" | "mismatch" | null;
-  notice: "threadCreated" | "messageSaved" | null;
+  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | null;
   failure: { kind: "journal" | "action"; cause: CommandFailure } | null;
 }
 export interface ConversationSessionSnapshot {
@@ -46,6 +47,8 @@ export class ConversationSession {
   constructor(readonly context: SessionRequest, private readonly onRecorded: () => void, private readonly onReveal: () => void, ports: Partial<Ports> = {}) {
     this.ports = { ...conversationDraftCommands, create: conversationCommands.create, append: conversationCommands.append,
       recoverCreate: conversationCommands.recoverCreate, recoverMessage: conversationCommands.recoverMessage,
+      recoverPlanning: conversationCommands.recoverPlanning, recoverProposalCapture: conversationCommands.recoverProposalCapture,
+      recoverProposalRevision: conversationCommands.recoverProposalRevision, recoverProposalWorkPlan: conversationCommands.recoverProposalWorkPlan,
       identity: () => crypto.randomUUID(), ...ports };
     this.writerId = this.ports.identity();
   }
@@ -117,13 +120,12 @@ export class ConversationSession {
     this.update(record, { busy: "journal" });
     try {
       const head = job.kind === "write" ? await this.ports.write(job.request) : await this.ports.resolve(job.request);
-      const raw = job.kind === "write" ? job.request.write.value : job.request.resolve.write.value;
-      const submitted: ConversationDraftValue = { ...raw, pending: raw.pending ?? null };
+      const submitted = job.kind === "write" ? job.request.write.value : job.request.resolve.write.value;
       let value = record.input.value;
       if (job.kind === "resolve") value = value.editSeq === submitted.editSeq ? submitted : { ...value, pending: null };
       record.job = null;
       this.update(record, { head, value, dirty: !same(head.value, value), busy: null, failure: null,
-        ...(job.kind === "resolve" ? { outcome: "recorded" as const, notice: job.submitted.kind === "create" ? "threadCreated" as const : "messageSaved" as const } : {}) });
+        ...(job.kind === "resolve" ? { outcome: "recorded" as const, notice: this.recordedNotice(job.submitted) } : {}) });
       return true;
     } catch (error) {
       record.job = job;
@@ -160,14 +162,16 @@ export class ConversationSession {
     if (await this.executeJob(record, job) && record.input.dirty) await this.persist(record);
   }
   private async submit(record: RecordState) {
-    if (!this.kernel.live || record.action) return;
+    const kind = record.input.value.pending?.kind;
+    if (!this.kernel.live || record.action || kind !== "create" && kind !== "append") return;
     record.action = true;
     try {
       if (!await this.persist(record)) return;
       const pending = record.input.value.pending; if (!pending) return;
       this.update(record, { busy: "submit", failure: null });
       if (pending.kind === "create") await this.ports.create({ sessionToken: this.context.sessionToken, ...pending.request });
-      else await this.ports.append({ sessionToken: this.context.sessionToken, ...pending.request });
+      else if (pending.kind === "append") await this.ports.append({ sessionToken: this.context.sessionToken, ...pending.request });
+      else return;
       this.onRecorded(); this.update(record, { busy: null, outcome: "recorded" });
       await this.resolve(record, pending);
     } catch (error) { this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
@@ -178,8 +182,7 @@ export class ConversationSession {
     if (!record || !pending || !this.kernel.live || record.action || record.input.busy || record.job) return;
     record.action = true; this.update(record, { busy: "check", failure: null });
     try {
-      const recovery = pending.kind === "create" ? await this.ports.recoverCreate({ sessionToken: this.context.sessionToken, ...pending.request })
-        : await this.ports.recoverMessage({ sessionToken: this.context.sessionToken, ...pending.request });
+      const recovery = await this.recover(pending);
       const outcome = recovery.outcome;
       this.update(record, { busy: null, outcome: outcome.kind === "recorded" ? "recorded" : outcome.kind === "mismatch" ? "mismatch" : outcome.replay === "explicit-same-request" ? "absent" : "unknown" });
       if (outcome.kind === "recorded") { this.onRecorded(); await this.resolve(record, pending); }
@@ -188,7 +191,27 @@ export class ConversationSession {
   }
   async retry(conversationId: string) {
     const record = this.records.get(conversationId);
-    if (record?.input.outcome === "absent" && !record.job) await this.submit(record);
+    if (record?.input.outcome === "absent" && !record.job && ["create", "append"].includes(record.input.value.pending?.kind ?? "")) await this.submit(record);
+  }
+  private recordedNotice(pending: ConversationDraftPending): NonNullable<ConversationInput["notice"]> {
+    switch (pending.kind) {
+      case "create": return "threadCreated";
+      case "append": return "messageSaved";
+      case "planning": return "planningRecorded";
+      case "proposal-capture": case "proposal-revision": return "proposalRecorded";
+      case "proposal-work-plan": return "workPlanRecorded";
+    }
+  }
+  private recover(pending: ConversationDraftPending) {
+    const sessionToken = this.context.sessionToken;
+    switch (pending.kind) {
+      case "create": return this.ports.recoverCreate({ sessionToken, ...pending.request });
+      case "append": return this.ports.recoverMessage({ sessionToken, ...pending.request });
+      case "planning": return this.ports.recoverPlanning({ sessionToken, ...pending.request });
+      case "proposal-capture": return this.ports.recoverProposalCapture({ sessionToken, ...pending.request });
+      case "proposal-revision": return this.ports.recoverProposalRevision({ sessionToken, ...pending.request });
+      case "proposal-work-plan": return this.ports.recoverProposalWorkPlan({ sessionToken, projectId: this.context.projectId, authorization: pending.request });
+    }
   }
   async flush(): Promise<boolean> {
     const records = [...this.records.values()];

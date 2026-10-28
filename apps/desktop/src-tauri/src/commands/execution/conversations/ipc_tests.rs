@@ -42,6 +42,66 @@ fn original(value: &Value) -> Value {
     value.as_object_mut().unwrap().remove("sessionToken");
     value
 }
+
+fn journal_before_action(
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    project: &Value,
+    mut pending: Value,
+) -> Value {
+    let source = if pending["kind"] == "proposal-work-plan" {
+        &pending["request"]["proposal"]
+    } else {
+        &pending["request"]
+    };
+    let key = json!({"projectId":source["projectId"],"conversationId":source["conversationId"]});
+    let before = call(
+        window,
+        "read_local_conversation_draft",
+        json!({"sessionToken":project["sessionToken"],"key":key}),
+    );
+    assert!(before["value"].is_null() || before["value"]["pending"].is_null());
+    let seq = before["value"]["editSeq"]
+        .as_str()
+        .unwrap_or("0")
+        .parse::<u64>()
+        .unwrap()
+        + 1;
+    pending["submittedSeq"] = json!(seq.to_string());
+    let mut write = json!({"key":key,"expectedRevision":before["revision"],"writerId":identity(),"value":{"text":"Input retained before the action","editSeq":seq.to_string(),"pending":pending}});
+    let saved = call(
+        window,
+        "write_local_conversation_draft",
+        json!({"sessionToken":project["sessionToken"],"write":write}),
+    );
+    write["expectedRevision"] = saved["revision"].clone();
+    write["value"]["pending"] = Value::Null;
+    write["value"]["editSeq"] = json!((seq + 1).to_string());
+    write["value"]["text"] = json!("Newer B retained after the action");
+    let resolve =
+        json!({"sessionToken":project["sessionToken"],"resolve":{"write":write,"pending":pending}});
+    assert!(
+        !reject(window, "resolve_local_conversation_draft", resolve.clone()).is_null(),
+        "missing original receipt cannot resolve the journal"
+    );
+    resolve
+}
+
+fn journal_after_action(
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    resolve: &Value,
+) -> Value {
+    let saved = call(window, "resolve_local_conversation_draft", resolve.clone());
+    assert_eq!(
+        saved["value"]["text"],
+        resolve["resolve"]["write"]["value"]["text"]
+    );
+    assert!(saved["value"]["pending"].is_null());
+    assert_eq!(
+        call(window, "resolve_local_conversation_draft", resolve.clone()),
+        saved
+    );
+    saved
+}
 fn session(project: &Value) -> Value {
     json!({ "projectId": project["metadata"]["projectId"], "sessionToken": project["sessionToken"] })
 }
@@ -725,7 +785,11 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
         json!({"conversationId":thread["conversationId"],"after":"0","limit":50}),
     );
     let before_discovery = planning_clock(&app, &project);
-    let empty = call(&window, "read_conversation_planning_attempts", discover.clone());
+    let empty = call(
+        &window,
+        "read_conversation_planning_attempts",
+        discover.clone(),
+    );
     assert_eq!(empty["rows"], json!([]));
     assert_eq!(empty["nextAfter"], Value::Null);
     assert_eq!(planning_clock(&app, &project), before_discovery);
@@ -788,7 +852,11 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     assert_eq!(view["budget"]["limit"], 1);
     assert_eq!(view["budget"]["dispatched"], 1);
     assert_eq!(provider.count(), 1);
-    let discovered = call(&window, "read_conversation_planning_attempts", discover.clone());
+    let discovered = call(
+        &window,
+        "read_conversation_planning_attempts",
+        discover.clone(),
+    );
     assert_eq!(discovered["rows"].as_array().unwrap().len(), 1);
     assert_eq!(discovered["rows"][0]["attemptId"], action);
     assert_eq!(discovered["rows"][0]["taskId"], task);
@@ -826,16 +894,23 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     let reopened = call(&window, "open_project", json!({"locator":destination}));
     let before_discovery = planning_clock(&app, &reopened);
     assert_eq!(
-        call(&window, "read_conversation_planning_attempts", in_session(
-            &reopened,
-            json!({"conversationId":thread["conversationId"],"after":"0","limit":50}),
-        )),
+        call(
+            &window,
+            "read_conversation_planning_attempts",
+            in_session(
+                &reopened,
+                json!({"conversationId":thread["conversationId"],"after":"0","limit":50}),
+            )
+        ),
         discovered,
     );
     assert_eq!(planning_clock(&app, &reopened), before_discovery);
     assert!(runtime_absent(&app, &reopened));
     assert_eq!(provider.count(), 1);
-    assert_eq!(reject(&window, "read_conversation_planning_attempts", discover)["code"], "session-invalid");
+    assert_eq!(
+        reject(&window, "read_conversation_planning_attempts", discover)["code"],
+        "session-invalid"
+    );
     let history = call(
         &window,
         "read_conversation_planning",
@@ -872,6 +947,13 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
     let destination = temporary.path().join("project");
     let app = crate::commands::register_commands(tauri::test::mock_builder())
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    app.state::<AppState>()
+        .local_drafts
+        .set(
+            crate::commands::drafts::DraftStore::at(temporary.path().join("local-drafts")).unwrap(),
+        )
+        .ok()
         .unwrap();
     let window =
         tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
@@ -943,14 +1025,19 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
         .unwrap()
         .as_millis()
         + 60_000;
-    call(
-        &window,
-        "start_conversation_planning",
-        in_session(
-            &project,
-            json!({"conversationId":thread["conversationId"],"preparationId":prepared["preparationId"],"consent":{"actionId":attempt,"attemptId":attempt,"taskId":identity(),"previewDigest":prepared["previewDigest"],"expiresAtMs":expires.to_string(),"shareMessages":true,"shareUnits":true}}),
-        ),
+    let start = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"preparationId":prepared["preparationId"],"consent":{"actionId":attempt,"attemptId":attempt,"taskId":identity(),"previewDigest":prepared["previewDigest"],"expiresAtMs":expires.to_string(),"shareMessages":true,"shareUnits":true}}),
     );
+    let mut action = original(&start);
+    action.as_object_mut().unwrap().remove("preparationId");
+    let planning_journal = journal_before_action(
+        &window,
+        &project,
+        json!({"kind":"planning","request":action,"preparationId":prepared["preparationId"]}),
+    );
+    call(&window, "start_conversation_planning", start);
+    journal_after_action(&window, &planning_journal);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     let view = loop {
         let view = call(
@@ -988,7 +1075,13 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
     let mut injected = capture.clone();
     injected["content"] = content.clone();
     assert!(!reject(&window, "capture_conversation_proposal", injected).is_null());
+    let capture_journal = journal_before_action(
+        &window,
+        &project,
+        json!({"kind":"proposal-capture","request":original(&capture)}),
+    );
     let first = call(&window, "capture_conversation_proposal", capture.clone());
+    journal_after_action(&window, &capture_journal);
     assert_eq!(first["content"], content);
     assert_eq!(first["revision"], "1");
     assert_eq!(first["ordinal"], "1");
@@ -1012,7 +1105,13 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
         &project,
         json!({"actionId":identity(),"conversationId":thread["conversationId"],"proposalId":first["proposalId"],"revisionId":identity(),"expectedRevisionId":first["revisionId"],"content":edited}),
     );
+    let revision_journal = journal_before_action(
+        &window,
+        &project,
+        json!({"kind":"proposal-revision","request":original(&revise)}),
+    );
     let second = call(&window, "revise_conversation_proposal", revise.clone());
+    journal_after_action(&window, &revision_journal);
     assert_eq!(second["content"], edited);
     assert_eq!(second["origin"], first["origin"]);
     assert_eq!(second["revision"], "2");
@@ -1186,11 +1285,17 @@ fn proposal_work_plan_flow(
     denied["authorization"]["confirmed"] = false.into();
     assert!(!reject(window, "authorize_conversation_proposal_work_plan", denied).is_null());
     assert_eq!(provider.count(), 0);
+    let authorization_journal = journal_before_action(
+        window,
+        project,
+        json!({"kind":"proposal-work-plan","request":authorization}),
+    );
     let accepted = call(
         window,
         "authorize_conversation_proposal_work_plan",
         approve.clone(),
     );
+    let journal_receipt = journal_after_action(window, &authorization_journal);
     assert_eq!(accepted["link"]["revisionId"], revised["revisionId"]);
     assert_eq!(accepted["link"]["planId"], prepared["plan"]["planId"]);
     assert_eq!(accepted["receipt"]["actionId"], authorization["actionId"]);
@@ -1292,6 +1397,13 @@ fn proposal_work_plan_flow(
     let reopened = call(window, "open_project", json!({"locator":destination}));
     let mut repeated = approve;
     repeated["sessionToken"] = reopened["sessionToken"].clone();
+    assert!(runtime_absent(app, &reopened));
+    let mut recovered_journal = authorization_journal;
+    recovered_journal["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(
+        journal_after_action(window, &recovered_journal),
+        journal_receipt
+    );
     assert!(runtime_absent(app, &reopened));
     assert_eq!(
         call(

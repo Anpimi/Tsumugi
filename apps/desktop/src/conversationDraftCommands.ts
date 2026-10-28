@@ -6,17 +6,22 @@ import type { Responses } from "./generated/draft.responses";
 import { validateResponseConversationRead, validateResponseConversationWritten, validateResponseConversationResolved, validateResponseConversationCleared, validateResponseConversationPage } from "./generated/draft.validators";
 
 export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary } from "./generated/draft.responses";
+import type { ConversationDraftPending } from "./generated/draft.responses";
 type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
 const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
+export function conversationPendingTarget(pending: ConversationDraftPending) {
+  return pending.kind === "proposal-work-plan" ? pending.request.proposal : pending.request;
+}
 function head(value: Head, key: Head["key"]) {
   const draft = value.value, pending = draft?.pending;
+  const target = pending ? conversationPendingTarget(pending) : null;
   return same(value.key, key) && (draft === null ? value.writerId === null : value.writerId !== null && BigInt(value.revision) > 0n
-    && (pending == null || pending.request.projectId === key.projectId && pending.request.conversationId === key.conversationId
+    && (pending == null || target?.projectId === key.projectId && target.conversationId === key.conversationId
       && BigInt(pending.submittedSeq) <= BigInt(draft.editSeq)
       && (pending.kind !== "append" || isConversationMessageText(pending.request.body))
       && (pending.kind !== "append" || pending.submittedSeq !== draft.editSeq || pending.request.body === draft.text)))
-    && bytes.encode(JSON.stringify(value)).length <= 256 * 1024;
+    && bytes.encode(JSON.stringify(value)).length <= 4 * 1024 * 1024 + 256 * 1024;
 }
 function written(value: Head, write: Requests["conversationWrite"]["write"]) {
   return head(value, write.key) && value.writerId === write.writerId && same(value.value, { ...write.value, pending: write.value.pending ?? null })

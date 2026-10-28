@@ -54,4 +54,16 @@ describe("conversation journal command boundary", () => {
     expect(isConversationMessageText("🙂".repeat(2048))).toBe(true);
     expect(isConversationMessageText("🙂".repeat(2049))).toBe(false);
   });
+  it("reads a complete confirmation larger than a translation draft and checks its nested conversation identity", async () => {
+    const authorization = { actionId: fixtureIdentity(920), proposal: { ...key, proposalId: fixtureIdentity(921), revisionId: fixtureIdentity(922) },
+      planId: fixtureIdentity(923), planDigest: "a".repeat(64), confirmed: true, effects: ["save-candidate"], expiresAt: "1", checkerExecutions: [], toolExecution: true,
+      applicationToolExecutions: Array.from({ length: 5000 }, (_, index) => ({ instanceId: fixtureIdentity(index + 10000), activationGeneration: 1 })) };
+    const value = { text: "Newer input", editSeq: "2", pending: { kind: "proposal-work-plan", submittedSeq: "1", request: authorization } };
+    const original = { ...head(), value };
+    expect(new TextEncoder().encode(JSON.stringify(original)).length).toBeGreaterThan(256 * 1024);
+    invoke.mockResolvedValueOnce(original);
+    expect((await conversationDraftCommands.read({ sessionToken, key })).value?.pending).toEqual(value.pending);
+    invoke.mockResolvedValueOnce({ ...original, value: { ...value, pending: { ...value.pending, request: { ...authorization, proposal: { ...authorization.proposal, conversationId: fixtureIdentity(924) } } } } });
+    await expect(conversationDraftCommands.read({ sessionToken, key })).rejects.toThrow();
+  });
 });
