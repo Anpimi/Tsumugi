@@ -23,7 +23,7 @@ import { jsonIdentity } from "./pluginToolChoices";
 import { checkerIdentity, contractIdentity } from "./reviewIdentity";
 import { validWorkPlanApplicationTools } from "./workPlanApplicationTools";
 export type {
-  WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
+  WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkPlanRunView, WorkProtection,
   MaintenanceAssessment, MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis,
   TeamHistoryPage, TeamDiscussionPost, TeamMemberRole,
   TeamExecutionView,
@@ -439,6 +439,18 @@ export const workPlanCommands = {
       || Boolean(value.plan.tools) !== Boolean(value.toolInvocations)
       || (value.plan.tools && (!value.toolInvocations || value.toolInvocations.limit !== value.plan.tools.maxInvocations
         || value.toolInvocations.reserved > value.toolInvocations.limit || !validWorkPlanApplicationTools(value.plan.tools.entries)))) invalidAcknowledgement();
+    return value;
+  },
+  run: async (input: WorkPlanStatusRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanRun(request)) throw new Error("Invalid work-plan run read");
+    const value = await checkedInvoke("read_work_plan_run", request, validators.validateResponseWorkPlanRun);
+    const start = value.lastStart;
+    if (value.projectId !== request.projectId || value.planId !== request.planId || value.lease.planId !== request.planId
+      || !/^[a-f0-9]{64}$/.test(value.planDigest) || BigInt(value.lease.generation) === 0n
+      || (value.budget !== null || start !== null) && value.budgetRootTaskId === null
+      || start !== null && (start.projectId !== request.projectId || start.planId !== request.planId
+        || BigInt(start.expectedGeneration) === 0n || BigInt(start.expectedGeneration) > BigInt(value.lease.generation))) invalidAcknowledgement();
     return value;
   },
   action: async (request: WorkPlanActionRequest) => {

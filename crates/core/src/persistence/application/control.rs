@@ -7,6 +7,7 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+mod run;
 
 #[cfg(test)]
 #[path = "control/protection_tests.rs"]
@@ -909,31 +910,11 @@ impl ProjectStore {
                     return Ok(None);
                 }
                 let saved = ledger::load_input(c, envelope.attempt_id)?;
-                if saved.bytes() != input.bytes() {
-                    return Err(err(ErrorCode::ResultMismatch, "work-plan-start-input"));
-                }
                 let association: Option<(String, i64, String, String)> = c.query_row(
                 "SELECT plan_id,generation,kind,root_task FROM application_executions WHERE attempt_id=?1",
                 [envelope.attempt_id.to_string()], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
             ).optional().map_err(sql)?;
-                if association
-                    != Some((
-                        plan.to_string(),
-                        generation.get() as i64,
-                        "model".to_string(),
-                        stored.plan.execution_input()?.task_id.to_string(),
-                    ))
-                {
-                    return Err(err(ErrorCode::CorruptLedger, "work-plan-start-association"));
-                }
-                Ok(Some(WorkPlanStartReceipt {
-                    project_id: project,
-                    plan_id: plan,
-                    action_id: action,
-                    expected_generation: generation,
-                    attempt_id: envelope.attempt_id,
-                    task_id: envelope.task_id,
-                }))
+                run::prove_start(&stored, action, generation, &input, &saved, association).map(Some)
             },
         )?;
         if self.is_reconciling() {

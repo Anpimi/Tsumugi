@@ -158,6 +158,7 @@ export interface Requests {
   workPlanGenerationStart: WorkPlanGenerationStartRequest;
   workPlanGenerationStartRead: WorkPlanGenerationStartReadRequest;
   workPlanPrepare: WorkPlanPrepareRequest;
+  workPlanRun: WorkPlanStatusRequest;
   workPlanStart: WorkPlanStartRequest;
   workPlanStartAction: WorkPlanStartRequest;
   workPlanStatus: WorkPlanStatusRequest;
@@ -961,14 +962,14 @@ export interface PluginToolRequest {
   package: PluginPackageRequest;
   resourceId: string;
 }
-export interface WorkPlanStartRequest {
-  actionId: ExecutionId;
-  expectedGeneration: Revision;
+export interface WorkPlanStatusRequest {
   planId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
 }
-export interface WorkPlanStatusRequest {
+export interface WorkPlanStartRequest {
+  actionId: ExecutionId;
+  expectedGeneration: Revision;
   planId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;

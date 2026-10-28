@@ -598,6 +598,7 @@ export interface Responses {
   workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanGenerationStartRead: PluginStartActionRead | null;
   workPlanReceipt: WorkPlanReceiptView;
+  workPlanRun: WorkPlanRunView;
   workPlanStartAction: WorkPlanStartReceipt | null;
   workPlanStatus: WorkPlanStatusView;
   workPlanTeamExecution: TeamExecutionView;
@@ -1849,6 +1850,23 @@ export interface PluginStartActionRead {
   operation: string;
   projectId: ExecutionId;
   taskId: ExecutionId;
+}
+/**
+ * Historical execution location and root budget; this grants no authority.
+ */
+export interface WorkPlanRunView {
+  budget: ProviderBudget | null;
+  budgetRootTaskId: ExecutionId | null;
+  /**
+   * The latest proven authorization or ordinary continue start, not the
+   * latest work of every team member.
+   */
+  lastStart: WorkPlanStartReceipt | null;
+  lease: AutomationLease;
+  planDigest: string;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  state: WorkPlanState;
 }
 /**
  * Evidence that the exact authorized fixed input was durably enqueued.

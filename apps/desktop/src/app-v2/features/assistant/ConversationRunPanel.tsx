@@ -20,6 +20,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import { runMatchesLink, type ConversationPlanLink } from "./conversationRun";
 import { emptyExecutionConsent, workPlanMinutesValid } from "./proposalWorkPlan";
+import { ConversationRunProgress } from "./ConversationRunProgress";
 import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
@@ -163,13 +164,12 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
     {read.isPending ? <LoadingState label={t("runLoading")}/> : null}
     {read.isError ? <Banner tone="error"><p>{t("runReadFailed")}</p><CommandFailureDetails failure={commandFailure(read.error)}/></Banner> : null}
     {read.data && !runMatchesLink(read.data, link) ? <Banner tone="error">{t("runMismatch")}</Banner> : null}
-    <div className={styles.actions}><Button size="sm" pending={read.isFetching} disabled={!canRead()} onClick={() => { if (canRead()) void read.refetch(); }}>{t("runRefresh")}</Button></div>
+    <div className={styles.actions}><Button size="sm" pending={read.isFetching} disabled={!canRead()} onClick={() => { if (canRead()) reads.invalidate(["execution"]); }}>{t("runRefresh")}</Button></div>
     {status ? <>
       <h5>{t(stateKeys[status.state])}</h5><p>{t("runStatusHelp")}</p>
       <p>{expiry && Number.isFinite(expiry.getTime()) ? t("runExpiry", { date: new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(expiry) }) : t("runExpiryUnknown")}</p>
       {expired && status.state !== "stopped" ? <p role="status">{t("runExpired")}</p> : null}
       {status.toolInvocations ? <p>{t("runToolUsage", { reserved: status.toolInvocations.reserved, limit: status.toolInvocations.limit })}</p> : null}
-      <p>{t("runProgressUnknown")}</p><p>{t("runUsageUnknown")}</p>
       <details><summary>{t("runFixedDetails")}</summary><RunPlanDetails status={status}/></details>
       {input.value.pending || input.failure ? <Banner tone="warning">{t("runPending")}</Banner> : null}
       {input.runFailure?.planId === link.planId ? <Banner tone="error"><p>{t("runActionFailed")}</p><CommandFailureDetails failure={input.runFailure.cause}/></Banner> : null}
@@ -202,6 +202,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
           connectionCurrent={connectionCurrent} capture={() => capture(true)} onFinished={finishAction}/>: null}
       </> : null}
     </> : null}
+    <ConversationRunProgress context={owner.context} link={link} status={status} visible={visible} canRead={canRead}/>
   </div>;
 }
 

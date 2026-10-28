@@ -3707,6 +3707,9 @@
       "workPlanPrepare": {
         "$ref": "#/definitions/WorkPlanPrepareRequest"
       },
+      "workPlanRun": {
+        "$ref": "#/definitions/WorkPlanStatusRequest"
+      },
       "workPlanStart": {
         "$ref": "#/definitions/WorkPlanStartRequest"
       },
@@ -3809,6 +3812,7 @@
       "workPlanAgentResource",
       "workPlanControl",
       "workPlanStatus",
+      "workPlanRun",
       "workPlanAction",
       "workProtectionRead",
       "workProtectionSet"
@@ -11963,6 +11967,69 @@
           }
         ]
       },
+      "WorkPlanRunView": {
+        "additionalProperties": false,
+        "description": "Historical execution location and root budget; this grants no authority.",
+        "properties": {
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ProviderBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "budgetRootTaskId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastStart": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanStartReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The latest proven authorization or ordinary continue start, not the\nlatest work of every team member."
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "planDigest": {
+            "type": "string"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "planDigest",
+          "lease",
+          "state",
+          "lastStart",
+          "budgetRootTaskId",
+          "budget"
+        ],
+        "type": "object"
+      },
       "WorkPlanStartReceipt": {
         "additionalProperties": false,
         "description": "Evidence that the exact authorized fixed input was durably enqueued.",
@@ -12563,6 +12630,9 @@
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
+      "workPlanRun": {
+        "$ref": "#/definitions/WorkPlanRunView"
+      },
       "workPlanStartAction": {
         "anyOf": [
           {
@@ -12673,6 +12743,7 @@
       "workPlanAgentResource",
       "workPlanReceipt",
       "workPlanStatus",
+      "workPlanRun",
       "workPlanAction",
       "workPlanStartAction",
       "workPlanControlAction",

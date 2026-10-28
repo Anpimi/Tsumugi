@@ -167,7 +167,7 @@ macro_rules! handlers {
         work_plans::recovery::end_work_plan_team_recovery,
         work_plans::team::publish_work_plan_team_discussion,work_plans::team::read_work_plan_team_publication_action,
         work_plans::team::send_work_plan_team_message,work_plans::team::read_work_plan_team_message_action,
-        work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,work_plans::read_work_plan_authorization_action,work_plans::read_work_plan_control_action,
+        work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_run,work_plans::read_work_plan_action,work_plans::read_work_plan_authorization_action,work_plans::read_work_plan_control_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };
 }
@@ -1281,11 +1281,12 @@ pub async fn read_execution_attempt(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                let (host, store) = active.execution_parts()?;
-                attempt_detail(
-                    host,
-                    store,
+                let running = active.execution.as_ref()
+                    .is_some_and(|host| host.runtime.is_active(request.attempt_id));
+                attempt_detail_read(
+                    &active.store,
                     request.attempt_id,
+                    running,
                     request.offset,
                     request.limit,
                 )
@@ -1300,10 +1301,20 @@ fn attempt_detail(
     offset: u32,
     limit: u32,
 ) -> Result<AttemptDetail, CommandError> {
+    attempt_detail_read(store, attempt_id, host.runtime.is_active(attempt_id), offset, limit)
+}
+
+fn attempt_detail_read(
+    store: &ProjectStore,
+    attempt_id: ExecutionId,
+    running: bool,
+    offset: u32,
+    limit: u32,
+) -> Result<AttemptDetail, CommandError> {
     store
         .execution_attempt_detail(
             attempt_id,
-            host.runtime.is_active(attempt_id),
+            running,
             offset,
             limit,
         )

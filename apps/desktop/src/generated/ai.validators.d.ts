@@ -32,6 +32,7 @@ export declare function validateRequestWorkPlanGenerationPrepare(value: unknown)
 export declare function validateRequestWorkPlanGenerationStart(value: unknown): value is Requests["workPlanGenerationStart"];
 export declare function validateRequestWorkPlanGenerationStartRead(value: unknown): value is Requests["workPlanGenerationStartRead"];
 export declare function validateRequestWorkPlanPrepare(value: unknown): value is Requests["workPlanPrepare"];
+export declare function validateRequestWorkPlanRun(value: unknown): value is Requests["workPlanRun"];
 export declare function validateRequestWorkPlanStart(value: unknown): value is Requests["workPlanStart"];
 export declare function validateRequestWorkPlanStartAction(value: unknown): value is Requests["workPlanStartAction"];
 export declare function validateRequestWorkPlanStatus(value: unknown): value is Requests["workPlanStatus"];
@@ -75,6 +76,7 @@ export declare function validateResponseWorkPlanControlAction(value: unknown): v
 export declare function validateResponseWorkPlanGenerationPreflight(value: unknown): value is Responses["workPlanGenerationPreflight"];
 export declare function validateResponseWorkPlanGenerationStartRead(value: unknown): value is Responses["workPlanGenerationStartRead"];
 export declare function validateResponseWorkPlanReceipt(value: unknown): value is Responses["workPlanReceipt"];
+export declare function validateResponseWorkPlanRun(value: unknown): value is Responses["workPlanRun"];
 export declare function validateResponseWorkPlanStartAction(value: unknown): value is Responses["workPlanStartAction"];
 export declare function validateResponseWorkPlanStatus(value: unknown): value is Responses["workPlanStatus"];
 export declare function validateResponseWorkPlanTeamExecution(value: unknown): value is Responses["workPlanTeamExecution"];

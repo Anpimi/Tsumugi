@@ -572,6 +572,23 @@ pub struct WorkPlanStartReceipt {
     pub task_id: ExecutionId,
 }
 
+/// Historical execution location and root budget; this grants no authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanRunView {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub plan_digest: String,
+    pub lease: AutomationLease,
+    pub state: WorkPlanState,
+    /// The latest proven authorization or ordinary continue start, not the
+    /// latest work of every team member.
+    pub last_start: Option<WorkPlanStartReceipt>,
+    pub budget_root_task_id: Option<ExecutionId>,
+    pub budget: Option<crate::ProviderBudget>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkPlanReceipt {

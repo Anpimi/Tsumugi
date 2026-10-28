@@ -1150,6 +1150,16 @@ pub(super) async fn authorize_work_plan_with_proposal(
 }
 
 #[tauri::command]
+pub async fn read_work_plan_run(
+    state: State<'_, AppState>, request: WorkPlanStatusRequest,
+) -> Result<tsumugi_core::application::WorkPlanRunView, CommandError> {
+    state.sessions.run("read_work_plan_run", CommandStage::ExecutionRead, move |sessions| {
+        authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?
+            .store.read_work_plan_run(request.project_id, request.plan_id).map_err(map_read)
+    }).await
+}
+
+#[tauri::command]
 pub async fn read_work_plan_start_action(
     state: State<'_, AppState>, request: WorkPlanStartRequest,
 ) -> Result<Option<tsumugi_core::application::WorkPlanStartReceipt>, CommandError> {
@@ -1754,6 +1764,7 @@ mod tests {
     mod settings;
     mod tool_result_reads;
     mod team_history;
+    mod run;
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     mod team_discussions;
     use super::*;
