@@ -85,6 +85,29 @@ async function openImportPalette() {
   return screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
 }
 
+it("shows project observation fallback in the workspace and refreshes through its guarded command", async () => {
+  const write = vi.spyOn(draftCommands, "write");
+  const reads = new SessionReads({ projectId: project.metadata.projectId, sessionToken: project.sessionToken });
+  vi.spyOn(reads, "subscriptionUnavailable").mockReturnValue(true);
+  const synchronize = vi.spyOn(reads, "synchronize").mockResolvedValue();
+  const read = vi.fn(async () => project);
+  controller = new ProjectLifecycle({ open: async () => project, read, close: async () => ({ closed: true }),
+    createReads: () => reads, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  await screen.findByText(i18n.t("execution.updatesUsingPolling"));
+  const refresh = screen.getByRole("button", { name: i18n.t("execution.refresh") });
+  await waitFor(() => expect(refresh).toBeEnabled());
+  const search = await screen.findByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+  fireEvent.compositionStart(search); expect(refresh).toBeDisabled();
+  fireEvent.compositionEnd(search); await waitFor(() => expect(refresh).toBeEnabled());
+  fireEvent.click(refresh);
+  await waitFor(() => expect(synchronize).toHaveBeenCalledExactlyOnceWith(true));
+  expect(read).toHaveBeenCalledOnce();
+  expect(write).not.toHaveBeenCalled();
+});
+
 describe("import workspace assembly", () => {
   it("protects lazy owner registration and allows a loaded idle importer to close normally", async () => {
     const { button, close, register } = await openImportWorkspace();

@@ -3,6 +3,7 @@ import { QueryClientProvider, useQuery, useInfiniteQuery, type InfiniteData, typ
 import { useTranslation } from "react-i18next";
 import { SessionReads, type ChangeScope } from "./sessionReads";
 import type { SessionRequest } from "./executionCommands";
+import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 
 const ReadsContext = createContext<SessionReads | null>(null);
 export function SessionReadProvider({ context, children, bridge = true, reads: providedReads }: { context: SessionRequest; children: ReactNode; bridge?: boolean; reads?: SessionReads }) {
@@ -71,8 +72,15 @@ export function useSessionInfiniteQuery<T, P>({ key, scopes, enabled, initialPag
   useReadVisibility(reads, queryKey, enabled);
   return query;
 }
-export function SessionReadStatus() {
-  const reads = useSessionReads(), { t } = useTranslation();
+export function useSessionReadStatus(): { message: "execution.updatesUnavailable" | "execution.updatesUsingPolling" | "execution.updatesPollingOnly"; failure: CommandFailure | null } | null {
+  const reads = useSessionReads();
   const failed = useSyncExternalStore(reads.subscribeStatus, reads.status);
-  return failed ? <p role="alert">{t("execution.updatesUnavailable")} <button className="text-button" onClick={() => void reads.synchronize(true)}>{t("execution.refresh")}</button></p> : null;
+  const polling = useSyncExternalStore(reads.subscribeStatus, reads.subscriptionUnavailable);
+  const failure = useSyncExternalStore(reads.subscribeStatus, reads.subscriptionFailure);
+  const message = failed ? "execution.updatesUnavailable" : polling ? failure?.phase === "unlisten" ? "execution.updatesPollingOnly" : "execution.updatesUsingPolling" : null;
+  return !reads.retired && message ? { message, failure: !failed && failure ? commandFailure(failure.cause) : null } : null;
+}
+export function SessionReadStatus() {
+  const reads = useSessionReads(), { t } = useTranslation(), notice = useSessionReadStatus();
+  return notice ? <div role={notice.message === "execution.updatesUnavailable" ? "alert" : "status"}><p>{t(notice.message)} <button className="text-button" onClick={() => void reads.synchronize(true)}>{t("execution.refresh")}</button></p><CommandFailureDetails failure={notice.failure}/></div> : null;
 }

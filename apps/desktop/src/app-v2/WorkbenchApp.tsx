@@ -6,7 +6,8 @@ import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, ChevronDown, Circle, CircleDot, Command, Layers, PanelRight, Pin, Plus, Search, Settings, Sparkles, X } from "lucide-react";
 import { ApplicationReadProvider } from "../ApplicationReadProvider";
-import { SessionReadProvider } from "../SessionReadProvider";
+import { SessionReadProvider, useSessionReadStatus } from "../SessionReadProvider";
+import { CommandFailureDetails } from "../CommandFailure";
 import { executionContext } from "../executionCommands";
 import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../ExecutionTaskSession";
 import { readRecentProjects, recentProjectName, rememberProject, type RecentProject } from "../recentProjects";
@@ -219,6 +220,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
 }
 
 function WorkspaceShell() {
+  const readStatus = useSessionReadStatus();
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
@@ -353,10 +355,10 @@ function WorkspaceShell() {
     const payload: ReviewBatchSelectionCommandPayload = { kind: "review-batch-selection", selection };
     if (commandsReady && commands) commands.dispatch("review.batch-preview", scope, payload);
   }
-  const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void lifecycle.refresh(); entries.current?.refresh(); },
+  const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
     openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
-  actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void lifecycle.refresh(); entries.current?.refresh(); },
+  actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
     openImport: async () => {
       requestImport();
       if (!importOwners) {
@@ -528,6 +530,8 @@ function WorkspaceShell() {
       <Button className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
     </header>
+    {readStatus ? <Banner tone={readStatus.message === "execution.updatesUnavailable" ? "warning" : "info"} role={readStatus.message === "execution.updatesUnavailable" ? "alert" : "status"}
+      action={<Button disabled={disabled || !commandsReady || !gate.canDispatch({ viewId: currentId, source: "button" })} onClick={() => dispatch("workspace.refresh")}>{t("execution.refresh")}</Button>}>{t(readStatus.message)}<CommandFailureDetails failure={readStatus.failure}/></Banner> : null}
     {commandFailed ? <Banner tone="error">{message("actionFailed")}</Banner> : null}
     {pendingImport && !importOwners ? <Banner>{message("importLoading")}</Banner> : null}
     {draftLoadFailed || draftState.hydration === "failed" ? <Banner tone="error" action={<Button onClick={retryDrafts}>{message("draftIndexRetry")}</Button>}>{message("draftIndexFailed")}</Banner>

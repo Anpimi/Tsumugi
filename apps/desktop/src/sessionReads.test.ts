@@ -9,6 +9,11 @@ const stops: (() => void)[] = [];
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { stops.splice(0).forEach(stop => stop()); vi.useRealTimers(); });
 async function settle() { for (let n = 0; n < 12; n++) await Promise.resolve(); await vi.advanceTimersByTimeAsync(0); }
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (cause: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
 function setup(wireOverride?: Partial<ReadTransport>) {
   let next = snapshot(), receive: (value: unknown) => void = () => {};
   const unlisten = vi.fn();
@@ -211,4 +216,135 @@ it("captures a first exact Query added during a caller-owned wait and releases i
   reads.client.setQueryData(reads.key(["comparison", "id"]), "new");
   expect(witness.current()).toBe(query);
   reads.client.clear();
+});
+
+it("retries rejected registration at the shared cadence without denying successful fresh reads", async () => {
+  const registered = vi.fn(); let attempts = 0;
+  const fixture = setup({ listen: async () => { if (++attempts < 3) throw new Error("Listener unavailable"); return registered; } });
+  const statuses: boolean[] = [], unsubscribe = fixture.reads.subscribeStatus(() => statuses.push(fixture.reads.subscriptionUnavailable()));
+  stops.push(unsubscribe);
+  expect(fixture.reads.subscriptionUnavailable()).toBe(false);
+  await settle();
+  expect(fixture.reads.subscriptionUnavailable()).toBe(true); expect(fixture.reads.status()).toBe(false);
+  expect(fixture.reads.subscriptionFailure()).toMatchObject({ phase: "listen", cause: expect.any(Error) });
+  await expect(fixture.reads.synchronizeFresh()).resolves.toBeUndefined();
+  expect(fixture.wire.listen).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1499); await settle(); expect(fixture.wire.listen).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1499); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(3);
+  expect(fixture.reads.subscriptionUnavailable()).toBe(false); expect(fixture.reads.subscriptionFailure()).toBeNull();
+  expect(statuses).toContain(true); expect(statuses.at(-1)).toBe(false);
+  await vi.advanceTimersByTimeAsync(4500); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(3);
+  fixture.stop(); await settle(); expect(registered).toHaveBeenCalledOnce();
+});
+
+it("covers the registration window with a forced read after an older snapshot flight finishes", async () => {
+  const registration = deferred<() => void>(), oldSnapshot = deferred<ProjectChanges>(); let snapshots = 0;
+  const fixture = setup({ listen: () => registration.promise,
+    snapshot: async () => ++snapshots === 1 ? oldSnapshot.promise : snapshot("3") });
+  const read = vi.fn().mockResolvedValue("current"), changes = vi.fn();
+  observe(fixture.reads, "registration-window", "translation", read); fixture.reads.subscribeChanges(changes);
+  await settle(); expect(fixture.wire.snapshot).toHaveBeenCalledOnce();
+  registration.resolve(vi.fn()); await settle(); expect(fixture.wire.snapshot).toHaveBeenCalledOnce();
+  oldSnapshot.resolve(snapshot()); await settle();
+  expect(fixture.wire.snapshot).toHaveBeenCalledTimes(2);
+  expect(changes).toHaveBeenCalledWith(["project"]); expect(read).toHaveBeenCalledTimes(2);
+  expect(fixture.wire.snapshot).toHaveBeenLastCalledWith({ ...context, afterSequence: "0" });
+  await fixture.reads.synchronize(); expect(fixture.wire.snapshot).toHaveBeenLastCalledWith({ ...context, afterSequence: "3" });
+});
+
+it("does not overlap registration attempts while a retry is still waiting, and keeps polling", async () => {
+  const registration = deferred<() => void>(); let attempts = 0;
+  const fixture = setup({ listen: async () => { if (++attempts === 1) throw new Error("First registration failed"); return registration.promise; } });
+  await settle(); await vi.advanceTimersByTimeAsync(1500); await settle();
+  expect(fixture.wire.listen).toHaveBeenCalledTimes(2);
+  const before = fixture.wire.snapshot.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(6000); await settle();
+  expect(fixture.wire.listen).toHaveBeenCalledTimes(2); expect(fixture.wire.snapshot.mock.calls.length).toBeGreaterThan(before);
+  const released = vi.fn(); registration.resolve(released); await settle();
+  expect(fixture.reads.subscriptionUnavailable()).toBe(false);
+  await vi.advanceTimersByTimeAsync(3000); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(2);
+  fixture.stop(); await settle(); expect(released).toHaveBeenCalledOnce();
+});
+
+it("shares one bridge across start callers until the last independent release", async () => {
+  const fixture = setup(); await settle();
+  const snapshots = fixture.wire.snapshot.mock.calls.length, second = fixture.reads.start(); stops.push(second);
+  fixture.reads.client.setQueryData(fixture.reads.key(["retained"]), "same cache");
+  await settle(); expect(fixture.wire.listen).toHaveBeenCalledOnce(); expect(fixture.wire.snapshot).toHaveBeenCalledTimes(snapshots);
+  fixture.stop(); fixture.stop(); await settle();
+  expect(fixture.unlisten).not.toHaveBeenCalled(); expect(fixture.reads.client.getQueryData(fixture.reads.key(["retained"]))).toBe("same cache");
+  await vi.advanceTimersByTimeAsync(1500); await settle(); expect(fixture.wire.snapshot.mock.calls.length).toBeGreaterThan(snapshots);
+  second(); second(); await settle(); const stoppedAt = fixture.wire.snapshot.mock.calls.length;
+  expect(fixture.unlisten).toHaveBeenCalledOnce(); expect(fixture.reads.client.getQueryCache().getAll()).toHaveLength(0);
+  await vi.advanceTimersByTimeAsync(4500); await settle(); expect(fixture.wire.snapshot).toHaveBeenCalledTimes(stoppedAt);
+});
+
+it.each(["stop", "retire"] as const)("cancels scheduled registration retries on %s", async mode => {
+  const fixture = setup({ listen: async () => { throw new Error("No event bridge"); } });
+  await settle(); expect(fixture.reads.subscriptionUnavailable()).toBe(true);
+  if (mode === "retire") fixture.reads.retire(); else fixture.stop();
+  const snapshots = fixture.wire.snapshot.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(9000); await settle();
+  expect(fixture.wire.listen).toHaveBeenCalledOnce(); expect(fixture.wire.snapshot).toHaveBeenCalledTimes(snapshots);
+});
+
+it.each([false, true])("serializes a restarted bridge behind its prior asynchronous cleanup (late registration: %s)", async late => {
+  const registration = deferred<() => Promise<void>>(), cleanup = deferred<void>(), released = vi.fn(() => cleanup.promise), nextRelease = vi.fn();
+  const callbacks: ((value: unknown) => void)[] = [];
+  const fixture = setup({ listen: async callback => { callbacks.push(callback); return callbacks.length === 1 ? registration.promise : nextRelease; } });
+  if (!late) { registration.resolve(released); await settle(); }
+  fixture.stop(); const restarted = fixture.reads.start(); stops.push(restarted);
+  if (late) registration.resolve(released);
+  await settle();
+  expect(fixture.wire.listen).toHaveBeenCalledOnce(); expect(released).toHaveBeenCalledOnce();
+  const changed = vi.fn(); fixture.reads.subscribeChanges(changed);
+  callbacks[0]({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["translation"] });
+  await vi.advanceTimersByTimeAsync(50); await settle(); expect(changed).not.toHaveBeenCalled();
+  cleanup.resolve(); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(2);
+  fixture.stop(); await settle(); expect(nextRelease).not.toHaveBeenCalled();
+  callbacks[1]({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["translation"] });
+  await vi.advanceTimersByTimeAsync(50); await settle(); expect(changed).toHaveBeenCalledExactlyOnceWith(["translation"]);
+  restarted(); await settle(); expect(nextRelease).toHaveBeenCalledOnce();
+});
+
+it("starts only the current bridge after a retired registration attempt rejects", async () => {
+  const registration = deferred<() => void>(), nextRelease = vi.fn(); let attempts = 0;
+  const fixture = setup({ listen: () => ++attempts === 1 ? registration.promise : Promise.resolve(nextRelease) });
+  fixture.stop(); const restarted = fixture.reads.start(); stops.push(restarted);
+  expect(fixture.wire.listen).toHaveBeenCalledOnce();
+  registration.reject(new Error("Old registration failed")); await settle();
+  expect(fixture.wire.listen).toHaveBeenCalledTimes(2); expect(fixture.reads.subscriptionUnavailable()).toBe(false);
+  expect(fixture.reads.subscriptionFailure()).toBeNull();
+  await vi.advanceTimersByTimeAsync(4500); await settle(); expect(fixture.wire.listen).toHaveBeenCalledTimes(2);
+});
+
+it("retains uncertain cleanup diagnostics without multiplying Host listeners, while fresh polling remains usable", async () => {
+  const failure = new Error("Host unlisten was not confirmed"), released = vi.fn(async () => { throw failure; });
+  let oldCallback: (value: unknown) => void = () => {};
+  const fixture = setup({ listen: async callback => { oldCallback = callback; return released; } });
+  await settle(); fixture.stop(); const restarted = fixture.reads.start(); stops.push(restarted); await settle();
+  expect(fixture.reads.subscriptionUnavailable()).toBe(true);
+  expect(fixture.reads.subscriptionFailure()).toEqual({ phase: "unlisten", cause: failure });
+  expect(fixture.reads.status()).toBe(false); await expect(fixture.reads.synchronizeFresh()).resolves.toBeUndefined();
+  const changed = vi.fn(); fixture.reads.subscribeChanges(changed);
+  oldCallback({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "7", scopes: ["source"] });
+  await vi.advanceTimersByTimeAsync(50); await settle(); expect(changed).not.toHaveBeenCalled();
+  const before = fixture.wire.snapshot.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(15_000); await fixture.reads.synchronize(true); await settle();
+  expect(fixture.wire.snapshot.mock.calls.length).toBeGreaterThan(before);
+  expect(fixture.wire.listen).toHaveBeenCalledOnce(); expect(released).toHaveBeenCalledOnce();
+  expect(fixture.reads.subscriptionUnavailable()).toBe(true);
+  restarted(); await settle(); expect(fixture.reads.subscriptionFailure()).toEqual({ phase: "unlisten", cause: failure });
+});
+
+it("does not clear an authoritative read failure merely because event registration recovers", async () => {
+  let attempts = 0;
+  const fixture = setup({ listen: async () => { if (++attempts === 1) throw new Error("No listener"); return vi.fn<() => void>(); },
+    snapshot: async () => { throw new Error("Snapshot unavailable"); } });
+  await settle(); expect(fixture.reads.subscriptionUnavailable()).toBe(true); expect(fixture.reads.status()).toBe(true);
+  await vi.advanceTimersByTimeAsync(1500); await settle();
+  expect(fixture.reads.subscriptionUnavailable()).toBe(false); expect(fixture.reads.status()).toBe(true);
+  await expect(fixture.reads.synchronizeFresh()).rejects.toThrow("Current project changes could not be confirmed");
 });

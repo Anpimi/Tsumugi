@@ -7,8 +7,10 @@ export type { ChangeScope, ProjectChanges, ChangeNotification } from "./generate
 import { listen } from "@tauri-apps/api/event";
 import type { RuntimeStatus, SessionRequest } from "./executionCommands";
 
+export type ReadUnlisten = () => void | Promise<void>;
+export interface SubscriptionFailure { phase: "listen" | "unlisten"; cause: unknown }
 export interface ReadTransport {
-  listen: (receive: (payload: unknown) => void) => Promise<() => void>;
+  listen: (receive: (payload: unknown) => void) => Promise<ReadUnlisten>;
   snapshot: (request: SessionRequest & { afterSequence: string }) => Promise<unknown>;
 }
 const transport: ReadTransport = {
@@ -41,6 +43,11 @@ export class SessionReads {
   private running = false;
   private closed = false;
   private stopBridge: (() => void) | undefined;
+  private bridgeUsers = new Set<symbol>();
+  private connectBridge: (() => void) | undefined;
+  private listenFlight: Promise<void> | null = null;
+  private listenRetry: ReturnType<typeof setTimeout> | undefined;
+  private releaseUncertain = false;
   private epoch: string | null = null;
   private retiredEpochs = new Set<string>();
   private sequence = "0";
@@ -51,11 +58,13 @@ export class SessionReads {
   private syncAgain = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private coalesce: ReturnType<typeof setTimeout> | undefined;
-  private unlisten: (() => void) | undefined;
+  private unlisten: ReadUnlisten | undefined;
   private uncache: (() => void) | undefined;
   private pending = new Set<string>();
   private affected = new Set<ChangeScope>();
   private failed = false;
+  private subscriptionFailed = false;
+  private subscriptionError: SubscriptionFailure | null = null;
   private statusListeners = new Set<() => void>();
   private changeListeners = new Set<(scopes: readonly ChangeScope[]) => void>();
   constructor(readonly context: SessionRequest, private readonly wire = transport) {}
@@ -85,15 +94,52 @@ export class SessionReads {
     };
   }
   status = () => this.failed;
+  subscriptionUnavailable = () => this.subscriptionFailed;
+  subscriptionFailure = () => this.subscriptionError;
   subscribeStatus = (receive: () => void) => { this.statusListeners.add(receive); return () => { this.statusListeners.delete(receive); }; };
   subscribeChanges = (receive: (scopes: readonly ChangeScope[]) => void) => { this.changeListeners.add(receive); return () => { this.changeListeners.delete(receive); }; };
   private notifyChanges(scopes: readonly ChangeScope[]) { this.changeListeners.forEach(receive => receive(scopes)); }
   private report(failed: boolean) { if (this.failed !== failed) { this.failed = failed; this.statusListeners.forEach(receive => receive()); } }
+  private reportSubscription(unavailable: boolean, failure: SubscriptionFailure | null) {
+    if (this.subscriptionFailed === unavailable && this.subscriptionError === failure) return;
+    this.subscriptionFailed = unavailable; this.subscriptionError = failure;
+    this.statusListeners.forEach(receive => receive());
+  }
+  private trackSubscription(work: Promise<void>) {
+    const flight = work.finally(() => {
+      if (this.listenFlight !== flight) return;
+      this.listenFlight = null; this.connectBridge?.();
+    });
+    this.listenFlight = flight;
+  }
+  private async releaseListener(stop: ReadUnlisten) {
+    try { await stop(); }
+    catch (cause) {
+      // The callback is already fenced by its bridge generation. Host release
+      // remains unconfirmed, so this instance must not accumulate new listeners.
+      this.releaseUncertain = true;
+      this.reportSubscription(true, { phase: "unlisten", cause });
+    }
+  }
+  private releaseRegisteredListener(stop: ReadUnlisten) {
+    const previous = this.listenFlight;
+    this.trackSubscription((async () => {
+      if (previous) await previous;
+      await this.releaseListener(stop);
+    })());
+  }
 
   start(): () => void {
     if (this.closed) return () => {};
+    const user = Symbol("session-read-bridge");
+    this.bridgeUsers.add(user);
+    if (!this.running) this.startBridge();
+    return () => { if (this.bridgeUsers.delete(user) && this.bridgeUsers.size === 0) this.stopBridge?.(); };
+  }
+  private startBridge() {
     this.running = true;
     const life = ++this.life;
+    const current = () => this.running && this.life === life && !this.closed;
     this.uncache = this.client.getQueryCache().subscribe(event => {
       const query = event.query;
       if (event.type === "updated" && query.state.fetchStatus === "idle" && this.pending.delete(query.queryHash)) {
@@ -101,26 +147,42 @@ export class SessionReads {
         if (query.isActive()) void this.client.refetchQueries({ queryKey: query.queryKey, exact: true }, { cancelRefetch: false });
       }
     });
-    void this.wire.listen(value => { if (this.running && this.life === life) this.receive(value); }).then(stop => {
-      if (!this.running || this.life !== life) { stop(); return; }
-      this.unlisten = stop;
-      // Read after registration so changes made while listen was pending are covered.
-      void this.synchronize(true);
-    }).catch(() => { if (this.running && this.life === life) this.report(true); });
+    const connect = () => {
+      if (!current() || this.unlisten || this.listenFlight || this.listenRetry !== undefined || this.releaseUncertain) return;
+      this.trackSubscription((async () => {
+        let stop: ReadUnlisten;
+        try { stop = await this.wire.listen(value => { if (current()) this.receive(value); }); }
+        catch (cause) {
+          if (current()) {
+            this.reportSubscription(true, { phase: "listen", cause });
+            if (current()) this.listenRetry = setTimeout(() => { this.listenRetry = undefined; connect(); }, 1500);
+          }
+          return;
+        }
+        if (!current()) { await this.releaseListener(stop); return; }
+        this.unlisten = stop;
+        this.reportSubscription(false, null);
+        // Registration cannot cover earlier commits. Queue a fresh snapshot
+        // behind any older read rather than trusting that read's completion.
+        void this.synchronize(true);
+      })());
+    };
+    this.connectBridge = connect;
     const beat = async () => {
       await this.synchronize();
       if (this.running && this.life === life) this.timer = setTimeout(() => void beat(), 1500);
     };
-    void beat();
     const focus = () => { void this.synchronize(true); };
     window.addEventListener("focus", focus);
     const stop = () => {
-      window.removeEventListener("focus", focus);
       if (this.life !== life) return;
+      window.removeEventListener("focus", focus);
       this.running = false; this.life++;
-      clearTimeout(this.timer); clearTimeout(this.coalesce);
-      this.timer = this.coalesce = undefined;
-      this.unlisten?.(); this.unlisten = undefined;
+      this.bridgeUsers.clear(); this.connectBridge = this.stopBridge = undefined;
+      clearTimeout(this.timer); clearTimeout(this.coalesce); clearTimeout(this.listenRetry);
+      this.timer = this.coalesce = this.listenRetry = undefined;
+      const unlisten = this.unlisten; this.unlisten = undefined;
+      if (unlisten) this.releaseRegisteredListener(unlisten);
       this.uncache?.(); this.uncache = undefined;
       this.pending.clear(); this.affected.clear();
       this.epoch = null; this.retiredEpochs.clear();
@@ -128,7 +190,8 @@ export class SessionReads {
       this.sequence = this.progress = this.verified = this.verifiedProgress = "0";
     };
     this.stopBridge = stop;
-    return stop;
+    this.reportSubscription(this.releaseUncertain, this.releaseUncertain ? this.subscriptionError : null);
+    if (current()) { connect(); void beat(); }
   }
 
   invalidate(affected: readonly ChangeScope[], semanticChange = true) {

@@ -1,9 +1,32 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { SessionReadProvider, useSessionQuery, useSessionInfiniteQuery, useSessionReads } from "./SessionReadProvider";
-import type { SessionReads } from "./sessionReads";
+import { SessionReadProvider, SessionReadStatus, useSessionQuery, useSessionInfiniteQuery, useSessionReads } from "./SessionReadProvider";
+import { SessionReads } from "./sessionReads";
+import { i18n } from "./i18n";
 afterEach(cleanup);
 const context = { projectId: "project", sessionToken: "session" };
+it("shows project observation fallback separately from failed authoritative reads", async () => {
+  await i18n.changeLanguage("zh-CN");
+  const reads = new SessionReads(context), listeners = new Set<() => void>();
+  const unavailable = vi.spyOn(reads, "status").mockReturnValue(false);
+  const polling = vi.spyOn(reads, "subscriptionUnavailable").mockReturnValue(true);
+  const failure = vi.spyOn(reads, "subscriptionFailure").mockReturnValue(null);
+  vi.spyOn(reads, "subscribeStatus").mockImplementation(receive => { listeners.add(receive); return () => { listeners.delete(receive); }; });
+  const refresh = vi.spyOn(reads, "synchronize").mockResolvedValue();
+  const view = render(<SessionReadProvider context={context} reads={reads} bridge={false}><SessionReadStatus/></SessionReadProvider>);
+  expect(screen.getByRole("status")).toHaveTextContent(i18n.t("execution.updatesUsingPolling"));
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("execution.refresh") }));
+  expect(refresh).toHaveBeenCalledExactlyOnceWith(true);
+  act(() => { failure.mockReturnValue({ phase: "unlisten", cause: new Error("Synthetic cleanup failure") }); listeners.forEach(notify => notify()); });
+  expect(screen.getByRole("status")).toHaveTextContent(i18n.t("execution.updatesPollingOnly"));
+  expect(screen.queryByText("Synthetic cleanup failure")).toBeNull();
+  act(() => { unavailable.mockReturnValue(true); listeners.forEach(notify => notify()); });
+  expect(screen.getByRole("alert")).toHaveTextContent(i18n.t("execution.updatesUnavailable"));
+  expect(screen.queryByText(i18n.t("execution.updatesUsingPolling"), { exact: false })).toBeNull();
+  act(() => { unavailable.mockReturnValue(false); polling.mockReturnValue(false); listeners.forEach(notify => notify()); });
+  expect(screen.queryByRole("alert")).toBeNull(); expect(screen.queryByRole("status")).toBeNull();
+  view.unmount(); expect(listeners.size).toBe(0); reads.retire();
+});
 function Probe({ read, enabled = true }: { read: () => Promise<string | null>; enabled?: boolean }) {
   const query = useSessionQuery({ key: ["same-attempt"], scopes: ["execution"], enabled, read });
   return <><p>{query.data ?? "Loading"}</p><button onClick={() => query.setData(null)}>Reopen attempt</button></>;
