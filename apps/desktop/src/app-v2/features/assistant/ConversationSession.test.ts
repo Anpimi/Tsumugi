@@ -5,6 +5,8 @@ import type { PreparedConversationPlanning, ProjectConversation, ProjectConversa
 import type { conversationCommands } from "../../../conversationCommands";
 import type { conversationDraftCommands } from "../../../conversationDraftCommands";
 import { validateResponseConversationWritten } from "../../../generated/draft.validators";
+import type { reviewCommands } from "../../../reviewCommands";
+import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
 
 const context = { projectId: "10000000-0000-4000-8000-000000000001", sessionToken: "session" };
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -50,7 +52,8 @@ function harness() {
   const preparePlanning = vi.fn<typeof conversationCommands.preparePlanning>();
   const validatePlanning = vi.fn<typeof conversationCommands.validatePlanning>(async (_request, expected) => expected);
   const startPlanning = vi.fn<typeof conversationCommands.startPlanning>(async request => ({ projectId: request.projectId, conversationId: request.conversationId, consent: request.consent, inputDigest: "c".repeat(64) }));
-  const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan };
+  const captureSelection = vi.fn<typeof reviewCommands.captureScope>();
+  const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection };
   const make = () => new ConversationSession(context, recorded, reveal, all);
   const owner = make();
   return { owner, make, ports: all, heads, created, appended, recorded, reveal, current: () => {
@@ -76,6 +79,57 @@ describe("ConversationSession", () => {
     h.ports.preparePlanning.mockResolvedValue(prepared);
     return { ...h, conversationId, messageId, prepared };
   }
+  async function readyWithUnits() {
+    const h = await readyToPlan(), id = h.ports.identity;
+    const scope: Extract<WorkspaceSelection, { kind: "scope" }> = { kind: "scope", query: { text: "fixed query", selection: "all", status: "all" }, selection: {
+      ...context, excluded: [id()], capture: { scopeId: id(), sourceSnapshotId: id(), locale: "zh-CN", query: "fixed query", readVersion: "a".repeat(64),
+        units: [0, 1, 2].map(() => ({ unitId: id(), expectedBasis: "b".repeat(64), expectedDecisionId: null })) },
+    } };
+    scope.selection.excluded = [scope.selection.capture.units[1].unitId];
+    const members = scope.selection.capture.units.filter(unit => !scope.selection.excluded.includes(unit.unitId));
+    h.owner.setPlanningSelection(h.conversationId, scope);
+    h.owner.setPlanningConfig(h.conversationId, before => ({ ...before, shareTerms: true, shareContext: true }));
+    const prepared: PreparedConversationPlanning = { ...h.prepared, preview: { ...h.prepared.preview, config: h.current().planning.config,
+      scope: { kind: "units", locale: "zh-CN", unitIds: members.map(unit => unit.unitId) },
+      units: members.map(unit => ({ unitId: unit.unitId, sourceSnapshotId: scope.selection.capture.sourceSnapshotId, sourceRevisionId: id(), selectionId: null, translationRevisionId: null,
+        protection: { unitId: unit.unitId, locale: "zh-CN", revision: "0", protected: false }, sharedTermRevisionIds: [], sharedContextRevisionId: null })),
+      brief: { ...h.prepared.preview.brief, units: members.length, sourceTexts: members.length },
+    } };
+    h.ports.preparePlanning.mockResolvedValue(prepared);
+    h.ports.captureSelection.mockResolvedValue({ ...scope.selection.capture, units: members });
+    return { ...h, prepared, scope, members };
+  }
+  it("plans against the original scope and exclusions with a precise units consent", async () => {
+    const h = await readyWithUnits(), originalIds = h.members.map(unit => unit.unitId);
+    h.scope.query.text = "a later filter"; h.scope.selection.excluded = [];
+    await h.owner.preparePlanning(h.conversationId);
+    expect(h.ports.captureSelection).toHaveBeenCalledTimes(2);
+    expect(h.ports.captureSelection).toHaveBeenLastCalledWith({ ...context, locale: "zh-CN", scopeId: h.scope.selection.capture.scopeId, excluded: [h.scope.selection.capture.units[1].unitId] });
+    expect(h.ports.preparePlanning).toHaveBeenCalledExactlyOnceWith({ ...context, conversationId: h.conversationId, config: expect.objectContaining({ maxItems: 2, maxRequests: 1, shareTerms: true, shareContext: true }),
+      selectedMessageIds: [h.messageId], scope: { kind: "units", locale: "zh-CN", unitIds: originalIds } });
+    h.owner.setPlanningConsent(h.conversationId, true); await h.owner.startPlanning(h.conversationId);
+    expect(h.ports.startPlanning).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ consent: expect.objectContaining({ shareMessages: true, shareUnits: true }) }));
+    expect(h.current().value.pending).toBeNull();
+  });
+  it("refuses a changed source snapshot or scope basis while preparing without submitting", async () => {
+    const h = await readyWithUnits();
+    h.ports.preparePlanning.mockResolvedValueOnce({ ...h.prepared, preview: { ...h.prepared.preview, units: h.prepared.preview.units.map(unit => ({ ...unit, sourceSnapshotId: h.ports.identity() })) } });
+    await h.owner.preparePlanning(h.conversationId);
+    expect(h.current().planning.failure?.kind).toBe("selection"); expect(h.current().planning.prepared).toBeNull();
+    h.ports.captureSelection.mockResolvedValueOnce({ ...h.scope.selection.capture, units: h.members });
+    h.ports.captureSelection.mockResolvedValueOnce({ ...h.scope.selection.capture, units: h.members.map(unit => ({ ...unit, expectedBasis: "e".repeat(64) })) });
+    await h.owner.preparePlanning(h.conversationId);
+    expect(h.current().planning.failure?.kind).toBe("selection"); expect(h.current().planning.prepared).toBeNull();
+    await h.owner.startPlanning(h.conversationId); expect(h.ports.startPlanning).not.toHaveBeenCalled(); expect(h.current().value.pending).toBeNull();
+  });
+  it("invalidates consent when removing entries and resets sharing to message-only", async () => {
+    const h = await readyWithUnits(); await h.owner.preparePlanning(h.conversationId); h.owner.setPlanningConsent(h.conversationId, true);
+    expect(h.owner.setPlanningSelection(h.conversationId, null)).toBe(true);
+    expect(h.current().planning).toMatchObject({ selection: null, prepared: null, consent: false, config: { maxItems: 1, shareTerms: false, shareContext: false } });
+    await h.owner.startPlanning(h.conversationId); expect(h.ports.startPlanning).not.toHaveBeenCalled();
+    expect(h.owner.setPlanningSelection(h.conversationId, { kind: "ids", locale: "zh-CN", sourceSnapshotId: h.ports.identity(), unitIds: Array.from({ length: 101 }, () => h.ports.identity()) })).toBe(false);
+    expect(h.current().planning.selection).toBeNull();
+  });
   it("prepares only on request and requires fresh consent for exactly one message-only request", async () => {
     const h = await readyToPlan();
     expect(h.ports.preparePlanning).not.toHaveBeenCalled(); expect(h.ports.startPlanning).not.toHaveBeenCalled();

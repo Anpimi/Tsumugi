@@ -5,16 +5,23 @@ import { connectionConfigCurrent, useConnectionFacts } from "../../../Applicatio
 import { connectionAiConfig, isChatGptSubscription, validAiLimits } from "../../../aiCommands";
 import { CommandFailureDetails } from "../../../CommandFailure";
 import { ModelConnectionPicker } from "../../../ModelConnectionPicker";
+import { SourceContextChoice } from "../../../SourceContextPreparation";
 import { Button } from "../../../design-system/Button";
 import { TextInput } from "../../../design-system/Field";
 import { Banner } from "../../../design-system/Feedback";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
+import { workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
 import styles from "./ConversationPanel.module.css";
 
-export function ConversationPlanningPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId }: {
+/** Formatting changes no material; consent still binds the original opaque capture. */
+function formattedInput(input: string) {
+  try { return JSON.stringify(JSON.parse(input), null, 2); } catch { return input; }
+}
+
+export function ConversationPlanningPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection = null }: {
   owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
-  gate: InteractionGate; viewId: string | null; parentDialogId?: string;
+  gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const facts = useConnectionFacts(), planning = input.planning, conversationId = input.key.conversationId;
@@ -31,6 +38,8 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
     && connectionConfigCurrent(facts.current(), owner.getSnapshot().inputs.get(conversationId)?.planning.config ?? planning.config);
   const valid = validAiLimits(planning.config) && !!planning.config.endpoint.trim() && !!planning.config.model.trim();
   const connectionCurrent = connectionConfigCurrent(facts.current(), planning.config);
+  const selectedCount = workspaceSelectionIds(selection).length, fixedCount = workspaceSelectionIds(planning.selection).length;
+  const fixedLocale = planning.selection?.kind === "ids" ? planning.selection.locale : planning.selection?.selection.capture.locale;
   useEffect(() => { if (!connectionCurrent) owner.invalidatePlanning(conversationId); }, [connectionCurrent, conversationId, owner]);
   useEffect(() => () => gate.releaseOwner(inputOwner), [gate, inputOwner]);
   useEffect(() => { if (!visible) { gate.releaseOwner(inputOwner); owner.setPlanningConsent(conversationId, false); } }, [conversationId, gate, inputOwner, owner, visible]);
@@ -45,8 +54,15 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
     onFocusCapture={() => gate.setInputOwner(viewId, inputOwner)}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputOwner); }}
     onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
-    <h3>{t("askTitle")}</h3><p>{t("askHelp")}</p>
+    <h3>{t("askTitle")}</h3><p>{t(planning.selection ? "askEntriesHelp" : "askHelp")}</p>
     <p role="status">{t("askSelection", { count: planning.messageIds.length })}</p>
+    <section className={styles.range} aria-label={t("askRange")}>
+      <p>{t(planning.selection ? "askFixedRange" : "askNoRange", { count: fixedCount, locale: fixedLocale })}</p>
+      <div className={styles.actions}><Button size="sm" disabled={blocked || selectedCount === 0 || selectedCount > 100}
+        onClick={() => { if (allowed()) owner.setPlanningSelection(conversationId, selection); }}>{t("askUseSelection", { count: selectedCount })}</Button>
+        {planning.selection ? <Button size="sm" disabled={blocked} onClick={() => { if (allowed()) owner.setPlanningSelection(conversationId, null); }}>{t("askRemoveRange")}</Button> : null}</div>
+      {selectedCount > 100 ? <p>{t("askRangeTooLarge")}</p> : selectedCount === 0 ? <p>{t("askSelectEntries")}</p> : null}
+    </section>
     <fieldset className={styles.configuration} disabled={blocked}><legend>{t("askDestination")}</legend>
       <ModelConnectionPicker config={planning.config} label={global("connections.choose")} active={visible} disabled={blocked} editSeq={planning.sequence}
         onSelect={(view, profileId, sequence) => {
@@ -62,20 +78,36 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
       <AiBudgetInputs config={planning.config} setConfig={change => owner.setPlanningConfig(conversationId, change)} fields={["maxOutputTokens", "timeoutSeconds"]} idPrefix={id}/>
       <p>{t(isChatGptSubscription(planning.config) ? "askSubscriptionBudget" : "askBudget", { tokens: planning.config.maxOutputTokens, seconds: planning.config.timeoutSeconds })}</p>
       <p>{t("askCost")}</p>
+      {planning.selection ? <>
+        <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.config.shareTerms}
+          onChange={event => owner.setPlanningConfig(conversationId, before => ({ ...before, shareTerms: event.target.checked }))}/><span>{global("ai.shareTerms")}</span></label>
+        <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.config.shareContext}
+          onChange={event => owner.setPlanningConfig(conversationId, before => ({ ...before, shareContext: event.target.checked }))}/><span>{global("ai.shareContext")}</span></label>
+        <SourceContextChoice value={planning.config.sourceContext} help={t("askSourceContextHelp")} onChange={sourceContext => owner.setPlanningConfig(conversationId, before => ({ ...before, sourceContext }))}/>
+      </> : null}
     </fieldset>
     {!valid ? <p>{t("askConfigHelp")}</p> : null}
-    {planning.failure ? <Banner tone="error"><p>{t("askFailed")}</p><CommandFailureDetails failure={planning.failure}/></Banner> : null}
+    {planning.failure ? <Banner tone="error"><p>{t(planning.failure.kind === "selection" ? "askSelectionFailed" : "askFailed")}</p><CommandFailureDetails failure={planning.failure.cause}/></Banner> : null}
     <Button size="sm" pending={planning.busy === "prepare"} disabled={blocked || !valid || !connectionCurrent || planning.messageIds.length === 0}
       onClick={event => { if (!allowed()) return; focus.current = { origin: event.currentTarget, preview: true }; void owner.preparePlanning(conversationId, current); }}>{t("askPrepare")}</Button>
     {prepared ? <section ref={previewRegion} tabIndex={-1} className={styles.preview} aria-label={t("askPreview")}>
       <h4>{t("askPreview")}</h4><p className={styles.text}>{prepared.preview.config.model} · {prepared.preview.config.endpoint}</p>
       <p>{t(isChatGptSubscription(prepared.preview.config) ? "askSubscriptionBudget" : "askBudget", { tokens: prepared.preview.config.maxOutputTokens, seconds: prepared.preview.config.timeoutSeconds })}</p>
-      <p>{t("askMaterialSummary", { count: prepared.preview.selectedMessages.length, bytes: prepared.preview.byteLength })}</p>
+      <p>{t(prepared.preview.scope.kind === "units" ? "askEntriesMaterialSummary" : "askMaterialSummary", {
+        count: prepared.preview.selectedMessages.length, units: prepared.preview.brief.units,
+        locale: prepared.preview.scope.kind === "units" ? prepared.preview.scope.locale : "",
+      })}</p>
+      {prepared.preview.scope.kind === "units" ? <>
+        <p>{t("askSharedResources", { terms: prepared.preview.brief.terms, contexts: prepared.preview.brief.manualContexts,
+          manualFacts: prepared.preview.brief.manualContextFacts, sourceFacts: prepared.preview.brief.sourceContextFacts, neighbors: prepared.preview.brief.sourceContextNeighbors })}</p>
+        <p>{t("askTranslationNotShared")}</p>
+        <p>{t("askProtectionShared", { count: prepared.preview.units.filter(unit => unit.protection.protected).length })}</p>
+      </> : null}
       {prepared.preview.selectedMessages.map(message => <div className={styles.previewMessage} key={message.messageId}><p className={styles.text}>{message.body}</p></div>)}
       <Button size="sm" aria-expanded={materialOpen} aria-controls={`${id}-material`} onClick={() => setMaterialOpen(value => !value)}>{t("askFullMaterial")}</Button>
-      {materialOpen ? <div id={`${id}-material`}><pre className={styles.text}>{prepared.preview.system}</pre><pre className={styles.text}>{prepared.preview.input}</pre></div> : null}
+      {materialOpen ? <div id={`${id}-material`}><pre className={styles.text}>{prepared.preview.system}</pre><pre className={styles.text}>{formattedInput(prepared.preview.input)}</pre></div> : null}
       <label className={styles.check}><TextInput className={styles.checkbox} type="checkbox" checked={planning.consent} disabled={blocked || !connectionCurrent}
-        onChange={event => { if (allowed()) owner.setPlanningConsent(conversationId, event.target.checked); }}/><span>{t("askConsent")}</span></label>
+        onChange={event => { if (allowed()) owner.setPlanningConsent(conversationId, event.target.checked); }}/><span>{t(prepared.preview.scope.kind === "units" ? "askEntriesConsent" : "askConsent")}</span></label>
       <Button variant="primary" size="sm" pending={planning.busy === "start"} disabled={blocked || !connectionCurrent || !planning.consent}
         onClick={event => { if (!allowed()) return; focus.current = { origin: event.currentTarget, preview: false }; void owner.startPlanning(conversationId, current); }}>{t("askSend")}</Button>
     </section> : null}

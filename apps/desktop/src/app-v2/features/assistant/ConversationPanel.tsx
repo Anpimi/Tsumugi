@@ -11,11 +11,12 @@ import { useSessionInfiniteQuery, useSessionQuery } from "../../../SessionReadPr
 import type { SessionRequest } from "../../../executionCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
+import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { ConversationPlanningPanel } from "./ConversationPlanningPanel";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
-interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string }
+interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
 
 function PlanningResult({ context, conversationId, attemptId, visible }: { context: SessionRequest; conversationId: string; attemptId: string; visible: boolean }) {
@@ -41,7 +42,7 @@ function PlanningResult({ context, conversationId, attemptId, visible }: { conte
   </section>;
 }
 
-function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput }) {
+function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput }) {
   const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
@@ -66,7 +67,7 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
           disabled={blocked || !planning.messageIds.includes(message.messageId) && planning.messageIds.length >= 16}
           onChange={event => { if (allowed()) owner.setPlanningMessages(conversationId, event.target.checked ? [...planning.messageIds, message.messageId] : planning.messageIds.filter(id => id !== message.messageId)); }}/><span>{t("askChooseMessage", { number: message.ordinal })}</span></label> : null}</div>)}</section>}
     {messages.hasNextPage ? <Button pending={messages.isFetchingNextPage} onClick={() => void messages.fetchNextPage()}>{t("moreMessages")}</Button> : null}
-    {planning.open ? <ConversationPlanningPanel owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/> : null}
+    {planning.open ? <ConversationPlanningPanel owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : null}
     {attempts.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void attempts.refetch()}>{t("retryRead")}</Button>}>{t("repliesReadFailed")}</Banner> : null}
     {runs.length ? <section aria-label={t("savedReplies")} className={local.history}>{runs.map(run => <PlanningResult key={run.attemptId} context={context}
       conversationId={conversationId} attemptId={run.attemptId} visible={visible}/>)}</section> : null}
@@ -74,7 +75,7 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
   </>;
 }
 
-export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId }: Props) {
+export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
   const activeId = state.activeId, input = activeId ? state.inputs.get(activeId) : undefined;
@@ -110,7 +111,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={blocked || state.hydration !== "ready"} onClick={() => void owner.create()}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/> : <p role="status">{t("creatingThread")}</p>}
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
     {input ? <div className={styles.composer}>
       {input.notice ? <p role="status" className={local.notice}>{t(input.notice)}</p> : null}

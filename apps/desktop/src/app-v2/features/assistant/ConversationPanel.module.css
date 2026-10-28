@@ -14,6 +14,9 @@
 .configuration :global(.field) input, .configuration :global(.field) select { min-inline-size: 0; inline-size: 100%; border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; }
 .configuration :global(.secondary-button) { border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; font-size: var(--text-sm); }
 .configuration :global(.execution-actions) { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.configuration fieldset { min-inline-size: 0; border: var(--border-width) solid var(--color-border-subtle); padding: var(--space-3); }
+.configuration :global(.source-check) { display: flex; align-items: start; gap: var(--space-2); font-size: var(--text-sm); }
+.range { display: grid; gap: var(--space-3); }
 .check { display: flex; align-items: start; gap: var(--space-2); font-size: var(--text-sm); }
 .checkbox { inline-size: 16px; min-inline-size: 16px; block-size: 16px; min-block-size: 16px; padding: 0; accent-color: var(--color-accent-solid); }
 .preview { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }

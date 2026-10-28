@@ -12,13 +12,13 @@ export function SourceContextSelectionSummary({ value }: { value: Selection }) {
 
 /** Controlled preparation input; the existing draft owner invalidates preview
  * and consent when any source category or budget changes. */
-export function SourceContextChoice({ value, onChange }: { value: Selection; onChange: (next: Selection) => void }) {
+export function SourceContextChoice({ value, onChange, help }: { value: Selection; onChange: (next: Selection) => void; help?: string }) {
   const { t } = useTranslation();
   const enabled = value.extracted || value.inferred || value.neighbors;
   const valid = validSourceContextSelection(value);
   return <fieldset className="source-context-choice">
     <legend>{t("sourceContext.title")}</legend>
-    <p>{t("sourceContext.help")}</p>
+    <p>{help ?? t("sourceContext.help")}</p>
     {(["extracted", "inferred", "neighbors"] as const).map(key => <label className="source-check" key={key}>
       <input type="checkbox" checked={value[key]} onChange={event => onChange({ ...value, [key]: event.target.checked })}/>{t(`sourceContext.choose.${key}`)}
     </label>)}

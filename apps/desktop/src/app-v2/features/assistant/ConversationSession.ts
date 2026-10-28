@@ -6,8 +6,11 @@ import type { SessionRequest } from "../../../executionCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
+import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection } from "../../workspace/workspaceSelection";
+import { checkPlanningSelection, planningSelectionMatchesPreview, planningSelectionScope } from "./planningSelection";
+import { reviewCommands } from "../../../reviewCommands";
 
-type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string; now: () => number };
+type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope };
 type JournalWrite = Omit<Parameters<Ports["write"]>[0]["write"], "value"> & { value: ConversationDraftValue };
 type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
   | { kind: "resolve"; request: { sessionToken: string; resolve: { write: JournalWrite; pending: ConversationDraftPending } }; submitted: ConversationDraftPending };
@@ -27,14 +30,19 @@ export interface ConversationPlanningInput {
   sequence: number;
   config: AiConfig;
   messageIds: readonly string[];
+  selection: WorkspaceSelection | null;
   prepared: PreparedConversationPlanning | null;
   consent: boolean;
   busy: "prepare" | "start" | null;
-  failure: CommandFailure | null;
+  failure: { kind: "selection" | "request"; cause: CommandFailure } | null;
+}
+function planningConfig(config: AiConfig, selection: WorkspaceSelection | null): AiConfig {
+  return { ...config, maxItems: selection ? workspaceSelectionIds(selection).length : 1, maxRequests: 1, concurrency: 1, maxRetries: 0,
+    ...(!selection ? { shareTerms: false, shareContext: false, contextStrategy: null, sourceContext: structuredClone(defaultAiConfig.sourceContext) } : {}) };
 }
 function planningInput(): ConversationPlanningInput {
-  return { open: false, sequence: 0, config: { ...structuredClone(defaultAiConfig), maxItems: 1, maxRequests: 1 },
-    messageIds: [], prepared: null, consent: false, busy: null, failure: null };
+  return { open: false, sequence: 0, config: planningConfig(structuredClone(defaultAiConfig), null),
+    messageIds: [], selection: null, prepared: null, consent: false, busy: null, failure: null };
 }
 export interface ConversationSessionSnapshot {
   hydration: "idle" | "loading" | "ready" | "failed";
@@ -66,6 +74,7 @@ export class ConversationSession {
       recoverPlanning: conversationCommands.recoverPlanning, recoverProposalCapture: conversationCommands.recoverProposalCapture,
       recoverProposalRevision: conversationCommands.recoverProposalRevision, recoverProposalWorkPlan: conversationCommands.recoverProposalWorkPlan,
       preparePlanning: conversationCommands.preparePlanning, validatePlanning: conversationCommands.validatePlanning, startPlanning: conversationCommands.startPlanning,
+      captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
   }
@@ -140,13 +149,18 @@ export class ConversationSession {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live || messageIds.length > 16 || new Set(messageIds).size !== messageIds.length) return;
     this.editPlanning(record, { messageIds: [...messageIds] });
   }
+  setPlanningSelection(conversationId: string, selected: WorkspaceSelection | null): boolean {
+    const record = this.records.get(conversationId); if (!record || !this.kernel.live) return false;
+    const selection = copyWorkspaceSelection(selected);
+    try { planningSelectionScope(this.context, selection); } catch { return false; }
+    this.editPlanning(record, { selection, config: planningConfig(record.input.planning.config, selection) });
+    return true;
+  }
   setPlanningConfig(conversationId: string, change: AiConfig | ((before: AiConfig) => AiConfig)) {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;
     const previous = record.input.planning.config;
     const edited = editedAiConfig(previous, typeof change === "function" ? change(previous) : change);
-    // This entry only discusses the selected messages. Unit planning has its own scope.
-    const config = { ...edited, maxItems: 1, maxRequests: 1, concurrency: 1, maxRetries: 0, shareTerms: false, shareContext: false,
-      contextStrategy: null, sourceContext: structuredClone(defaultAiConfig.sourceContext) };
+    const config = planningConfig(edited, record.input.planning.selection);
     this.editPlanning(record, { config });
   }
   invalidatePlanning(conversationId: string) {
@@ -166,16 +180,25 @@ export class ConversationSession {
   async preparePlanning(conversationId: string, current: () => boolean = () => true) {
     const record = this.records.get(conversationId); if (!record || !this.canPrepare(record) || !current()) return;
     const before = record.input.planning;
+    let failureKind: "selection" | "request" = "selection";
     record.action = true;
     this.update(record, { planning: { ...before, busy: "prepare", prepared: null, consent: false, failure: null } });
     try {
+      const live = () => this.kernel.live && record.input.planning.sequence === before.sequence && current();
+      const scope = await checkPlanningSelection(this.context, before.selection, live, this.ports.captureSelection);
+      if (!live()) return;
+      failureKind = "request";
       const prepared = await this.ports.preparePlanning({ ...this.context, conversationId, config: structuredClone(before.config),
-        selectedMessageIds: [...before.messageIds], scope: { kind: "conversation-only" } });
-      if (!this.kernel.live || record.input.planning.sequence !== before.sequence || !current()) return;
+        selectedMessageIds: [...before.messageIds], scope });
+      if (!live()) return;
+      failureKind = "selection";
+      if (!planningSelectionMatchesPreview(before.selection, prepared)) throw new Error("The planning source selection has changed");
+      await checkPlanningSelection(this.context, before.selection, live, this.ports.captureSelection);
+      if (!live()) return;
       // Host retains one capture. Another thread's earlier preview cannot remain confirmable.
       for (const other of this.records.values()) if (other !== record && other.input.planning.prepared) this.editPlanning(other, {});
       this.update(record, { planning: { ...record.input.planning, prepared } });
-    } catch (error) { if (this.kernel.live) this.update(record, { planning: { ...record.input.planning, failure: commandFailure(error) } });
+    } catch (error) { if (this.kernel.live && record.input.planning.sequence === before.sequence) this.update(record, { planning: { ...record.input.planning, failure: { kind: failureKind, cause: commandFailure(error) } } });
     } finally {
       record.action = false;
       if (this.kernel.live) {
@@ -197,7 +220,7 @@ export class ConversationSession {
       }
       const actionId = this.ports.identity(), editSeq = nextEditSeq(record.input.value.editSeq);
       const consent = { actionId, attemptId: actionId, taskId: this.ports.identity(), previewDigest: prepared.previewDigest,
-        expiresAtMs: String(this.ports.now() + Math.min(prepared.preview.config.timeoutSeconds, 120) * 1000), shareMessages: true, shareUnits: false };
+        expiresAtMs: String(this.ports.now() + Math.min(prepared.preview.config.timeoutSeconds, 120) * 1000), shareMessages: true, shareUnits: prepared.preview.scope.kind === "units" };
       const pending: ConversationDraftPending = { kind: "planning", preparationId: prepared.preparationId, submittedSeq: editSeq,
         request: { ...record.input.key, consent } };
       this.changed++;
@@ -212,7 +235,7 @@ export class ConversationSession {
     } catch (error) {
       if (!this.kernel.live) return;
       if (record.input.value.pending?.kind === "planning") this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
-      else this.update(record, { planning: { ...record.input.planning, prepared: null, consent: false, failure: commandFailure(error) } });
+      else if (record.input.planning.sequence === before.sequence) this.update(record, { planning: { ...record.input.planning, prepared: null, consent: false, failure: { kind: "request", cause: commandFailure(error) } } });
     } finally {
       record.action = false;
       if (this.kernel.live) {
