@@ -16,7 +16,17 @@ import { reviewSummaryFor, reviewTargetFixture } from "../testSupport/reviewFixt
 import { translationCommands, type CandidateDecision, type CandidateDecisionRequest, type TranslationHistory, type TranslationRevision } from "../translationCommands";
 import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle } from "./platform/projectLifecycle";
+import aiFixture from "../../test/fixtures/aiCommands.contract.json";
+import { conversationCommands } from "../conversationCommands";
+import { canonicalConversationDraft, conversationDraftCommands, type ConversationDraftHead } from "../conversationDraftCommands";
+import { workPlanCommands } from "../workPlanCommands";
+import { conversationWorkPlanFixture } from "../testSupport/conversationWorkPlanFixture";
+import { validateResponseView, validateResponseWorkPlan, validateResponseWorkPlanStatus, validateResponseWorkPlanRun } from "../generated/ai.validators";
+import { validateResponseRevision } from "../generated/translation.validators";
+import { validateResponseConversationWritten } from "../generated/draft.validators";
 
+const nativeInvoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", async original => ({ ...await original<object>(), invoke: nativeInvoke }));
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 const project: ProjectView = { sessionToken: "workbench-candidate-session", locator: "/synthetic/workbench-candidates", reconciliationState: "settled",
   metadata: { projectId: translationFixture.save.projectId, displayName: "Candidate workspace", metadataRevision: "1", sourceLocale: "en", targetLocales: ["zh-CN"] } };
@@ -51,6 +61,7 @@ function receipt(request: CandidateDecisionRequest): CandidateDecision {
 }
 
 beforeEach(async () => {
+  nativeInvoke.mockReset();
   localStorage.clear(); history.replaceState(null, "", "/"); await i18n.changeLanguage("en-US");
   // Both the inline row and Inspector are visible in the desktop layout.
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
@@ -103,6 +114,105 @@ async function openCandidates() {
 function dockTab(name: "agent" | "detail") {
   fireEvent.mouseDown(within(screen.getByRole("tablist", { name: w("dockTabs") })).getByRole("tab", { name: w(name) }), { button: 0, ctrlKey: false });
 }
+
+async function openAssistantCandidate(width: number, ordinal: string) {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: width });
+  const context = { projectId: project.metadata.projectId, sessionToken: project.sessionToken }, conversationId = fixtureIdentity(68000), threadKey = { projectId: context.projectId, conversationId };
+  const base = conversationWorkPlanFixture(threadKey), plan = copy(base.prepared.plan), observed: unknown = copy(aiFixture.responses.view);
+  if (!validateResponseView(observed) || !plan.preview || !observed.rows[0].output || base.revision.content.kind !== "proposal") throw new Error("Complete assistant candidate fixture required");
+  const view = observed, item = { ...copy(plan.preview.items[0]), unitId: target.unitId, sourceRevisionId: target.sourceRevisionId,
+    sourceSnapshotId: target.sourceSnapshotId, nativeKey: target.nativeKey, sourceText: target.sourceText, context: null };
+  plan.scope = [{ ...plan.scope[0], unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, sourceSnapshotId: item.sourceSnapshotId, nativeKey: item.nativeKey }];
+  plan.preview.items = [item]; plan.preview.config.maxItems = 1;
+  const output = view.rows[0].output; if (!output) throw new Error("Returned assistant text required");
+  view.rows = [{ ...view.rows[0], item, savedRevisionId: candidate.revisionId, output: { ...output, unitId: item.unitId, text: candidate.text } }];
+  view.detail.items = [{ ...view.detail.items[0], scope: { kind: "translation", id: target.unitId, locale: target.locale },
+    status: { ...view.detail.items[0].status, adoption: "committed" } }];
+  view.detail.progress.adopted = 1; view.detail.recovery.units = [];
+  view.config = copy(plan.preview.config); view.recipe = plan.preview.recipe; view.planId = plan.planId; view.planGeneration = "1";
+  const link = { ...base.prepared.proposal, planId: plan.planId, planDigest: plan.digest, actionId: fixtureIdentity(68001), ordinal: "1" };
+  const start = { projectId: context.projectId, planId: plan.planId, actionId: link.actionId, expectedGeneration: "1", taskId: view.detail.taskId, attemptId: view.detail.attemptId };
+  const run: unknown = { projectId: context.projectId, planId: plan.planId, planDigest: plan.digest, lease: { planId: plan.planId, generation: "1" }, state: "active", lastStart: start, budgetRootTaskId: start.taskId, budget: null };
+  const status: unknown = { plan, lease: { planId: plan.planId, generation: "1" }, state: "active", effects: ["save-candidate"], expiresAt: "18446744073709551615", toolInvocations: null };
+  const revision: TranslationRevision = { ...copy(candidate), ordinal, attemptId: start.attemptId, itemId: view.rows[0].itemId, resultId: view.rows[0].resultId };
+  if (!validateResponseWorkPlan(plan) || !validateResponseView(view) || !validateResponseWorkPlanRun(run) || !validateResponseWorkPlanStatus(status) || !validateResponseRevision(revision)) throw new Error("Invalid assistant candidate projection");
+  const revisionRead = vi.fn(async () => copy(revision));
+  nativeInvoke.mockImplementation(async command => {
+    if (command === "read_ai_translation") return copy(view);
+    if (command === "read_translation_revision") return revisionRead();
+    throw new Error(`Unexpected assistant candidate command: ${command}`);
+  });
+  let journal: ConversationDraftHead = { key: threadKey, revision: "1", writerId: fixtureIdentity(68002), value: { text: "Retained message draft", editSeq: "1", pending: null } };
+  vi.spyOn(conversationDraftCommands, "list").mockResolvedValue({ items: [], next: null });
+  vi.spyOn(conversationDraftCommands, "read").mockImplementation(async () => copy(journal));
+  vi.spyOn(conversationDraftCommands, "write").mockImplementation(async ({ write }) => {
+    const value: unknown = { key: write.key, writerId: write.writerId, revision: String(BigInt(journal.revision) + 1n), value: canonicalConversationDraft(write.value) };
+    if (!validateResponseConversationWritten(value)) throw new Error("Invalid assistant journal fixture"); journal = value; return copy(value);
+  });
+  vi.spyOn(conversationCommands, "list").mockResolvedValue({ projectId: context.projectId, rows: [{ ...threadKey, title: "Recorded assistant", ordinal: "1" }], nextAfter: null });
+  vi.spyOn(conversationCommands, "messages").mockResolvedValue({ ...threadKey, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "planningAttempts").mockResolvedValue({ ...threadKey, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalRevisions").mockResolvedValue({ ...threadKey, rows: [], nextAfter: null });
+  vi.spyOn(conversationCommands, "proposalWorkPlans").mockResolvedValue({ ...threadKey, rows: [link], nextAfter: null });
+  vi.spyOn(conversationCommands, "readProposal").mockResolvedValue({ ...base.revision, content: { ...base.revision.content, unitIds: [target.unitId] } });
+  vi.spyOn(workPlanCommands, "status").mockResolvedValue(status); vi.spyOn(workPlanCommands, "run").mockResolvedValue(run);
+  vi.spyOn(executionCommands, "attempt").mockResolvedValue(view.detail);
+  vi.mocked(translationCommands.history).mockImplementation(async () => ({ ...historyView(), rows: [copy(revision)], total: ordinal }));
+  const close = vi.fn(async () => ({ closed: true }));
+  controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  const lifecycle = controller; render(<StrictMode><WorkbenchApp controller={lifecycle} native /></StrictMode>);
+  fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } }); fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
+  const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
+  await waitFor(() => expect(details).toBeEnabled());
+  if (width < 700) fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
+  const choose = await screen.findByRole("button", { name: i18n.t("conversation.chooseThread") });
+  await waitFor(() => expect(choose).toBeEnabled()); choose.focus(); fireEvent.keyDown(choose, { key: "ArrowDown" });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Recorded assistant" }));
+  const composer = await screen.findByRole("textbox", { name: i18n.t("conversation.message") });
+  fireEvent.click(await screen.findByRole("button", { name: i18n.t("conversation.runShow") }));
+  await screen.findByRole("heading", { name: i18n.t("conversation.runStateActive") });
+  expect(screen.getByRole("button", { name: i18n.t("conversation.runPause") })).toBeEnabled(); expect(screen.getByRole("button", { name: i18n.t("conversation.runStop") })).toBeEnabled();
+  expect(nativeInvoke.mock.calls.some(([command]) => command === "read_ai_translation")).toBe(false);
+  fireEvent.click(await screen.findByRole("button", { name: i18n.t("conversation.runResultsShow") }));
+  const open = await screen.findByRole("button", { name: i18n.t("conversation.runResultsOpenCandidate") }); await waitFor(() => expect(open).toBeEnabled());
+  expect(screen.getByRole("button", { name: i18n.t("conversation.runPause") })).toBeEnabled(); expect(screen.getByRole("button", { name: i18n.t("conversation.runStop") })).toBeEnabled();
+  return { lifecycle, close, revision, revisionRead, composer, open, journal: () => copy(journal) };
+}
+
+it.each([[1440, "9007199254740993"], [360, "75"]] as const)("assistant run candidate navigates the real %spx workspace to its exact saved candidate page", async (width, ordinal) => {
+  const h = await openAssistantCandidate(width, ordinal); h.open.focus(); fireEvent.click(h.open);
+  const panel = await screen.findByRole("region", { name: w("candidateTitle") }, { timeout: 5000 });
+  expect(await within(panel).findByRole("region", { name: i18n.t("workbenchV2.candidateAudit") })).toBeVisible();
+  expect(translationCommands.history).toHaveBeenCalledWith({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    unitId: target.unitId, locale: target.locale, afterOrdinal: String(BigInt(ordinal) - 1n), limit: 50 });
+  expect(nativeInvoke).toHaveBeenCalledWith("read_translation_revision", { request: { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    unitId: target.unitId, locale: target.locale, revisionId: h.revision.revisionId } });
+  expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(translationCommands.decideCandidate).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
+}, 15000);
+
+it("assistant run candidate keeps the original view and message draft after a failed exact revision read, then recovers", async () => {
+  const h = await openAssistantCandidate(1440, "9007199254740993"); h.revisionRead.mockRejectedValueOnce(new Error("Exact candidate temporarily unavailable"));
+  fireEvent.change(h.composer, { target: { value: "Message B retained after failed navigation" } });
+  h.open.focus(); fireEvent.click(h.open); await screen.findByText(i18n.t("conversation.runResultsOpenFailed"));
+  expect(h.composer).toBeVisible(); expect(h.composer).toHaveValue("Message B retained after failed navigation");
+  expect(vi.mocked(translationCommands.history).mock.calls.some(([request]) => request.afterOrdinal === "9007199254740992")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runResultsRecoverRead") }));
+  const retry = await screen.findByRole("button", { name: i18n.t("conversation.runResultsOpenCandidate") }); await waitFor(() => expect(retry).toBeEnabled()); retry.focus(); fireEvent.click(retry);
+  await screen.findByRole("region", { name: w("candidateTitle") }); expect(h.journal().value?.text).toBe("Message B retained after failed navigation");
+  expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
+});
+
+it.each(["composition", "dialog"] as const)("assistant run candidate refuses a late revision while a %s owns the real workspace", async guard => {
+  const h = await openAssistantCandidate(1440, "75"); let answer!: (value: TranslationRevision) => void;
+  const reply = new Promise<TranslationRevision>(resolve => { answer = resolve; }); h.revisionRead.mockReturnValueOnce(reply);
+  h.open.focus(); fireEvent.click(h.open); await waitFor(() => expect(h.revisionRead).toHaveBeenCalledOnce());
+  if (guard === "composition") fireEvent.compositionStart(h.composer);
+  else { fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") })); await screen.findByRole("dialog"); }
+  await act(async () => { answer(h.revision); await reply; });
+  expect(vi.mocked(translationCommands.history).mock.calls.some(([request]) => request.afterOrdinal === "74")).toBe(false);
+  expect(h.journal().value?.text).toBe("Retained message draft"); expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
+  if (guard === "composition") fireEvent.compositionEnd(h.composer);
+});
 
 it("opens Inspector from the focused inline candidate, keeps the other snapshot observer current, and stages into the shared editor until explicit confirmation", async () => {
   const h = await openCandidates(), reads = h.lifecycle.getSnapshot().session!.reads;

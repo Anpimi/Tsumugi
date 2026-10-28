@@ -21,11 +21,12 @@ import type { ConversationInput, ConversationSession } from "./ConversationSessi
 import { runMatchesLink, type ConversationPlanLink } from "./conversationRun";
 import { emptyExecutionConsent, workPlanMinutesValid } from "./proposalWorkPlan";
 import { ConversationRunProgress } from "./ConversationRunProgress";
+import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
   owner: ConversationSession; input: ConversationInput; link: ConversationPlanLink;
-  visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string;
+  visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate;
 }
 
 const stateKeys = { active: "runStateActive", paused: "runStatePaused", stopped: "runStateStopped", "taken-over": "runStateTakenOver" } as const;
@@ -79,7 +80,7 @@ export function ConversationRunPanel(props: Props) {
   </section>;
 }
 
-function RunObservation({ owner, input, link, visible, disabled, gate, viewId, parentDialogId }: Props) {
+function RunObservation({ owner, input, link, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate }: Props) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads(), facts = useConnectionFacts(), id = useId(), inputOwner = `conversation-run-${id}`;
   const statusRegion = useRef<HTMLDivElement>(null);
@@ -202,7 +203,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
           connectionCurrent={connectionCurrent} capture={() => capture(true)} onFinished={finishAction}/>: null}
       </> : null}
     </> : null}
-    <ConversationRunProgress context={owner.context} link={link} status={status} visible={visible} canRead={canRead}/>
+    <ConversationRunProgress onOpenCandidate={onOpenCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}/>
   </div>;
 }
 

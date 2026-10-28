@@ -384,10 +384,12 @@ pub async fn read_ai_translation(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                let (host, store) = active.execution_parts()?;
+                let store = &active.store;
+                let running = active.execution.as_ref()
+                    .is_some_and(|host| host.runtime.is_active(request.attempt_id));
                 let input = store.execution_input(request.attempt_id).map_err(map_ai)?;
                 let settings = tsumugi_core::ai::settings(&input).map_err(map_ai)?;
-                let detail = attempt_detail(host, store, request.attempt_id, 0, 100)?;
+                let detail = attempt_detail_read(store, request.attempt_id, running, 0, 100)?;
                 let rows = detail
                     .items
                     .iter()
@@ -395,7 +397,9 @@ pub async fn read_ai_translation(
                         let item = tsumugi_core::ai::item_payload(&input, row.status.item_id)?;
                         let output = if let Some(id) = row.result_id {
                             let result = store.execution_result(request.attempt_id, id)?;
-                            if result.envelope().outcome == ExecutionState::Succeeded {
+                            if result.envelope().outcome == ExecutionState::Succeeded
+                                && row.status.validation == ValidationState::Valid
+                            {
                                 Some(tsumugi_core::ai::validate_output(&input, &result)?)
                             } else {
                                 None
@@ -412,7 +416,12 @@ pub async fn read_ai_translation(
                             }
                             _ => None,
                         };
-                        let automation = if let Some(view) = effect_projection(receipt, host.ai.automation.view(request.attempt_id, row.status.item_id)) {
+                        let live = if receipt.is_none() {
+                            active.execution.as_ref().and_then(|host| {
+                                host.ai.automation.view(request.attempt_id, row.status.item_id)
+                            })
+                        } else { None };
+                        let automation = if let Some(view) = effect_projection(receipt, live) {
                             Some(view)
                         } else if let Some(lease) = input.envelope().automation {
                             let plan = store.work_plan(lease.plan_id)?;

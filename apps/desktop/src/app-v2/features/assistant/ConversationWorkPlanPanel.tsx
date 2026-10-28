@@ -25,9 +25,11 @@ import { workPlanMinutesValid, type ProposalWorkPlanTools } from "./proposalWork
 import styles from "./ConversationWorkPlanPanel.module.css";
 import { ConversationRunPanel } from "./ConversationRunPanel";
 
+import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
+
 interface Props {
   owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
-  gate: InteractionGate; viewId: string | null; parentDialogId?: string;
+  gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate;
 }
 type PlanPage = Awaited<ReturnType<typeof conversationCommands.proposalWorkPlans>>;
 type PlanLink = PlanPage["rows"][number];
@@ -59,7 +61,7 @@ function WorkPlanHistoryRecord({ owner, link, visible, canRead, ...runProps }: P
 }
 
 /** A saved proposal fixes scope and policy; all new sharing and execution consent is explicit. */
-export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId }: Props) {
+export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const reads = useSessionReads(), facts = useConnectionFacts(), workPlan = input.workPlan;
   const conversationId = input.key.conversationId, revision = workPlan.revision;
@@ -268,7 +270,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
         if (canRead()) void history.refetch();
       }}>{t("retryRead")}</Button>}><p>{t("planHistoryFailed")}</p><CommandFailureDetails failure={commandFailure(history.error)}/></Banner> : null}
       {history.isSuccess && links.length === 0 ? <p>{t("planHistoryEmpty")}</p> : null}
-      {links.map(link => <WorkPlanHistoryRecord key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
+      {links.map(link => <WorkPlanHistoryRecord onOpenCandidate={onOpenCandidate} key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
         gate={gate} viewId={viewId} parentDialogId={parentDialogId} canRead={canRead}/>)}
       {history.hasNextPage ? <div className={styles.actions}><Button size="sm" pending={history.isFetchingNextPage} disabled={!visible || disabled || history.isFetching}
         onClick={() => { if (canRead()) void history.fetchNextPage(); }}>{t("planHistoryMore")}</Button></div> : null}

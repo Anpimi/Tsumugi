@@ -21,6 +21,7 @@ import { SplitView, SplitPanel, SplitHandle } from "../design-system/SplitView";
 import { CommandPalette } from "../design-system/CommandPalette";
 import { ProjectLifecycle, type ProjectSession } from "./platform/projectLifecycle";
 import { useNativeProjectClose, useProjectLifecycle } from "./platform/useProjectLifecycle";
+import type { OpenConversationRunCandidate } from "./features/assistant/conversationRunResultReads";
 import type { EntryReviewEditorRequest } from "./features/review/navigationTypes";
 import { createWorkspaceStore, type WorkspaceView } from "./workspace/workspaceStore";
 import { createWorkspaceRouter } from "./workspace/workspaceRouter";
@@ -325,12 +326,12 @@ function WorkspaceShell() {
   };
   function closePalette() { paletteRelease.current?.(); paletteRelease.current = null; setPalette(false); }
   function openPalette() { if (paletteRelease.current) return; paletteRelease.current = gate.pushDialog("workspace-palette"); setPalette(true); }
-  function closeDrawer() { drawerRelease.current?.(); drawerRelease.current = null; setDrawer(false); }
+  const closeDrawer = useCallback(() => { drawerRelease.current?.(); drawerRelease.current = null; setDrawer(false); }, []);
   useLayoutEffect(() => recoveryKey ? gate.pushDialog("draft-recovery") : undefined, [gate, recoveryKey !== null]);
-  function showDock() {
+  const showDock = useCallback(() => {
     if (narrow && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
     else requestAnimationFrame(() => dock.current?.focus());
-  }
+  }, [narrow, gate]);
   const revealedConversation = useRef(conversationReveal);
   useEffect(() => {
     if (revealedConversation.current === conversationReveal) return;
@@ -501,13 +502,28 @@ function WorkspaceShell() {
       return accepted;
     } catch { setCommandFailed(true); return false; }
   }
-  async function inspectCandidate(unitId: string, locale: string, revisionId: string | null) {
+  const inspectCandidate = useCallback(async (unitId: string, locale: string, revisionId: string | null, afterOrdinal = "0") => {
     const target = { entryMode: "table" as const, locale, focus: unitId, dock: "details" as const, detailTab: "candidates" as const,
-      candidateAfterOrdinal: "0", candidateInitialRevisionId: revisionId };
+      candidateAfterOrdinal: afterOrdinal, candidateInitialRevisionId: revisionId };
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
       : await runtime.navigation.open({ kind: "entries", ...target, editing: false, queueActive: false });
     if (accepted && narrow) showDock();
-  }
+    return accepted;
+  }, [view, runtime.navigation, narrow, showDock]);
+  const openRunCandidate = useCallback<OpenConversationRunCandidate>(async (target, current) => {
+    const allowed = () => current() && !disabled && !session.reads.retired
+      && target.projectId === session.project.metadata.projectId
+      && gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined });
+    if (!allowed()) return false;
+    const [{ resolveConversationRunCandidate }, { translationHistoryAfter }] = await Promise.all([
+      import("./features/assistant/conversationRunResultReads"), import("../translationCommands"),
+    ]);
+    if (!allowed()) return false;
+    const revision = await resolveConversationRunCandidate(executionContext(session.project), target);
+    if (!allowed()) return false;
+    if (narrow && drawer) closeDrawer();
+    return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1));
+  }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer]);
   async function inspectReview(unitId: string, locale: string) {
     const target = { entryMode: "table" as const, locale, focus: unitId, dock: "details" as const, detailTab: "detail" as const, editing: false, focusMode: false };
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
@@ -547,7 +563,7 @@ function WorkspaceShell() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={<ErrorState title={t("conversation.unavailable")}/>}><Suspense fallback={<LoadingState label={t("conversation.loading")}/>}>
-        {conversations ? <ConversationPanel owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null}/>
           : conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>}
       </Suspense></FeatureBoundary></TabsContent>

@@ -7,11 +7,13 @@ import { workPlanCommands, type WorkPlanRunView, type WorkPlanStatusView } from 
 import { Button } from "../../../design-system/Button";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import type { ConversationPlanLink } from "./conversationRun";
+import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
+import { ConversationRunResults } from "./ConversationRunResults";
 import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView | null;
-  visible: boolean; canRead: () => boolean;
+  visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationRunCandidate;
 }
 
 function RunAttempt({ context, run, visible, canRead }: Pick<Props, "context" | "visible" | "canRead"> & { run: WorkPlanRunView }) {
@@ -43,7 +45,7 @@ function RunAttempt({ context, run, visible, canRead }: Pick<Props, "context" | 
 }
 
 /** Read the original plan's start proof before asking the execution ledger for progress. */
-export function ConversationRunProgress({ context, link, status, visible, canRead }: Props) {
+export function ConversationRunProgress({ context, link, status, visible, canRead, onOpenCandidate }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const read = useSessionQuery({ key: ["work-plan-run", link.planId], scopes: ["project", "execution"], enabled: visible,
     read: async () => {
@@ -67,6 +69,9 @@ export function ConversationRunProgress({ context, link, status, visible, canRea
       <section className={styles.material} aria-label={t("runBudgetTitle")}><h5>{t("runBudgetTitle")}</h5>
         {run.budget ? <AiProviderBudget budget={run.budget}/> : <p>{t(run.budgetRootTaskId ? "runBudgetMissing" : "runNoModelBudget")}</p>}
       </section>
+      {sameStatus && status?.plan.preview && !status.plan.options.teamExecution && !status.plan.options.mcpTermQuery && run.lastStart
+        ? <ConversationRunResults context={context} link={link} plan={status.plan} start={run.lastStart}
+          visible={visible} canRead={canRead} onOpenCandidate={onOpenCandidate}/> : null}
     </> : null}
   </div>;
 }

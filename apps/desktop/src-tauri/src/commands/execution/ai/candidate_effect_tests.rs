@@ -375,10 +375,36 @@ fn request(h: &Harness, unit: ExecutionId, revision: ExecutionId) -> Value {
     json!({"sessionToken":h.token,"projectId":h.project,"unitId":unit,"locale":"zh-CN","revisionId":revision})
 }
 
+fn ai_request(h: &Harness, attempt: ExecutionId) -> Value {
+    json!({"sessionToken":h.token,"projectId":h.project,"attemptId":attempt})
+}
+
+fn ai_row(view: &Value, item: ExecutionId) -> &Value {
+    view["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["itemId"] == json!(item))
+        .unwrap()
+}
+
+fn validation(view: &Value, item: ExecutionId) -> &Value {
+    &view["detail"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["status"]["itemId"] == json!(item))
+        .unwrap()["status"]["validation"]
+}
+
+fn database_bytes(h: &Harness) -> Vec<u8> {
+    std::fs::read(h._directory.path().join("project/project.sqlite3")).unwrap()
+}
+
 #[test]
 fn ai_candidate_effect_exact_ipc_keeps_original_receipt_after_pause_and_later_candidate_without_runtime()
  {
-    let h = opened(false);
+    let mut h = opened(false);
     let unit = h.units[0];
     let project = h.project;
     let (first, original, manual, clock) =
@@ -460,6 +486,66 @@ fn ai_candidate_effect_exact_ipc_keeps_original_receipt_after_pause_and_later_ca
         serde_json::to_value(original).unwrap()
     );
     assert_eq!(view["effect"]["retryable"], false);
+    let before = database_bytes(&h);
+    let ai = call(
+        &h.window,
+        "read_ai_translation",
+        ai_request(&h, first.input.envelope().attempt_id),
+    )
+    .unwrap();
+    assert_eq!(
+        ai["planId"],
+        json!(first.input.envelope().automation.unwrap().plan_id)
+    );
+    assert_eq!(
+        ai["planGeneration"],
+        json!(first.input.envelope().automation.unwrap().generation)
+    );
+    assert_eq!(
+        ai["detail"]["taskId"],
+        json!(first.input.envelope().task_id)
+    );
+    assert_eq!(
+        ai["detail"]["attemptId"],
+        json!(first.input.envelope().attempt_id)
+    );
+    assert_eq!(ai["rows"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        ai["rows"][0]["itemId"],
+        json!(first.result.envelope().item_id)
+    );
+    assert_eq!(
+        ai["rows"][0]["resultId"],
+        json!(first.result.envelope().result_id)
+    );
+    assert_eq!(ai["rows"][0]["savedRevisionId"], json!(first.revision));
+    assert_eq!(ai["rows"][0]["output"]["text"], "你好 {{name}} e\u{301} 👩🏽‍💻");
+    assert_eq!(ai["rows"][0]["automation"], view["effect"]);
+    assert_eq!(ai["budget"]["dispatched"], 0);
+    assert_eq!(database_bytes(&h), before);
+    let revision = first.revision;
+    let attempt = first.input.envelope().attempt_id;
+    let result = first.result.envelope().result_id;
+    let item = first.result.envelope().item_id;
+    let expected_protection = h.app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        let saved = store
+            .translation_revision(project, unit, "zh-CN", revision)
+            .unwrap();
+        assert_eq!(serde_json::to_value(saved.origin_kind).unwrap(), "ai");
+        assert_eq!(saved.attempt_id, Some(attempt));
+        assert_eq!(saved.result_id, Some(result));
+        assert_eq!(saved.item_id, Some(item));
+        assert_eq!(
+            saved.source_revision_id,
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .source_revision_id
+        );
+        store.work_protection(unit, "zh-CN").unwrap()
+    });
+    let manual_event = manual.event_id;
     h.app.state::<AppState>().sessions.with(move |sessions| {
         let active = sessions.active.as_ref().unwrap();
         assert!(
@@ -489,6 +575,222 @@ fn ai_candidate_effect_exact_ipc_keeps_original_receipt_after_pause_and_later_ca
             "{key}"
         );
     }
+    // This explicit fixture grant installs the ordinary live tracker. The read
+    // itself neither installs one nor submits the queued synthetic input.
+    let other_unit = h.units[1];
+    let live_input = h.app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let store = &mut active.store;
+        let config = tsumugi_core::ai::AiConfig {
+            endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+            model: "synthetic-live-effect".into(),
+            credential_env: String::new(),
+            ..Default::default()
+        };
+        let plan = store
+            .prepare_work_plan(Some(config), "zh-CN", &[other_unit], PlanOptions::default())
+            .unwrap();
+        let grant = store
+            .authorize_work_plan(
+                &plan,
+                &AuthorizeWorkPlan {
+                    action_id: ExecutionId::new(),
+                    plan_digest: plan.digest.clone(),
+                    confirmed: true,
+                    effects: plan.authorization_effects().unwrap(),
+                    expires_at: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs()
+                        + 60,
+                },
+            )
+            .unwrap();
+        let input = FixedInput::capture(grant.input.unwrap()).unwrap();
+        store.enqueue_execution(&input).unwrap();
+        // The fixture queue predates this Host: creating it does not admit that
+        // historical input to the runtime's new-work sequence.
+        let (host, store) = active.execution_parts().unwrap();
+        host.ai.track(store, &input, None).unwrap();
+        input
+    });
+    let before = database_bytes(&h);
+    let live = call(
+        &h.window,
+        "read_ai_translation",
+        ai_request(&h, live_input.envelope().attempt_id),
+    )
+    .unwrap();
+    assert_eq!(live["rows"][0]["automation"]["phase"], "waiting");
+    let persisted = call(&h.window, "read_ai_translation", ai_request(&h, attempt)).unwrap();
+    assert_eq!(persisted["rows"][0]["automation"], view["effect"]);
+    assert_eq!(database_bytes(&h), before);
+    h.app
+        .state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_some()));
+    // End the fixture-owned waiting tracker before closing its project. Reads
+    // above deliberately preserve it and cannot perform this cancellation.
+    h.app.state::<AppState>().sessions.with(|sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution
+            .as_mut()
+            .unwrap()
+            .ai
+            .stop();
+    });
+    call(&h.window, "close_project", json!({"sessionToken":h.token})).unwrap();
+    let reopened = call(
+        &h.window,
+        "open_project",
+        json!({"locator":h._directory.path().join("project")}),
+    )
+    .unwrap();
+    h.token = reopened["sessionToken"].clone();
+    let before = database_bytes(&h);
+    let historical = call(&h.window, "read_ai_translation", ai_request(&h, attempt)).unwrap();
+    assert_eq!(historical["rows"], ai["rows"]);
+    let inactive = call(
+        &h.window,
+        "read_ai_translation",
+        ai_request(&h, live_input.envelope().attempt_id),
+    )
+    .unwrap();
+    assert!(
+        inactive["rows"][0]["automation"].is_null(),
+        "history cannot rebuild an unfinished live effect tracker"
+    );
+    assert_eq!(inactive["budget"]["dispatched"], 0);
+    assert_eq!(database_bytes(&h), before);
+    h.app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none());
+        let current = active.store.review_target(project, unit, "zh-CN").unwrap();
+        assert_eq!(current.selection_id, Some(manual_event));
+        assert_eq!(current.translation_text.as_deref(), Some(""));
+        assert!(current.current_check.is_none());
+        assert_eq!(
+            active.store.work_protection(unit, "zh-CN").unwrap(),
+            expected_protection
+        );
+    });
+}
+
+struct AiOutputValidation;
+impl tsumugi_core::execution::ResultValidator for AiOutputValidation {
+    fn operation(&self) -> &str {
+        tsumugi_core::ai::OPERATION
+    }
+    fn validate(&self, input: &FixedInput, result: &FixedResult) -> Result<(), ExecutionError> {
+        tsumugi_core::ai::validate_output(input, result).map(|_| ())
+    }
+}
+
+#[test]
+fn ai_history_read_keeps_pending_and_invalid_rows_without_hiding_valid_empty_candidates_or_bad_frames()
+ {
+    let h = opened(false);
+    let units = h.units.clone();
+    let (input, bad_result, saved) = h.app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let config = tsumugi_core::ai::AiConfig {
+            endpoint:"http://127.0.0.1:9/v1/chat/completions".into(), model:"synthetic-mixed-validation".into(),
+            credential_env:String::new(), ..Default::default()
+        };
+        let input = store.preview_ai(config, "zh-CN", &units).unwrap().fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        store.enqueue_execution(&input).unwrap();
+        let mut bad = None;
+        let mut saved = None;
+        for (index, item) in input.envelope().items.iter().enumerate() {
+            let payload = tsumugi_core::ai::item_payload(&input, item.item_id).unwrap();
+            let dispatch = store.dispatch_execution_item(input.envelope().attempt_id, item.item_id).unwrap();
+            let result = FixedResult::capture(ResultEnvelope {
+                project_id:input.envelope().project_id, attempt_id:input.envelope().attempt_id,
+                item_id:item.item_id, result_id:ExecutionId::new(), supersedes:None,
+                dispatch_token:dispatch.dispatch_token, capability_id:input.envelope().capability_id.clone(),
+                capability_version:input.envelope().capability_version.clone(), outcome:ExecutionState::Succeeded,
+                output:Some(json!({"unitId":payload.unit_id,"targetLocale":"zh-CN","text":"","usage":null,"requests":if index==0 {0} else {1},"usageIncomplete":true})),
+                diagnostic:None, plugin:None,
+            }, &input, dispatch.dispatch_token).unwrap();
+            store.save_execution_result(&result).unwrap();
+            if index == 0 { bad = Some(result.envelope().result_id); }
+            else {
+                store.validate_execution_result(input.envelope().attempt_id, result.envelope().result_id).unwrap();
+                let adoption_unit = input.envelope().units.iter().find(|unit| unit.item_ids.contains(&item.item_id)).unwrap().unit_id;
+                let action = store.prepare_adoption(input.envelope().attempt_id, adoption_unit, vec![result.envelope().result_id], Value::Null).unwrap();
+                store.adopt_execution(&action, &AiAdoptionHandler).unwrap();
+                saved = store.saved_ai_candidate(input.envelope().attempt_id, item.item_id).unwrap();
+            }
+        }
+        (input, bad.unwrap(), saved.unwrap())
+    });
+    let request = ai_request(&h, input.envelope().attempt_id);
+    let bad_item = input.envelope().items[0].item_id;
+    let good_item = input.envelope().items[1].item_id;
+    let before = database_bytes(&h);
+    let pending = call(&h.window, "read_ai_translation", request.clone()).unwrap();
+    assert_eq!(pending["rows"].as_array().unwrap().len(), 2);
+    assert_eq!(validation(&pending, bad_item), "pending");
+    assert!(ai_row(&pending, bad_item)["output"].is_null());
+    assert_eq!(ai_row(&pending, good_item)["output"]["text"], "");
+    assert_eq!(ai_row(&pending, good_item)["savedRevisionId"], json!(saved));
+    assert_eq!(database_bytes(&h), before);
+    let attempt = input.envelope().attempt_id;
+    h.app.state::<AppState>().sessions.with(move |sessions| {
+        let store = &mut sessions.active.as_mut().unwrap().store;
+        let validation = store
+            .capture_result_validation(attempt, bad_result)
+            .unwrap()
+            .prepare(&AiOutputValidation)
+            .unwrap();
+        store.commit_result_validation(validation).unwrap();
+    });
+    let before = database_bytes(&h);
+    let invalid = call(&h.window, "read_ai_translation", request.clone()).unwrap();
+    assert_eq!(validation(&invalid, bad_item), "invalid");
+    assert!(ai_row(&invalid, bad_item)["output"].is_null());
+    assert_eq!(ai_row(&invalid, good_item)["savedRevisionId"], json!(saved));
+    assert_eq!(ai_row(&invalid, good_item)["output"]["text"], "");
+    assert_eq!(database_bytes(&h), before);
+    let database =
+        rusqlite::Connection::open(h._directory.path().join("project/project.sqlite3")).unwrap();
+    let digest: String = database
+        .query_row(
+            "SELECT digest FROM execution_results WHERE result_id=?1",
+            [bad_result.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    database
+        .execute(
+            "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+            rusqlite::params![bad_result.to_string(), "0".repeat(64)],
+        )
+        .unwrap();
+    let before = database_bytes(&h);
+    assert_eq!(
+        call(&h.window, "read_ai_translation", request.clone()).unwrap_err()["code"],
+        "output-invalid"
+    );
+    assert_eq!(database_bytes(&h), before);
+    database
+        .execute(
+            "UPDATE execution_results SET digest=?2 WHERE result_id=?1",
+            rusqlite::params![bad_result.to_string(), digest],
+        )
+        .unwrap();
+    let restored = call(&h.window, "read_ai_translation", request).unwrap();
+    assert_eq!(
+        ai_row(&restored, good_item)["savedRevisionId"],
+        json!(saved)
+    );
+    h.app
+        .state::<AppState>()
+        .sessions
+        .with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
 }
 
 #[test]
