@@ -4,13 +4,14 @@ import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-re
 import { conversationCommands, isConversationMessageText } from "../../../conversationCommands";
 import { commandFailure, CommandFailureDetails } from "../../../CommandFailure";
 import { Button, IconButton } from "../../../design-system/Button";
-import { Field, TextArea } from "../../../design-system/Field";
+import { Field, TextArea, TextInput } from "../../../design-system/Field";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-system/Feedback";
 import { Menu } from "../../../design-system/Menu";
 import { useSessionInfiniteQuery, useSessionQuery } from "../../../SessionReadProvider";
 import type { SessionRequest } from "../../../executionCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
-import type { ConversationSession } from "./ConversationSession";
+import type { ConversationInput, ConversationSession } from "./ConversationSession";
+import { ConversationPlanningPanel } from "./ConversationPlanningPanel";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
@@ -40,7 +41,8 @@ function PlanningResult({ context, conversationId, attemptId, visible }: { conte
   </section>;
 }
 
-function ThreadHistory({ context, conversationId, visible }: { context: SessionRequest; conversationId: string; visible: boolean }) {
+function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput }) {
+  const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
     initialPageParam: null as string | null, nextPage: noNext,
@@ -50,12 +52,21 @@ function ThreadHistory({ context, conversationId, visible }: { context: SessionR
     read: after => conversationCommands.planningAttempts({ ...context, conversationId, after, limit: 50 }) });
   const saved = messages.data?.pages.flatMap(page => page.rows) ?? [];
   const runs = attempts.data?.pages.flatMap(page => page.rows) ?? [];
+  const blocked = disabled || !visible || !!input.value.pending || !!input.busy || !!planning.busy || !!input.failure;
+  const allowed = () => !blocked && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
   return <>
+    <Button size="sm" disabled={disabled || !visible} aria-expanded={planning.open} onClick={() => {
+      if (gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) owner.setPlanningOpen(conversationId, !planning.open);
+    }}>{t(planning.open ? "askClose" : "askTitle")}</Button>
     {messages.isPending ? <LoadingState label={t("readingMessages")}/> : messages.isError ? <ErrorState title={t("messagesReadFailed")}
       action={<Button onClick={() => void messages.refetch()}>{t("retryRead")}</Button>}/> : saved.length === 0 ? <p className={styles.meta}>{t("emptyThread")}</p>
       : <section aria-label={t("savedMessages")} className={local.history}>{saved.map(message => <div key={message.messageId} className={styles.userMessage}>
-        <span className={local.author}>{t("you")}</span><p className={local.text}>{message.body}</p></div>)}</section>}
+        <span className={local.author}>{t("you")}</span><p className={local.text}>{message.body}</p>
+        {planning.open ? <label className={local.check}><TextInput className={local.checkbox} type="checkbox" checked={planning.messageIds.includes(message.messageId)}
+          disabled={blocked || !planning.messageIds.includes(message.messageId) && planning.messageIds.length >= 16}
+          onChange={event => { if (allowed()) owner.setPlanningMessages(conversationId, event.target.checked ? [...planning.messageIds, message.messageId] : planning.messageIds.filter(id => id !== message.messageId)); }}/><span>{t("askChooseMessage", { number: message.ordinal })}</span></label> : null}</div>)}</section>}
     {messages.hasNextPage ? <Button pending={messages.isFetchingNextPage} onClick={() => void messages.fetchNextPage()}>{t("moreMessages")}</Button> : null}
+    {planning.open ? <ConversationPlanningPanel owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/> : null}
     {attempts.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void attempts.refetch()}>{t("retryRead")}</Button>}>{t("repliesReadFailed")}</Banner> : null}
     {runs.length ? <section aria-label={t("savedReplies")} className={local.history}>{runs.map(run => <PlanningResult key={run.attemptId} context={context}
       conversationId={conversationId} attemptId={run.attemptId} visible={visible}/>)}</section> : null}
@@ -99,14 +110,14 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={blocked || state.hydration !== "ready"} onClick={() => void owner.create()}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory key={activeId} context={owner.context} conversationId={activeId} visible={visible}/> : <p role="status">{t("creatingThread")}</p>}
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
     {input ? <div className={styles.composer}>
       {input.notice ? <p role="status" className={local.notice}>{t(input.notice)}</p> : null}
       {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
         <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
       {pending && !input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
-        <p>{t(input.outcome === "absent" ? replayable ? "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : "pending")}</p>
+        <p>{t(input.outcome === "blocked" ? "absentBlocked" : input.outcome === "absent" ? replayable ? "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : "pending")}</p>
         <CommandFailureDetails failure={input.failure?.cause ?? null}/>
         <div className={local.actions}><Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.check(activeId!)}>{t("check")}</Button>
           {input.outcome === "absent" && replayable ? <Button size="sm" disabled={blocked || !!input.busy} onClick={() => void owner.retry(activeId!)}>{t("retryOriginal")}</Button> : null}</div>
@@ -122,8 +133,8 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
             event.preventDefault(); event.stopPropagation(); if (!blocked) void owner.append(activeId!);
           }}/>
       </Field>
-      <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? "savingMessage" : input.busy === "check" ? "checking" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</span>
-        <Button variant="secondary" size="sm" disabled={blocked || !!input.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
+      <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? pending?.kind === "planning" ? "askStarting" : "savingMessage" : input.busy === "check" ? "checking" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</span>
+        <Button variant="secondary" size="sm" disabled={blocked || !!input.busy || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
           onClick={() => void owner.append(activeId!)}>{t("saveMessage")}</Button></div>
     </div> : null}
   </div>;

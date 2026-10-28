@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import { SessionReadProvider } from "../../../SessionReadProvider";
@@ -9,6 +9,9 @@ import { ConversationSession } from "./ConversationSession";
 import ConversationPanel from "./ConversationPanel";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
+import { connectionFixture } from "../../../testSupport/connectionFixture";
+import { ApplicationReadProvider } from "../../../ApplicationReadProvider";
+import { defaultAiConfig } from "../../../aiCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -17,6 +20,72 @@ const thread = { projectId: context.projectId, conversationId, title: "春季更
 const key = { projectId: context.projectId, conversationId };
 beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("zh-CN"); });
 afterEach(cleanup);
+
+it("reviews explicitly selected messages and exact limits before one request, clears changed consent, and blocks IME and other dialogs", async () => {
+  let head: ConversationDraftHead = { key, revision: "0", writerId: null, value: null };
+  const message = { ...key, messageId: fixtureIdentity(902), body: "  请先解释这条消息，不要改译文。\n", author: "human", ordinal: "1" };
+  const config = { ...defaultAiConfig, endpoint: "http://127.0.0.1:11434/v1/chat/completions", model: "模拟助理", credentialEnv: "",
+    connectionProfile: { profileId: fixtureIdentity(910), storeId: fixtureIdentity(911), revision: "1", digest: "a".repeat(64) } };
+  let prepared: unknown;
+  invoke.mockImplementation(async (command: string, { request }) => {
+    if (command === "list_project_conversations") return { projectId: context.projectId, rows: [thread], nextAfter: null };
+    if (command === "read_project_conversation_messages") return { ...key, rows: [message], nextAfter: null };
+    if (command === "read_conversation_planning_attempts") return { ...key, rows: [], nextAfter: null };
+    if (command === "read_model_connections") return connectionFixture([config]);
+    if (command === "read_local_conversation_draft") return structuredClone(head);
+    if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
+      const write = request.write ?? request.resolve.write;
+      head = { key, revision: String(BigInt(head.revision) + 1n), writerId: write.writerId, value: structuredClone(write.value) }; return structuredClone(head);
+    }
+    if (command === "prepare_conversation_planning") {
+      const system = "Synthetic instructions", input = JSON.stringify({ messages: [message.body] });
+      prepared = { preparationId: fixtureIdentity(915), previewDigest: "b".repeat(64), preview: { version: 2, ...key, config: request.config,
+        scope: request.scope, selectedMessages: [message], units: [], system, input, byteLength: new TextEncoder().encode(JSON.stringify({ system, input })).length,
+        brief: { messages: 1, units: 0, sourceTexts: 0, terms: 0, manualContexts: 0, manualContextFacts: 0, sourceContextFacts: 0, sourceContextNeighbors: 0 } } };
+      return prepared;
+    }
+    if (command === "validate_conversation_planning") return prepared;
+    if (command === "start_conversation_planning") {
+      expect(head.value?.pending).toMatchObject({ kind: "planning", request: { ...key, consent: request.consent } });
+      return { ...key, consent: request.consent, inputDigest: "c".repeat(64) };
+    }
+    throw new Error(`Unexpected ${command}`);
+  });
+  const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
+  const owner = new ConversationSession(context, () => reads.invalidate(["project"]), () => {}, { list: async () => ({ items: [], next: null }) });
+  await owner.initialize(); await owner.open(conversationId);
+  render(<ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
+    <ConversationPanel owner={owner} visible disabled={false} gate={gate} viewId="entries"/>
+  </SessionReadProvider></ApplicationReadProvider>);
+  await screen.findByText("请先解释这条消息，不要改译文。");
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_conversation_planning" || command === "start_conversation_planning")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "询问助理" }));
+  expect(screen.getByRole("button", { name: "核对发送内容" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("checkbox", { name: "发送第 1 条消息" }));
+  await screen.findByRole("option", { name: "Synthetic 模拟助理 · 模拟助理" });
+  fireEvent.change(screen.getByRole("combobox", { name: i18n.t("connections.choose") }), { target: { value: config.connectionProfile.profileId } });
+  fireEvent.click(screen.getByRole("button", { name: "核对发送内容" }));
+  const preview = await screen.findByRole("region", { name: "核对这次请求" });
+  expect(within(preview).getByText("只分享这 1 条消息，不带项目条目或资源。")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "发送一次" })).toBeDisabled();
+  const consent = within(preview).getByRole("checkbox"); fireEvent.click(consent);
+  fireEvent.change(screen.getByRole("spinbutton", { name: i18n.t("ai.maxOutputTokens") }), { target: { value: "1500" } });
+  expect(screen.queryByRole("region", { name: "核对这次请求" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "核对发送内容" }));
+  const refreshed = await screen.findByRole("region", { name: "核对这次请求" });
+  const confirm = within(refreshed).getByRole("checkbox"); expect(confirm).not.toBeChecked(); fireEvent.click(confirm);
+  const send = screen.getByRole("button", { name: "发送一次" });
+  fireEvent.compositionStart(confirm); fireEvent.click(send); expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning")).toBe(false);
+  fireEvent.compositionEnd(confirm);
+  const close = gate.pushDialog("other"); fireEvent.click(send); close();
+  expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning")).toBe(false);
+  fireEvent.click(send);
+  await screen.findByText("规划请求已记录，可以在这个对话里查看结果。");
+  const starts = invoke.mock.calls.filter(([command]) => command === "start_conversation_planning"); expect(starts).toHaveLength(1);
+  expect(starts[0][1].request.consent).toMatchObject({ shareMessages: true, shareUnits: false });
+  expect(head.value?.pending).toBeNull();
+  owner.retire(); reads.retire();
+});
 
 it("shows saved messages and keeps composer input across presentation changes without IME or dialog shortcuts submitting it", async () => {
   let head: ConversationDraftHead = { key, revision: "0", writerId: null, value: null };
@@ -48,7 +117,8 @@ it("shows saved messages and keeps composer input across presentation changes wi
   </SessionReadProvider>;
   const view = render(tree());
   await waitFor(() => expect(screen.getByRole("button", { name: "对话" })).toBeEnabled());
-  fireEvent.pointerDown(screen.getByRole("button", { name: "对话" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+  screen.getByRole("button", { name: "对话" }).focus();
+  fireEvent.keyDown(screen.getByRole("button", { name: "对话" }), { key: "ArrowDown" });
   fireEvent.click(await screen.findByRole("menuitem", { name: "春季更新" }));
   const input = await screen.findByRole("textbox", { name: "消息" });
   fireEvent.focus(input); fireEvent.change(input, { target: { value: "  先看这几条 🙂\n" } });

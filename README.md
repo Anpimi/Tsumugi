@@ -102,7 +102,7 @@ The desktop app organizes work into dedicated views accessible from the sidebar.
 - **Tasks**: Monitor persisted execution progress, cancel running work, reconcile interrupted operations, and adopt completed outputs.
 - **Build & Export**: Build verified language files from approved translations and export them to local folders.
 
-In the opt-in desktop workspace, the right-hand conversation panel can create and select threads, page through messages, save messages, recover local input and uncertain requests, and read the thread’s recorded planning replies and proposals. Saving a message does not call a model. Controls to send a planning request, revise a proposal, or confirm execution are not yet available.
+In the opt-in desktop workspace, the right-hand conversation panel can create and select threads, page through messages, save messages, recover local input and uncertain requests, and read the thread’s recorded planning replies and proposals. Saving a message does not call a model. To ask the assistant, explicitly select 1–16 saved messages, review the connection, material and limits, then consent to one request. This message-only flow includes no project entries or resources and does not authorize a work plan. Entry-scoped planning, proposal editing and execution confirmation controls are not yet available.
 
 In the opt-in desktop workspace, the entries view can filter by translation, review, issue, impact, delivery-blocking, and AI candidate status. Select the current page or capture all matching entries as a fixed set; changing the filter does not expand that selection. Use the arrow keys or J/K to move through the editing queue and Enter to edit the focused entry. The full-page display shows the current loaded page.
 
