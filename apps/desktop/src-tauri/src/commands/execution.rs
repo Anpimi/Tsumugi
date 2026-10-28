@@ -120,7 +120,7 @@ macro_rules! handlers {
         review::read_segment_page,review::capture_segment_scope,review::read_segment_queue_window,review::read_segment_source_comparison,
         review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
-        release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
+        release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_record,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
         ai::read_ai_start_action,
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::read_ai_candidate_effect,ai::retry_work_plan_effect,

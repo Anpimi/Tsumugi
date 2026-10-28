@@ -1,5 +1,6 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { EntryReviewNavigation } from "../features/review/navigationTypes";
+import type { DecisionCursor } from "../../generated/decisions.responses";
 import { copyWorkspaceSelection, type WorkspaceSelection } from "./workspaceSelection";
 
 export const viewKinds = ["entries", "knowledge", "runs", "delivery", "decisions", "extensions", "settings"] as const;
@@ -15,6 +16,9 @@ export interface WorkspaceView {
   detailTab: "detail" | "context" | "candidates" | "issues" | "history";
   reviewHistoryOffset: number;
   reviewNavigation: EntryReviewNavigation | null;
+  decisionCursor: DecisionCursor | null;
+  decisionPrevious: readonly (DecisionCursor | null)[];
+  decisionFinding: { runId: string; issueId: string; offset: number } | null;
   candidateAfterOrdinal: string;
   candidateInitialRevisionId: string | null;
   candidateCompareOpen: boolean;
@@ -80,6 +84,9 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     detailTab: input.detailTab ?? "detail",
     reviewHistoryOffset: input.reviewHistoryOffset ?? 0,
     reviewNavigation: input.reviewNavigation ?? null,
+    decisionCursor: input.decisionCursor ? { ...input.decisionCursor } : null,
+    decisionPrevious: (input.decisionPrevious ?? []).map(cursor => cursor ? { ...cursor } : null),
+    decisionFinding: input.decisionFinding ? { ...input.decisionFinding } : null,
     candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
     candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
     candidateCompareOpen: input.candidateCompareOpen ?? false,
@@ -93,9 +100,9 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     scroll: { top: input.scroll?.top ?? 0, left: input.scroll?.left ?? 0 },
     selection: copyWorkspaceSelection(input.selection ?? null),
     focus: input.focus ?? null,
-    editing: input.editing ?? input.focus != null,
-    queueActive: input.queueActive ?? input.focus != null,
-    queueAnchor: input.queueAnchor ?? input.focus ?? null,
+    editing: input.editing ?? (input.kind === "entries" && input.focus != null),
+    queueActive: input.queueActive ?? (input.kind === "entries" && input.focus != null),
+    queueAnchor: input.queueAnchor ?? (input.kind === "entries" ? input.focus ?? null : null),
     queueScopeId: input.queueScopeId ?? null,
     focusMode: input.focusMode ?? false,
     dock: input.dock ?? "agent",
@@ -164,12 +171,15 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
         || patch.preset !== undefined && patch.preset !== view.preset;
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
-      const next = { ...view, ...patch, ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
-        ...(changedTarget || changedScope ? { reviewNavigation: patch.reviewNavigation ?? null } : {}),
+      const next = { ...view, ...patch,
+        ...(patch.decisionCursor !== undefined ? { decisionCursor: patch.decisionCursor ? { ...patch.decisionCursor } : null } : {}),
+        ...(patch.decisionPrevious ? { decisionPrevious: patch.decisionPrevious.map(cursor => cursor ? { ...cursor } : null) } : {}),
+        ...(patch.candidateCompareRefs ? { candidateCompareRefs: Object.freeze([...patch.candidateCompareRefs]) } : {}), ...(patch.selection !== undefined ? { selection: copyWorkspaceSelection(patch.selection) } : {}), ...(patch.scroll ? { scroll: { ...patch.scroll } } : {}),
+        ...(changedTarget || changedScope ? { reviewNavigation: patch.reviewNavigation ?? null, decisionFinding: patch.decisionFinding ?? null } : {}),
         ...(changedTarget ? { reviewHistoryOffset: patch.reviewHistoryOffset ?? 0, candidateAfterOrdinal: patch.candidateAfterOrdinal ?? "0", candidateInitialRevisionId: patch.candidateInitialRevisionId ?? null, candidateCompareOpen: patch.candidateCompareOpen ?? false, candidateComparisonId: patch.candidateComparisonId ?? null, candidateCompareRefs: Object.freeze([...(patch.candidateCompareRefs ?? [])]) } : {}),
-        ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: target,
-          queueActive: patch.queueActive ?? patch.focus != null, editing: patch.editing ?? patch.focus != null,
-          focusMode: (patch.editing ?? patch.focus != null) ? patch.focusMode ?? view.focusMode : false } : {}) };
+        ...(changedScope ? { cursor: null, afterOrdinal: 0, queueScopeId: null, queueAnchor: view.kind === "entries" ? target : null,
+          queueActive: patch.queueActive ?? (view.kind === "entries" && patch.focus != null), editing: patch.editing ?? (view.kind === "entries" && patch.focus != null),
+          focusMode: (patch.editing ?? (view.kind === "entries" && patch.focus != null)) ? patch.focusMode ?? view.focusMode : false } : {}) };
       set({ views: { ...state.views, [viewId]: next } });
       return true;
     },

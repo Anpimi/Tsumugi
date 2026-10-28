@@ -1,4 +1,11 @@
+import { decisionsEn, decisionsZh } from "./decisions";
+import { decisionDetailsEn, decisionDetailsZh } from "./decisionDetails";
+
 export const workbenchEn = {
+  ...decisionsEn,
+  ...decisionDetailsEn,
+  decisionFindingChanged: "This finding has changed or is no longer on this page. Refresh the list before continuing.",
+  decisionNavigationFailed: "The original record could not be opened. Your input is kept. Read the list again and retry.",
   reviewBatchReviewer: "Reviewer: {{actor}}",
   reviewBatchApproving: "Approving…",
   "reviewBatchTitle": "Approve selected translations",
@@ -623,6 +630,10 @@ export const workbenchEn = {
 
 type Messages = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? string : { [P in keyof typeof workbenchEn[K]]: string } };
 export const workbenchZh: Messages = {
+  ...decisionsZh,
+  ...decisionDetailsZh,
+  decisionFindingChanged: "这条问题已变化，或已不在这一页。刷新待处理列表后再继续。",
+  decisionNavigationFailed: "未能打开原记录。你的输入已保留，重新读取列表后再试。",
   reviewBatchReviewer: "审阅人：{{actor}}",
   reviewBatchApproving: "正在批准…",
   "reviewBatchTitle": "批准所选译文",

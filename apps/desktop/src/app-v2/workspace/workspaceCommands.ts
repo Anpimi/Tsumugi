@@ -4,7 +4,7 @@ import { InteractionGate, type CommandSource } from "./interactionGate";
 import { getWorkspaceView, type WorkspaceStore } from "./workspaceStore";
 import type { WorkspaceNavigation } from "./workspaceRouter";
 
-export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "translation.import", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode", "translation.stage-focused-ai"] as const;
+export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.decisions", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "translation.import", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode", "translation.stage-focused-ai"] as const;
 export type WorkspaceCommandId = typeof workspaceCommandIds[number];
 const commandIds = new Set<string>(workspaceCommandIds);
 
@@ -21,6 +21,7 @@ export interface WorkspaceCommandActions {
   focusAgent?: () => void;
   focusDetails?: () => void;
   openCommands?: () => void;
+  openDecisions?: () => void | Promise<unknown>;
   openImport?: () => void | Promise<unknown>;
   canOpenImport?: () => boolean;
   confirm?: (advance: boolean) => void | Promise<unknown>;
@@ -65,6 +66,7 @@ export function registerWorkspaceCommands({ commands, store, gate, viewId, scope
     commands.register({ ...metadata, id: "workspace.pin-view", get nameKey(): TranslationKey { return view()?.pinned ? "workbenchV2.unpinView" : "workbenchV2.pinView"; }, binding: null, availability: () => available(!!view()), handler: () => { if (viewId) store.getState().pin(viewId); } }),
     commands.register({ ...metadata, id: "workspace.agent", nameKey: "workbenchV2.agent", binding: "Mod+L", availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "agent", dockOpen: true }); actions.focusAgent?.(); }) }),
     commands.register({ ...metadata, id: "workspace.details", nameKey: "workbenchV2.detail", binding: "Mod+I", availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "details", dockOpen: true }); actions.focusDetails?.(); }) }),
+    commands.register({ ...metadata, id: "workspace.decisions", nameKey: "workbenchV2.decisions", binding: null, availability: () => available(!!actions.openDecisions), handler: run(() => actions.openDecisions?.()) }),
     commands.register({ ...metadata, id: "workspace.focus-search", nameKey: "workbenchV2.searchEntries", binding: "Mod+F", availability: () => available(view()?.kind === "entries" && view()?.entryMode !== "import" && !!actions.focusSearch), handler: run(() => actions.focusSearch?.()) }),
     commands.register({ ...metadata, id: "workspace.search", nameKey: "workbenchV2.search", binding: null, availability: () => available(view()?.kind === "entries" && view()?.entryMode !== "import"), handler: run(() => { const current = view(); return current ? navigation.update(current.id, { query: current.searchInput, afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 }, focus: null }) : undefined; }) }),
     commands.register({ ...metadata, id: "workspace.refresh", nameKey: "workbenchV2.refresh", binding: null, availability: () => available(!!actions.refresh), handler: run(() => actions.refresh?.()) }),

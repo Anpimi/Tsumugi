@@ -7,6 +7,16 @@ export interface DecisionActivityOwner {
   subscribe(listener: () => void): () => void;
 }
 export type DecisionOwners = readonly [DecisionActivityOwner | null, DecisionActivityOwner | null];
+const ownerBindings = new WeakMap<DecisionActivityOwner, number>();
+let nextBinding = 0;
+function binding(owner: DecisionActivityOwner | null): number | null {
+  if (owner === null) return null;
+  const existing = ownerBindings.get(owner);
+  if (existing !== undefined) return existing;
+  const value = ++nextBinding;
+  ownerBindings.set(owner, value);
+  return value;
+}
 
 /** Inbox, badge and tray borrow the same SessionReads cache. Owner lifecycle is
  * captured with the request and checked again before a result can be cached. */
@@ -24,7 +34,9 @@ export function decisionReadOptions(reads: SessionReads, query: DecisionPageRequ
       && decisionActivityIdentity(now.every(owner => owner !== null) ? now.map(owner => owner!.getDecisionActivity()) : null) === identity;
   };
   return {
-    queryKey: reads.key(["workbench-decisions", request.query, request.cursor, identity, 50]),
+    // A replacement owner cannot reuse a completed read from a retired object,
+    // even if it reports the same journal identity and activity revision.
+    queryKey: reads.key(["workbench-decisions", request.query, request.cursor, identity, capturedOwners.map(binding), 50]),
     queryFn: async ({ signal }: { signal: AbortSignal }) => {
       if (signal.aborted || !current()) throw new Error("Decision read changed");
       const page = await read(request);

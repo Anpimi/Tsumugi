@@ -104,7 +104,7 @@ async function openIssues() {
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   await user.click(screen.getByRole("button", { name: w("openProject") }));
-  const ready = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: fixture.target.nativeKey }) });
+  const ready = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: fixture.target.nativeKey }) }, { timeout: 5000 });
   await waitFor(() => expect(ready).toBeEnabled());
   const filter = screen.getByRole("button", { name: w("allEntries") });
   filter.focus(); await user.keyboard("{ArrowDown}");
@@ -115,7 +115,9 @@ async function openIssues() {
   await screen.findByRole("region", { name: w("entryIssuesTitle") });
   return user;
 }
-it("locates the saved Unicode range, confirms an edit and returns to the original fixed issue scope without recapturing it", async () => {
+// The first full editor journey also loads the lazy work surfaces. Its timeout
+// covers module transformation in the test runner, not an input latency target.
+it("locates the saved Unicode range, confirms an edit and returns to the original fixed issue scope without recapturing it", { timeout: 15_000 }, async () => {
   const user = await openIssues();
   const captures = vi.mocked(segmentCommands.page).mock.calls.filter(([request]) => !request.scopeId).length;
   await user.click(await screen.findByRole("button", { name: i18n.t("review.diagnosticNavigation.locateTranslation") }));

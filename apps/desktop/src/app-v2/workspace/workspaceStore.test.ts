@@ -4,6 +4,20 @@ import { workspaceViewHref } from "./workspaceRouter";
 const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
+  it("keeps a project decision and its page separate from the entry editing queue", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "inbox", kind: "decisions", locale: "zh-CN", focus: "delivery-unknown:original" }] });
+    const cursor = { basis: "a".repeat(64), afterId: "delivery-unknown:earlier" };
+    store.getState().patch("inbox", { decisionCursor: cursor, decisionPrevious: [null], scroll: { top: 120, left: 0 } });
+    cursor.afterId = "changed-outside-view";
+    expect(store.getState().views.inbox).toMatchObject({ focus: "delivery-unknown:original", editing: false, queueActive: false, queueAnchor: null,
+      decisionCursor: { afterId: "delivery-unknown:earlier" }, decisionPrevious: [null], scroll: { top: 120, left: 0 } });
+    store.getState().open({ id: "entry", kind: "entries", locale: "zh-CN", focus: "unit-a" });
+    store.getState().activate("inbox");
+    expect(store.getState().views.inbox.decisionPrevious).toEqual([null]);
+    expect(workspaceViewHref(store.getState().views.inbox)).not.toMatch(/decisionCursor|afterId|decisionPrevious/);
+    store.getState().patch("inbox", { locale: "fr-FR", focus: "delivery-unknown:other" });
+    expect(store.getState().views.inbox).toMatchObject({ editing: false, queueActive: false, queueAnchor: null });
+  });
   it("retains comparison and inspector tabs per view and resets candidate paging for another target", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN", focus: "unit-a" }] });
     const references = ["revision-a", "revision-b"];

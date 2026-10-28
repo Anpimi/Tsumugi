@@ -244,6 +244,7 @@ export interface Responses {
   deliveries: DeliveryView[];
   delivery: DeliveryView;
   deliveryAction: DeliveryView | null;
+  deliveryRecord: DeliveryRecordView | null;
   finishArtifactCheck: null;
   identity: ExecutionId;
   pluginBuild: PluginBuildReview;
@@ -1249,6 +1250,17 @@ export interface DeliveryFile {
   fileName: string;
   locale: string;
   state: DeliveryFileState;
+}
+/**
+ * Original delivery history without native destination authority or paths.
+ */
+export interface DeliveryRecordView {
+  actionId: ExecutionId;
+  createdAt: string;
+  deliveryId: ExecutionId;
+  files: DeliveryFile[];
+  releaseId: ExecutionId;
+  state: DeliveryState;
 }
 export interface PluginBuildReview {
   attemptId: ExecutionId;

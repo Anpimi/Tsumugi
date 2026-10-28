@@ -4,6 +4,14 @@ In **Review and QA**, you inspect selected translations against current source c
 
 Review history and check evidence are stored in the project's SQLite database; see the [README](../README.md#development) for current database schema compatibility.
 
+## Your decisions in the opt-in workspace
+
+Open **Your decisions** from the activity bar, the command palette or the tray above the Agent input. The badge, inbox and tray share the same project-wide counts. “At least” means a source is bounded or unavailable; an incomplete read with no known items is not reported as zero pending decisions.
+
+A candidate opens its exact saved version. A review finding opens the matching page and finding; a pending local request opens its original entry or conversation slot. The original editor and recovery controls still own confirmation, checking and explicit retries. Other items show the original resource proposal, source-mapping evidence, execution result or delivery record. These details are read-only; full resource adoption, source correction and delivery controls are still being connected.
+
+Pages retain their read basis. If the underlying list changes, return to the latest list before continuing. Refreshing does not select the next item or clear a pending request. Delivery history can show an older exact record without directory access; checking actual destination files still requires a fresh directory selection in the delivery workflow.
+
 ## Reviewing entries and recording decisions
 
 Open a project with an imported source snapshot and target language, then select **Review and QA** in the sidebar:

@@ -6,7 +6,7 @@ import { SessionReads } from "../../../sessionReads";
 import type { ConversationDraftHead } from "../../../conversationDraftCommands";
 import type { ProjectConversationMessage } from "../../../conversationCommands";
 import { ConversationSession } from "./ConversationSession";
-import ConversationPanel from "./ConversationPanel";
+import ConversationPanel, { type ConversationRecoveryTarget } from "./ConversationPanel";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { fixtureIdentity } from "../../../testSupport/executionFixture";
 import { connectionFixture } from "../../../testSupport/connectionFixture";
@@ -20,7 +20,8 @@ const context = { projectId: fixtureIdentity(900), sessionToken: "conversation-p
 const thread = { projectId: context.projectId, conversationId, title: "春季更新", ordinal: "1" };
 const key = { projectId: context.projectId, conversationId };
 beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("zh-CN"); });
-afterEach(cleanup);
+const recoveryResources: { owner: ConversationSession; reads: SessionReads; gate: InteractionGate }[] = [];
+afterEach(() => { cleanup(); recoveryResources.splice(0).forEach(({ owner, reads, gate }) => { owner.retire(); reads.retire(); gate.dispose(); }); });
 
 it.each(["conversation-only", "units"] as const)("reviews %s material and exact limits before one request, clears changed consent, and blocks IME and other dialogs", async mode => {
   let head: ConversationDraftHead = { key, revision: "0", writerId: null, value: null };
@@ -174,4 +175,76 @@ it("shows saved messages and keeps composer input across presentation changes wi
   expect(messages).toHaveLength(2);
   expect(invoke.mock.calls.some(([command]) => command === "start_conversation_planning" || command === "create_project_conversation")).toBe(false);
   owner.retire(); reads.retire();
+});
+
+async function recoveryHarness(slot: "primary" | "revocation", focus = true, hidden = false, dialog = false) {
+  const pending = { kind: "append" as const, submittedSeq: "2", request: { ...key, actionId: fixtureIdentity(940), messageId: fixtureIdentity(941), body: "Submitted A" } };
+  const planId = fixtureIdentity(942), revocations = [
+    { submittedSeq: "3", request: { projectId: context.projectId, planId, actionId: fixtureIdentity(943), expectedGeneration: "2", command: "pause" as const } },
+    { submittedSeq: "4", request: { projectId: context.projectId, planId, actionId: fixtureIdentity(944), expectedGeneration: "2", command: "stop" as const } },
+  ];
+  const head: ConversationDraftHead = { key, revision: "8", writerId: fixtureIdentity(945),
+    value: { text: "New input B", editSeq: "7", messageEditSeq: "7", pending, revocations } };
+  const read = vi.fn(async () => structuredClone(head));
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "list_project_conversations") return { projectId: context.projectId, rows: [thread], nextAfter: null };
+    if (["read_project_conversation_messages", "read_conversation_planning_attempts", "read_conversation_proposal_revisions", "read_conversation_proposal_work_plans"].includes(command)) return { ...key, rows: [], nextAfter: null };
+    if (command === "read_model_connections") return connectionFixture([]);
+    throw new Error(`Unexpected recovery navigation command: ${command}`);
+  });
+  const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
+  const closeDialog = dialog ? gate.pushDialog("synthetic-recovery-focus") : () => {};
+  const owner = new ConversationSession(context, () => {}, () => {}, { list: async () => ({ items: [], next: null }), read });
+  recoveryResources.push({ owner, reads, gate });
+  await owner.initialize(); await owner.open(conversationId);
+  const check = vi.spyOn(owner, "check"), checkRevocation = vi.spyOn(owner, "checkRevocation").mockResolvedValue(undefined);
+  const retry = vi.spyOn(owner, "retry"), retryRevocation = vi.spyOn(owner, "retryRevocation");
+  const original: ConversationRecoveryTarget = { conversationId, slot, actionId: slot === "primary" ? pending.request.actionId : revocations[1].request.actionId, focus };
+  let target: ConversationRecoveryTarget | null = original, visible = !hidden;
+  const tree = () => <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
+    <ConversationPanel owner={owner} visible={visible} disabled={false} gate={gate} viewId="entries" recoveryTarget={target} decisionTray={<span>Recovery inbox tray</span>}/>
+  </SessionReadProvider></ApplicationReadProvider>;
+  const view = render(tree());
+  function show(next = target, nextVisible = visible) { target = next; visible = nextVisible; view.rerender(tree()); }
+  return { owner, gate, read, check, checkRevocation, retry, retryRevocation, original, show, closeDialog, head };
+}
+
+it("locates only the original primary request, preserves B, and reports a changed request without choosing another slot", async () => {
+  const h = await recoveryHarness("primary");
+  const region = screen.getByRole("region", { name: i18n.t("conversation.recoveryPrimary") });
+  await waitFor(() => expect(region).toHaveFocus());
+  expect(region).toHaveTextContent(i18n.t("conversation.saveMessage"));
+  expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("New input B");
+  expect(screen.getByText("Recovery inbox tray")).toBeInTheDocument();
+  const composer = screen.getByRole("textbox", { name: "消息" }); act(() => composer.focus());
+  act(() => h.show({ ...h.original, focus: false })); expect(composer).toHaveFocus();
+  act(() => h.show({ ...h.original, actionId: fixtureIdentity(949) }));
+  expect(screen.getByText(i18n.t("conversation.recoveryChanged"))).toBeInTheDocument();
+  expect(document.querySelector("[data-conversation-recovery]")).not.toBeInTheDocument();
+  expect(composer).toHaveValue("New input B");
+  expect(h.read).toHaveBeenCalledTimes(1); expect(h.check).not.toHaveBeenCalled(); expect(h.retry).not.toHaveBeenCalled();
+  expect(h.checkRevocation).not.toHaveBeenCalled(); expect(h.retryRevocation).not.toHaveBeenCalled();
+});
+
+it("reveals the exact revocation row without a work plan history page or automatic settlement", async () => {
+  const h = await recoveryHarness("revocation");
+  const row = document.querySelector('[data-conversation-recovery="revocation"]');
+  await waitFor(() => expect(row).toHaveFocus());
+  expect(row).toHaveTextContent(i18n.t("conversation.runRevocationStop"));
+  expect(row).not.toHaveTextContent(i18n.t("conversation.runRevocationPause"));
+  expect(screen.getByRole("textbox", { name: "消息" })).toHaveValue("New input B");
+  expect(h.checkRevocation).not.toHaveBeenCalled(); expect(h.check).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.some(([command]) => command === "read_work_plan_status" || command === "resolve_local_conversation_draft")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runRevocationCheck") }));
+  await waitFor(() => expect(h.checkRevocation).toHaveBeenCalledWith(conversationId, h.original.actionId));
+  expect(h.check).not.toHaveBeenCalled(); expect(h.retryRevocation).not.toHaveBeenCalled();
+});
+
+it.each(["hidden", "moved"] as const)("does not take recovery focus after it was %s while presentation was unavailable", async mode => {
+  const h = await recoveryHarness("primary", true, mode === "hidden", mode === "moved");
+  const composer = screen.getByRole("textbox", { name: "消息" });
+  if (mode === "moved") act(() => { composer.focus(); composer.blur(); h.closeDialog(); });
+  else act(() => h.show(h.original, true));
+  expect(document.querySelector('[data-conversation-recovery="primary"]')).not.toHaveFocus();
+  expect(h.check).not.toHaveBeenCalled(); expect(h.retry).not.toHaveBeenCalled();
 });

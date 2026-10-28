@@ -6,6 +6,10 @@
 .text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin-block: var(--space-3); }
 .author { display: block; color: var(--color-text-secondary); font-size: var(--text-sm); margin-block-end: var(--space-2); }
 .notice { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); }
+.recovery { display: grid; gap: var(--space-3); min-inline-size: 0; padding: var(--space-3); border: var(--border-width) solid var(--color-accent-solid); border-radius: var(--radius-sm); }
+.recovery h3, .recovery p { margin: 0; overflow-wrap: anywhere; }
+.recovery h3 { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+.recovery:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
 .planning, .preview { display: grid; gap: var(--space-4); min-inline-size: 0; }
 .planning h3, .preview h4 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
 .planning p { margin: 0; overflow-wrap: anywhere; }

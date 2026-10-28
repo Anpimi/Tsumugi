@@ -70,7 +70,7 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
   const checkStatus = !check ? t("noCurrentCheck") : check.basis !== target.basis ? t("checkOutdated") : t(`checkOutcome.${check.outcome}`);
   const candidatePanel = view.detailTab === "candidates" || view.detailTab === "history";
   return <TabsRoot className={local.root} value={view.detailTab} onValueChange={value => {
-    const tab = tabs.find(item => item === value); if (tab) patch({ detailTab: tab, candidateInitialRevisionId: null });
+    const tab = tabs.find(item => item === value); if (tab) patch({ detailTab: tab, candidateInitialRevisionId: null, decisionFinding: null });
   }}>
     <TabsList className={local.tabs} aria-label={t("entryDetailsTabs")}>{tabs.map(tab => <TabsTrigger key={tab} value={tab}>{t(tab === "context" ? "entryContextTab" : tab)}</TabsTrigger>)}</TabsList>
     <TabsContent value="detail" className={styles.details}>
@@ -108,7 +108,8 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         <EntryChecksPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
           viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
         <EntryIssuesPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
-          viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }} onEdit={() => { void onEdit(unitId, locale); }} onReviewEdit={onReviewEdit}/>
+          viewId={view.id} disabled={disabled} visible={visible && view.detailTab === "issues"} parentDialogId={parentDialogId} initialFinding={view.decisionFinding}
+          read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }} onEdit={() => { void onEdit(unitId, locale); }} onReviewEdit={onReviewEdit}/>
         <EntryFallbackPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}
           viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId} read={{ key: ["workbench-entry-details", unitId, locale], data: query.data }}/>
         <EntrySemanticPanel project={project} target={target} owner={reviewOwner} drafts={drafts} commands={commands} gate={gate}

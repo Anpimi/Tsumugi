@@ -49,6 +49,7 @@ export interface EntryIssueLocatePayload {
   intent: ReviewDiagnosticIntent;
 }
 export interface EntryIssuesPanelProps extends EntryReviewPanelProps {
+  initialFinding?: { runId: string; issueId: string; offset: number } | null;
   onEdit?: () => void;
   onReviewEdit?: (request: EntryReviewEditorRequest, proof: () => boolean) => Promise<boolean>;
 }

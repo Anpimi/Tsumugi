@@ -138,3 +138,78 @@ fn registered_release_receipts_preserve_history_authorization_and_runtime_indepe
     assert_eq!(call(&view, "read_delivery_action", new_lookup).unwrap_err()["code"], "session-invalid");
     app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
 }
+
+#[test]
+fn registered_delivery_record_reads_exact_redacted_history_without_destination_authority() {
+    let temp = tempfile::tempdir().unwrap();
+    let project_path = temp.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+    let view = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let project = call(&view, "create_project", json!({"destination":project_path,
+        "displayName":"Delivery record history","sourceLocale":"en","targetLocales":["zh-CN"]})).unwrap();
+    let session = project["sessionToken"].clone();
+    let project_id = project["metadata"]["projectId"].clone();
+    let (pending, unknown) = app.state::<AppState>().sessions.with(|sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        assert!(active.execution.is_none());
+        let (_, release, _) = seed(&mut active.store);
+        let pending = active.store.begin_delivery(ExecutionId::new(), release, "/synthetic/unselected/first", false).unwrap();
+        let second = active.store.begin_delivery(ExecutionId::new(), release, "/synthetic/unselected/second", false).unwrap();
+        let files = second.files.into_iter().map(|mut file| { file.state = DeliveryFileState::Unknown; file }).collect();
+        let unknown = active.store.finish_delivery(second.action_id, files).unwrap();
+        (pending, unknown)
+    });
+    let observer = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+    let data_version = || observer.pragma_query_value::<i64, _>(None, "data_version", |row| row.get(0)).unwrap();
+    let before = data_version();
+    let request = |delivery: &DeliveryView| json!({"sessionToken":session,"projectId":project_id,
+        "releaseId":delivery.release_id,"deliveryId":delivery.delivery_id,"actionId":delivery.action_id});
+    let record = |delivery: &DeliveryView| json!({"releaseId":delivery.release_id,"deliveryId":delivery.delivery_id,
+        "actionId":delivery.action_id,"state":delivery.state,"files":delivery.files,"createdAt":delivery.created_at});
+    // The older pending action must not be replaced by a newer delivery for its release.
+    for original in [&pending, &unknown] {
+        let result = call(&view, "read_delivery_record", request(original)).unwrap();
+        assert_eq!(result, record(original));
+        let decoded: DeliveryRecordView = serde_json::from_value(result.clone()).unwrap();
+        assert_eq!(decoded.delivery_id, original.delivery_id);
+        assert_eq!(result.as_object().unwrap().len(), 6);
+        let text = serde_json::to_string(&result).unwrap();
+        assert!(!text.contains("directory") && !text.contains("selection") && !text.contains("permit")
+            && !text.contains("/synthetic/unselected/"));
+    }
+    for field in ["releaseId", "deliveryId"] {
+        let mut wrong = request(&pending); wrong[field] = json!(ExecutionId::new());
+        assert!(call(&view, "read_delivery_record", wrong).is_err(), "{field}");
+    }
+    let mut wrong_action = request(&pending); wrong_action["actionId"] = json!(unknown.action_id);
+    assert!(call(&view, "read_delivery_record", wrong_action).is_err());
+    let mut wrong_project = request(&pending); wrong_project["projectId"] = json!(ExecutionId::new());
+    assert!(call(&view, "read_delivery_record", wrong_project).is_err());
+    let mut stale = request(&pending); stale["sessionToken"] = json!("retired-session");
+    assert_eq!(call(&view, "read_delivery_record", stale).unwrap_err()["code"], "session-invalid");
+    let mut missing = request(&pending); missing["actionId"] = json!(ExecutionId::new());
+    assert_eq!(call(&view, "read_delivery_record", missing).unwrap(), Value::Null);
+    let lookup = json!({"sessionToken":session,"projectId":project_id,
+        "actionId":pending.action_id,"selectionId":ExecutionId::new()});
+    assert_eq!(call(&view, "read_delivery_action", lookup.clone()).unwrap_err()["code"], "session-invalid");
+    assert_eq!(data_version(), before);
+    let original_pending = pending.clone();
+    let original_unknown = unknown.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_ref().unwrap();
+        assert!(active.execution.is_none());
+        assert!(!active.store.is_reconciling());
+        assert_eq!(active.store.delivery_by_action(original_pending.action_id).unwrap().as_ref(), Some(&original_pending));
+        assert_eq!(active.store.delivery_by_action(original_unknown.action_id).unwrap().as_ref(), Some(&original_unknown));
+    });
+    call(&view, "close_project", json!({"sessionToken":session})).unwrap();
+    let reopened = call(&view, "open_project", json!({"locator":project_path})).unwrap();
+    for original in [&pending, &unknown] {
+        let mut reopened_request = request(original); reopened_request["sessionToken"] = reopened["sessionToken"].clone();
+        assert_eq!(call(&view, "read_delivery_record", reopened_request).unwrap(), record(original));
+    }
+    let mut reopened_lookup = lookup; reopened_lookup["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_delivery_action", reopened_lookup).unwrap_err()["code"], "session-invalid");
+    app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
+}

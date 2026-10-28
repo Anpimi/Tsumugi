@@ -101,11 +101,31 @@ pub struct DeliveryPreview {
     pub folder_name: String,
     pub files: Vec<PreviewFile>,
 }
+/// Original delivery history without native destination authority or paths.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct DeliveryRecordView {
+    pub delivery_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub release_id: ExecutionId,
+    pub state: DeliveryState,
+    pub files: Vec<DeliveryFile>,
+    pub created_at: String,
+}
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] BuildRequest { attempt_id: ExecutionId, choices: Vec<BuildLocaleChoice>, expected_eligibility_basis: String });
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     ReleaseRequest {
         release_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    DeliveryRecordRequest {
+        release_id: ExecutionId,
+        delivery_id: ExecutionId,
+        action_id: ExecutionId
     }
 );
 request!(
@@ -226,6 +246,26 @@ pub async fn read_locale_build_attempt(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn read_delivery_record(
+    state: State<'_, AppState>,
+    request: DeliveryRecordRequest,
+) -> Result<Option<DeliveryRecordView>, CommandError> {
+    state.sessions.run("read_delivery_record", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let Some(delivery) = active.store.delivery_by_action(request.action_id).map_err(map_read)? else {
+            return Ok(None);
+        };
+        if delivery.release_id != request.release_id || delivery.delivery_id != request.delivery_id
+            || delivery.action_id != request.action_id {
+            return Err(map_read(ExecutionError::new(ErrorCode::ResultMismatch, "delivery-record-binding")));
+        }
+        Ok(Some(DeliveryRecordView { delivery_id: delivery.delivery_id, action_id: delivery.action_id,
+            release_id: delivery.release_id, state: delivery.state, files: delivery.files,
+            created_at: delivery.created_at }))
+    }).await
 }
 
 #[tauri::command]

@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { useStore } from "zustand";
 import { isTauri } from "@tauri-apps/api/core";
@@ -45,6 +45,10 @@ import type { ComparisonSession } from "./features/comparison/ComparisonSession"
 import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
 import type { ConversationSession } from "./features/assistant/ConversationSession";
+import type { ConversationRecoveryTarget } from "./features/assistant/ConversationPanel";
+import type { DecisionItem } from "../decisionCommands";
+import { useDecisionFeed } from "./features/decisions/useDecisionFeed";
+import { DecisionBadge, DecisionTray } from "./features/decisions/DecisionList";
 import { TokenizedText } from "../design-system/TokenizedText";
 import { installWorkspaceMenu } from "./nativeMenu";
 import { FeatureBoundary } from "./FeatureBoundary";
@@ -68,6 +72,7 @@ const FocusedCandidate = lazy(() => import("./features/entries/FocusedCandidate"
 const ComparisonOwnerHost = lazy(() => import("./features/comparison/ComparisonOwnerHost"));
 const ComparisonRecovery = lazy(() => import("./features/comparison/ComparisonRecovery"));
 const ConversationPanel = lazy(() => import("./features/assistant/ConversationPanel"));
+const DecisionWorkspace = lazy(() => import("./features/decisions/DecisionWorkspace"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
@@ -80,7 +85,8 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   reviewBatchOpen: boolean; setReviewBatchOpen: (open: boolean) => void; reviewBatchSelection: WorkspaceSelection | null; prepareReviewBatch: (selection: WorkspaceSelection) => void;
   candidateBatchOpen: boolean; setCandidateBatchOpen: (open: boolean) => void;
   comparisonOwner: ComparisonSession | null; requestComparisons: () => void;
-  conversations: ConversationSession | null; conversationLoadFailed: boolean; retryConversations: () => void; conversationReveal: number };
+  conversations: ConversationSession | null; conversationLoadFailed: boolean; retryConversations: () => void; conversationReveal: number;
+  conversationRecovery: ConversationRecoveryTarget | null; revealConversation: (target?: ConversationRecoveryTarget) => void };
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
@@ -133,6 +139,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   const [conversations, setConversations] = useState<ConversationSession | null>(null), [conversationLoadFailed, setConversationLoadFailed] = useState(false);
   const [conversationAttempt, setConversationAttempt] = useState(0), [conversationReveal, setConversationReveal] = useState(0);
+  const [conversationRecovery, setConversationRecovery] = useState<ConversationRecoveryTarget | null>(null);
   const conversationParticipant = useRef<LifecycleParticipant | null>(null), conversationOwner = useRef<ConversationSession | null>(null);
   readonlyRef.current = readOnly;
   useLayoutEffect(() => lifecycle.register({ id: "conversation-input", area: "tasks", scope: { kind: "project", ...executionContext(session.project) },
@@ -223,7 +230,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
     reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
-    conversations, conversationLoadFailed, retryConversations: () => setConversationAttempt(value => value + 1), conversationReveal }}>
+    conversations, conversationLoadFailed, retryConversations: () => setConversationAttempt(value => value + 1), conversationReveal, conversationRecovery,
+    revealConversation: target => { if (target) setConversationRecovery({ ...target }); setConversationReveal(value => value + 1); } }}>
     {(importRequested || reviewRequested) && drafts ? <FeatureBoundary fallback={<ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
       <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
@@ -251,7 +259,7 @@ function WorkspaceShell() {
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
-    conversations, conversationLoadFailed, retryConversations, conversationReveal } = useWorkspaceContext();
+    conversations, conversationLoadFailed, retryConversations, conversationReveal, conversationRecovery, revealConversation } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
@@ -266,6 +274,8 @@ function WorkspaceShell() {
   const [registeredCommands, setRegisteredCommands] = useState<WorkbenchCommands | null>(null);
   const [palette, setPalette] = useState(false), [drawer, setDrawer] = useState(false);
   const drawerEditorClose = useRef(false);
+  const drawerRecoveryFocus = useRef(false);
+  const drawerDecisionClose = useRef(false), decisionTrigger = useRef<HTMLButtonElement>(null);
   const paletteRelease = useRef<(() => void) | null>(null), drawerRelease = useRef<(() => void) | null>(null);
   const [commandFailed, setCommandFailed] = useState(false);
   const [presented, setPresented] = useState<{ candidates: string | null; protection: string | null; comparison: string | null; review: string | null }>({ candidates: null, protection: null, comparison: null, review: null });
@@ -274,7 +284,7 @@ function WorkspaceShell() {
     return next === before[kind] ? before : { ...before, [kind]: next };
   }), []);
   const [pendingImport, setPendingImport] = useState<{ viewId: string | null; locale: string | null } | null>(null);
-  const entries = useRef<EntriesHandle>(null), dock = useRef<HTMLDivElement>(null);
+  const entries = useRef<EntriesHandle>(null), dock = useRef<HTMLDivElement>(null), main = useRef<HTMLElement>(null);
   const candidateBatchTrigger = useRef<HTMLButtonElement>(null);
   const candidateBatchRecoveryTrigger = useRef<HTMLButtonElement>(null);
   const reviewBatchTrigger = useRef<HTMLButtonElement>(null), reviewBatchRecoveryTrigger = useRef<HTMLButtonElement>(null);
@@ -295,6 +305,11 @@ function WorkspaceShell() {
   const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
   const pendingDrafts = draftState.summaries.filter(summary => summary.hasPending);
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
+  const decisionFeed = useDecisionFeed(session.reads, [drafts, conversations], view?.kind === "decisions" ? view.decisionCursor : null,
+    view?.kind === "decisions" && !importVisible, !readOnly);
+  const decisionBadgeId = useId();
+  const lastDecisionView = useRef<string | null>(null);
+  useEffect(() => { if (view?.kind === "decisions") lastDecisionView.current = view.id; }, [view?.kind, view?.id]);
   useEffect(() => { if (view?.kind === "entries" && (view.focus || view.selection) && !importVisible) requestCandidates(); }, [view?.kind, view?.focus, view?.selection !== null, importVisible, requestCandidates]);
   useEffect(() => {
     if (view?.kind === "entries" && view.focus && view.dock === "details" && ["detail", "issues"].includes(view.detailTab)
@@ -338,9 +353,11 @@ function WorkspaceShell() {
     revealedConversation.current = conversationReveal;
     const active = store.getState().activeViewId;
     if (active) store.getState().patch(active, { dock: "agent" });
-    if (narrow && !drawerRelease.current) { drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true); }
-    else requestAnimationFrame(() => dock.current?.focus());
-  }, [conversationReveal, store, narrow, gate]);
+    if (narrow && !drawerRelease.current) {
+      drawerRecoveryFocus.current = !!conversationRecovery?.focus;
+      drawerRelease.current = gate.pushDialog("workspace-dock"); setDrawer(true);
+    } else if (!conversationRecovery?.focus) requestAnimationFrame(() => dock.current?.focus());
+  }, [conversationReveal, conversationRecovery, store, narrow, gate]);
   const ids = state.viewOrder.join("|");
   useEffect(() => {
     let alive = true;
@@ -433,6 +450,7 @@ function WorkspaceShell() {
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
+      openDecisions: () => openDecisions(),
       openImport: () => actions.current.openImport(), canOpenImport: () => actions.current.canOpenImport(),
       confirm: advance => actions.current.confirm(advance), exitEditor: () => actions.current.exitEditor(), toggleFocus: () => actions.current.toggleFocus(),
       isEditing: () => actions.current.isEditing(), canConfirm: () => actions.current.canConfirm(), canAdvance: () => actions.current.canAdvance() }, onError: () => setCommandFailed(true) });
@@ -472,6 +490,79 @@ function WorkspaceShell() {
   const reviewPanelVisible = currentId !== null && presented.review === currentId;
   const candidateBatchOwnsPending = !!candidateOwners?.decisions.state.pending && !!candidateBatchState?.items.some(item => item.request === candidateOwners.decisions.state.pending);
   const candidateBatchBlocked = !!candidateBatchState && !candidateBatchState.ended && !["idle", "complete"].includes(candidateBatchState.phase);
+  function decisionCurrent() {
+    const now = lifecycle.getSnapshot(), actual = currentId ? store.getState().views[currentId] : null;
+    return !readOnly && !session.reads.retired && now.phase === "idle" && !now.pending
+      && now.session?.project.sessionToken === session.project.sessionToken
+      && store.getState().activeViewId === currentId && (actual?.focus ?? null) === (view?.focus ?? null)
+      && actual?.dock === view?.dock;
+  }
+  async function openDecisions(newView = false) {
+    const now = lifecycle.getSnapshot();
+    if (readOnly || now.phase !== "idle" || now.pending || session.reads.retired
+      || !gate.canDispatch({ viewId: store.getState().activeViewId, source: "button" })) return false;
+    const origin = document.activeElement;
+    const state = store.getState(), remembered = lastDecisionView.current;
+    const existing = remembered && state.views[remembered]?.kind === "decisions" ? remembered
+      : [...state.viewOrder].reverse().find(id => state.views[id].kind === "decisions");
+    const accepted = await (!newView && existing ? runtime.navigation.activate(existing)
+      : runtime.navigation.open({ kind: "decisions", locale: activeLocale, editing: false, queueActive: false }));
+    if (accepted) requestAnimationFrame(() => {
+      const now = lifecycle.getSnapshot(), state = store.getState();
+      if (!session.reads.retired && now.phase === "idle" && !now.pending && now.session?.project.sessionToken === session.project.sessionToken
+        && state.activeViewId && state.views[state.activeViewId]?.kind === "decisions"
+        && (document.activeElement === origin || document.activeElement === document.body)) main.current?.focus();
+    });
+    return accepted;
+  }
+  async function navigateDecision(item: DecisionItem, sourceCurrent: () => boolean): Promise<boolean> {
+    if (!decisionCurrent() || !sourceCurrent() || !gate.canDispatch({ viewId: currentId, source: "button" })) return false;
+    const intent = gate.acquireIntent("decision-target");
+    if (!intent) return false;
+    const origin = document.activeElement;
+    const focusRetained = () => document.activeElement === origin || document.activeElement === document.body;
+    const current = () => intent.current() && decisionCurrent() && sourceCurrent() && focusRetained();
+    try {
+      const { resolveDecisionNavigation, DecisionNavigationChanged } = await import("./features/decisions/decisionNavigation");
+      if (!current()) return false;
+      let destination: Awaited<ReturnType<typeof resolveDecisionNavigation>>;
+      try { destination = await resolveDecisionNavigation(executionContext(session.project), item, current); }
+      catch (cause) { if (cause instanceof DecisionNavigationChanged) return false; throw cause; }
+      if (!current()) return false;
+      if (destination.kind === "translation-request") {
+        if (!drafts) return false;
+        await drafts.open(destination.key);
+        if (!current() || !drafts.getEntry(destination.key)) return false;
+        intent.release(); revealDraft(destination.key); return true;
+      }
+      if (destination.kind === "conversation-request") {
+        if (!conversations || !await conversations.open(destination.conversationId) || !current()) return false;
+        intent.release(); revealConversation({ conversationId: destination.conversationId, slot: destination.slot, actionId: destination.actionId, focus: focusRetained() }); return true;
+      }
+      if (destination.kind === "details") return false;
+      intent.release();
+      const accepted = await runtime.navigation.open({ kind: "entries", locale: destination.locale, focus: destination.unitId,
+        editing: false, queueActive: false, dock: "details", focusMode: false,
+        detailTab: destination.kind === "candidate" ? "candidates" : destination.kind === "finding" ? "issues" : "detail",
+        candidateInitialRevisionId: destination.kind === "candidate" ? destination.revisionId : null,
+        candidateAfterOrdinal: destination.kind === "candidate" ? destination.afterOrdinal : "0",
+        decisionFinding: destination.kind === "finding" ? { runId: destination.runId, issueId: destination.issueId, offset: destination.offset } : null });
+      if (accepted && narrow) showDock();
+      return accepted;
+    } finally { intent.release(); }
+  }
+  function openDecisionsFromTray() {
+    if (disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined })) return;
+    if (narrow && drawer) { drawerDecisionClose.current = true; closeDrawer(); }
+    dispatch("workspace.decisions");
+  }
+  function decisionTray() {
+    return <DecisionTray page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}
+      disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onOpen={openDecisionsFromTray}/>;
+  }
+  function conversationFallback(content: ReactNode) {
+    return <div className={styles.agent}><div className={styles.messages}>{content}</div>{decisionTray()}</div>;
+  }
   async function openCandidateEditor(unitId: string, locale: string, parentDialogId?: string): Promise<boolean> {
     if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
     if (parentDialogId === "workspace-dock" && narrow && drawer) closeDrawer();
@@ -529,6 +620,7 @@ function WorkspaceShell() {
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
       : await runtime.navigation.open({ kind: "entries", ...target, queueActive: false });
     if (accepted) { hideReviewRecovery(); if (narrow) showDock(); }
+    return accepted;
   }
   function renderCandidate(row: SegmentRow) {
     if (row.content.unitId !== view?.focus || !row.aiCandidateCount || !drafts || !candidateOwners || !commandsReady || !commands) return null;
@@ -562,10 +654,10 @@ function WorkspaceShell() {
   function panel() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
-      <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={<ErrorState title={t("conversation.unavailable")}/>}><Suspense fallback={<LoadingState label={t("conversation.loading")}/>}>
+      <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
         {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
-          selection={view?.kind === "entries" && !importVisible ? view.selection : null}/>
-          : conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>}
+          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} recoveryTarget={conversationRecovery}/>
+          : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}><EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
@@ -580,7 +672,7 @@ function WorkspaceShell() {
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
         { id: "open", label: message("openProject"), onSelect: () => dispatch("workspace.open-project"), disabled: disabled || !commandsReady }, { id: "close", label: message("closeProject"), onSelect: () => dispatch("workspace.close-project"), disabled: disabled || !commandsReady },
       ]} />
-      <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled}>{activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
+      <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
       <Button size="sm" disabled={!drafts || draftState.summaries.length === 0} onClick={() => { const first = draftState.summaries[0]; if (first) revealDraft(first.key); }}>{message("draftRecoveryTitle")}</Button>
       <Button className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
@@ -622,10 +714,12 @@ function WorkspaceShell() {
     </Suspense> : null}
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
-        {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined}><IconButton label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} disabled={id !== "entries" || disabled} title={id !== "entries" ? message("comingLater") : undefined} onClick={event => {
+        {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined}><IconButton ref={id === "decisions" ? decisionTrigger : undefined} label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} aria-describedby={id === "decisions" ? decisionBadgeId : undefined}
+          disabled={id !== "entries" && id !== "decisions" || disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} title={id !== "entries" && id !== "decisions" ? message("comingLater") : undefined} onClick={event => {
+          if (id === "decisions") { if (event.metaKey || event.ctrlKey) void openDecisions(true); else dispatch("workspace.decisions"); return; }
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
-        }}>{icon}</IconButton></div>)}
+        }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}/></span> : null}</div>)}
         <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled title={message("comingLater")}><Command /></IconButton><IconButton label={message("settings")} disabled title={message("comingLater")}><Settings /></IconButton></div>
       </nav>
       <SplitView key={currentId} className={styles.workspaceSplit} elementRef={split} disabled={disabled} onLayoutChanged={(layout, meta) => {
@@ -637,9 +731,9 @@ function WorkspaceShell() {
           if (pixels !== view.dockSize) store.getState().patch(view.id, { dockSize: pixels });
         }
       }}>
-        <SplitPanel minSize={0} className={styles.mainPanel}><main className={styles.main}>
+        <SplitPanel minSize={0} className={styles.mainPanel}><main ref={main} tabIndex={view?.kind === "decisions" ? -1 : undefined} className={styles.main}>
           <div className={styles.viewTabs} aria-label={message("views")} role="navigation">{state.viewOrder.map(id => {
-            const item = state.views[id], name = message("viewName", { locale: item.locale });
+            const item = state.views[id], name = item.kind === "entries" ? message("viewName", { locale: item.locale }) : message(item.kind);
             return <div key={id} className={appStyles.viewTab} data-active={id === currentId || undefined}>
               <Button size="sm" aria-current={id === currentId ? "page" : undefined} onClick={() => { if (!disabled) void runtime.navigation.activate(id); }}>{item.pinned ? <Pin /> : null}{name}</Button>
               {!item.pinned ? <IconButton size="xs" label={message("closeView", { name })} disabled={disabled} onClick={() => void runtime.navigation.close(id)}><X /></IconButton> : null}
@@ -651,13 +745,23 @@ function WorkspaceShell() {
             const accepted = await runtime.navigation.update(view.id, patch);
             if (accepted && patch.dock === "details" && narrow) showDock();
             return accepted;
-          }} /></Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
+          }} /></Suspense></FeatureBoundary> : view.kind === "decisions" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")}/>}><Suspense fallback={<LoadingState label={message("decisionsLoading")}/>}>
+            <DecisionWorkspace view={view} feed={decisionFeed} disabled={disabled} patch={patch => store.getState().patch(view.id, patch)} current={decisionCurrent} onNavigate={navigateDecision}
+              onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}/>
+          </Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
         </main></SplitPanel>
         {!narrow ? <><SplitHandle label={message("resizeDock")} elementRef={splitHandle} /><SplitPanel id="workspace-dock" key={wide ? "wide" : "compact"} groupResizeBehavior="preserve-pixel-size" defaultSize={view?.dockSize ?? (wide ? 380 : 340)} minSize={300} maxSize="45%"><aside className={styles.dock} ref={dock} tabIndex={-1} aria-label={message("agent")}>{panel()}</aside></SplitPanel></> : null}
       </SplitView>
     </div>
-    <footer className={styles.statusbar}><span><Circle />{message(readOnly ? "retired" : "liveProject")}</span><span className={styles.statusEnd}>{message("language")} · {activeLocale}</span></footer>
-    <Sheet open={drawer && narrow} onCloseAutoFocus={event => { if (drawerEditorClose.current) { event.preventDefault(); drawerEditorClose.current = false; } }} onOpenChange={open => { if (!open) closeDrawer(); }} title={message("agent")} description={session.project.metadata.displayName} closeLabel={message("close")}>{panel()}</Sheet>
+    <footer className={styles.statusbar}><span><Circle />{message(readOnly ? "retired" : "liveProject")}</span><span className={styles.statusEnd}>{message("language")} · {view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}</span></footer>
+    <Sheet open={drawer && narrow} onOpenAutoFocus={event => { if (drawerRecoveryFocus.current) { event.preventDefault(); drawerRecoveryFocus.current = false; } }} onCloseAutoFocus={event => {
+      if (drawerDecisionClose.current) {
+        event.preventDefault(); drawerDecisionClose.current = false;
+        const state = store.getState();
+        if (state.activeViewId && state.views[state.activeViewId]?.kind === "decisions") main.current?.focus(); else decisionTrigger.current?.focus();
+      }
+      else if (drawerEditorClose.current) { event.preventDefault(); drawerEditorClose.current = false; }
+    }} onOpenChange={open => { if (!open) closeDrawer(); }} title={message("agent")} description={session.project.metadata.displayName} closeLabel={message("close")}>{panel()}</Sheet>
     <Sheet open={recoveryKey !== null} onOpenChange={open => { if (!open) revealDraft(null); }} title={message("draftRecoveryTitle")} description={message("draftRecoveryHelp")} closeLabel={message("close")}
       onOpenAutoFocus={event => { event.preventDefault(); requestAnimationFrame(() => recoveryEditor.current?.focus()); }}
       onEscapeKeyDown={event => {

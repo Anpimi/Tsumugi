@@ -5,6 +5,7 @@
 .help { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); }
 .card { min-inline-size: 0; border: var(--border-width) solid var(--color-border-subtle); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: var(--space-3); }
 .card p { margin: 0; }
+.card:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
 .text { min-inline-size: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-3); }
 .evidence { min-inline-size: 0; font-size: var(--text-sm); }

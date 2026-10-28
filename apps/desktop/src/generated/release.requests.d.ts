@@ -12,6 +12,7 @@ export interface Requests {
   artifactWorkflowStart: ArtifactCheckWorkflowStartRequest;
   artifactWorkflowStop: ArtifactCheckWorkflowStopRequest;
   build: BuildRequest;
+  deliveryRecord: DeliveryRecordRequest;
   export: ExportRequest;
   finishArtifactCheck: ArtifactCheckFinishRequest;
   pluginBuild: PluginBuildPrepareRequest;
@@ -445,6 +446,13 @@ export interface BuildRequest {
 export interface BuildLocaleChoice {
   fileName: string;
   locale: string;
+}
+export interface DeliveryRecordRequest {
+  actionId: ExecutionId;
+  deliveryId: ExecutionId;
+  projectId: ExecutionId;
+  releaseId: ExecutionId;
+  sessionToken: string;
 }
 export interface ExportRequest {
   actionId: ExecutionId;

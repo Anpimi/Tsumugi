@@ -58,7 +58,8 @@ function diagnosticFindings(fixture: ReturnType<typeof reviewDiagnosticFixture>)
 const locateLabel = (field: "source" | "translation") => i18n.t(field === "source" ? "review.diagnosticNavigation.locateSource" : "review.diagnosticNavigation.locateTranslation");
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
 afterEach(() => { cleanup(); retained.splice(0).forEach(({ reads, drafts, gate }) => { reads.retire(); drafts.retire(); gate.dispose(); }); });
-async function harness(target: ReviewTarget, initial: ReviewFindingView, semantic: AiSemanticReviewView | null = null, navigation = false, retainedValue: DraftValue | null = null) {
+async function harness(target: ReviewTarget, initial: ReviewFindingView, semantic: AiSemanticReviewView | null = null, navigation = false, retainedValue: DraftValue | null = null,
+  initialFinding: EntryIssuesPanelProps["initialFinding"] = null, readPage?: (offset: number) => Promise<ReviewFindingView>) {
   const reads = new SessionReads(context), gate = new InteractionGate(), commands = new WorkbenchCommands(), onEdit = vi.fn();
   const onReviewEdit = vi.fn<NonNullable<EntryIssuesPanelProps["onReviewEdit"]>>(async (_request, proof) => proof());
   gate.setVisibleOwner("entries");
@@ -78,7 +79,7 @@ async function harness(target: ReviewTarget, initial: ReviewFindingView, semanti
   const mutations: MutationCoordinator = { reserveMutation: () => drafts.reserveMutation("retained-for-navigation"), releaseMutation: token => drafts.releaseMutation(token) };
   const projection = { page: initial }; let nextIdentity = 9970;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_findings") return structuredClone(projection.page);
+    if (command === "read_review_findings") return readPage ? readPage(args.request.offset as number) : structuredClone(projection.page);
     if (command === "read_ai_semantic_review") return { attemptId: args.request.attemptId, view: structuredClone(semantic) };
     if (command === "create_execution_identity") return fixtureIdentity(nextIdentity++);
     if (command === "read_review_finding_action" || command === "read_review_waiver_action") return null;
@@ -92,7 +93,7 @@ async function harness(target: ReviewTarget, initial: ReviewFindingView, semanti
     reads.client.setQueryData(reads.key(key), { current: value });
     return { key, data: reads.client.getQueryData(reads.key(key)) };
   };
-  let presentation = { target, visible: true, read: seed(target) };
+  let presentation = { target, visible: true, read: seed(target), initialFinding };
   function Content() {
     const owner = useReviewDraftSession();
     useLayoutEffect(() => { current = owner; });
@@ -109,9 +110,64 @@ async function harness(target: ReviewTarget, initial: ReviewFindingView, semanti
   async function audit(reason = "Reason A", actor = "Reviewer A") {
     await act(async () => { owner().setActor(actor); owner().editReason(target, reason); });
   }
-  function show(value: ReviewTarget, visible = true) { presentation = { target: value, visible, read: seed(value) }; view.rerender(ui()); }
+  function show(value: ReviewTarget, visible = true, finding = presentation.initialFinding) { presentation = { target: value, visible, read: seed(value), initialFinding: finding }; view.rerender(ui()); }
   return { reads, drafts, gate, commands, owner, audit, view, key, projection, show, onEdit, onReviewEdit };
 }
+
+it("opens the exact inbox finding page once and keeps manual pagination usable", async () => {
+  const f = fixtures(), initialFinding = { runId: f.advisory.runId, issueId: f.advisory.finding.issueId, offset: 20 };
+  const other = { ...f.advisory, finding: { ...f.advisory.finding, issueId: "c".repeat(64), detail: "Another advisory" } };
+  f.target.currentCheck?.rules[1].findings.unshift(other.finding);
+  const h = await harness(f.target, { ...f.page, findings: [other, f.advisory], nextOffset: 40 }, null, false, null, initialFinding);
+  await waitFor(() => expect(document.querySelector('[data-decision-finding="true"]')).toHaveFocus());
+  expect(calls("read_review_findings")[0][1].request).toMatchObject({ offset: 20, limit: 20 });
+  expect(document.activeElement).toHaveTextContent(f.advisory.finding.detail);
+  h.projection.page = { ...f.page, findings: [other] };
+  fireEvent.click(screen.getByText(i18n.t("workbenchV2.entryIssuesHistory")));
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.entryIssuesMoreHistory") }));
+  await waitFor(() => expect(calls("read_review_findings").at(-1)?.[1].request.offset).toBe(40));
+  act(() => h.show(f.target));
+  expect(calls("read_review_findings").map(([, args]) => args.request.offset)).toEqual([20, 40]);
+  expect(calls("create_execution_identity")).toHaveLength(0); expect(calls("write_review_finding")).toHaveLength(0);
+});
+
+it("does not steal focus after the user moves away while the finding page loads", async () => {
+  const f = fixtures(), pending = deferred<ReviewFindingView>();
+  await harness(f.target, f.page, null, false, null, { runId: f.advisory.runId, issueId: f.advisory.finding.issueId, offset: 20 }, () => pending.promise);
+  const elsewhere = screen.getByRole("button", { name: w("entryIssuesEdit") });
+  elsewhere.focus(); elsewhere.blur();
+  await act(async () => pending.resolve(f.page));
+  await screen.findByText(f.advisory.finding.detail);
+  expect(document.querySelector('[data-decision-finding="true"]')).not.toHaveFocus();
+});
+
+it("locates an unresolved repair card with its original stale source evidence", async () => {
+  const f = fixtures(), runId = fixtureIdentity(9980), actionId = fixtureIdentity(9981);
+  const stale = { ...f.target, basisEvidence: { ...f.target.basisEvidence, sourceRevisionId: fixtureIdentity(9982) } };
+  const decision = findingReceipt({ projectId: context.projectId, actionId, unitId: f.target.unitId, locale: f.target.locale,
+    expectedBasis: "c".repeat(64), runId, issueId: f.advisory.finding.issueId, expectedDecisionId: null,
+    disposition: "repair-requested", actor: "Original reviewer", reason: "Retain the original request" }, stale, f.advisory);
+  await harness(f.target, { ...f.page, findings: [], history: [decision], repairs: [{ decision, status: "awaiting-current-recheck", recheckRunId: null }] }, null, false, null,
+    { runId, issueId: f.advisory.finding.issueId, offset: 20 });
+  await waitFor(() => expect(document.querySelector('[data-decision-finding="true"]')).toHaveFocus());
+  expect(document.activeElement).toHaveTextContent("Original reviewer: Retain the original request");
+  expect(calls("write_review_finding")).toHaveLength(0);
+});
+
+it("invalidates an inbox finding cursor on target change and never focuses a hidden late card", async () => {
+  const f = fixtures(), pending = deferred<ReviewFindingView>();
+  const changed = { ...f.target, basis: "e".repeat(64), sourceRevisionId: fixtureIdentity(9983),
+    basisEvidence: { ...f.target.basisEvidence, sourceRevisionId: fixtureIdentity(9983) } };
+  const h = await harness(f.target, f.page, null, false, null, { runId: f.advisory.runId, issueId: f.advisory.finding.issueId, offset: 20 },
+    offset => offset === 20 ? pending.promise : Promise.resolve(reviewFindingViewFixture(changed)));
+  act(() => h.show(changed, false));
+  await act(async () => pending.resolve(f.page));
+  expect(document.querySelector('[data-decision-finding="true"]')).not.toBeInTheDocument();
+  act(() => h.show(changed));
+  await screen.findByText(i18n.t("workbenchV2.decisionFindingChanged"));
+  await waitFor(() => expect(calls("read_review_findings").at(-1)?.[1].request.offset).toBe(0));
+  expect(document.activeElement).not.toHaveAttribute("data-decision-finding", "true");
+});
 
 it("mounts read-only, keeps mandatory QA separate, and grants or revokes only its exact current waiver", async () => {
   const f = fixtures(), h = await harness(f.target, f.page);

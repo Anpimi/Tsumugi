@@ -8,6 +8,7 @@ export declare function validateRequestArtifactWorkflowSession(value: unknown): 
 export declare function validateRequestArtifactWorkflowStart(value: unknown): value is Requests["artifactWorkflowStart"];
 export declare function validateRequestArtifactWorkflowStop(value: unknown): value is Requests["artifactWorkflowStop"];
 export declare function validateRequestBuild(value: unknown): value is Requests["build"];
+export declare function validateRequestDeliveryRecord(value: unknown): value is Requests["deliveryRecord"];
 export declare function validateRequestExport(value: unknown): value is Requests["export"];
 export declare function validateRequestFinishArtifactCheck(value: unknown): value is Requests["finishArtifactCheck"];
 export declare function validateRequestPluginBuild(value: unknown): value is Requests["pluginBuild"];
@@ -27,6 +28,7 @@ export declare function validateResponseCancelPluginBuild(value: unknown): value
 export declare function validateResponseDeliveries(value: unknown): value is Responses["deliveries"];
 export declare function validateResponseDelivery(value: unknown): value is Responses["delivery"];
 export declare function validateResponseDeliveryAction(value: unknown): value is Responses["deliveryAction"];
+export declare function validateResponseDeliveryRecord(value: unknown): value is Responses["deliveryRecord"];
 export declare function validateResponseFinishArtifactCheck(value: unknown): value is Responses["finishArtifactCheck"];
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponsePluginBuild(value: unknown): value is Responses["pluginBuild"];

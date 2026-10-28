@@ -41,7 +41,7 @@ import { validateResponseProjectView } from "./generated/validators";
 
 type PlainWorkbenchCommandId = "translation.hide-candidate-batch" | "translation.open-retained-candidate-batch" | "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
-  | "workspace.agent" | "workspace.details" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
+  | "workspace.agent" | "workspace.details" | "workspace.decisions" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.import" | "translation.refresh-import" | "translation.reset-import"
   | "translation.inspect-focused-candidates" | "translation.open-retained-candidate" | "translation.discard-retained-candidate-inputs" | "translation.stage-focused-ai" | "translation.refresh-candidates" | "translation.first-candidate-page" | "translation.next-candidate-page"

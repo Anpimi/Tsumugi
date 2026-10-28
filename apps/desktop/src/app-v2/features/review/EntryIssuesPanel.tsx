@@ -22,6 +22,7 @@ import type { EntryIssueCapture, EntryIssueFindingPayload, EntryIssueLocatePaylo
 import styles from "./EntryIssuesPanel.module.css";
 
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
+type IssuesCursor = { scope: string; identity: string; initial: EntryIssuesPanelProps["initialFinding"]; offset: number; navigation: "requested" | "browsing" | "changed" };
 function targetMatches(capture: EntryIssueCapture, target: ReviewTarget) {
   return capture.unitId === target.unitId && capture.locale === target.locale && capture.basis === target.basis
     && capture.sourceSnapshotId === target.sourceSnapshotId && capture.sourceRevisionId === target.sourceRevisionId
@@ -29,15 +30,21 @@ function targetMatches(capture: EntryIssueCapture, target: ReviewTarget) {
 }
 
 /** Current QA and advisory evidence remain distinct; audit input and original actions belong to the shared Review owner. */
-export default function EntryIssuesPanel({ project, target, owner, drafts, commands, gate, viewId, disabled, visible, parentDialogId, read, onEdit, onReviewEdit }: EntryIssuesPanelProps) {
+export default function EntryIssuesPanel({ project, target, owner, drafts, commands, gate, viewId, disabled, visible, parentDialogId, read, initialFinding, onEdit, onReviewEdit }: EntryIssuesPanelProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" }), { t: legacy } = useTranslation(), reads = useSessionReads();
   const state = owner.state, shared = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const context = executionContext(project), commandScope = { ...context, area: "translation" as const };
   const scope = JSON.stringify([context.projectId, context.sessionToken, target.unitId, target.locale, viewId]);
   const targetIdentity = JSON.stringify([scope, target.basis, target.basisEvidence, target.sourceText, target.translationText, target.currentCheck?.runId]);
-  const [cursor, setCursor] = useState({ scope, offset: 0 });
-  const offset = cursor.scope === scope ? cursor.offset : 0;
+  const [cursor, setCursor] = useState<IssuesCursor>({ scope, identity: targetIdentity, initial: initialFinding, offset: initialFinding?.offset ?? 0,
+    navigation: initialFinding ? "requested" : "browsing" });
+  const newNavigation = cursor.initial !== initialFinding, changedTarget = cursor.scope !== scope || cursor.identity !== targetIdentity;
+  if (newNavigation) setCursor({ scope, identity: targetIdentity, initial: initialFinding, offset: initialFinding?.offset ?? 0, navigation: initialFinding ? "requested" : "browsing" });
+  else if (changedTarget) setCursor({ ...cursor, scope, identity: targetIdentity, offset: 0, navigation: initialFinding ? "changed" : "browsing" });
+  const offset = newNavigation ? initialFinding?.offset ?? 0 : changedTarget ? 0 : cursor.offset;
+  const navigationMode = newNavigation ? initialFinding ? "requested" : "browsing" : changedTarget ? "changed" : cursor.navigation;
+  const requestedFinding = navigationMode === "requested" ? initialFinding : null;
   const options = reviewFindingsRead(context, target.unitId, target.locale, offset);
   const findings = useSessionQuery({ ...options, enabled: visible && !disabled && !reads.retired });
   const record = useMemo(() => {
@@ -47,9 +54,11 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
   useSyncExternalStore(record.subscribe, record.snapshot, record.snapshot);
   const mounted = useRef(false), flight = useRef(false), live = useRef({ scope, targetIdentity, visible, disabled, parentDialogId });
   const root = useRef<HTMLElement>(null), result = useRef<HTMLDivElement>(null), focus = useRef<{ scope: string; identity: string; origin: HTMLButtonElement } | null>(null);
+  const findingCard = useRef<HTMLElement>(null), seenFinding = useRef<{ scope: string; request: EntryIssuesPanelProps["initialFinding"] } | null>(null);
+  const findingFocus = useRef<{ scope: string; identity: string; origin: Element | null; moved: boolean; dispose: () => void } | null>(null);
   const [working, setWorking] = useState(false), [feedback, setFeedback] = useState<{ scope: string; kind: "saved" | "changed" | "failed" } | null>(null);
   const [navigation, setNavigation] = useState<{ identity: string; kind: "loading" | "changed" | "failed" } | null>(null);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; findingFocus.current?.dispose(); findingFocus.current = null; }; }, []);
   useLayoutEffect(() => { live.current = { scope, targetIdentity, visible, disabled, parentDialogId }; });
   function present() {
     return mounted.current && visible && !disabled && !reads.retired && !drafts.getSnapshot().retired
@@ -74,6 +83,30 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
       && value.runId === (target.currentCheck?.runId ?? null) ? value : null;
   }
   const page = currentPage();
+  const requested = (runId: string, issueId: string) => requestedFinding?.runId === runId && requestedFinding.issueId === issueId;
+  const requestedAdvisory = page?.findings.find(item => requested(item.runId, item.finding.issueId) && item.decision?.request.disposition !== "rejected");
+  const requestedRepair = !requestedAdvisory ? page?.repairs.find(item => requested(item.recheckRunId ?? item.decision.request.runId, item.decision.request.issueId)
+    && (item.status === "awaiting-current-recheck" || item.status === "current-rule-findings")) : undefined;
+  const decisionChanged = !!initialFinding && (navigationMode === "changed" || navigationMode === "requested" && !!page && !requestedAdvisory && !requestedRepair);
+  useLayoutEffect(() => {
+    if (!seenFinding.current || seenFinding.current.scope !== scope || seenFinding.current.request !== initialFinding) {
+      findingFocus.current?.dispose(); findingFocus.current = null;
+      seenFinding.current = { scope, request: initialFinding };
+      if (initialFinding && visible && !disabled) {
+        const ticket = { scope, identity: targetIdentity, origin: document.activeElement, moved: false, dispose: () => document.removeEventListener("focusin", moved) };
+        const moved = (event: FocusEvent) => { if (event.target !== ticket.origin) ticket.moved = true; };
+        document.addEventListener("focusin", moved); findingFocus.current = ticket;
+      }
+    }
+    const ticket = findingFocus.current;
+    if (!ticket) return;
+    if (ticket.scope !== scope || ticket.identity !== targetIdentity || !visible || disabled || ticket.moved || navigationMode !== "requested") {
+      ticket.dispose(); findingFocus.current = null; return;
+    }
+    if (!page || !present()) return;
+    ticket.dispose(); findingFocus.current = null;
+    if (document.activeElement === ticket.origin && (requestedAdvisory || requestedRepair)) findingCard.current?.focus();
+  });
   const aiOrigin = page?.findings.find(item => item.purpose === "ai-semantic" && item.runId === page.semanticRunId)?.aiOrigin ?? null;
   const semanticOptions = semanticReviewRead(context, aiOrigin?.attemptId ?? null);
   const semantic = useSessionQuery({ ...semanticOptions, enabled: visible && !disabled && !reads.retired && !!aiOrigin });
@@ -87,7 +120,7 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
     if (completed.current === state.completionVersion) return;
     completed.current = state.completionVersion;
     void reads.client.invalidateQueries({ queryKey: reads.key(["review-findings", target.unitId, target.locale]) });
-    setCursor({ scope, offset: 0 });
+    setCursor(before => ({ ...before, scope, identity: targetIdentity, offset: 0, navigation: "browsing" }));
   }, [state.completionVersion, reads, scope, target.unitId, target.locale]);
   function audit(): EntryIssueCapture | null {
     const current = owner.current(), selected = current.selected;
@@ -244,8 +277,8 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
     if (payload.operation === "edit") void openEditor();
     else if (payload.operation === "refresh") void findings.refetch();
     else if (payload.operation === "semantic") void semantic.refetch();
-    else if (payload.operation === "first") setCursor({ scope, offset: 0 });
-    else { const next = currentPage()?.nextOffset; if (next != null && next > offset) setCursor({ scope, offset: next }); }
+    else if (payload.operation === "first") setCursor(before => ({ ...before, scope, identity: targetIdentity, offset: 0, navigation: "browsing" }));
+    else { const next = currentPage()?.nextOffset; if (next != null && next > offset) setCursor(before => ({ ...before, scope, identity: targetIdentity, offset: next, navigation: "browsing" })); }
   }
   useLayoutEffect(() => {
     if (!visible) return;
@@ -304,6 +337,7 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
   return <section ref={root} className={styles.section} aria-label={t("entryIssuesTitle")}>
     <h3 className={styles.title}>{t("entryIssuesTitle")}</h3><p className={styles.help}>{t("entryIssuesHelp")}</p><p className={styles.help}>{t("entryIssuesAuditHelp")}</p>
     {!ready ? <Banner tone="warning" role="status">{t("entryIssuesReadChanged")}</Banner> : null}
+    {decisionChanged ? <Banner tone="warning" role="status">{t("decisionFindingChanged")}</Banner> : null}
     <div className={styles.actions}>{button("refresh", t("entryIssuesRefresh"), "review.entry-issues-refresh")}{onReviewEdit || onEdit ? button("edit", t("entryIssuesEdit"), "review.entry-issues-edit") : null}</div>
     <section className={styles.group} aria-label={t("entryIssuesRequired")}><h4>{t("entryIssuesRequired")}</h4>
       {target.currentCheck && !qaCurrent ? <Banner tone="warning" role="status">{t("entryIssuesOutdated")}</Banner> : null}
@@ -344,7 +378,8 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
         const payload = (disposition: EntryIssueFindingPayload["disposition"]): EntryIssueFindingPayload | null => captured ? { ...captured, kind: "entry-issue-finding", purpose: item.purpose,
           runId: item.runId, issueId: item.finding.issueId, expectedDecisionId: item.decision?.decisionId ?? null, disposition, evidence: item } : null;
         const toggle = payload(rejected ? "restored" : "rejected"), repair = payload("repair-requested");
-        return <article className={styles.card} key={`${item.purpose}:${item.runId}:${item.finding.issueId}`}><p><strong>{item.purpose === "ai-semantic" ? legacy("semanticReview.title") : reviewRuleLabel(legacy, item.finding.rule)}</strong></p>
+        return <article className={styles.card} key={`${item.purpose}:${item.runId}:${item.finding.issueId}`} tabIndex={-1}
+          ref={item === requestedAdvisory ? findingCard : undefined} data-decision-finding={item === requestedAdvisory ? "true" : undefined}><p><strong>{item.purpose === "ai-semantic" ? legacy("semanticReview.title") : reviewRuleLabel(legacy, item.finding.rule)}</strong></p>
           <div className={styles.text}><TokenizedText text={item.finding.detail}/></div>{origin(item)}{details(item.requirement, item.runId, target.sourceRevisionId)}
           {diagnosticDetails(diagnostics, !!(item.purpose === "qa" ? qaRun() : semanticRun(item)), item.finding.detail)}
           {item.decision ? <><p>{decisionText(item.decision.request.disposition)}</p><p className={styles.text}><TokenizedText text={`${item.decision.request.actor}: ${item.decision.request.reason}`}/></p></> : null}
@@ -352,7 +387,8 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
             <Button size="sm" disabled={!repair || !findingAvailability(repair).enabled} onClick={() => { if (repair) commands.dispatch("review.entry-repair-finding", commandScope, repair); }}>{t("entryIssuesRepair")}</Button></div>
         </article>;
       })}
-      {page?.repairs.map(repair => <article className={styles.card} key={repair.decision.decisionId}><div className={styles.text}><TokenizedText text={repair.decision.finding.detail}/></div>
+      {page?.repairs.map(repair => <article className={styles.card} key={repair.decision.decisionId} tabIndex={-1}
+        ref={repair === requestedRepair ? findingCard : undefined} data-decision-finding={repair === requestedRepair ? "true" : undefined}><div className={styles.text}><TokenizedText text={repair.decision.finding.detail}/></div>
         <p>{legacy(repair.status === "awaiting-current-recheck" ? "review.advisoryFindings.awaiting" : repair.status === "current-rule-clear" ? "review.advisoryFindings.recheckClear" : repair.status === "superseded" ? "review.advisoryFindings.superseded" : "review.advisoryFindings.recheckFindings")}</p>
         <p className={styles.text}><TokenizedText text={`${repair.decision.request.actor}: ${repair.decision.request.reason}`}/></p>{auditDetails(repair.decision)}</article>)}
       <details><summary>{t("entryIssuesHistory")}</summary><div className={styles.history}>

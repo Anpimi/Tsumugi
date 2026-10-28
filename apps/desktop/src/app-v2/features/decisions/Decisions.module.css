@@ -1,0 +1,41 @@
+.workspace { flex: 1; min-block-size: 0; min-inline-size: 0; block-size: 100%; overflow: auto; }
+.workspace:focus-visible, .detailFocus:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: calc(-1 * var(--focus-width)); }
+.document { flex: 1; min-block-size: 0; min-inline-size: 0; overflow: auto; padding: var(--space-8) var(--space-8) var(--space-10); container-type: inline-size; }
+.document > * { max-inline-size: 72ch; }
+.header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
+.header > div { min-inline-size: 0; flex: 1; }
+.header h1 { margin: 0; color: var(--color-text-primary); font-size: var(--text-lg); line-height: var(--line-lg); font-weight: var(--weight-semibold); }
+.header p, .count, .pageHelp, .refreshing { color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); }
+.header p { margin-block: var(--space-3) 0; }
+.count { margin-block: var(--space-5); font-variant-numeric: tabular-nums; }
+.pageHelp { margin-block: var(--space-5) 0; }
+.document p, .document h2, .document h3 { overflow-wrap: anywhere; }
+.partialHelp { margin: 0; }
+.coverage { display: grid; gap: var(--space-3); margin-block: var(--space-4) 0; }
+.coverage > div { display: grid; gap: var(--space-1); }
+.coverage dt { font-weight: var(--weight-medium); }
+.coverage dd { margin: 0; color: var(--color-text-secondary); }
+.group { margin-block-start: var(--space-8); }
+.group > h2 { margin: 0 0 var(--space-4); color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); font-weight: var(--weight-regular); }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; align-items: flex-start; gap: var(--space-5); padding: var(--space-4); margin-inline: calc(-1 * var(--space-4)); border-inline-start: var(--selection-width) solid var(--color-transparent); border-radius: var(--radius-sm); }
+.row + .row { margin-block-start: var(--space-3); }
+.row[data-selected="true"] { border-inline-start-color: var(--color-accent-solid); background: var(--color-accent-soft); }
+.icon, .aiIcon { inline-size: var(--icon-size); block-size: var(--icon-size); flex-shrink: 0; margin-block-start: var(--space-1); color: var(--color-accent-text); stroke-width: var(--icon-stroke); }
+.aiIcon { color: var(--color-ai-solid); }
+.rowBody { flex: 1; min-inline-size: 0; }
+.rowHeading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-4); }
+.rowHeading h3 { margin: 0; color: var(--color-text-primary); font-size: var(--text-base); line-height: var(--line-base); font-weight: var(--weight-semibold); }
+.rowBody > p { margin-block: var(--space-3); font-size: var(--text-base); line-height: var(--line-base); }
+.meta { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); }
+.rowBody > .fileSummary { color: var(--color-text-secondary); font-size: var(--text-sm); line-height: var(--line-sm); }
+.rowActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); margin-block-start: var(--space-4); }
+.rowActions svg { inline-size: var(--icon-size); block-size: var(--icon-size); }
+.pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-4); margin-block-start: var(--space-8); padding-block-start: var(--space-4); border-block-start: var(--border-width) solid var(--color-border-subtle); }
+.tray { inline-size: 100%; min-inline-size: 0; justify-content: flex-start; flex-shrink: 0; border-block-start: var(--border-width) solid var(--color-border-subtle); border-radius: 0; padding-inline: var(--space-6); }
+.tray > span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tray > svg { inline-size: var(--icon-size); block-size: var(--icon-size); flex-shrink: 0; }
+.tray > svg:first-child { color: var(--color-accent-text); }
+.tray > svg:last-child { margin-inline-start: auto; }
+.badge { pointer-events: none; font-variant-numeric: tabular-nums; }
+@container (max-width: 360px) { .header > div { flex-basis: 100%; } .row { gap: var(--space-3); } .rowActions { justify-content: flex-start; } }

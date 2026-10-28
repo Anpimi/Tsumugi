@@ -379,6 +379,34 @@
         ],
         "type": "object"
       },
+      "DeliveryRecordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "deliveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "releaseId",
+          "deliveryId",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "EncodedPayload": {
         "additionalProperties": false,
         "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
@@ -728,6 +756,9 @@
       "build": {
         "$ref": "#/definitions/BuildRequest"
       },
+      "deliveryRecord": {
+        "$ref": "#/definitions/DeliveryRecordRequest"
+      },
       "export": {
         "$ref": "#/definitions/ExportRequest"
       },
@@ -770,6 +801,7 @@
       "artifactCheck",
       "finishArtifactCheck",
       "release",
+      "deliveryRecord",
       "preview",
       "export",
       "reconcile"
@@ -2478,6 +2510,42 @@
         ],
         "type": "string"
       },
+      "DeliveryRecordView": {
+        "additionalProperties": false,
+        "description": "Original delivery history without native destination authority or paths.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "deliveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/definitions/DeliveryFile"
+            },
+            "type": "array"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/DeliveryState"
+          }
+        },
+        "required": [
+          "deliveryId",
+          "actionId",
+          "releaseId",
+          "state",
+          "files",
+          "createdAt"
+        ],
+        "type": "object"
+      },
       "DeliverySelection": {
         "additionalProperties": false,
         "properties": {
@@ -3690,6 +3758,16 @@
           }
         ]
       },
+      "deliveryRecord": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/DeliveryRecordView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "finishArtifactCheck": {
         "type": "null"
       },
@@ -3734,6 +3812,7 @@
       "finishArtifactCheck",
       "cancelPluginBuild",
       "deliveryAction",
+      "deliveryRecord",
       "identity",
       "releases",
       "selection",

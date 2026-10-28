@@ -1,6 +1,6 @@
 import type { BuildRequest } from "./generated/release.requests";
 import { checkedInvoke } from "./ipc";
-import type { SessionRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest, SavedPluginBuildRequest } from "./generated/release.requests";
+import type { SessionRequest, ReleaseRequest, DeliveryRecordRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest, SavedPluginBuildRequest } from "./generated/release.requests";
 import * as validators from "./generated/release.validators";
 import type { DeliveryFile, DeliveryPreview, DeliveryView, ReleaseView } from "./generated/release.responses";
 import type { ArtifactCheckWorkflowPreparation, ArtifactCheckWorkflowStart, ArtifactCheckWorkflowStepIdentity,
@@ -10,6 +10,8 @@ import type { ArtifactCheckWorkflowView, ArtifactCheckWorkflowObservation } from
 
 export type { PluginBuildRequest } from "./generated/release.requests";
 export type { ExportRequest } from "./generated/release.requests";
+export type { DeliveryRecordRequest } from "./generated/release.requests";
+export type { DeliveryRecordView } from "./generated/release.responses";
 export type { PluginBuildPrepareRequest, PluginBuildLocaleChoice, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
 export type { PluginBuildReview, ArtifactCheckReview, CheckedArtifact } from "./generated/release.responses";
 export type { SavedPluginBuildView, SavedBuildLocale } from "./generated/release.responses";
@@ -241,6 +243,13 @@ export const releaseCommands = {
   },
   finishCheck: (request: ArtifactCheckFinishRequest) => checkedInvoke("finish_artifact_check", request, validators.validateResponseFinishArtifactCheck),
   cancelPluginPreparation: (request: SessionRequest) => checkedInvoke("cancel_plugin_build_preparation", request, validators.validateResponseCancelPluginBuild),
+  deliveryRecord: async (request: DeliveryRecordRequest) => {
+    const original = { ...request };
+    const result = await checkedInvoke("read_delivery_record", original, validators.validateResponseDeliveryRecord);
+    requireConfirmation(result === null || result.deliveryId === original.deliveryId
+      && result.actionId === original.actionId && result.releaseId === original.releaseId);
+    return result;
+  },
   deliveryAction: async (request: ReconcileRequest) => {
     const result = await checkedInvoke("read_delivery_action", request, validators.validateResponseDeliveryAction);
     requireConfirmation(result === null || result.actionId === request.actionId);

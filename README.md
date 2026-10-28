@@ -114,6 +114,8 @@ The displayed progress and results belong to that recorded start; team member pr
 
 In the opt-in desktop workspace, the entries view can filter by translation, review, issue, impact, delivery-blocking, and AI candidate status. Select the current page or capture all matching entries as a fixed set; changing the filter does not expand that selection. Use the arrow keys or J/K to move through the editing queue and Enter to edit the focused entry. The full-page display shows the current loaded page.
 
+**Your decisions** in the opt-in workspace groups the project’s pending candidates, reviews, mappings and result checks. Its activity badge and the Agent tray use the same counts, including a clear indication when some sources are unavailable. Opening a candidate, finding or local request checks its exact original identity and keeps other tabs and input. Resource, mapping, execution and delivery items offer read-only details; reading them does not approve, retry or settle the operation. Full resource, source-correction and delivery controls are still being connected. See [Review and QA](docs/review-qa.md#your-decisions-in-the-opt-in-workspace).
+
 Browser-style shortcuts (refresh, back/forward navigation, print, view source, save page) are disabled in the workbench so they do not interfere with editing. `Ctrl+S` (`Cmd+S` on macOS) saves the active editor draft, and standard text selection/copy (`Ctrl+C` / `Cmd+C`) and input context menus work as expected.
 
 ## Architecture

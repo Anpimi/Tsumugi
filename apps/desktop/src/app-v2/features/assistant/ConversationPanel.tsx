@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-react";
 import { conversationCommands, isConversationMessageText } from "../../../conversationCommands";
@@ -7,21 +7,24 @@ import { Button, IconButton } from "../../../design-system/Button";
 import { Field, TextArea, TextInput } from "../../../design-system/Field";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../../../design-system/Feedback";
 import { Menu } from "../../../design-system/Menu";
-import { useSessionInfiniteQuery, useSessionQuery } from "../../../SessionReadProvider";
+import { useSessionInfiniteQuery, useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { ConversationPlanningPanel } from "./ConversationPlanningPanel";
 import { ConversationProposals } from "./ConversationProposals";
 import { ConversationWorkPlanPanel } from "./ConversationWorkPlanPanel";
-import { locallyReplayableConversationRequest } from "../../../conversationDraftCommands";
+import { locallyReplayableConversationRequest, type ConversationDraftPending } from "../../../conversationDraftCommands";
 import { isRunPending } from "./conversationRun";
+import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
-interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate }
+export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
+interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; decisionTray?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
+const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending?.kind === "planning" ? pending.request.consent.actionId : pending?.request.actionId;
 
 function PlanningResult({ owner, input, attemptId, visible, disabled, gate, viewId, parentDialogId, savedResultIds }: Omit<Props, "selection"> & { input: ConversationInput; attemptId: string; savedResultIds: ReadonlySet<string> }) {
   const context = owner.context, conversationId = input.key.conversationId;
@@ -92,9 +95,11 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
   </>;
 }
 
-export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate }: Props) {
+export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, decisionTray, recoveryTarget }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
+  const reads = useSessionReads();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
+  useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const activeId = state.activeId, input = activeId ? state.inputs.get(activeId) : undefined;
   const composer = useRef<HTMLTextAreaElement>(null), composing = useRef(false);
   const threads = useSessionInfiniteQuery({ key: ["conversations"], scopes: ["project"], enabled: visible,
@@ -113,6 +118,46 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
   const runPending = isRunPending(pending);
   const replayable = locallyReplayableConversationRequest(pending) || !!activeId && owner.canRetryRun(activeId);
   const exists = pending?.kind !== "create" || input?.outcome === "recorded";
+  const primaryRecovery = !!recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "primary" && pendingAction(pending) === recoveryTarget.actionId;
+  const revocationRecovery = recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "revocation"
+    ? input?.value.revocations?.find(slot => slot.request.actionId === recoveryTarget.actionId) : undefined;
+  const recoveryChanged = !!recoveryTarget && (recoveryTarget.conversationId !== activeId || !!input && !primaryRecovery && !revocationRecovery);
+  const recoveryRegion = useRef<HTMLElement>(null), seenRecovery = useRef<ConversationRecoveryTarget | null | undefined>(undefined);
+  const recoveryFocus = useRef<{ target: ConversationRecoveryTarget; origin: Element | null; moved: boolean; dispose: () => void } | null>(null);
+  useLayoutEffect(() => () => { recoveryFocus.current?.dispose(); recoveryFocus.current = null; }, []);
+  useLayoutEffect(() => {
+    if (seenRecovery.current !== recoveryTarget) {
+      recoveryFocus.current?.dispose(); recoveryFocus.current = null; seenRecovery.current = recoveryTarget;
+      if (recoveryTarget?.focus && visible && !blocked) {
+        const ticket = { target: recoveryTarget, origin: document.activeElement, moved: false, dispose: () => document.removeEventListener("focusin", moved) };
+        const moved = (event: FocusEvent) => { if (event.target !== ticket.origin) ticket.moved = true; };
+        document.addEventListener("focusin", moved); recoveryFocus.current = ticket;
+      }
+    }
+    const ticket = recoveryFocus.current;
+    if (!ticket) return;
+    if (!visible || blocked || reads.retired || ticket.moved || activeId !== ticket.target.conversationId || recoveryChanged) {
+      ticket.dispose(); recoveryFocus.current = null; return;
+    }
+    const latest = owner.getSnapshot(), current = latest.inputs.get(ticket.target.conversationId);
+    const exact = ticket.target.slot === "primary" ? pendingAction(current?.value.pending) === ticket.target.actionId
+      : current?.value.revocations?.some(slot => slot.request.actionId === ticket.target.actionId);
+    if (!exact || !recoveryRegion.current || !gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })) return;
+    ticket.dispose(); recoveryFocus.current = null;
+    if (latest.activeId === ticket.target.conversationId && !latest.retired && document.activeElement === ticket.origin) recoveryRegion.current.focus();
+  });
+  function recoveryRequestName(value: ConversationDraftPending) {
+    switch (value.kind) {
+      case "create": return t("newThread");
+      case "append": return t("saveMessage");
+      case "planning": return t("askTitle");
+      case "proposal-capture": return t("proposalCapture");
+      case "proposal-revision": return t("proposalSaveVersion");
+      case "proposal-work-plan": return t("planConfirm");
+      case "work-plan-start": return t("runStart");
+      case "work-plan-control": return t(value.request.command === "pause" ? "runPause" : value.request.command === "stop" ? "runStop" : value.request.command === "take-over" ? "runTakeOver" : "runReviewContinue");
+    }
+  }
   useEffect(() => () => gate.releaseOwner("conversation-composer"), [gate]);
   useEffect(() => { if (!visible) { composing.current = false; gate.releaseOwner("conversation-composer"); } }, [gate, visible]);
   return <div className={styles.agent}>
@@ -134,11 +179,30 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
           : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory onOpenCandidate={onOpenCandidate} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
+    {decisionTray}
     {input ? <div className={styles.composer}>
+      {recoveryChanged ? <Banner tone="warning" role="status">{t("recoveryChanged")}</Banner> : null}
+      {revocationRecovery && recoveryTarget ? <ConversationRunRevocations owner={owner} input={input}
+        link={{ conversationId: input.key.conversationId, planId: revocationRecovery.request.planId }}
+        recovery={{ actionId: recoveryTarget.actionId, targetRef: recoveryRegion }} canRead={() => {
+          const live = presentation.current, latest = owner.getSnapshot();
+          return live.visible && !live.blocked && !reads.retired && !latest.retired && live.activeId === recoveryTarget.conversationId
+            && latest.activeId === recoveryTarget.conversationId && live.viewId === viewId && live.parentDialogId === parentDialogId
+            && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+        }}
+        onFinished={origin => {
+          const live = presentation.current;
+          if (live.visible && !live.blocked && live.activeId === recoveryTarget.conversationId
+            && (document.activeElement === origin || document.activeElement === document.body)) composer.current?.focus();
+        }}/> : null}
       {input.notice ? <p role="status" className={local.notice}>{t(input.notice)}</p> : null}
       {input.failure?.kind === "journal" ? <Banner tone="error"><p>{t("journalFailed")}</p><CommandFailureDetails failure={input.failure.cause}/>
         <Button size="sm" disabled={blocked || input.journalBusy} onClick={() => void owner.retryJournal(activeId!)}>{t("retryJournal")}</Button></Banner> : null}
-      {pending && !input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
+      {pending ? <section ref={primaryRecovery ? recoveryRegion : undefined} tabIndex={primaryRecovery ? -1 : undefined}
+        className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
+        aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
+        {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
+      {!input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
         <p>{t(input.outcome === "blocked" ? runPending ? "runBlocked" : "absentBlocked" : input.outcome === "absent" ? replayable ? runPending ? "runAbsent" : "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : runPending ? "runPending" : "pending")}</p>
         <CommandFailureDetails failure={input.failure?.cause ?? null}/>
         <div className={local.actions}><Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy)} onClick={async event => {
@@ -157,7 +221,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
             };
             if (current()) void owner.retry(conversationId, current);
           }}>{t(runPending ? "runRetryOriginal" : "retryOriginal")}</Button> : null}</div>
-      </Banner> : null}
+      </Banner> : null}</section> : null}
       <Field label={t("message")} error={byteLength > 8192 ? t("messageTooLong") : undefined} description={t("localOnly")}>
         <TextArea ref={composer} rows={3} value={input.value.text} readOnly={blocked} placeholder={t("placeholder")}
           onFocus={() => gate.setInputOwner(viewId, "conversation-composer")} onBlur={() => { composing.current = false; gate.releaseOwner("conversation-composer"); }}

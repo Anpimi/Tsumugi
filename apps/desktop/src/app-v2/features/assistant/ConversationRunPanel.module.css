@@ -10,6 +10,10 @@
 .panel legend { font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .continuation { padding-block-start: var(--space-3); border-block-start: var(--border-width) solid var(--color-border-subtle); }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.recovery { padding: var(--space-3); border: var(--border-width) solid var(--color-accent-solid); border-radius: var(--radius-sm); }
+.recovery h6, .recovery p { margin: 0; overflow-wrap: anywhere; }
+.recovery h6 { font-size: var(--text-sm); font-weight: var(--weight-semibold); }
+.recovery:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
 .check, .panel :global(.source-check) { display: flex; align-items: start; gap: var(--space-2); font-size: var(--text-sm); }
 .checkbox, .panel :global(.source-check) input { inline-size: 16px; min-inline-size: 16px; block-size: 16px; min-block-size: 16px; padding: 0; accent-color: var(--color-accent-solid); }
 .panel :global(.secondary-button), .panel :global(.text-button) { min-block-size: 28px; border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; font-size: var(--text-sm); }

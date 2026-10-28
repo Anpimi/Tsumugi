@@ -12,11 +12,12 @@
 .activityItem { position: relative; display: flex; width: 100%; justify-content: center; }
 .activityItem[data-active] { color: var(--color-accent-text); background: var(--color-accent-soft); }
 .activityItem[data-active]::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; width: 2px; background: var(--color-accent-solid); }
-.activityCount { position: absolute; inset-inline-end: var(--space-1); inset-block-end: 0; font-size: var(--text-xs); line-height: var(--line-xs); font-variant-numeric: tabular-nums; background: var(--color-bg-canvas); border-radius: var(--radius-sm); }
+.activityCount { position: absolute; inset-inline-end: var(--space-1); inset-block-end: 0; font-size: var(--text-xs); line-height: var(--line-xs); font-variant-numeric: tabular-nums; background: var(--color-bg-canvas); border-radius: var(--radius-sm); pointer-events: none; }
 .activityBottom { margin-block-start: auto; display: flex; flex-direction: column; gap: var(--space-4); }
 .workspaceSplit { flex: 1; min-width: 0; }
 .mainPanel { display: flex; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; container-type: inline-size; }
+.main:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: calc(-1 * var(--focus-width)); }
 .viewTabs { display: flex; align-items: center; min-height: var(--size-tab-bar); flex-shrink: 0; gap: var(--space-1); padding-inline: var(--space-4); overflow-x: auto; border-block-end: 1px solid var(--color-border-subtle); }
 .viewTabs > [data-active] { color: var(--color-text-primary); background: var(--color-bg-subtle); }
 .viewTabs > :not([data-active]) { color: var(--color-text-secondary); }

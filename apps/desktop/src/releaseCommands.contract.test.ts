@@ -9,6 +9,42 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
+function deliveryRecordFixture() {
+  const { deliveryId, actionId, releaseId, state, files, createdAt } = fixture.responses.delivery;
+  return { deliveryId, actionId, releaseId, state, files, createdAt };
+}
+
+it("reads an exact redacted delivery record without selecting a directory or recovering an action", async () => {
+  const record = deliveryRecordFixture();
+  const request = { ...fixture.requests.session, deliveryId: record.deliveryId,
+    actionId: record.actionId, releaseId: record.releaseId };
+  expect(validators.validateRequestDeliveryRecord(request)).toBe(true);
+  for (const state of ["pending", "unknown"] as const) {
+    const value = { ...record, state };
+    expect(validators.validateResponseDeliveryRecord(value)).toBe(true);
+    invoke.mockResolvedValueOnce(value);
+    expect(await releaseCommands.deliveryRecord(request)).toEqual(value);
+    expect(invoke).toHaveBeenLastCalledWith("read_delivery_record", { request });
+  }
+  invoke.mockResolvedValueOnce(null);
+  expect(await releaseCommands.deliveryRecord(request)).toBeNull();
+  expect(invoke).toHaveBeenCalledTimes(3);
+  for (const extra of [{ directory: "/unrequested/destination" }, { selectionId: fixture.requests.reconcile.selectionId }, { permit: true }]) {
+    expect(validators.validateResponseDeliveryRecord({ ...record, ...extra })).toBe(false);
+  }
+  expect(validators.validateRequestDeliveryRecord({ ...request, selectionId: fixture.requests.reconcile.selectionId })).toBe(false);
+});
+
+it.each(["deliveryId", "actionId", "releaseId"] as const)("rejects a delivery record bound to another %s without retry", async field => {
+  const record = deliveryRecordFixture();
+  const request = { ...fixture.requests.session, deliveryId: record.deliveryId,
+    actionId: record.actionId, releaseId: record.releaseId };
+  invoke.mockResolvedValueOnce({ ...record, [field]: "00000000-0000-4000-8000-000000000099" });
+  await expect(releaseCommands.deliveryRecord(request)).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenLastCalledWith("read_delivery_record", { request });
+});
+
 it("reads the typed saved build with its exact original identity and without execution calls", async () => {
   expect(validators.validateRequestSavedPluginBuild(pluginBuildWorkflow.savedRead)).toBe(true);
   expect(validators.validateResponseSavedPluginBuild(savedPluginBuild)).toBe(true);
