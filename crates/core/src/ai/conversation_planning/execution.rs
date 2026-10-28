@@ -346,7 +346,7 @@ pub(crate) fn request_body(input: &FixedInput, item: ExecutionId) -> Result<Valu
     Ok(body)
 }
 
-fn validate_model(
+pub(crate) fn validate_model(
     model: &ConversationPlanningModelOutput,
     preview: &ConversationPlanningPreview,
 ) -> Result<(), ExecutionError> {

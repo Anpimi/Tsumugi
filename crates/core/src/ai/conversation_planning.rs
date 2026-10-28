@@ -72,4 +72,4 @@ pub use execution::{
     ConversationPlanningModelOutput, ConversationPlanningOutput, ConversationPlanningRunner,
     consent_from_input, preview_from_input, validate_output,
 };
-pub(crate) use execution::{fixed_input, request_body, settings};
+pub(crate) use execution::{fixed_input, request_body, settings, validate_model};

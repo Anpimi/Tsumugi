@@ -271,6 +271,18 @@ export type TeamWorkKind = "translation" | "review" | "evidence";
 export type ToolGuidancePolicy = {
   profile: "declared-tools-1";
 };
+export type ConversationActionOutcome4 =
+  | {
+      kind: "recorded";
+      receipt: ConversationProposalRevision;
+    }
+  | {
+      kind: "pending";
+      replay: ConversationActionReplay;
+    }
+  | {
+      kind: "mismatch";
+    };
 
 export interface Responses {
   conversation: ProjectConversation;
@@ -284,6 +296,10 @@ export interface Responses {
   planningReceipt: ConversationPlanningReceipt;
   planningRecovery: ConversationPlanningRecovery;
   planningRun: ConversationPlanningView | null;
+  proposal: ConversationProposalRevision;
+  proposalCaptureRecovery: ConversationProposalCaptureRecovery;
+  proposalPage: ConversationProposalPage;
+  proposalRevisionRecovery: ConversationProposalRevisionRecovery;
 }
 /**
  * Stable identity independent of any WorkPlan. Later associations can refer to
@@ -827,4 +843,53 @@ export interface AiUsageView {
   completionTokens: UnsignedDecimal;
   promptTokens: UnsignedDecimal;
   reasoningTokens: UnsignedDecimal | null;
+}
+export interface ConversationProposalRevision {
+  content: ConversationPlanningModelOutput;
+  conversationId: ExecutionId;
+  ordinal: Revision;
+  origin: ConversationProposalOrigin;
+  previousRevisionId: ExecutionId | null;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revision: Revision;
+  revisionId: ExecutionId;
+}
+export interface ConversationProposalOrigin {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ConversationProposalCaptureRecovery {
+  outcome: ConversationActionOutcome4;
+  request: CaptureConversationProposal;
+}
+export interface CaptureConversationProposal {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  resultId: ExecutionId;
+  revisionId: ExecutionId;
+}
+export interface ConversationProposalPage {
+  conversationId: ExecutionId;
+  nextAfter: Revision | null;
+  projectId: ExecutionId;
+  rows: ConversationProposalRevision[];
+}
+export interface ConversationProposalRevisionRecovery {
+  outcome: ConversationActionOutcome4;
+  request: ReviseConversationProposal;
+}
+export interface ReviseConversationProposal {
+  actionId: ExecutionId;
+  content: ConversationPlanningModelOutput;
+  conversationId: ExecutionId;
+  expectedRevisionId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
 }

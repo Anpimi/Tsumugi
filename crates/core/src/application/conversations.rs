@@ -3,6 +3,8 @@ use crate::execution::{ExecutionId, Revision};
 use serde::{Deserialize, Serialize};
 mod planning;
 pub use planning::*;
+mod proposals;
+pub use proposals::*;
 
 /// Match the existing human-readable team member name bound.
 pub const MAX_CONVERSATION_TITLE_BYTES: usize = 128;

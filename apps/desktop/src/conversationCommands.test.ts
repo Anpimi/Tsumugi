@@ -213,3 +213,76 @@ it.each([
   await expect(conversationCommands.readPlanning({ ...context, conversationId: create.conversationId, attemptId: planningConsent.attemptId })).rejects.toThrow("Invalid IPC response");
   expect(invoke).toHaveBeenCalledOnce();
 });
+
+const proposalCapture = { ...context, actionId: fixtureIdentity(18200), conversationId: create.conversationId,
+  proposalId: fixtureIdentity(18201), revisionId: fixtureIdentity(18202), attemptId: planningConsent.attemptId, resultId: fixtureIdentity(18203) };
+const proposalContent = { kind: "proposal" as const, summary: "  Keep {{name}} é 👩🏽‍💻\r\n  ", unitIds: [fixtureIdentity(18204)],
+  options: { stages: [{ stage: "generation" as const, mode: "assisted" as const }], selectionPolicy: "candidates-only" as const, advisoryChecks: [], adoptResources: false, deliver: false }, questions: [] };
+const proposalFirst = { projectId: context.projectId, conversationId: create.conversationId, proposalId: proposalCapture.proposalId,
+  revisionId: proposalCapture.revisionId, revision: "1", ordinal: "9007199254740993", previousRevisionId: null,
+  origin: { attemptId: proposalCapture.attemptId, resultId: proposalCapture.resultId, inputDigest: "a".repeat(64), resultDigest: "b".repeat(64) }, content: proposalContent };
+const proposalRevise = { ...context, actionId: fixtureIdentity(18205), conversationId: create.conversationId, proposalId: proposalFirst.proposalId,
+  revisionId: fixtureIdentity(18206), expectedRevisionId: proposalFirst.revisionId, content: { ...proposalContent, summary: "Only prepare a candidate." } };
+const proposalSecond = { ...proposalFirst, revisionId: proposalRevise.revisionId, previousRevisionId: proposalFirst.revisionId,
+  revision: "2", ordinal: "9007199254740994", content: proposalRevise.content };
+
+it("keeps immutable proposal versions separate from planning and execution permission", async () => {
+  invoke.mockResolvedValueOnce(proposalFirst).mockResolvedValueOnce(proposalSecond).mockResolvedValueOnce(proposalFirst)
+    .mockResolvedValueOnce(proposalSecond).mockResolvedValueOnce({ projectId: context.projectId, conversationId: create.conversationId, rows: [proposalFirst, proposalSecond], nextAfter: null });
+  await expect(conversationCommands.captureProposal(proposalCapture)).resolves.toEqual(proposalFirst);
+  await expect(conversationCommands.reviseProposal(proposalRevise)).resolves.toEqual(proposalSecond);
+  await expect(conversationCommands.readProposal({ ...context, conversationId: create.conversationId, proposalId: proposalFirst.proposalId, revisionId: proposalFirst.revisionId })).resolves.toEqual(proposalFirst);
+  await expect(conversationCommands.validateProposal({ ...context, conversationId: create.conversationId, proposalId: proposalFirst.proposalId, revisionId: proposalSecond.revisionId })).resolves.toEqual(proposalSecond);
+  await expect(conversationCommands.proposalRevisions({ ...context, conversationId: create.conversationId, after: "9007199254740992", limit: 50 })).resolves.toMatchObject({ rows: [proposalFirst, proposalSecond] });
+  expect(invoke.mock.calls.map(([name]) => name)).toEqual(["capture_conversation_proposal", "revise_conversation_proposal", "read_conversation_proposal", "validate_conversation_proposal", "read_conversation_proposal_revisions"]);
+  expect(invoke.mock.calls[0][1]).toEqual({ request: proposalCapture });
+});
+
+it.each([
+  { ...proposalFirst, origin: { ...proposalFirst.origin, attemptId: fixtureIdentity(18990) } },
+  { ...proposalFirst, revisionId: fixtureIdentity(18990) },
+  { ...proposalFirst, revision: "2", previousRevisionId: fixtureIdentity(18990) },
+  { ...proposalFirst, content: { kind: "reply", summary: "A reply is not a proposal.", questions: [] } },
+])("rejects a captured proposal acknowledgement for different evidence or identities %#", async value => {
+  invoke.mockResolvedValueOnce(value);
+  await expect(conversationCommands.captureProposal(proposalCapture)).rejects.toThrow("Invalid IPC response");
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { ...proposalSecond, previousRevisionId: fixtureIdentity(18990) },
+  { ...proposalSecond, content: { ...proposalSecond.content, summary: "Different saved text" } },
+  { ...proposalSecond, content: { ...proposalSecond.content, unitIds: [...proposalSecond.content.unitIds, ...proposalSecond.content.unitIds] } },
+])("rejects a revision acknowledgement that would replace newer input or change the saved request %#", async value => {
+  invoke.mockResolvedValueOnce(value);
+  await expect(conversationCommands.reviseProposal(proposalRevise)).rejects.toThrow("Invalid IPC response");
+  expect(invoke).toHaveBeenCalledOnce();
+});
+
+it("recovers only the original proposal mutation without renewing planning permission", async () => {
+  const { sessionToken: _captureToken, ...originalCapture } = proposalCapture;
+  const { sessionToken: _reviseToken, ...originalRevise } = proposalRevise;
+  invoke.mockResolvedValueOnce({ request: originalCapture, outcome: { kind: "recorded", receipt: proposalFirst } });
+  await expect(conversationCommands.recoverProposalCapture(proposalCapture)).resolves.toMatchObject({ outcome: { receipt: proposalFirst } });
+  for (const outcome of [{ kind: "recorded", receipt: proposalSecond }, { kind: "pending", replay: "explicit-same-request" }, { kind: "pending", replay: "blocked" }, { kind: "mismatch" }]) {
+    invoke.mockResolvedValueOnce({ request: originalRevise, outcome });
+    await expect(conversationCommands.recoverProposalRevision(proposalRevise)).resolves.toMatchObject({ outcome });
+  }
+  invoke.mockResolvedValueOnce({ request: { ...originalRevise, expectedRevisionId: fixtureIdentity(18990) }, outcome: { kind: "pending", replay: "explicit-same-request" } });
+  await expect(conversationCommands.recoverProposalRevision(proposalRevise)).rejects.toThrow("Invalid IPC response");
+  expect(invoke.mock.calls.every(([name]) => name.startsWith("recover_conversation_proposal_"))).toBe(true);
+});
+
+it("reads historical versions without requiring live permission and refuses unordered or foreign feeds", async () => {
+  const request = { ...context, conversationId: create.conversationId, after: "9007199254740992", limit: 50 };
+  const valid = { projectId: context.projectId, conversationId: create.conversationId, rows: [proposalFirst, proposalSecond], nextAfter: proposalSecond.ordinal };
+  for (const invalid of [
+    { ...valid, rows: [proposalSecond, proposalFirst] }, { ...valid, rows: [proposalFirst, proposalFirst] },
+    { ...valid, conversationId: fixtureIdentity(18990) }, { ...valid, rows: [{ ...proposalFirst, ordinal: request.after }] },
+  ]) {
+    invoke.mockResolvedValueOnce(invalid);
+    await expect(conversationCommands.proposalRevisions(request)).rejects.toThrow("Invalid IPC response");
+  }
+  invoke.mockResolvedValueOnce({ ...proposalFirst, content: { ...proposalFirst.content, summary: "\ufeff" } });
+  await expect(conversationCommands.readProposal({ ...context, conversationId: create.conversationId, proposalId: proposalFirst.proposalId, revisionId: null })).resolves.toMatchObject({ content: { summary: "\ufeff" } });
+});

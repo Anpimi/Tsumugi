@@ -12,20 +12,134 @@ export type ConversationPlanningScope =
       locale: string;
       unitIds: ExecutionId[];
     };
+export type ConversationPlanningModelOutput =
+  | {
+      kind: "reply";
+      questions: string[];
+      summary: string;
+    }
+  | {
+      kind: "proposal";
+      options: PlanOptions;
+      questions: string[];
+      summary: string;
+      unitIds: ExecutionId[];
+    };
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+/**
+ * Selecting a check is not adopting its resource or requiring its findings.
+ * Blocking checks continue to use the original mandatory Review contract.
+ */
+export type TextReviewDisposition = "advisory";
+export type ComponentScope = "application" | "project" | "attempt";
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux" | "windows";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
+/**
+ * Explicit model sharing of one original, human-previewed terminology query.
+ */
+export type McpTermQueryPolicy = {
+  preview: McpTermQueryPreview;
+  profile: "fixed-term-query-1";
+};
+export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
+export type StageMode = "manual" | "assisted" | "skipped";
+export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
+export type TeamDiscussionPolicy =
+  | {
+      profile: "current-plan-1";
+    }
+  | {
+      profile: "current-plan-2";
+    };
+export type TeamExecutionPolicy = {
+  initialMemberId: ExecutionId;
+  initialUnitId: ExecutionId;
+  limits: TeamExecutionLimits;
+  members: TeamExecutionMember[];
+  profile: "bounded-team-1";
+};
+export type TeamWorkKind = "translation" | "review" | "evidence";
+/**
+ * Explicit model sharing of guidance declared by the captured tools.
+ */
+export type ToolGuidancePolicy = {
+  profile: "declared-tools-1";
+};
 
 export interface Requests {
   append: AppendProjectConversationMessageRequest;
+  captureProposal: CaptureConversationProposalRequest;
   create: CreateProjectConversationRequest;
   list: ListProjectConversationsRequest;
   messages: ReadProjectConversationMessagesRequest;
   preparePlanning: PrepareConversationPlanningRequest;
+  proposalRevisions: ReadConversationProposalRevisionsRequest;
   read: ReadProjectConversationRequest;
   readPlanning: ReadConversationPlanningRequest;
+  readProposal: ReadConversationProposalRequest;
   recoverCreate: CreateProjectConversationRequest;
   recoverMessage: AppendProjectConversationMessageRequest;
   recoverPlanning: RecoverConversationPlanningRequest;
+  recoverProposalCapture: CaptureConversationProposalRequest;
+  recoverProposalRevision: ReviseConversationProposalRequest;
+  reviseProposal: ReviseConversationProposalRequest;
   startPlanning: StartConversationPlanningRequest;
   validatePlanning: ValidateConversationPlanningRequest;
+  validateProposal: ValidateConversationProposalRequest;
 }
 export interface AppendProjectConversationMessageRequest {
   actionId: ExecutionId;
@@ -33,6 +147,16 @@ export interface AppendProjectConversationMessageRequest {
   conversationId: ExecutionId;
   messageId: ExecutionId;
   projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface CaptureConversationProposalRequest {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  resultId: ExecutionId;
+  revisionId: ExecutionId;
   sessionToken: string;
 }
 export interface CreateProjectConversationRequest {
@@ -109,6 +233,13 @@ export interface SourceContextSelection {
   maxItems: number;
   neighbors: boolean;
 }
+export interface ReadConversationProposalRevisionsRequest {
+  after?: Revision | null;
+  conversationId: ExecutionId;
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
 export interface ReadProjectConversationRequest {
   conversationId: ExecutionId;
   projectId: ExecutionId;
@@ -118,6 +249,13 @@ export interface ReadConversationPlanningRequest {
   attemptId: ExecutionId;
   conversationId: ExecutionId;
   projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ReadConversationProposalRequest {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId?: ExecutionId | null;
   sessionToken: string;
 }
 export interface RecoverConversationPlanningRequest {
@@ -139,6 +277,271 @@ export interface ConversationPlanningConsent {
   shareUnits: boolean;
   taskId: ExecutionId;
 }
+export interface ReviseConversationProposalRequest {
+  actionId: ExecutionId;
+  content: ConversationPlanningModelOutput;
+  conversationId: ExecutionId;
+  expectedRevisionId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
+  sessionToken: string;
+}
+export interface PlanOptions {
+  adoptResources: boolean;
+  advisoryChecks: AdvisoryReviewCheck[];
+  deliver: boolean;
+  /**
+   * Absent keeps the original MCP preparation exclusively human-controlled.
+   */
+  mcpTermQuery?: McpTermQueryPolicy | null;
+  selectionPolicy: SelectionPolicy;
+  stages: StageChoice[];
+  /**
+   * Explicit consent for bounded, same-plan published discussions.
+   */
+  teamDiscussions?: TeamDiscussionPolicy | null;
+  teamExecution?: TeamExecutionPolicy | null;
+  /**
+   * Absent means that tool guidance is available only to the human reader.
+   */
+  toolGuidance?: ToolGuidancePolicy | null;
+}
+/**
+ * Captured by the trusted package adapter. Selecting these rules neither
+ * adopts Resource entries nor grants permission to run the checker.
+ */
+export interface AdvisoryReviewCheck {
+  binding: TextReviewBinding;
+  declarationResourceId: string;
+  execution: PluginExecutionBinding;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+}
+export interface TextReviewBinding {
+  checker: CapabilityBinding;
+  declaration: TextReviewDeclaration;
+  resources: TextReviewResourceBinding[];
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * One provider's available rules. An invocation must use an explicitly chosen
+ * nonempty subset; installation and a matching spelling do not select rules.
+ */
+export interface TextReviewDeclaration {
+  checker: string;
+  disposition: TextReviewDisposition;
+  profile: ContractRef;
+  rules: TextReviewRuleDeclaration[];
+  supportingResources: string[];
+}
+export interface TextReviewRuleDeclaration {
+  description: string;
+  requiresTranslation: boolean;
+  rule: ContractRef;
+  title: string;
+}
+/**
+ * A declared Resource contribution in the exact same package as the checker.
+ * This mirrors Resource metadata, without coupling review to tool declarations.
+ */
+export interface TextReviewResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+export interface PluginExecutionBinding {
+  applicationScope: ApplicationScopeBasis | null;
+  capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile?: ContractRef | null;
+}
+/**
+ * Identity allocated by the application instance owner before consent. This
+ * persisted fact never recreates the owner's session-local execution lease.
+ */
+export interface ApplicationScopeBasis {
+  activationGeneration: number;
+  instanceId: ExecutionId;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+/**
+ * Exact package Resource bytes captured by the Host, never a plugin's mutable
+ * lookup or a claim that the referenced resource has been adopted by a project.
+ */
+export interface TextReviewResourcePin {
+  contributionId: string;
+  schema: ContractRef;
+  sha256: string;
+}
+export interface McpTermQueryPreview {
+  arguments: McpTermQueryArguments;
+  basis: McpTermQueryBasis;
+  inputDigest: string;
+  request: McpTermQueryRequest;
+  toolDigest: string;
+}
+export interface McpTermQueryArguments {
+  query: string;
+  sourceLocale: string;
+  targetLocale: string;
+}
+export interface McpTermQueryBasis {
+  locale: string;
+  projectId: ExecutionId;
+  sourceLocale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface McpTermQueryRequest {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  expiresAtMs: number;
+  locale: string;
+  projectId: ExecutionId;
+  query: string;
+  taskId: ExecutionId;
+  tool: McpTermTool;
+  unitId: ExecutionId;
+}
+export interface McpTermTool {
+  credentialEnv: string | null;
+  description: string | null;
+  discoveryExpiresAtMs: number;
+  discoveryGeneration: UnsignedDecimal;
+  discoveryId: ExecutionId;
+  endpoint: string;
+  inputSchema: unknown;
+  outputSchema: unknown;
+  profileVersion: string;
+  protocolVersion: string;
+  serverName: string;
+  serverVersion: string;
+  toolName: string;
+}
+export interface StageChoice {
+  mode: StageMode;
+  stage: WorkStage;
+}
+export interface TeamExecutionLimits {
+  maxActivations: number;
+  maxConcurrency: number;
+  maxNoProgress: number;
+}
+export interface TeamExecutionMember {
+  config: AiConfig;
+  displayName: string;
+  kinds: TeamWorkKind[];
+  memberId: ExecutionId;
+  role: string;
+  roleVersionId: ExecutionId;
+  toolHandles: ExecutionId[];
+  unitIds: ExecutionId[];
+}
 export interface StartConversationPlanningRequest {
   consent: ConversationPlanningConsent;
   conversationId: ExecutionId;
@@ -149,5 +552,12 @@ export interface StartConversationPlanningRequest {
 export interface ValidateConversationPlanningRequest {
   preparationId: ExecutionId;
   projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ValidateConversationProposalRequest {
+  conversationId: ExecutionId;
+  projectId: ExecutionId;
+  proposalId: ExecutionId;
+  revisionId: ExecutionId;
   sessionToken: string;
 }

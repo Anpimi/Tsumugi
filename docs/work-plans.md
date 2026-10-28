@@ -24,7 +24,13 @@ The existing runtime, Provider service and request budget enforce this permissio
 
 Planning results are typed replies or plan suggestions. Suggestions must stay within the captured entries and language and preserve human protection. Invalid scope, unsupported effects, extra fields and malformed output are refused without automatic repair or a second model request. The original fixed input also retains local provenance; the Provider receives only the disclosed system and input text. History remains readable after the permission ends.
 
-Persisted proposal revisions, explicit authorization of a resulting work plan, and the assistant interface still need their own integration. A planning result cannot start or adopt work.
+## Conversation proposal revisions
+
+Core stores immutable proposal revisions, with desktop IPC commands and a frontend command adapter for this layer. An initial revision can only come from the Store's successful, valid planning proposal result. It retains references to the original attempt, result, input digest, and result digest without copying the planning materials. Human adjustments create a new revision; `expectedRevisionId` checks that the current revision has not changed before saving.
+
+Creating and revising a proposal records the original request and receipt in the same transaction. Repeating the same action returns its original revision, and the original action can be checked after an uncertain response. Creating, revising, or explicitly validating a proposal checks its relevant materials against current project state. Historical revisions remain readable when those materials are stale; reopening history does not restore planning permission.
+
+There is no proposal interface yet, and proposal revisions are not linked to or authorized as a `WorkPlan`. A planning result or proposal cannot start or adopt work.
 
 ## Preparing and verifying a work plan
 

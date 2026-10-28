@@ -444,47 +444,77 @@ impl ProjectStore {
             .connection()
             .map_err(|_| fail(ErrorCode::StorageFailed, "conversation-planning-session"))?;
         let (current, current_ai) = read_snapshot(c, |c| preview_in(self, c, &capture.request))?;
-        // Source-context identities and shared manual decisions remain local
-        // evidence even when their provider-facing text is unchanged. The
-        // unrelated global resource change counter is deliberately excluded.
-        let shared_evidence = |preview: &Option<AiPreview>| {
-            preview.as_ref().map(|preview| {
-                preview
-                    .items
-                    .iter()
-                    .map(|item| {
-                        let manual = match &item.project_context {
-                            crate::ProjectFactCapture::Selected { decisions, .. }
-                                if preview.config.share_context =>
-                            {
-                                decisions
-                                    .iter()
-                                    .filter(|decision| {
-                                        matches!(
-                                            decision.request.disposition,
-                                            crate::ContextFactDisposition::Replace { .. }
-                                        )
-                                    })
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                            }
-                            _ => Vec::new(),
-                        };
-                        (item.source_context.clone(), manual)
-                    })
-                    .collect::<Vec<_>>()
-            })
-        };
-        if current != capture.preview
-            || shared_evidence(&current_ai) != shared_evidence(&capture.ai_preview)
-        {
-            return Err(fail(
-                ErrorCode::DependencyConflict,
-                "conversation-planning-current",
-            ));
-        }
-        Ok(())
+        check_material(&current, &current_ai, &capture.preview, &capture.ai_preview)
     }
+}
+
+/// Compare durable materials without creating a capture, permission or runtime.
+/// The caller owns the snapshot, including when called inside a mutation.
+pub(super) fn validate_material_in(
+    store: &ProjectStore,
+    c: &Connection,
+    expected: &ConversationPlanningPreview,
+    material: &Option<AiPreview>,
+) -> Result<(), ExecutionError> {
+    let request = PrepareConversationPlanning {
+        project_id: expected.project_id,
+        conversation_id: expected.conversation_id,
+        selected_message_ids: expected
+            .selected_messages
+            .iter()
+            .map(|message| message.message_id)
+            .collect(),
+        scope: expected.scope.clone(),
+        config: expected.config.clone(),
+    };
+    let (current, current_ai) = preview_in(store, c, &request)?;
+    check_material(&current, &current_ai, expected, material)
+}
+
+fn check_material(
+    current: &ConversationPlanningPreview,
+    current_ai: &Option<AiPreview>,
+    expected: &ConversationPlanningPreview,
+    material: &Option<AiPreview>,
+) -> Result<(), ExecutionError> {
+    // Source-context identities and shared manual decisions remain local
+    // evidence even when their provider-facing text is unchanged. The
+    // unrelated global resource change counter is deliberately excluded.
+    let shared_evidence = |preview: &Option<AiPreview>| {
+        preview.as_ref().map(|preview| {
+            preview
+                .items
+                .iter()
+                .map(|item| {
+                    let manual = match &item.project_context {
+                        crate::ProjectFactCapture::Selected { decisions, .. }
+                            if preview.config.share_context =>
+                        {
+                            decisions
+                                .iter()
+                                .filter(|decision| {
+                                    matches!(
+                                        decision.request.disposition,
+                                        crate::ContextFactDisposition::Replace { .. }
+                                    )
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        }
+                        _ => Vec::new(),
+                    };
+                    (item.source_context.clone(), manual)
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    if current != expected || shared_evidence(current_ai) != shared_evidence(material) {
+        return Err(fail(
+            ErrorCode::DependencyConflict,
+            "conversation-planning-current",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

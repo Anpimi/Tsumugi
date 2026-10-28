@@ -66,6 +66,7 @@ fn legacy_rows(c: &Connection) -> BTreeMap<String, Vec<Vec<rusqlite::types::Valu
 fn make_legacy(path: &std::path::Path) {
     let c = Connection::open(path.join(super::super::super::DATABASE_FILENAME)).unwrap();
     for name in [
+        "application_conversation_proposals",
         "application_conversation_actions",
         "application_conversation_messages",
         "application_conversations",
@@ -543,7 +544,7 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
         assert_eq!(
             version(&raw),
             if point == "conversation-after-commit" {
-                62
+                crate::persistence::SCHEMA_VERSION
             } else {
                 61
             }
@@ -551,7 +552,7 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
         assert_eq!(legacy_rows(&raw), before);
         drop(raw);
         let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(version(reopened.connection().unwrap()), 62);
+        assert_eq!(version(reopened.connection().unwrap()), crate::persistence::SCHEMA_VERSION);
         assert_eq!(legacy_rows(reopened.connection().unwrap()), before);
         assert_eq!(reopened.work_plan(plan.plan_id).unwrap(), plan);
         assert_eq!(

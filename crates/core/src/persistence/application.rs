@@ -49,12 +49,12 @@ pub(super) fn validate(c: &rusqlite::Connection) -> Result<(), ExecutionError> {
 pub(super) fn validate_after_open(
     c: &rusqlite::Connection, inputs: OpenControlValidation<'_>,
 ) -> Result<(), ExecutionError> {
-    validate_after_open_version(c, inputs, true)
+    validate_after_open_version(c, inputs, super::SCHEMA_VERSION)
 }
 pub(super) fn validate_after_open_version(
-    c: &rusqlite::Connection, inputs: OpenControlValidation<'_>, conversations: bool,
+    c: &rusqlite::Connection, inputs: OpenControlValidation<'_>, version: i64,
 ) -> Result<(), ExecutionError> {
-    if conversations { self::conversations::validate(c)?; }
+    if version >= 62 { self::conversations::validate_version(c, version >= 63)?; }
     control::validate_after_open(c, inputs)?;
     team::validate(c)?;
     coordination::validate(c)

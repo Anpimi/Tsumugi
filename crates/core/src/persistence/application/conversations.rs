@@ -7,6 +7,7 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 mod planning;
+pub(in crate::persistence) mod proposals;
 
 const MAX_RECORD: usize = 64 * 1024;
 const TABLES: &[(&str, &str)] = &[
@@ -24,13 +25,17 @@ const TABLES: &[(&str, &str)] = &[
     ),
 ];
 pub(in crate::persistence) fn initialize(c: &Connection) -> rusqlite::Result<()> {
+    initialize_messages(c)?;
+    proposals::initialize(c)
+}
+pub(in crate::persistence) fn initialize_messages(c: &Connection) -> rusqlite::Result<()> {
     for (_, sql) in TABLES {
         c.execute_batch(sql)?;
     }
     Ok(())
 }
 pub(in crate::persistence) fn table_names() -> impl Iterator<Item = String> {
-    TABLES.iter().map(|(name, _)| name.to_string())
+    TABLES.iter().map(|(name, _)| name.to_string()).chain(proposals::table_names())
 }
 fn fail(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
@@ -128,30 +133,39 @@ enum Action {
     Append {
         request: AppendProjectConversationMessage,
     },
+    CaptureProposal { request: CaptureConversationProposal },
+    ReviseProposal { request: ReviseConversationProposal },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum Receipt {
     Create { receipt: ProjectConversation },
     Append { receipt: ProjectConversationMessage },
+    Proposal { receipt: ConversationProposalRevision },
 }
 impl Action {
     fn id(&self) -> ExecutionId {
         match self {
             Self::Create { request } => request.action_id,
             Self::Append { request } => request.action_id,
+            Self::CaptureProposal { request } => request.action_id,
+            Self::ReviseProposal { request } => request.action_id,
         }
     }
     fn parent(&self) -> ExecutionId {
         match self {
             Self::Create { request } => request.conversation_id,
             Self::Append { request } => request.conversation_id,
+            Self::CaptureProposal { request } => request.conversation_id,
+            Self::ReviseProposal { request } => request.conversation_id,
         }
     }
     fn project(&self) -> ExecutionId {
         match self {
             Self::Create { request } => request.project_id,
             Self::Append { request } => request.project_id,
+            Self::CaptureProposal { request } => request.project_id,
+            Self::ReviseProposal { request } => request.project_id,
         }
     }
 }
@@ -184,6 +198,15 @@ fn action(
         {
             ()
         }
+        (Action::CaptureProposal { request }, Receipt::Proposal { receipt })
+            if receipt == &proposals::revision_in(c, project, request.conversation_id, request.proposal_id, request.revision_id)?
+                && receipt.previous_revision_id.is_none()
+                && receipt.origin.attempt_id == request.attempt_id
+                && receipt.origin.result_id == request.result_id => (),
+        (Action::ReviseProposal { request }, Receipt::Proposal { receipt })
+            if receipt == &proposals::revision_in(c, project, request.conversation_id, request.proposal_id, request.revision_id)?
+                && receipt.previous_revision_id == Some(request.expected_revision_id)
+                && receipt.content == request.content => (),
         _ => return Err(corrupt()),
     }
     Ok(Some((request, receipt)))
@@ -213,6 +236,9 @@ fn record(c: &Connection, request: &Action, receipt: &Receipt) -> Result<(), Exe
     Ok(())
 }
 pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionError> {
+    validate_version(c, true)
+}
+pub(in crate::persistence) fn validate_version(c: &Connection, proposals: bool) -> Result<(), ExecutionError> {
     let project = ExecutionId::parse(
         &read_metadata_from(c)
             .map_err(|_| corrupt())?
@@ -222,6 +248,7 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
     .map_err(|_| corrupt())?;
     let mut parents = std::collections::BTreeSet::new();
     let mut messages = std::collections::BTreeSet::new();
+    let mut revisions = std::collections::BTreeSet::new();
     let mut q = c
         .prepare("SELECT action_id FROM application_conversation_actions ORDER BY action_id")
         .map_err(sql)?;
@@ -238,6 +265,12 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
                 if !messages.insert(request.message_id) {
                     return Err(corrupt());
                 }
+            }
+            Action::CaptureProposal { request } => {
+                if !proposals || !revisions.insert(request.revision_id) { return Err(corrupt()); }
+            }
+            Action::ReviseProposal { request } => {
+                if !proposals || !revisions.insert(request.revision_id) { return Err(corrupt()); }
             }
         }
     }
@@ -269,6 +302,7 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
             return Err(corrupt());
         }
     }
+    if proposals { self::proposals::validate(c, &revisions)?; }
     Ok(())
 }
 fn page_limit(limit: u32) -> Result<(), ExecutionError> {

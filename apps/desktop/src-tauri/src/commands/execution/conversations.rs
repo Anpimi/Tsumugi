@@ -2,6 +2,7 @@
 use super::*;
 use tsumugi_core::application::conversations::*;
 pub(in crate::commands) mod planning;
+pub(in crate::commands) mod proposals;
 #[cfg(feature = "wire-schema")]
 pub(in crate::commands) use planning::{
     PrepareConversationPlanningRequest, PreparedConversationPlanning,

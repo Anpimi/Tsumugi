@@ -5,6 +5,7 @@ import { jsonIdentity } from "./pluginToolChoices";
 import type { Requests } from "./generated/conversations.requests";
 import type { Responses } from "./generated/conversations.responses";
 import { validateResponseConversation, validateResponsePage, validateResponseMessage, validateResponseMessagePage, validateResponseCreateRecovery, validateResponseMessageRecovery, validateResponsePlanning, validateResponsePlanningReceipt, validateResponsePlanningRecovery, validateResponsePlanningRun } from "./generated/conversations.validators";
+import { validateResponseProposal, validateResponseProposalPage, validateResponseProposalCaptureRecovery, validateResponseProposalRevisionRecovery } from "./generated/conversations.validators";
 
 export type { ProjectConversation, ProjectConversationMessage, ProjectConversationPage, ProjectConversationMessagePage,
   ProjectConversationCreateRecovery, ProjectConversationMessageRecovery } from "./generated/conversations.responses";
@@ -15,6 +16,7 @@ export type PreparedConversationPlanning = Responses["planning"];
 export type ConversationPlanningConsent = Requests["startPlanning"]["consent"];
 export type ConversationPlanningReceipt = Responses["planningReceipt"];
 export type ConversationPlanningRun = NonNullable<Responses["planningRun"]>;
+export type ConversationProposalRevision = Responses["proposal"];
 const bytes = new TextEncoder();
 const bounded = (value: unknown) => bytes.encode(JSON.stringify(value)).length <= 256 * 1024;
 function conversation(value: Responses["conversation"], projectId: string, conversationId?: string) {
@@ -78,8 +80,55 @@ function planningRun(value: NonNullable<Responses["planningRun"]>, request: Requ
     && bounded(value);
 }
 
+function proposal(value: Responses["proposal"], request: { projectId: string; conversationId: string; proposalId?: string; revisionId?: string | null }) {
+  const content = value.content;
+  return value.projectId === request.projectId && value.conversationId === request.conversationId
+    && (request.proposalId === undefined || value.proposalId === request.proposalId)
+    && (request.revisionId == null || value.revisionId === request.revisionId)
+    && BigInt(value.revision) > 0n && BigInt(value.ordinal) > 0n
+    && (value.previousRevisionId === null ? value.revision === "1" : BigInt(value.revision) > 1n && value.previousRevisionId !== value.revisionId)
+    && /^[0-9a-f]{64}$/.test(value.origin.inputDigest) && /^[0-9a-f]{64}$/.test(value.origin.resultDigest)
+    && content.kind === "proposal" && content.unitIds.length >= 1 && content.unitIds.length <= 100
+    && new Set(content.unitIds).size === content.unitIds.length
+    && content.summary.length > 0 && bytes.encode(content.summary).length <= 8192
+    && content.questions.length <= 8 && content.questions.every(question => question.length > 0 && bytes.encode(question).length <= 2048)
+    && bounded(value);
+}
+function capturedProposal(value: Responses["proposal"], request: Requests["captureProposal"]) {
+  return proposal(value, request) && value.revision === "1" && value.previousRevisionId === null
+    && value.origin.attemptId === request.attemptId && value.origin.resultId === request.resultId;
+}
+function revisedProposal(value: Responses["proposal"], request: Requests["reviseProposal"]) {
+  return proposal(value, request) && value.previousRevisionId === request.expectedRevisionId
+    && jsonIdentity(value.content) === jsonIdentity(request.content);
+}
+function originalRequest<T extends { sessionToken: string }>(request: T) {
+  const { sessionToken: _sessionToken, ...original } = request;
+  return original;
+}
+
 /** Project conversations, explicit planning permission and original-action history. */
 export const conversationCommands = {
+  captureProposal: (request: Requests["captureProposal"]) => checkedInvoke("capture_conversation_proposal", request,
+    (value): value is Responses["proposal"] => validateResponseProposal(value) && capturedProposal(value, request)),
+  reviseProposal: (request: Requests["reviseProposal"]) => checkedInvoke("revise_conversation_proposal", request,
+    (value): value is Responses["proposal"] => validateResponseProposal(value) && revisedProposal(value, request)),
+  readProposal: (request: Requests["readProposal"]) => checkedInvoke("read_conversation_proposal", request,
+    (value): value is Responses["proposal"] => validateResponseProposal(value) && proposal(value, request)),
+  proposalRevisions: (request: Requests["proposalRevisions"]) => checkedInvoke("read_conversation_proposal_revisions", request,
+    (value): value is Responses["proposalPage"] => validateResponseProposalPage(value) && value.projectId === request.projectId
+      && value.conversationId === request.conversationId && page(value, request)
+      && new Set(value.rows.map(row => row.revisionId)).size === value.rows.length && value.rows.every(row => proposal(row, request))),
+  validateProposal: (request: Requests["validateProposal"]) => checkedInvoke("validate_conversation_proposal", request,
+    (value): value is Responses["proposal"] => validateResponseProposal(value) && proposal(value, request)),
+  recoverProposalCapture: (request: Requests["recoverProposalCapture"]) => checkedInvoke("recover_conversation_proposal_capture", request,
+    (value): value is Responses["proposalCaptureRecovery"] => validateResponseProposalCaptureRecovery(value)
+      && jsonIdentity(value.request) === jsonIdentity(originalRequest(request))
+      && (value.outcome.kind !== "recorded" || capturedProposal(value.outcome.receipt, request))),
+  recoverProposalRevision: (request: Requests["recoverProposalRevision"]) => checkedInvoke("recover_conversation_proposal_revision", request,
+    (value): value is Responses["proposalRevisionRecovery"] => validateResponseProposalRevisionRecovery(value)
+      && jsonIdentity(value.request) === jsonIdentity(originalRequest(request))
+      && (value.outcome.kind !== "recorded" || revisedProposal(value.outcome.receipt, request))),
   startPlanning: (request: Requests["startPlanning"]) => checkedInvoke("start_conversation_planning", request,
     (value): value is Responses["planningReceipt"] => validateResponsePlanningReceipt(value) && planningReceipt(value, request)),
   recoverPlanning: (request: Requests["recoverPlanning"]) => checkedInvoke("recover_conversation_planning", request,

@@ -563,6 +563,11 @@ struct PlanningProvider {
 }
 impl PlanningProvider {
     fn new() -> Self {
+        Self::with_content(
+            json!({"kind":"reply","summary":"先确认要处理哪些条目。","questions":[]}),
+        )
+    }
+    fn with_content(content: Value) -> Self {
         use std::{
             io::{Read, Write},
             net::TcpListener,
@@ -636,7 +641,7 @@ impl PlanningProvider {
                     assert!(all.is_empty(), "unexpected repeated planning request");
                     all.push(value);
                 }
-                let response=json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":json!({"kind":"reply","summary":"先确认要处理哪些条目。","questions":[]}).to_string()}}],"usage":{"prompt_tokens":7,"completion_tokens":3}}).to_string();
+                let response=json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":content.to_string()}}],"usage":{"prompt_tokens":7,"completion_tokens":3}}).to_string();
                 write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
             }
         });
@@ -825,6 +830,257 @@ fn conversation_planning_ipc_requires_explicit_permission_and_reopens_as_history
     assert_eq!(provider.count(), 1);
     assert_eq!(
         reject(&window, "read_conversation_planning", read)["code"],
+        "session-invalid"
+    );
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":reopened["sessionToken"]}),
+    );
+}
+
+#[test]
+fn conversation_proposal_ipc_preserves_versions_original_actions_and_readonly_reopening() {
+    let temporary = tempfile::tempdir().unwrap();
+    let destination = temporary.path().join("project");
+    let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .unwrap();
+    let window =
+        tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .build()
+            .unwrap();
+    let project = call(
+        &window,
+        "create_project",
+        json!({"destination":destination,"displayName":"Proposal IPC","sourceLocale":"en","targetLocales":["zh-CN"]}),
+    );
+    let unit = app.state::<AppState>().sessions.with(|sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        let source = tsumugi_core::content::SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"Keep {{name}}"}"#, "en").unwrap();
+        let input = source.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let result = store.execution_current_result(input.envelope().attempt_id, input.envelope().items[0].item_id).unwrap().unwrap();
+        let preview = store.source_preview(input.envelope().attempt_id, result, 0, 1).unwrap();
+        let action = store.prepare_adoption_with_id(ExecutionId::new(), input.envelope().attempt_id, input.envelope().units[0].unit_id,
+            vec![result], serde_json::to_value(preview.confirmation).unwrap()).unwrap();
+        store.adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler).unwrap();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        store.source_content(snapshot, 0, 1).unwrap().rows.remove(0).unit_id.unwrap()
+    });
+    let content = json!({"kind":"proposal","summary":"先为这一条生成候选译文。","unitIds":[unit],"options":tsumugi_core::application::PlanOptions::default(),"questions":[]});
+    let provider = PlanningProvider::with_content(content.clone());
+    let thread = call(
+        &window,
+        "create_project_conversation",
+        in_session(
+            &project,
+            json!({"actionId":identity(),"conversationId":identity(),"title":null}),
+        ),
+    );
+    let message = call(
+        &window,
+        "append_project_conversation_message",
+        in_session(
+            &project,
+            json!({"actionId":identity(),"conversationId":thread["conversationId"],"messageId":identity(),"body":"为这一条准备候选，保留 {{name}}。"}),
+        ),
+    );
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint: provider.endpoint.clone(),
+        model: "synthetic-planner".into(),
+        credential_env: String::new(),
+        max_requests: 1,
+        ..Default::default()
+    };
+    let prepared = call(
+        &window,
+        "prepare_conversation_planning",
+        in_session(
+            &project,
+            json!({"conversationId":thread["conversationId"],"selectedMessageIds":[message["messageId"]],"scope":{"kind":"units","locale":"zh-CN","unitIds":[unit]},"config":config}),
+        ),
+    );
+    assert_eq!(provider.count(), 0);
+    let attempt = identity();
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        + 60_000;
+    call(
+        &window,
+        "start_conversation_planning",
+        in_session(
+            &project,
+            json!({"conversationId":thread["conversationId"],"preparationId":prepared["preparationId"],"consent":{"actionId":attempt,"attemptId":attempt,"taskId":identity(),"previewDigest":prepared["previewDigest"],"expiresAtMs":expires.to_string(),"shareMessages":true,"shareUnits":true}}),
+        ),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let view = loop {
+        let view = call(
+            &window,
+            "read_conversation_planning",
+            in_session(
+                &project,
+                json!({"conversationId":thread["conversationId"],"attemptId":attempt}),
+            ),
+        );
+        if view["output"].is_object() {
+            break view;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "planning result did not finish: {view}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    assert_eq!(view["output"]["model"], content);
+    let capture = in_session(
+        &project,
+        json!({"actionId":identity(),"conversationId":thread["conversationId"],"proposalId":identity(),"revisionId":identity(),"attemptId":attempt,"resultId":view["resultId"]}),
+    );
+    let pending = call(
+        &window,
+        "recover_conversation_proposal_capture",
+        capture.clone(),
+    );
+    assert_eq!(pending["request"], original(&capture));
+    assert_eq!(
+        pending["outcome"],
+        json!({"kind":"pending","replay":"explicit-same-request"})
+    );
+    let mut injected = capture.clone();
+    injected["content"] = content.clone();
+    assert!(!reject(&window, "capture_conversation_proposal", injected).is_null());
+    let first = call(&window, "capture_conversation_proposal", capture.clone());
+    assert_eq!(first["content"], content);
+    assert_eq!(first["revision"], "1");
+    assert_eq!(first["ordinal"], "1");
+    assert!(first["previousRevisionId"].is_null());
+    assert_eq!(first["origin"]["attemptId"], json!(attempt));
+    assert_eq!(
+        call(&window, "capture_conversation_proposal", capture.clone()),
+        first
+    );
+    let read = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"proposalId":first["proposalId"],"revisionId":null}),
+    );
+    assert_eq!(
+        call(&window, "read_conversation_proposal", read.clone()),
+        first
+    );
+    let mut edited = content.clone();
+    edited["summary"] = json!("  只保留候选 é 👩🏽‍💻\r\n保留 {{name}}  ");
+    let revise = in_session(
+        &project,
+        json!({"actionId":identity(),"conversationId":thread["conversationId"],"proposalId":first["proposalId"],"revisionId":identity(),"expectedRevisionId":first["revisionId"],"content":edited}),
+    );
+    let second = call(&window, "revise_conversation_proposal", revise.clone());
+    assert_eq!(second["content"], edited);
+    assert_eq!(second["origin"], first["origin"]);
+    assert_eq!(second["revision"], "2");
+    assert_eq!(second["previousRevisionId"], first["revisionId"]);
+    assert_eq!(
+        call(&window, "revise_conversation_proposal", revise.clone()),
+        second
+    );
+    assert_eq!(
+        call(&window, "capture_conversation_proposal", capture.clone()),
+        first
+    );
+    assert_eq!(
+        call(&window, "read_conversation_proposal", read.clone()),
+        second
+    );
+    let mut old = read.clone();
+    old["revisionId"] = first["revisionId"].clone();
+    assert_eq!(
+        call(&window, "read_conversation_proposal", old.clone()),
+        first
+    );
+    assert!(!reject(&window, "validate_conversation_proposal", old).is_null());
+    let mut valid = read.clone();
+    valid["revisionId"] = second["revisionId"].clone();
+    assert_eq!(
+        call(&window, "validate_conversation_proposal", valid.clone()),
+        second
+    );
+    let mut conflict = revise.clone();
+    conflict["actionId"] = json!(identity());
+    conflict["revisionId"] = json!(identity());
+    assert!(!reject(&window, "revise_conversation_proposal", conflict).is_null());
+    let feed = in_session(
+        &project,
+        json!({"conversationId":thread["conversationId"],"after":null,"limit":1}),
+    );
+    let page = call(
+        &window,
+        "read_conversation_proposal_revisions",
+        feed.clone(),
+    );
+    assert_eq!(page["rows"], json!([first]));
+    assert_eq!(page["nextAfter"], first["ordinal"]);
+    let mut next = feed;
+    next["after"] = page["nextAfter"].clone();
+    let page = call(&window, "read_conversation_proposal_revisions", next);
+    assert_eq!(page["rows"], json!([second]));
+    assert!(page["nextAfter"].is_null());
+    let mut mismatch = revise.clone();
+    mismatch["content"]["summary"] = json!("Different request");
+    assert_eq!(
+        call(&window, "recover_conversation_proposal_revision", mismatch)["outcome"],
+        json!({"kind":"mismatch"})
+    );
+    let mut foreign = read.clone();
+    foreign["conversationId"] = json!(identity());
+    assert!(!reject(&window, "read_conversation_proposal", foreign).is_null());
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":project["sessionToken"]}),
+    );
+    let reopened = call(&window, "open_project", json!({"locator":destination}));
+    let mut history = read.clone();
+    history["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&window, "read_conversation_proposal", history), second);
+    let mut recover = revise;
+    recover["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(
+        call(
+            &window,
+            "recover_conversation_proposal_revision",
+            recover.clone()
+        )["outcome"],
+        json!({"kind":"recorded","receipt":second})
+    );
+    valid["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(
+        call(&window, "validate_conversation_proposal", valid),
+        second
+    );
+    assert!(runtime_absent(&app, &reopened));
+    recover["actionId"] = json!(identity());
+    recover["revisionId"] = json!(identity());
+    recover["expectedRevisionId"] = second["revisionId"].clone();
+    recover["content"]["summary"] = json!("重开后调整这份建议。");
+    assert_eq!(
+        call(&window, "revise_conversation_proposal", recover)["revision"],
+        "3"
+    );
+    assert!(runtime_absent(&app, &reopened));
+    assert_eq!(provider.count(), 1);
+    assert_eq!(
+        reject(&window, "read_conversation_proposal", read)["code"],
         "session-invalid"
     );
     call(
