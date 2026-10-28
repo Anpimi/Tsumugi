@@ -1,0 +1,28 @@
+.panel, .editor, .preview, .section, .history, .record { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.panel { container-type: inline-size; }
+.editor, .history { border-block-start: var(--border-width) solid var(--color-border-subtle); padding-block-start: var(--space-4); }
+.panel h3, .panel h4 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.panel p { margin: 0; overflow-wrap: anywhere; }
+.panel pre, .panel code, .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.panel pre, .text { font: inherit; }
+.configuration, .execution { display: grid; gap: var(--space-3); min-inline-size: 0; margin: 0; padding: var(--space-4); border: var(--border-width) solid var(--color-border-subtle); }
+.panel fieldset { min-inline-size: 0; }
+.panel legend { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.panel :global(.field) { display: grid; gap: var(--space-2); margin-block: var(--space-3); font-size: var(--text-sm); }
+.panel :global(.field) input, .panel :global(.field) select { min-inline-size: 0; inline-size: 100%; border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; }
+.panel :global(.secondary-button), .panel :global(.text-button) { min-block-size: 28px; border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-sm); background: var(--color-bg-surface); color: var(--color-text-primary); padding: var(--space-2) var(--space-3); font: inherit; font-size: var(--text-sm); }
+.panel :global(.secondary-button):enabled:hover, .panel :global(.text-button):enabled:hover { background: var(--color-bg-subtle); }
+.panel :global(.secondary-button):enabled:active, .panel :global(.text-button):enabled:active { background: var(--color-bg-muted); }
+.panel :global(.secondary-button):disabled, .panel :global(.text-button):disabled { opacity: var(--opacity-disabled); }
+.panel :global(.secondary-button):focus-visible, .panel :global(.text-button):focus-visible, .panel summary:focus-visible, .panel input:focus-visible, .panel select:focus-visible, .editor:focus-visible, .preview:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
+.panel :global(.execution-actions), .panel :global(.form-actions), .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.panel :global(.source-check), .check { display: flex; align-items: start; gap: var(--space-2); font-size: var(--text-sm); }
+.panel :global(.source-check) input, .checkbox { inline-size: 16px; min-inline-size: 16px; block-size: 16px; min-block-size: 16px; padding: 0; accent-color: var(--color-accent-solid); }
+.preview { padding-block-start: var(--space-4); border-block-start: var(--border-width) solid var(--color-border-subtle); }
+.record { border-inline-start: var(--border-width) solid var(--color-border-subtle); padding-inline-start: var(--space-3); }
+.identifiers { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); font-size: var(--text-sm); }
+.identifiers dt { color: var(--color-text-secondary); }
+.identifiers dd { margin: 0 0 var(--space-2); overflow-wrap: anywhere; }
+.section ul { margin: 0; padding-inline-start: var(--space-5); }
+.panel summary { cursor: pointer; overflow-wrap: anywhere; }
+@container (max-width: 320px) { .configuration, .execution { padding: var(--space-3); } .actions > button { inline-size: 100%; } }

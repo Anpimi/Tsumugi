@@ -10,6 +10,9 @@ import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { conversationProposalFixture } from "../../../testSupport/conversationProposalFixture";
 import { validateResponseProposal } from "../../../generated/conversations.validators";
 import { isCommandError } from "../../../projectCommands";
+import { conversationWorkPlanFixture } from "../../../testSupport/conversationWorkPlanFixture";
+import { validateResponseProposalWorkPlanReceipt } from "../../../generated/conversations.validators";
+import type { ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
 
 const context = { projectId: "10000000-0000-4000-8000-000000000001", sessionToken: "session" };
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -58,8 +61,9 @@ function harness() {
   const captureSelection = vi.fn<typeof reviewCommands.captureScope>();
   const captureProposal = vi.fn<typeof conversationCommands.captureProposal>(), reviseProposal = vi.fn<typeof conversationCommands.reviseProposal>();
   const validateProposal = vi.fn<typeof conversationCommands.validateProposal>(), readPlanning = vi.fn<typeof conversationCommands.readPlanning>();
+  const prepareProposalWorkPlan = vi.fn<typeof conversationCommands.prepareProposalWorkPlan>(), authorizeProposalWorkPlan = vi.fn<typeof conversationCommands.authorizeProposalWorkPlan>();
   const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
-    captureProposal, reviseProposal, validateProposal, readPlanning };
+    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan };
   const make = () => new ConversationSession(context, recorded, reveal, all);
   const owner = make();
   return { owner, make, ports: all, heads, created, appended, recorded, reveal, current: () => {
@@ -69,6 +73,112 @@ function harness() {
 }
 
 describe("ConversationSession", () => {
+  const confirmation: ProposalWorkPlanConfirmation = { effects: ["save-candidate"], checkerExecutions: [], toolExecution: false, applicationToolExecutions: [] };
+  async function readyWorkPlan(prepare = true) {
+    const h = harness(); await h.owner.initialize(); await h.owner.create();
+    const conversationId = h.current().key.conversationId, fixture = conversationWorkPlanFixture({ ...context, conversationId });
+    h.ports.validateProposal.mockResolvedValue(fixture.revision); h.ports.readPlanning.mockResolvedValue(fixture.run);
+    h.ports.prepareProposalWorkPlan.mockResolvedValue(fixture.prepared);
+    const receipt = (request: Parameters<typeof conversationCommands.authorizeProposalWorkPlan>[0]) => {
+      const value: unknown = { link: { ...request.authorization.proposal, planId: request.authorization.planId,
+        planDigest: request.authorization.planDigest, actionId: request.authorization.actionId, ordinal: "1" },
+      receipt: { actionId: request.authorization.actionId, lease: { planId: request.authorization.planId, generation: "1" },
+        state: "active", attemptId: fixture.prepared.plan.attemptId, parentTask: null } };
+      if (!validateResponseProposalWorkPlanReceipt(value)) throw new Error("Invalid synthetic work-plan receipt"); return value;
+    };
+    h.ports.authorizeProposalWorkPlan.mockImplementation(async request => receipt(request));
+    h.owner.beginWorkPlan(fixture.revision); h.owner.setWorkPlanConfig(conversationId, fixture.config);
+    if (prepare) await h.owner.prepareWorkPlan(conversationId);
+    return { ...h, ...fixture, conversationId, receipt };
+  }
+  it("prepares the exact saved proposal and keeps incomplete questions or a local edit out of confirmation", async () => {
+    const h = await readyWorkPlan(false);
+    h.owner.beginWorkPlan({ ...h.revision, revisionId: h.ports.identity(), content: { ...h.revision.content, questions: ["Which voice?"] } });
+    h.owner.setWorkPlanConfig(h.conversationId, h.config);
+    await h.owner.prepareWorkPlan(h.conversationId); expect(h.ports.prepareProposalWorkPlan).not.toHaveBeenCalled();
+    h.owner.setWorkPlanOpen(h.conversationId, false); h.owner.beginWorkPlan(h.revision);
+    h.owner.setWorkPlanConfig(h.conversationId, h.config);
+    h.owner.beginProposalEdit(h.revision); await h.owner.flush();
+    await h.owner.prepareWorkPlan(h.conversationId); expect(h.ports.prepareProposalWorkPlan).not.toHaveBeenCalled();
+    const edit = h.current().value.proposalEdits![0]; h.owner.discardProposalEdit(h.conversationId, edit.proposalId, edit.editSeq); await h.owner.flush();
+    await h.owner.prepareWorkPlan(h.conversationId);
+    expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledOnce();
+    expect(h.ports.prepareProposalWorkPlan.mock.calls[0][0]).toMatchObject({ proposal: { proposalId: h.revision.proposalId, revisionId: h.current().workPlan.revision?.revisionId }, toolSelection: null, advisoryChecks: [] });
+    expect(h.ports.authorizeProposalWorkPlan).not.toHaveBeenCalled(); expect(h.ports.startPlanning).not.toHaveBeenCalled();
+  });
+  it("drops late plan preparations after edits or closing without restoring consent", async () => {
+    const h = await readyWorkPlan(false), response = deferred<typeof h.prepared>();
+    h.ports.prepareProposalWorkPlan.mockReturnValueOnce(response.promise);
+    const prepare = h.owner.prepareWorkPlan(h.conversationId);
+    await vi.waitFor(() => expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledOnce());
+    h.owner.setWorkPlanConfig(h.conversationId, before => ({ ...before, maxRequests: before.maxRequests + 1 }));
+    response.resolve(h.prepared); await prepare;
+    expect(h.current().workPlan.prepared).toBeNull(); expect(h.current().workPlan.consent).toBe(false);
+    await h.owner.prepareWorkPlan(h.conversationId); h.owner.setWorkPlanConsent(h.conversationId, true);
+    h.owner.setWorkPlanOpen(h.conversationId, false);
+    expect(h.current().workPlan).toMatchObject({ open: false, prepared: null, consent: false, executionConsent: { checkers: [], tools: null, applications: [] } });
+  });
+  it("coordinates the single Host preparation slot across conversations", async () => {
+    const h = await readyWorkPlan(), firstId = h.conversationId, secondId = h.ports.identity();
+    await h.owner.open(secondId);
+    const second = conversationWorkPlanFixture({ ...context, conversationId: secondId });
+    h.owner.beginWorkPlan(second.revision); h.owner.setWorkPlanConfig(secondId, second.config);
+    h.ports.validateProposal.mockResolvedValue(second.revision); h.ports.readPlanning.mockResolvedValue(second.run);
+    const response = deferred<typeof second.prepared>(); h.ports.prepareProposalWorkPlan.mockReturnValueOnce(response.promise);
+    const preparing = h.owner.prepareWorkPlan(secondId);
+    await vi.waitFor(() => expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledTimes(2));
+    expect(h.owner.getSnapshot().inputs.get(firstId)?.workPlan.prepared).toBeNull();
+    await h.owner.prepareWorkPlan(firstId); expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledTimes(2);
+    response.resolve(second.prepared); await preparing;
+    expect(h.owner.getSnapshot().inputs.get(secondId)?.workPlan.prepared?.proposal.conversationId).toBe(secondId);
+  });
+  it("journals complete work-plan confirmation before authorization and preserves concurrent message input", async () => {
+    const h = await readyWorkPlan(), originalWrite = h.ports.write.getMockImplementation()!, ack = deferred<ConversationDraftHead>();
+    h.owner.setWorkPlanMinutes(h.conversationId, 7); h.owner.setWorkPlanConsent(h.conversationId, true);
+    h.ports.write.mockImplementationOnce(async request => { const head = await originalWrite(request); await ack.promise; return head; });
+    const authorization = h.owner.authorizeWorkPlan(h.conversationId, confirmation);
+    await vi.waitFor(() => expect(h.current().value.pending?.kind).toBe("proposal-work-plan"));
+    expect(h.ports.authorizeProposalWorkPlan).not.toHaveBeenCalled();
+    const pending = h.current().value.pending; if (pending?.kind !== "proposal-work-plan") throw new Error("Missing plan confirmation");
+    expect(pending.request).toMatchObject({ ...confirmation, proposal: h.prepared.proposal, planId: h.prepared.plan.planId,
+      planDigest: h.prepared.plan.digest, expiresAt: "520", confirmed: true });
+    expect(JSON.stringify(pending)).not.toContain(context.sessionToken);
+    h.owner.edit(h.conversationId, "Message B while confirming the plan");
+    ack.resolve(h.heads.get(h.conversationId)!); await authorization; await h.owner.flush();
+    expect(h.ports.authorizeProposalWorkPlan.mock.calls.map(([request]) => request)).toEqual([{ ...context, authorization: pending.request }]);
+    expect(h.current().value).toMatchObject({ text: "Message B while confirming the plan", pending: null });
+    expect(h.current().workPlan.prepared).toBeNull(); expect(h.current().notice).toBe("workPlanRecorded");
+    expect(h.ports.startPlanning).not.toHaveBeenCalled();
+  });
+  it("retains a journaled plan when presentation changes before dispatch and never replays it after reopening", async () => {
+    const h = await readyWorkPlan(), originalWrite = h.ports.write.getMockImplementation()!, ack = deferred<ConversationDraftHead>();
+    h.owner.setWorkPlanConsent(h.conversationId, true);
+    h.ports.write.mockImplementationOnce(async request => { const head = await originalWrite(request); await ack.promise; return head; });
+    let visible = true; const authorization = h.owner.authorizeWorkPlan(h.conversationId, confirmation, () => visible);
+    await vi.waitFor(() => expect(h.current().value.pending?.kind).toBe("proposal-work-plan")); visible = false;
+    ack.resolve(h.heads.get(h.conversationId)!); await authorization;
+    expect(h.ports.authorizeProposalWorkPlan).not.toHaveBeenCalled();
+    const pending = h.current().value.pending; if (pending?.kind !== "proposal-work-plan") throw new Error("Missing plan confirmation");
+    const reopened = h.make(); await reopened.initialize(); await reopened.open(h.conversationId);
+    h.ports.recoverProposalWorkPlan.mockResolvedValueOnce({ request: pending.request, outcome: { kind: "pending", replay: "blocked" } });
+    await reopened.check(h.conversationId); await reopened.retry(h.conversationId);
+    expect(reopened.getSnapshot().inputs.get(h.conversationId)?.outcome).toBe("blocked");
+    expect(reopened.getSnapshot().inputs.get(h.conversationId)?.value.pending).toEqual(pending);
+    expect(reopened.getSnapshot().inputs.get(h.conversationId)?.workPlan.prepared).toBeNull();
+    expect(h.ports.authorizeProposalWorkPlan).not.toHaveBeenCalled(); reopened.retire();
+  });
+  it("settles an uncertain authorization only through its exact recorded link without renewing preparation", async () => {
+    const h = await readyWorkPlan(); h.owner.setWorkPlanConsent(h.conversationId, true);
+    h.ports.authorizeProposalWorkPlan.mockRejectedValueOnce(new Error("Lost authorization acknowledgement"));
+    await h.owner.authorizeWorkPlan(h.conversationId, confirmation);
+    const pending = h.current().value.pending; if (pending?.kind !== "proposal-work-plan") throw new Error("Missing plan confirmation");
+    h.owner.edit(h.conversationId, "Keep this message after checking"); await h.owner.flush();
+    h.ports.recoverProposalWorkPlan.mockResolvedValueOnce({ request: pending.request, outcome: { kind: "recorded", receipt: h.receipt({ ...context, authorization: pending.request }).link } });
+    await h.owner.check(h.conversationId);
+    expect(h.current().value).toMatchObject({ text: "Keep this message after checking", pending: null });
+    expect(h.current().workPlan).toMatchObject({ prepared: null, consent: false });
+    await h.owner.retry(h.conversationId); expect(h.ports.authorizeProposalWorkPlan).toHaveBeenCalledOnce();
+  });
   async function readyProposal() {
     const h = harness(); await h.owner.initialize(); await h.owner.create();
     const conversationId = h.current().key.conversationId, fixture = conversationProposalFixture({ projectId: context.projectId, conversationId });

@@ -11,8 +11,12 @@ import { checkPlanningSelection, planningSelectionMatchesPreview, planningSelect
 import { reviewCommands } from "../../../reviewCommands";
 import { validProposalContent, type ProposalContent } from "./proposalDraft";
 import { isCommandError } from "../../../projectCommands";
+import { emptyExecutionConsent, workPlanInput, workPlanMinutesValid, type ConversationWorkPlanInput, type ProposalWorkPlanTools, type ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
+import type { WorkPlanExecutionConsent } from "../../../WorkPlanExecutionReview";
+import type { PlanToolDraft } from "../../../WorkPlanToolChoice";
+import type { PluginTextReviewSelection } from "../../../pluginCommands";
 
-type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope };
+type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "prepareProposalWorkPlan" | "authorizeProposalWorkPlan" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & { identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope };
 type JournalWrite = Omit<Parameters<Ports["write"]>[0]["write"], "value"> & { value: ConversationDraftValue };
 type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
   | { kind: "resolve"; request: { sessionToken: string; resolve: { write: JournalWrite; pending: ConversationDraftPending } }; submitted: ConversationDraftPending };
@@ -29,6 +33,7 @@ export interface ConversationInput {
   proposalEditorId: string | null;
   proposalFailure: { proposalId: string; cause: CommandFailure } | null;
   capturedResultIds: readonly string[];
+  workPlan: ConversationWorkPlanInput;
 }
 export interface ConversationPlanningInput {
   open: boolean;
@@ -81,6 +86,7 @@ export class ConversationSession {
       preparePlanning: conversationCommands.preparePlanning, validatePlanning: conversationCommands.validatePlanning, startPlanning: conversationCommands.startPlanning,
       readPlanning: conversationCommands.readPlanning, captureProposal: conversationCommands.captureProposal,
       reviseProposal: conversationCommands.reviseProposal, validateProposal: conversationCommands.validateProposal,
+      prepareProposalWorkPlan: conversationCommands.prepareProposalWorkPlan, authorizeProposalWorkPlan: conversationCommands.authorizeProposalWorkPlan,
       captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
@@ -114,7 +120,7 @@ export class ConversationSession {
       if (!this.kernel.live) return false;
       const value = head.value ?? { text: "", editSeq: "0", pending: null };
       this.records.set(conversationId, { input: { key, head, value, dirty: false, busy: null, outcome: value.pending ? "unknown" : null, notice: null, failure: null, planning: planningInput(),
-        proposalEditorId: value.proposalEdits?.[0]?.proposalId ?? null, proposalFailure: null, capturedResultIds: [] }, job: null, writing: null, action: false });
+        proposalEditorId: value.proposalEdits?.[0]?.proposalId ?? null, proposalFailure: null, capturedResultIds: [], workPlan: workPlanInput() }, job: null, writing: null, action: false });
       this.publish(this.state.activeId === conversationId ? { inputFailure: null } : {}); return true;
     }).catch(error => { if (this.kernel.live && this.state.activeId === conversationId) this.publish({ inputFailure: { conversationId, cause: commandFailure(error) } }); return false;
     }).finally(() => { this.opening.delete(conversationId); });
@@ -125,7 +131,7 @@ export class ConversationSession {
     const conversationId = this.ports.identity(), key = { projectId: this.context.projectId, conversationId };
     const pending: ConversationDraftPending = { kind: "create", submittedSeq: "1", request: { ...key, actionId: this.ports.identity(), title: null } };
     const record: RecordState = { input: { key, head: { key, revision: "0", writerId: null, value: null }, value: { text: "", editSeq: "1", pending },
-      dirty: true, busy: null, outcome: null, notice: null, failure: null, planning: planningInput(), proposalEditorId: null, proposalFailure: null, capturedResultIds: [] }, job: null, writing: null, action: false };
+      dirty: true, busy: null, outcome: null, notice: null, failure: null, planning: planningInput(), proposalEditorId: null, proposalFailure: null, capturedResultIds: [], workPlan: workPlanInput() }, job: null, writing: null, action: false };
     this.records.set(conversationId, record); this.changed++; this.publish({ activeId: conversationId });
     await this.submit(record);
   }
@@ -214,6 +220,113 @@ export class ConversationSession {
       else if (live()) this.update(record, { proposalFailure: { proposalId, cause: commandFailure(error) } });
     } finally {
       record.action = false; if (this.kernel.live) { this.update(record, { busy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+    }
+  }
+  beginWorkPlan(revision: ConversationProposalRevision) {
+    const record = this.records.get(revision.conversationId);
+    if (!record || !this.kernel.live || record.action || revision.projectId !== this.context.projectId || revision.content.kind !== "proposal") return;
+    const before = record.input.workPlan;
+    this.update(record, { workPlan: before.revision?.revisionId === revision.revisionId ? { ...before, open: true, consent: false, executionConsent: emptyExecutionConsent() }
+      : { ...workPlanInput(), open: true, sequence: before.sequence + 1, revision: structuredClone(revision), config: { ...structuredClone(defaultAiConfig), maxItems: revision.content.unitIds.length } } });
+  }
+  setWorkPlanOpen(conversationId: string, open: boolean) {
+    const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;
+    this.update(record, { workPlan: { ...record.input.workPlan, open, ...(!open ? { sequence: record.input.workPlan.sequence + 1, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } : {}) } });
+  }
+  private editWorkPlan(record: RecordState, patch: Partial<ConversationWorkPlanInput>) {
+    this.update(record, { workPlan: { ...record.input.workPlan, ...patch, sequence: record.input.workPlan.sequence + 1,
+      prepared: null, consent: false, executionConsent: emptyExecutionConsent(), failure: null } });
+  }
+  setWorkPlanConfig(conversationId: string, change: AiConfig | ((before: AiConfig) => AiConfig)) {
+    const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;
+    const before = record.input.workPlan.config;
+    this.editWorkPlan(record, { config: editedAiConfig(before, typeof change === "function" ? change(before) : change) });
+  }
+  setWorkPlanTools(conversationId: string, toolDraft: PlanToolDraft | null) {
+    const record = this.records.get(conversationId); if (record && this.kernel.live) this.editWorkPlan(record, { toolDraft: structuredClone(toolDraft) });
+  }
+  setWorkPlanChecks(conversationId: string, advisoryChecks: PluginTextReviewSelection[]) {
+    const record = this.records.get(conversationId); if (record && this.kernel.live) this.editWorkPlan(record, { advisoryChecks: structuredClone(advisoryChecks) });
+  }
+  setWorkPlanMinutes(conversationId: string, minutes: number) {
+    const record = this.records.get(conversationId); if (record && this.kernel.live) this.update(record, { workPlan: { ...record.input.workPlan, sequence: record.input.workPlan.sequence + 1, minutes, consent: false } });
+  }
+  setWorkPlanConsent(conversationId: string, consent: boolean) {
+    const record = this.records.get(conversationId); if (record && this.kernel.live) this.update(record, { workPlan: { ...record.input.workPlan,
+      consent: consent && !!record.input.workPlan.prepared && workPlanMinutesValid(record.input.workPlan.minutes) } });
+  }
+  setWorkPlanExecutionConsent(conversationId: string, change: (before: WorkPlanExecutionConsent) => WorkPlanExecutionConsent) {
+    const record = this.records.get(conversationId); if (record && this.kernel.live) this.update(record, { workPlan: { ...record.input.workPlan,
+      executionConsent: change(record.input.workPlan.executionConsent), consent: false } });
+  }
+  invalidateWorkPlan(conversationId: string) {
+    const record = this.records.get(conversationId);
+    if (record && this.kernel.live && (record.input.workPlan.prepared || record.input.workPlan.consent || record.input.workPlan.busy === "prepare")) this.editWorkPlan(record, {});
+  }
+  async prepareWorkPlan(conversationId: string, selectedTools: ProposalWorkPlanTools = null, current: () => boolean = () => true) {
+    const record = this.records.get(conversationId), before = record?.input.workPlan, revision = before?.revision;
+    if (!record || !before || !revision || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
+      || [...this.records.values()].some(other => other.input.workPlan.busy)
+      || revision.content.kind !== "proposal" || revision.content.questions.length || record.input.value.proposalEdits?.some(edit => edit.proposalId === revision.proposalId)
+      || !validAiLimits(before.config) || !before.config.endpoint.trim() || !before.config.model.trim() || revision.content.unitIds.length > before.config.maxItems
+      || !!before.toolDraft !== !!selectedTools || !current()) return;
+    record.action = true;
+    // The Host has one preparation slot for this project session.
+    for (const other of this.records.values()) if (other !== record) this.invalidateWorkPlan(other.input.key.conversationId);
+    this.update(record, { workPlan: { ...before, busy: "prepare", prepared: null, consent: false, executionConsent: emptyExecutionConsent(), failure: null } });
+    const live = () => this.kernel.live && current() && record.input.workPlan.sequence === before.sequence;
+    try {
+      const validated = await this.ports.validateProposal({ ...this.context, conversationId, proposalId: revision.proposalId, revisionId: revision.revisionId });
+      if (!live()) return;
+      const run = await this.ports.readPlanning({ ...this.context, conversationId, attemptId: validated.origin.attemptId });
+      if (!live()) return;
+      if (!run || run.resultId !== validated.origin.resultId || run.preview.scope.kind !== "units") throw new Error("The proposal material is not available");
+      const entries = selectedTools?.entries.map(tool => ({ handle: this.ports.identity(), tool: tool.tool, target: tool.target, selections: tool.selections }));
+      const first = entries?.[0];
+      if (selectedTools && !first) throw new Error("The selected tools are not available");
+      const toolSelection: Parameters<Ports["prepareProposalWorkPlan"]>[0]["toolSelection"] = selectedTools && first && entries
+        ? { entries: [first, ...entries.slice(1)], maxInvocations: selectedTools.maxInvocations } : null;
+      const prepared = await this.ports.prepareProposalWorkPlan({ ...this.context, proposal: { ...record.input.key, proposalId: revision.proposalId, revisionId: revision.revisionId },
+        config: structuredClone(before.config), advisoryChecks: structuredClone(before.advisoryChecks), toolSelection }, revision, run.preview.scope.locale, selectedTools?.entries.map(tool => tool.view) ?? []);
+      if (!live()) return;
+      this.update(record, { workPlan: { ...record.input.workPlan, prepared } });
+    } catch (error) { if (live()) this.update(record, { workPlan: { ...record.input.workPlan, failure: commandFailure(error) } });
+    } finally {
+      record.action = false;
+      if (this.kernel.live) { this.update(record, { workPlan: { ...record.input.workPlan, busy: null } }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+    }
+  }
+  async authorizeWorkPlan(conversationId: string, confirmation: ProposalWorkPlanConfirmation, current: () => boolean = () => true) {
+    const record = this.records.get(conversationId), before = record?.input.workPlan, prepared = before?.prepared;
+    if (!record || !before || !prepared || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
+      || [...this.records.values()].some(other => other.input.workPlan.busy)
+      || !before.consent || !workPlanMinutesValid(before.minutes) || record.input.value.proposalEdits?.some(edit => edit.proposalId === prepared.proposal.proposalId) || !current()) return;
+    record.action = true;
+    const live = () => this.kernel.live && current() && record.input.workPlan.sequence === before.sequence && record.input.workPlan.prepared === prepared;
+    this.update(record, { workPlan: { ...before, busy: "authorize", failure: null } });
+    try {
+      await this.ports.validateProposal({ ...this.context, conversationId, proposalId: prepared.proposal.proposalId, revisionId: prepared.proposal.revisionId });
+      if (!live() || !record.input.workPlan.consent || record.input.workPlan.minutes !== before.minutes) return;
+      const editSeq = nextEditSeq(record.input.value.editSeq);
+      const pending: ConversationDraftPending = { kind: "proposal-work-plan", submittedSeq: editSeq, request: {
+        actionId: this.ports.identity(), proposal: structuredClone(prepared.proposal), planId: prepared.plan.planId, planDigest: prepared.plan.digest,
+        confirmed: true, ...structuredClone(confirmation), expiresAt: String(Math.floor(this.ports.now() / 1000) + before.minutes * 60) } };
+      this.changed++;
+      this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending },
+        dirty: true, outcome: null, notice: null, workPlan: { ...record.input.workPlan, consent: false } });
+      if (!await this.persist(record) || !live()) return;
+      this.update(record, { busy: "submit", failure: null });
+      await this.ports.authorizeProposalWorkPlan({ ...this.context, authorization: pending.request });
+      if (!this.kernel.live) return;
+      this.onRecorded(); this.update(record, { busy: null, outcome: "recorded", workPlan: { ...record.input.workPlan, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } });
+      await this.resolve(record, pending);
+    } catch (error) {
+      if (!this.kernel.live) return;
+      if (record.input.value.pending) this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
+      else if (live()) this.update(record, { workPlan: { ...record.input.workPlan, failure: commandFailure(error) } });
+    } finally {
+      record.action = false;
+      if (this.kernel.live) { this.update(record, { workPlan: { ...record.input.workPlan, busy: null } }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
     }
   }
   setPlanningOpen(conversationId: string, open: boolean) {
@@ -421,6 +534,7 @@ export class ConversationSession {
   }
   private recordCaptureAcknowledgement(record: RecordState, pending: ConversationDraftPending) {
     if (pending.kind === "proposal-capture" && !record.input.capturedResultIds.includes(pending.request.resultId)) this.update(record, { capturedResultIds: [...record.input.capturedResultIds, pending.request.resultId] });
+    if (pending.kind === "proposal-work-plan") this.update(record, { workPlan: { ...record.input.workPlan, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } });
   }
   private recordedNotice(pending: ConversationDraftPending): NonNullable<ConversationInput["notice"]> {
     switch (pending.kind) {

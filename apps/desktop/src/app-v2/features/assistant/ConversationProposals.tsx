@@ -128,6 +128,7 @@ export function ConversationProposals({ revisions, ...props }: ContextProps & { 
         <p className={styles.text}>{revision.content.summary}</p>{revision.content.kind === "proposal" ? <p>{t("proposalScope", { count: revision.content.unitIds.length })}</p> : null}
         {revision.content.questions.length ? <p>{t("proposalQuestionsRemaining", { count: revision.content.questions.length })}</p> : null}
         <Button size="sm" disabled={disabled || !visible} onClick={() => { if (allowed()) { focusRequest.current = true; owner.beginProposalEdit(revision); } }}>{t(edits.some(edit => edit.proposalId === revision.proposalId) ? "proposalContinueEditing" : "proposalEdit")}</Button>
+        <Button size="sm" disabled={disabled || !visible || !!input.busy || !!input.workPlan.busy || !!input.value.pending} onClick={() => { if (allowed()) owner.beginWorkPlan(revision); }}>{t("planReviewOpen")}</Button>
       </article>)}
     </section> : null}
   </>;

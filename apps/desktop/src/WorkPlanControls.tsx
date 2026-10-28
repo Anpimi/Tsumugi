@@ -1,13 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ReviewCheckerDetails, checkerIdentity } from "./ReviewCheckers";
-import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { useTranslation } from "react-i18next";
-import { enUS } from "./i18n/en-US";
-import { PluginPermissions } from "./PluginPermissions";
 import { validateResponseWorkPlanStartAction } from "./generated/ai.validators";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome } from "./projectCommands";
-import type { WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanStartRequest, AutomationEffect } from "./generated/ai.requests";
+import type { WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanStartRequest } from "./generated/ai.requests";
 import { workPlanCommands, type WorkPlanView, type WorkPlanReceiptView, type WorkPlanStatusView, type WorkPlanCommand } from "./workPlanCommands";
 import { useSessionReads } from "./SessionReadProvider";
 import { useWorkbenchCommands, type CommandAvailability, type AiStartCommandPayload, type AiStartPendingCommandPayload,
@@ -15,7 +11,7 @@ import { useWorkbenchCommands, type CommandAvailability, type AiStartCommandPayl
 import { jsonIdentity } from "./pluginToolChoices";
 import type { WorkPlanContinuation } from "./AiPreparationSession";
 import type { EditorTarget } from "./TranslationWorkbench";
-import { useWorkPlanApplicationTools, WorkPlanApplicationToolDetails, WorkPlanApplicationToolObservation } from "./workPlanApplicationTools";
+import { useWorkPlanExecutionReview, WorkPlanExecutionReview, workPlanEffects } from "./WorkPlanExecutionReview";
 
 export type PlanPending = ({ kind: "authorize"; request: WorkPlanAuthorizeRequest; checking:boolean; failure:unknown }
   | { kind: "control"; request: WorkPlanControlRequest; checking:boolean; failure:unknown }
@@ -62,8 +58,6 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   const { minutes, renewConsent, checkerConsent, toolConsent, applicationToolConsent, pending, ready, missing } = session.state;
   const setMinutes = (minutes: number) => session.update(before => ({ ...before, minutes }));
   const setRenewConsent = (renewConsent: boolean) => session.update(before => ({ ...before, renewConsent }));
-  const setCheckerConsent = (change: (before: string[]) => string[]) => session.update(before => ({ ...before, checkerConsent: change(before.checkerConsent) }));
-  const setToolConsent = (toolConsent: string | null) => session.update(before => ({ ...before, toolConsent }));
   const setPending = (pending: PlanPending | null) => session.update(before => ({ ...before, pending }));
   const setReady = (ready: PlanReady | null) => session.update(before => ({ ...before, ready }));
   const setMissing = (missing: boolean) => session.update(before => ({ ...before, missing }));
@@ -71,21 +65,12 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   useEffect(() => { onBlockedChange(Boolean(pending || ready)); }, [pending, ready, onBlockedChange]);
   const validMinutes = Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
   const plan = status?.plan ?? pending?.prepared ?? ready?.prepared ?? prepared;
-  const applicationTools = useWorkPlanApplicationTools(plan?.tools?.entries ?? [], open && !busy);
-  const applicationConsentKey = (group: typeof applicationTools.groups[number]) => jsonIdentity([context.sessionToken, context.projectId,
-    plan?.planId, plan?.digest, status?.lease.generation ?? "prepared", group.basis, group.capabilities, group.tools]) ?? "";
-  const applicationsConfirmed = applicationTools.groups.every(group => applicationToolConsent.includes(applicationConsentKey(group)));
-  const confirmedApplications = () => applicationTools.groups.length && applicationsConfirmed && applicationTools.current()
-    ? applicationTools.groups.map(group => structuredClone(group.basis)) : [];
-  const checkerRequired = Boolean(plan?.preview && plan.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted"));
-  const checkerConsentKey = (checker: WorkPlanView["checkers"][number]) => JSON.stringify([context.sessionToken, context.projectId,
-    plan?.planId, plan?.digest, status?.lease.generation ?? "prepared", checker]);
-  const checkerConfirmed = !checkerRequired || Boolean(plan && plan.checkers.length > 0
-    && plan.checkers.every(checker => checker.kind === "ready" && checkerConsent.includes(checkerConsentKey(checker))));
-  const confirmedCheckers = () => checkerRequired && checkerConfirmed ? plan?.checkers.map(checker => checker.checker) ?? [] : [];
-  const toolsRequired = Boolean(plan?.tools?.entries.length);
-  const toolKey = toolsRequired && plan ? JSON.stringify([context.sessionToken, context.projectId, plan.planId, plan.digest, status?.lease.generation ?? "prepared", plan.tools]) : null;
-  const toolsConfirmed = !toolsRequired || (toolKey !== null && toolConsent === toolKey);
+  const executionReview = useWorkPlanExecutionReview({ context, plan, generation: status?.lease.generation ?? null, open: open && !busy,
+    value: { checkers: checkerConsent, tools: toolConsent, applications: applicationToolConsent },
+    onChange: change => session.update(before => {
+      const next = change({ checkers: before.checkerConsent, tools: before.toolConsent, applications: before.applicationToolConsent });
+      return { ...before, checkerConsent: next.checkers, toolConsent: next.tools, applicationToolConsent: next.applications };
+    }) });
   const blocked = busy || disabled || Boolean(pending);
   const confirmOriginal = !status || !status.plan.options.teamExecution && (status.state === "paused" || status.state === "taken-over");
 
@@ -261,24 +246,15 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     return query?.status==="success"&&query.fetchStatus==="idle"&&!query.isInvalidated&&query.error===null
       &&query.data?.plan.digest===status.plan.digest&&jsonIdentity(query.data.lease)===jsonIdentity(status.lease)&&query.data.state===status.state;
   }
-  function effects():AutomationEffect[] {
-    if(!plan)return [];
-    return ["save-candidate",...(checkerRequired?["run-checks"] as const:[]),
-      ...(plan.options.selectionPolicy==="candidates-only"?[]:
-        [plan.options.selectionPolicy==="missing-only"?"select-missing":"replace-captured-selection"] as const),
-      ...(plan.options.teamDiscussions?["publish-discussion"] as const:[]),
-      ...(plan.options.teamExecution?["dispatch-team-work","send-team-message"] as const:[]),
-      ...(toolsRequired||plan?.options.mcpTermQuery?["query-tools"] as const:[])];
-  }
   function startPayload():AiStartCommandPayload|undefined {
     return prepared?.preview&&prepared.attemptId?{kind:"ai-start",planId:prepared.planId,digest:prepared.digest,attemptId:prepared.attemptId,
-      editSeq,minutes:session.current().minutes,confirmed:consent,checkerExecutions:confirmedCheckers(),toolExecution:toolsRequired&&toolsConfirmed,
-      applicationToolExecutions:confirmedApplications(),effects:effects()}:undefined;
+      editSeq,minutes:session.current().minutes,confirmed:consent,checkerExecutions:executionReview.checkerExecutions(),toolExecution:executionReview.toolExecution,
+      applicationToolExecutions:executionReview.applicationToolExecutions(),effects:workPlanEffects(plan)}:undefined;
   }
   function authorizeAvailability(payload?:AiStartCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;
     return payload&&jsonIdentity(payload)===jsonIdentity(startPayload())&&!!prepared&&!status&&!session.current().ready
-      &&consent&&checkerConfirmed&&toolsConfirmed&&applicationsConfirmed&&applicationTools.current()&&validMinutes&&canFresh()?{enabled:true}:unavailable;
+      &&consent&&executionReview.current()&&validMinutes&&canFresh()?{enabled:true}:unavailable;
   }
   async function authorize(payload:AiStartCommandPayload,current:WorkPlanContinuation) {
     if(!prepared)return;
@@ -292,14 +268,14 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   function controlPayload(command:WorkPlanCommand):AiPlanControlCommandPayload|undefined {
     return status?{kind:"ai-plan-control",command,planId:status.lease.planId,expectedGeneration:status.lease.generation,
       minutes:command==="continue"?session.current().minutes:null,confirmed:command==="continue"&&renewConsent,
-      checkerExecutions:command==="continue"?confirmedCheckers():[],toolExecution:command==="continue"&&toolsRequired&&toolsConfirmed,
-      applicationToolExecutions:command==="continue"?confirmedApplications():[]}:undefined;
+      checkerExecutions:command==="continue"?executionReview.checkerExecutions():[],toolExecution:command==="continue"&&executionReview.toolExecution,
+      applicationToolExecutions:command==="continue"?executionReview.applicationToolExecutions():[]}:undefined;
   }
   function controlAvailability(payload?:AiPlanControlCommandPayload):CommandAvailability {
     const allowed=gate(false,payload?.command!=="continue");if(!allowed.enabled)return allowed;
     if(!payload||!status||!statusCurrent()||jsonIdentity(payload)!==jsonIdentity(controlPayload(payload.command)))return unavailable;
-    if(payload.command==="continue")return !status.plan.options.teamExecution&&!status.plan.options.mcpTermQuery&&!session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent&&checkerConfirmed&&toolsConfirmed
-      &&applicationsConfirmed&&applicationTools.current()&&validMinutes?{enabled:true}:unavailable;
+    if(payload.command==="continue")return !status.plan.options.teamExecution&&!status.plan.options.mcpTermQuery&&!session.current().ready&&(status.state==="paused"||status.state==="taken-over")&&renewConsent
+      &&executionReview.current()&&validMinutes?{enabled:true}:unavailable;
     return (payload.command==="pause"?status.state==="active":payload.command==="stop"?status.state!=="stopped":status.state!=="taken-over"&&status.state!=="stopped")?{enabled:true}:unavailable;
   }
   function readyPayload():AiPlanStartCommandPayload|undefined {
@@ -400,50 +376,8 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
           disabled={!translationAvailability(translationPayload(unit)).enabled} onClick={()=>{const payload=translationPayload(unit);if(payload)registry.dispatch("ai.plan.open-translation",scope,payload);}}>{t("ai.plan.edit")}</button></li>)}</ul>
       </details>
       {!plan.preview ? <p>{t("ai.plan.manualHelp")}</p> : null}
-      {plan.tools ? <section aria-label={t("ai.tools.reviewTitle")}>
-        <h4>{t("ai.tools.reviewTitle")}</h4><p>{t("ai.tools.limitHelp")}</p><p>{t("ai.tools.fixedLimit", { limit: plan.tools.maxInvocations, defaultValue: enUS.ai.tools.fixedLimit })}</p>
-        {plan.tools.entries.map(tool => <article key={tool.handle}>
-          <h4>{tool.binding.declaration.title} · {tool.binding.capability.provider.plugin.id} {tool.binding.capability.provider.plugin.version}</h4>
-          <p>{tool.binding.declaration.description}</p><PluginPermissions permissions={tool.binding.capability.declaration.permissions} />
-          <details><summary>{t("sourcePlugin.fixedDetails")}</summary><pre className="ai-text">{JSON.stringify({ binding: tool.binding, execution: tool.execution,
-            applicationCapabilities: tool.applicationCapabilities, packageOrigin: tool.packageOrigin, runtimeOrigin: tool.runtimeOrigin, target: tool.target, selections: tool.selections }, null, 2)}</pre></details>
-        </article>)}
-        {applicationTools.groups.length ? <section aria-label={t("toolQuery.applicationTitle")}>
-          {applicationTools.groups.map(group => <fieldset key={jsonIdentity(group.basis)}>
-            <legend>{t("ai.tools.applicationInstance", { name: group.tools[0].binding.declaration.title })}</legend>
-            <WorkPlanApplicationToolDetails group={group} />
-            {confirmOriginal ? <label className="source-check">
-              <input type="checkbox" checked={applicationToolConsent.includes(applicationConsentKey(group))}
-                disabled={blocked || Boolean(ready) || !applicationTools.current()} onChange={event => {
-                  const key = applicationConsentKey(group), checked = event.target.checked;
-                  session.update(before => ({ ...before, applicationToolConsent: checked
-                    ? [...before.applicationToolConsent.filter(value => value !== key), key]
-                    : before.applicationToolConsent.filter(value => value !== key) }));
-                }} />{t("ai.tools.applicationConsent")}</label> : null}
-          </fieldset>)}
-          <WorkPlanApplicationToolObservation observation={applicationTools.observation} />
-        </section> : null}
-        <p>{t("sourcePlugin.unsandboxed")}</p>
-        {confirmOriginal ? <label className="source-check">
-          <input type="checkbox" checked={toolKey !== null && toolConsent === toolKey} disabled={blocked || Boolean(ready)}
-            onChange={event => setToolConsent(event.target.checked ? toolKey : null)} />{t("ai.tools.consent")}
-        </label> : null}
-      </section> : null}
-      {checkerRequired ? <>
-        {plan.checkers.length === 0 ? <p role="alert">{t("ai.plan.checkerUnavailable")}</p> : null}
-        {onOpenExtensions && (plan.checkers.length === 0 || plan.checkers.some(checker => checker.kind === "unavailable")) ? <button type="button"
-          className="text-button" disabled={blocked} onClick={onOpenExtensions}>{t("review.openExtensions")}</button> : null}
-        {plan.checkers.map(checker => checker.kind === "ready" ? <fieldset key={checkerIdentity(checker.checker)}>
-          <legend>{t("review.checkerConsentScope", { plugin: `${checker.checker.provider.plugin.publisher}/${checker.checker.provider.plugin.id} ${checker.checker.provider.plugin.version}`, profile: checker.checker.profile.id })}</legend>
-          <ReviewCheckerDetails view={checker.plugin} />
-          {confirmOriginal ? <label className="source-check">
-            <input type="checkbox" checked={checkerConsent.includes(checkerConsentKey(checker))} disabled={blocked || Boolean(ready)}
-              onChange={event => { const key = checkerConsentKey(checker); setCheckerConsent(previous => event.target.checked ? [...previous.filter(value => value !== key), key] : previous.filter(value => value !== key)); }} />{t("ai.plan.checkerConsent")}
-          </label> : null}
-        </fieldset> : <div key={checkerIdentity(checker.checker)} role="alert"><p>{t("ai.plan.checkerUnavailable")}</p>
-          <p>{checker.checker.provider.plugin.publisher}/{checker.checker.provider.plugin.id} {checker.checker.provider.plugin.version}</p>
-          <CommandFailureDetails failure={commandFailure(checker.error)} /></div>)}
-      </> : null}
+      <WorkPlanExecutionReview review={executionReview} disabled={blocked} consentDisabled={Boolean(ready)}
+        showConsent={confirmOriginal} onOpenExtensions={onOpenExtensions} />
     </> : null}
     {prepared?.preview && !status && !ready && !pending ? <>
       {duration}

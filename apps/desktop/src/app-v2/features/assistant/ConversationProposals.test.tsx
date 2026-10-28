@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import { SessionReadProvider } from "../../../SessionReadProvider";
+import { ApplicationReadProvider } from "../../../ApplicationReadProvider";
 import { SessionReads } from "../../../sessionReads";
 import { canonicalConversationDraft, type ConversationDraftHead } from "../../../conversationDraftCommands";
 import type { ConversationProposalRevision } from "../../../conversationCommands";
@@ -31,7 +32,7 @@ function expectNoExecution() {
     "list_project_conversations", "read_project_conversation_messages", "read_conversation_planning_attempts", "read_conversation_planning",
     "read_conversation_proposal_revisions", "read_conversation_proposal", "validate_conversation_proposal",
     "list_local_conversation_drafts", "read_local_conversation_draft", "write_local_conversation_draft", "resolve_local_conversation_draft",
-    "capture_conversation_proposal", "revise_conversation_proposal",
+    "capture_conversation_proposal", "revise_conversation_proposal", "read_conversation_proposal_work_plans",
   ].includes(command))).toEqual([]);
 }
 function harness(saved = true) {
@@ -51,6 +52,7 @@ function harness(saved = true) {
       rows: [{ attemptId: fixture.run.receipt.consent.attemptId, taskId: fixture.run.receipt.consent.taskId, sequence: "1" }], nextAfter: null };
     if (command === "read_conversation_planning") return structuredClone(fixture.run);
     if (command === "read_conversation_proposal_revisions") return { ...key, rows: structuredClone(state.revisions), nextAfter: null };
+    if (command === "read_conversation_proposal_work_plans") return { ...key, rows: [], nextAfter: null };
     if (command === "read_conversation_proposal" || command === "validate_conversation_proposal") {
       const revision = request.revisionId === null ? [...state.revisions].reverse().find(item => item.proposalId === request.proposalId)
         : state.revisions.find(item => item.proposalId === request.proposalId && item.revisionId === request.revisionId);
@@ -91,9 +93,9 @@ function harness(saved = true) {
     const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
     const owner = new ConversationSession(context, () => reads.invalidate(["project"]), () => {});
     expect(await owner.initialize()).toBe(true); expect(await owner.open(conversationId)).toBe(true);
-    const view = render(<SessionReadProvider context={context} reads={reads} bridge={false}>
+    const view = render(<ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
       <ConversationPanel owner={owner} visible disabled={false} gate={gate} viewId="entries"/>
-    </SessionReadProvider>);
+    </SessionReadProvider></ApplicationReadProvider>);
     const retire = () => { owner.retire(); reads.retire(); gate.dispose(); };
     disposals.push(retire);
     return { owner, gate, view, retire, flush: async () => { await act(async () => { expect(await owner.flush()).toBe(true); }); } };

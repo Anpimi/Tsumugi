@@ -13,6 +13,7 @@ import type { ConversationInput, ConversationSession } from "./ConversationSessi
 import type { WorkspaceSelection } from "../../workspace/workspaceSelection";
 import { ConversationPlanningPanel } from "./ConversationPlanningPanel";
 import { ConversationProposals } from "./ConversationProposals";
+import { ConversationWorkPlanPanel } from "./ConversationWorkPlanPanel";
 import { locallyReplayableConversationRequest } from "../../../conversationDraftCommands";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
@@ -84,6 +85,7 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
     {attempts.hasNextPage ? <Button pending={attempts.isFetchingNextPage} onClick={() => void attempts.fetchNextPage()}>{t("moreReplies")}</Button> : null}
     {proposals.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void proposals.refetch()}>{t("retryRead")}</Button>}>{t("proposalReadFailed")}</Banner> : null}
     <ConversationProposals owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} revisions={revisions}/>
+    <ConversationWorkPlanPanel owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/>
     {proposals.hasNextPage ? <Button pending={proposals.isFetchingNextPage} onClick={() => void proposals.fetchNextPage()}>{t("moreProposalVersions")}</Button> : null}
   </>;
 }
@@ -147,7 +149,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
             event.preventDefault(); event.stopPropagation(); if (!blocked) void owner.append(activeId!);
           }}/>
       </Field>
-      <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? pending?.kind === "planning" ? "askStarting" : pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision" ? "proposalSaving" : "savingMessage" : input.busy === "check" ? pending ? "checking" : "proposalChecking" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</span>
+      <div className={styles.composerFooter}><span role="status">{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "submit" ? pending?.kind === "planning" ? "askStarting" : pending?.kind === "proposal-work-plan" ? "planConfirming" : pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision" ? "proposalSaving" : "savingMessage" : input.busy === "check" ? pending ? "checking" : "proposalChecking" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</span>
         <Button variant="secondary" size="sm" disabled={blocked || !!input.busy || !!input.planning.busy || !!pending || !!input.failure || !isConversationMessageText(input.value.text)}
           onClick={() => void owner.append(activeId!)}>{t("saveMessage")}</Button></div>
     </div> : null}

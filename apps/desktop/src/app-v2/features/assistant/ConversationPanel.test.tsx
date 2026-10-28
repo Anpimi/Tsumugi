@@ -31,7 +31,7 @@ it.each(["conversation-only", "units"] as const)("reviews %s material and exact 
   invoke.mockImplementation(async (command: string, { request }) => {
     if (command === "list_project_conversations") return { projectId: context.projectId, rows: [thread], nextAfter: null };
     if (command === "read_project_conversation_messages") return { ...key, rows: [message], nextAfter: null };
-    if (command === "read_conversation_planning_attempts" || command === "read_conversation_proposal_revisions") return { ...key, rows: [], nextAfter: null };
+    if (["read_conversation_planning_attempts", "read_conversation_proposal_revisions", "read_conversation_proposal_work_plans"].includes(command)) return { ...key, rows: [], nextAfter: null };
     if (command === "read_model_connections") return connectionFixture([config]);
     if (command === "read_local_conversation_draft") return structuredClone(head);
     if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
@@ -115,7 +115,7 @@ it("shows saved messages and keeps composer input across presentation changes wi
   invoke.mockImplementation(async (command: string, { request }) => {
     if (command === "list_project_conversations") return { projectId: context.projectId, rows: [thread], nextAfter: null };
     if (command === "read_project_conversation_messages") return { ...key, rows: messages, nextAfter: null };
-    if (command === "read_conversation_planning_attempts" || command === "read_conversation_proposal_revisions") return { ...key, rows: [], nextAfter: null };
+    if (["read_conversation_planning_attempts", "read_conversation_proposal_revisions", "read_conversation_proposal_work_plans"].includes(command)) return { ...key, rows: [], nextAfter: null };
     if (command === "read_local_conversation_draft") return structuredClone(head);
     if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
       const write = request.write ?? request.resolve.write;
@@ -134,9 +134,9 @@ it("shows saved messages and keeps composer input across presentation changes wi
   const reads = new SessionReads(context), gate = new InteractionGate(); gate.setVisibleOwner("entries");
   const owner = new ConversationSession(context, () => reads.invalidate(["project"]), () => {}, { list: async () => ({ items: [], next: null }) });
   await owner.initialize();
-  const tree = (visible = true) => <SessionReadProvider context={context} reads={reads} bridge={false}>
+  const tree = (visible = true) => <ApplicationReadProvider><SessionReadProvider context={context} reads={reads} bridge={false}>
     <ConversationPanel owner={owner} visible={visible} disabled={false} gate={gate} viewId="entries"/>
-  </SessionReadProvider>;
+  </SessionReadProvider></ApplicationReadProvider>;
   const view = render(tree());
   await waitFor(() => expect(screen.getByRole("button", { name: "对话" })).toBeEnabled());
   screen.getByRole("button", { name: "对话" }).focus();
