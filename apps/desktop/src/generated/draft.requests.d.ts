@@ -2,6 +2,16 @@
 
 export type Revision = string;
 export type ExecutionId = string;
+export type ConversationDraftDisposition = "recorded" | "fenced-not-applied";
+export type ConversationDraftResolveTarget =
+  | {
+      kind: "pending";
+      pending: ConversationDraftPending;
+    }
+  | {
+      kind: "revocation";
+      revocation: ConversationDraftRevocation;
+    };
 /**
  * Frozen business requests are recovery input, never restored authority.
  */
@@ -173,6 +183,7 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type WorkPlanRevocationCommand = "pause" | "stop" | "take-over";
 /**
  * A frozen original request, without any session token or execution authority.
  */
@@ -247,7 +258,8 @@ export interface ConversationDraftResolveRequest {
   sessionToken: string;
 }
 export interface ConversationDraftResolve {
-  pending: ConversationDraftPending;
+  disposition: ConversationDraftDisposition;
+  target: ConversationDraftResolveTarget;
   write: ConversationDraftWrite;
 }
 export interface CreateProjectConversation {
@@ -643,6 +655,20 @@ export interface WorkPlanControlOriginal {
   projectId: ExecutionId;
   toolExecution: boolean;
 }
+export interface ConversationDraftRevocation {
+  request: WorkPlanRevocationOriginal;
+  submittedSeq: Revision;
+}
+/**
+ * A complete control request that can only withdraw authority.
+ */
+export interface WorkPlanRevocationOriginal {
+  actionId: ExecutionId;
+  command: WorkPlanRevocationCommand;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+}
 export interface ConversationDraftWrite {
   expectedRevision: Revision;
   key: ConversationDraftKey;
@@ -654,6 +680,10 @@ export interface ConversationDraftValue {
   messageEditSeq?: Revision | null;
   pending?: ConversationDraftPending | null;
   proposalEdits?: ConversationProposalDraft[];
+  /**
+   * @maxItems 32
+   */
+  revocations?: ConversationDraftRevocation[];
   text: string;
 }
 /**

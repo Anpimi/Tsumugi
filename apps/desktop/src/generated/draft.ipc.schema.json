@@ -486,6 +486,13 @@
         ],
         "type": "object"
       },
+      "ConversationDraftDisposition": {
+        "enum": [
+          "recorded",
+          "fenced-not-applied"
+        ],
+        "type": "string"
+      },
       "ConversationDraftKey": {
         "additionalProperties": false,
         "properties": {
@@ -743,8 +750,11 @@
       "ConversationDraftResolve": {
         "additionalProperties": false,
         "properties": {
-          "pending": {
-            "$ref": "#/definitions/ConversationDraftPending"
+          "disposition": {
+            "$ref": "#/definitions/ConversationDraftDisposition"
+          },
+          "target": {
+            "$ref": "#/definitions/ConversationDraftResolveTarget"
           },
           "write": {
             "$ref": "#/definitions/ConversationDraftWrite"
@@ -752,7 +762,8 @@
         },
         "required": [
           "write",
-          "pending"
+          "target",
+          "disposition"
         ],
         "type": "object"
       },
@@ -769,6 +780,60 @@
         "required": [
           "sessionToken",
           "resolve"
+        ],
+        "type": "object"
+      },
+      "ConversationDraftResolveTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              },
+              "pending": {
+                "$ref": "#/definitions/ConversationDraftPending"
+              }
+            },
+            "required": [
+              "kind",
+              "pending"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "revocation",
+                "type": "string"
+              },
+              "revocation": {
+                "$ref": "#/definitions/ConversationDraftRevocation"
+              }
+            },
+            "required": [
+              "kind",
+              "revocation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ConversationDraftRevocation": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/WorkPlanRevocationOriginal"
+          },
+          "submittedSeq": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "request",
+          "submittedSeq"
         ],
         "type": "object"
       },
@@ -802,6 +867,13 @@
             "items": {
               "$ref": "#/definitions/ConversationProposalDraft"
             },
+            "type": "array"
+          },
+          "revocations": {
+            "items": {
+              "$ref": "#/definitions/ConversationDraftRevocation"
+            },
+            "maxItems": 32,
             "type": "array"
           },
           "text": {
@@ -2703,6 +2775,43 @@
         ],
         "type": "object"
       },
+      "WorkPlanRevocationCommand": {
+        "enum": [
+          "pause",
+          "stop",
+          "take-over"
+        ],
+        "type": "string"
+      },
+      "WorkPlanRevocationOriginal": {
+        "additionalProperties": false,
+        "description": "A complete control request that can only withdraw authority.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "command": {
+            "$ref": "#/definitions/WorkPlanRevocationCommand"
+          },
+          "expectedGeneration": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "actionId",
+          "expectedGeneration",
+          "command"
+        ],
+        "type": "object"
+      },
       "WorkPlanStartOriginal": {
         "additionalProperties": false,
         "properties": {
@@ -4026,6 +4135,22 @@
           }
         ]
       },
+      "ConversationDraftRevocation": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/WorkPlanRevocationOriginal"
+          },
+          "submittedSeq": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "request",
+          "submittedSeq"
+        ],
+        "type": "object"
+      },
       "ConversationDraftSummary": {
         "additionalProperties": false,
         "properties": {
@@ -4080,6 +4205,13 @@
             "items": {
               "$ref": "#/definitions/ConversationProposalDraft"
             },
+            "type": "array"
+          },
+          "revocations": {
+            "items": {
+              "$ref": "#/definitions/ConversationDraftRevocation"
+            },
+            "maxItems": 32,
             "type": "array"
           },
           "text": {
@@ -6009,6 +6141,43 @@
           "toolExecution",
           "applicationToolExecutions",
           "expiresAt"
+        ],
+        "type": "object"
+      },
+      "WorkPlanRevocationCommand": {
+        "enum": [
+          "pause",
+          "stop",
+          "take-over"
+        ],
+        "type": "string"
+      },
+      "WorkPlanRevocationOriginal": {
+        "additionalProperties": false,
+        "description": "A complete control request that can only withdraw authority.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "command": {
+            "$ref": "#/definitions/WorkPlanRevocationCommand"
+          },
+          "expectedGeneration": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "actionId",
+          "expectedGeneration",
+          "command"
         ],
         "type": "object"
       },

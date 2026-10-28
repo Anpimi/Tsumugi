@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { conversationDraftCommands, locallyReplayableConversationRequest, type ConversationDraftPending, type ConversationProposalDraft } from "./conversationDraftCommands";
 import { conversationCommands, isConversationMessageText } from "./conversationCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import type { ConversationDraftRevocation } from "./generated/draft.responses";
+import { validateRequestConversationResolve, validateResponseConversationWritten } from "./generated/draft.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -31,6 +33,10 @@ const runningValue = (original: RunPending) => ({
   text: "  Newer message B\n🙂  ", editSeq: "3", messageEditSeq: "2", pending: original,
   proposalEdits: [proposalEdit(fixtureIdentity(945), "2"), proposalEdit(fixtureIdentity(946), "3")],
 });
+const revocation = (command: ConversationDraftRevocation["request"]["command"] = "pause", actionId = fixtureIdentity(960)): ConversationDraftRevocation => ({
+  submittedSeq: "3", request: { projectId: key.projectId, planId: fixtureIdentity(940), actionId,
+    expectedGeneration: "9007199254740993", command },
+});
 beforeEach(() => { invoke.mockReset(); });
 
 describe("conversation journal command boundary", () => {
@@ -52,7 +58,7 @@ describe("conversation journal command boundary", () => {
     invoke.mockResolvedValueOnce({ ...head(), value: { ...value, pending: null } });
     expect((await conversationDraftCommands.write({ sessionToken, write: { ...write, value } })).value?.pending).toBeNull();
     invoke.mockResolvedValueOnce(head());
-    await expect(conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value: { ...value, pending: null } }, pending } })).rejects.toThrow();
+    await expect(conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value: { ...value, pending: null } }, target: { kind: "pending", pending }, disposition: "recorded" } })).rejects.toThrow();
     invoke.mockResolvedValueOnce({ items: [], next: key });
     expect((await conversationDraftCommands.list({ sessionToken, projectId: key.projectId, after: null, limit: 50 })).next).toEqual(key);
     invoke.mockResolvedValueOnce({ items: [], next: key });
@@ -78,7 +84,7 @@ describe("conversation journal command boundary", () => {
     expect((await conversationDraftCommands.write({ sessionToken, write: { ...write, value } })).value).toEqual(canonical);
     expect(invoke.mock.calls[0][1].request.write.value).toEqual(value);
     invoke.mockResolvedValueOnce({ ...head(), value: canonical });
-    expect((await conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value }, pending } })).value).toEqual(canonical);
+    expect((await conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value }, target: { kind: "pending", pending }, disposition: "recorded" } })).value).toEqual(canonical);
   });
 
   it("keeps the append body bound to the message sequence when only proposal edits advance", async () => {
@@ -184,24 +190,24 @@ describe("conversation journal command boundary", () => {
 
     it("freezes resolution input and accepts only an acknowledgement preserving newer input with pending cleared", async () => {
       const original = runningPending(kind), value = { ...runningValue(original), pending: null };
-      const input = { sessionToken, resolve: { write: { ...write, value: structuredClone(value) }, pending: structuredClone(original) } };
+      const input = { sessionToken, resolve: { write: { ...write, value: structuredClone(value) }, target: { kind: "pending" as const, pending: structuredClone(original) }, disposition: "recorded" as const } };
       const response = { ...head(), value: structuredClone(value) };
       let answer!: (value: unknown) => void; invoke.mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
       const result = conversationDraftCommands.resolve(input);
-      input.resolve.pending.request.actionId = fixtureIdentity(947);
+      input.resolve.target.pending.request.actionId = fixtureIdentity(947);
       input.resolve.write.value.text = "Message C entered while resolving";
       input.resolve.write.value.proposalEdits[0].content.summary = "Newer proposal C";
-      if (input.resolve.pending.kind === "work-plan-start") input.resolve.pending.expectedAttemptId = fixtureIdentity(948);
+      if (input.resolve.target.pending.kind === "work-plan-start") input.resolve.target.pending.expectedAttemptId = fixtureIdentity(948);
       else {
-        input.resolve.pending.request.checkerExecutions[0].profile.behaviorVersion = 2;
-        input.resolve.pending.request.applicationToolExecutions[0].activationGeneration = 3;
+        input.resolve.target.pending.request.checkerExecutions[0].profile.behaviorVersion = 2;
+        input.resolve.target.pending.request.applicationToolExecutions[0].activationGeneration = 3;
       }
       answer(response);
       expect((await result).value).toEqual(value);
-      expect(invoke.mock.calls[0]).toEqual(["resolve_local_conversation_draft", { request: { sessionToken, resolve: { write: { ...write, value }, pending: original } } }]);
+      expect(invoke.mock.calls[0]).toEqual(["resolve_local_conversation_draft", { request: { sessionToken, resolve: { write: { ...write, value }, target: { kind: "pending", pending: original }, disposition: "recorded" } } }]);
       for (const bad of [{ ...value, text: "" }, { ...value, proposalEdits: [] }, { ...value, pending: original }]) {
         invoke.mockResolvedValueOnce({ ...head(), value: bad });
-        await expect(conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value }, pending: original } })).rejects.toThrow();
+        await expect(conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value }, target: { kind: "pending", pending: original }, disposition: "recorded" } })).rejects.toThrow();
       }
     });
 
@@ -269,6 +275,92 @@ describe("conversation journal command boundary", () => {
       invoke.mockResolvedValueOnce({ ...head(), value: { ...value, pending: { ...original, request: incomplete } } });
       await expect(conversationDraftCommands.read({ sessionToken, key })).rejects.toThrow();
     }
+  });
+
+  describe("independent revocation journal slots", () => {
+    it("reads all withdrawing controls beside the unresolved primary and unfinished input", async () => {
+      const value = { ...runningValue(runningPending("work-plan-start")),
+        revocations: [revocation(), revocation("stop", fixtureIdentity(961)), revocation("take-over", fixtureIdentity(962))] };
+      const response = { ...head(), value };
+      expect(validateResponseConversationWritten(response)).toBe(true);
+      invoke.mockResolvedValueOnce(response);
+      expect((await conversationDraftCommands.read({ sessionToken, key })).value).toEqual(value);
+      expect(invoke.mock.calls).toEqual([["read_local_conversation_draft", { request: { sessionToken, key } }]]);
+    });
+
+    it("freezes revocation requests and accepts omission of the canonical empty vector", async () => {
+      const value = { ...runningValue(runningPending("work-plan-start")), revocations: [revocation()] };
+      const input = { sessionToken, write: { ...write, value: structuredClone(value) } };
+      let answer!: (value: unknown) => void; invoke.mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+      const writing = conversationDraftCommands.write(input);
+      input.write.value.revocations[0].request.actionId = fixtureIdentity(963);
+      input.write.value.revocations[0].request.expectedGeneration = "9007199254740994";
+      input.write.value.text = "Newer C";
+      answer({ ...head(), value });
+      expect((await writing).value).toEqual(value);
+      expect(invoke.mock.calls[0]).toEqual(["write_local_conversation_draft", { request: { sessionToken, write: { ...write, value } } }]);
+      const { revocations: _slots, ...canonical } = value;
+      invoke.mockResolvedValueOnce({ ...head(), value: canonical });
+      expect((await conversationDraftCommands.write({ sessionToken, write: { ...write, value: { ...canonical, revocations: [] } } })).value).toEqual(canonical);
+    });
+
+    it.each(["recorded", "fenced-not-applied"] as const)("resolves only the exact revocation with %s while preserving primary and other slots", async disposition => {
+      const original = revocation(), other = revocation("stop", fixtureIdentity(961));
+      const value = { ...runningValue(runningPending("work-plan-start")), revocations: [other] };
+      const input = { sessionToken, resolve: { write: { ...write, value: structuredClone(value) },
+        target: { kind: "revocation" as const, revocation: structuredClone(original) }, disposition } };
+      expect(validateRequestConversationResolve(input)).toBe(true);
+      let answer!: (value: unknown) => void; invoke.mockImplementationOnce(() => new Promise(resolve => { answer = resolve; }));
+      const resolving = conversationDraftCommands.resolve(input);
+      input.resolve.target.revocation.request.command = "take-over";
+      input.resolve.target.revocation.submittedSeq = "2";
+      input.resolve.write.value.text = "Message C";
+      input.resolve.write.value.revocations[0].request.actionId = fixtureIdentity(963);
+      answer({ ...head(), value });
+      expect((await resolving).value).toEqual(value);
+      expect(invoke.mock.calls[0]).toEqual(["resolve_local_conversation_draft", { request: { sessionToken, resolve: {
+        write: { ...write, value }, target: { kind: "revocation", revocation: original }, disposition,
+      } } }]);
+      for (const changed of [{ ...value, pending: null }, { ...value, revocations: [] },
+        { ...value, revocations: [other, original] }, { ...value, proposalEdits: [] },
+        { ...value, revocations: [{ ...other, request: { ...other.request, command: "pause" } }] }]) {
+        invoke.mockResolvedValueOnce({ ...head(), value: changed });
+        await expect(conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value },
+          target: { kind: "revocation", revocation: original }, disposition } })).rejects.toThrow();
+      }
+    });
+
+    it("retains revocations when settling the primary and canonicalizes the final removed slot", async () => {
+      const primary = runningPending("work-plan-start"), original = revocation();
+      primary.request.expectedGeneration = "1";
+      const value = { ...runningValue(primary), pending: null, revocations: [original] };
+      invoke.mockResolvedValueOnce({ ...head(), value });
+      expect((await conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value },
+        target: { kind: "pending", pending: primary }, disposition: "fenced-not-applied" } })).value).toEqual(value);
+      const { revocations: _slots, ...canonical } = value;
+      invoke.mockResolvedValueOnce({ ...head(), value: canonical });
+      expect((await conversationDraftCommands.resolve({ sessionToken, resolve: { write: { ...write, value: { ...canonical, revocations: [] } },
+        target: { kind: "revocation", revocation: original }, disposition: "recorded" } })).value).toEqual(canonical);
+    });
+
+    it("rejects foreign scope, reused action identities, future sequences and authority-bearing slot material", async () => {
+      const primary = runningPending("work-plan-start"), slot = revocation(), value = runningValue(primary);
+      const invalid: unknown[] = [
+        [{ ...slot, request: { ...slot.request, projectId: fixtureIdentity(964) } }],
+        [slot, slot], [{ ...slot, request: { ...slot.request, actionId: primary.request.actionId } }],
+        [{ ...slot, submittedSeq: "4" }], [{ ...slot, request: { ...slot.request, expectedGeneration: "0" } }],
+        [{ ...slot, request: { ...slot.request, command: "continue" } }],
+        [{ ...slot, request: { ...slot.request, confirmed: false } }],
+        [{ ...slot, request: { ...slot.request, sessionToken: "not-storable" } }],
+        [{ ...slot, request: { ...slot.request, expiresAt: null } }],
+        [{ ...slot, unknown: true }], Array.from({ length: 33 }, (_, index) => revocation("pause", fixtureIdentity(970 + index))),
+      ];
+      for (const revocations of invalid) {
+        invoke.mockResolvedValueOnce({ ...head(), value: { ...value, revocations } });
+        await expect(conversationDraftCommands.read({ sessionToken, key })).rejects.toThrow();
+      }
+      expect(invoke.mock.calls.every(([command]) => command === "read_local_conversation_draft")).toBe(true);
+    });
   });
 
   it("rejects mismatched or unordered planning discovery pages without querying details or replaying", async () => {

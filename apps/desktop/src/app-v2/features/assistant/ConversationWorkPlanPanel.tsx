@@ -77,7 +77,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   const disposeProof = () => { proof.current?.dispose(); proof.current = null; };
   const invalidate = () => { disposeProof(); owner.invalidateWorkPlan(conversationId); };
   const pending = !!input.value.pending || !!input.failure;
-  const blocked = disabled || !open || !!input.busy || pending || !!workPlan.busy;
+  const blocked = disabled || !open || (!!input.busy || input.journalBusy) || pending || !!workPlan.busy;
   const unsavedProposal = !!revision && !!input.value.proposalEdits?.some(edit => edit.proposalId === revision.proposalId);
   const unresolved = proposal?.questions.length ?? 0;
   const connectionCurrent = connectionConfigCurrent(facts.current(), workPlan.config);
@@ -133,11 +133,11 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   }, [open, visible]);
   useEffect(() => {
     const ticket = focus.current;
-    if (!ticket || workPlan.busy || input.busy) return;
+    if (!ticket || workPlan.busy || input.busy || input.journalBusy) return;
     focus.current = null;
     if (open && (document.activeElement === ticket.origin || document.activeElement === document.body))
       (ticket.preview && workPlan.prepared ? previewRegion.current : root.current)?.focus();
-  }, [input.busy, open, workPlan.busy, workPlan.prepared]);
+  }, [input.busy, input.journalBusy, open, workPlan.busy, workPlan.prepared]);
 
   const toolChoice = useRef<PlanToolChoiceHandle>(null);
   async function prepare(button: HTMLElement) {

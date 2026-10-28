@@ -22,6 +22,7 @@ use tsumugi_core::{
         AuthorizeWorkPlan, AutomationEffect, AutomationLease, ControlWorkPlan,
         MaintenanceAssessment, MaintenancePlanBasis, PlanOptions, PlanSelectionBasis,
         SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand, WorkPlanReceipt,
+        WorkPlanRequestOutcome, WorkPlanRequestSettlement, WorkPlanStartReceipt,
         WorkPlanState, WorkPlanStatus, WorkPlanToolConsent, WorkPlanTools, WorkProtection,
     },
 };
@@ -426,6 +427,15 @@ request!(
 );
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanStartSettlementRequest {
+        plan_id: ExecutionId,
+        action_id: ExecutionId,
+        expected_generation: Revision,
+        expected_attempt_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     WorkPlanStatusRequest {
         plan_id: ExecutionId
     }
@@ -586,6 +596,52 @@ pub struct WorkPlanActionReadView {
     pub project_id:ExecutionId,
     pub request:WorkPlanRecordedAction,
     pub receipt:WorkPlanReceiptView,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanStartSettlementOriginal {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub expected_generation: Revision,
+    pub expected_attempt_id: ExecutionId,
+}
+
+/// Request correspondence includes Host choices, while the settlement proves
+/// only the persisted Core transition and never restores those choices.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanControlSettlementOriginal {
+    pub project_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub expected_generation: Revision,
+    pub command: WorkPlanCommand,
+    pub confirmed: bool,
+    pub checker_executions: Vec<ReviewCheckerKey>,
+    pub tool_execution: bool,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+    pub application_tool_executions: Vec<tsumugi_core::execution::ApplicationScopeBasis>,
+    pub expires_at: Option<UnsignedDecimal>,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanStartSettlementView {
+    pub request: WorkPlanStartSettlementOriginal,
+    pub settlement: WorkPlanRequestSettlement<WorkPlanStartReceipt>,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanControlSettlementView {
+    pub request: WorkPlanControlSettlementOriginal,
+    pub settlement: WorkPlanRequestSettlement<WorkPlanReceiptView>,
 }
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -1169,6 +1225,73 @@ pub async fn read_work_plan_start_action(
             .map_err(map_read)
     }).await
 }
+
+#[tauri::command]
+pub async fn read_work_plan_start_settlement(
+    state: State<'_, AppState>, request: WorkPlanStartSettlementRequest,
+) -> Result<WorkPlanStartSettlementView, CommandError> {
+    state.sessions.run("read_work_plan_start_settlement", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let settlement = active.store.work_plan_start_settlement(
+            request.project_id, request.plan_id, request.action_id,
+            request.expected_generation, request.expected_attempt_id,
+        ).map_err(map_read)?;
+        Ok(WorkPlanStartSettlementView {
+            request: WorkPlanStartSettlementOriginal {
+                project_id: request.project_id,
+                plan_id: request.plan_id,
+                action_id: request.action_id,
+                expected_generation: request.expected_generation,
+                expected_attempt_id: request.expected_attempt_id,
+            },
+            settlement,
+        })
+    }).await
+}
+
+#[tauri::command]
+pub async fn read_work_plan_control_settlement(
+    state: State<'_, AppState>, request: WorkPlanControlRequest,
+) -> Result<WorkPlanControlSettlementView, CommandError> {
+    state.sessions.run("read_work_plan_control_settlement", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let proof = active.store.work_plan_control_settlement(request.project_id, &ControlWorkPlan {
+            action_id: request.action_id,
+            plan_id: request.plan_id,
+            expected_generation: request.expected_generation,
+            command: request.command,
+            confirmed: request.confirmed,
+            expires_at: request.expires_at.map(UnsignedDecimal::get),
+        }).map_err(map_read)?;
+        let outcome = match proof.outcome {
+            WorkPlanRequestOutcome::Recorded { receipt } => WorkPlanRequestOutcome::Recorded { receipt: receipt.into() },
+            WorkPlanRequestOutcome::Pending => WorkPlanRequestOutcome::Pending,
+            WorkPlanRequestOutcome::FencedNotApplied => WorkPlanRequestOutcome::FencedNotApplied,
+        };
+        Ok(WorkPlanControlSettlementView {
+            request: WorkPlanControlSettlementOriginal {
+                project_id: request.project_id,
+                action_id: request.action_id,
+                plan_id: request.plan_id,
+                expected_generation: request.expected_generation,
+                command: request.command,
+                confirmed: request.confirmed,
+                checker_executions: request.checker_executions,
+                tool_execution: request.tool_execution,
+                application_tool_executions: request.application_tool_executions,
+                expires_at: request.expires_at,
+            },
+            settlement: WorkPlanRequestSettlement {
+                project_id: proof.project_id,
+                plan_id: proof.plan_id,
+                lease: proof.lease,
+                state: proof.state,
+                outcome,
+            },
+        })
+    }).await
+}
+
 #[tauri::command]
 pub async fn start_work_plan(
     state: State<'_, AppState>,
@@ -2992,6 +3115,81 @@ mod tests {
                 )
                 .is_err()
         );
+        assert_eq!(fixture.bytes(), before);
+    }
+
+    #[test]
+    fn registered_work_plan_settlements_bind_original_requests_without_restoring_consent() {
+        let mut fixture = Fixture::create();
+        let wire: Value = serde_json::from_str(include_str!("../../../../test/fixtures/workPlanCommands.contract.json")).unwrap();
+        let config: AiConfig = serde_json::from_value(wire["requests"]["prepare"]["config"].clone()).unwrap();
+        let unit = fixture.unit;
+        let (old_start, start, continuing, absent, input) = fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let store = &mut sessions.active.as_mut().unwrap().store;
+            let plan = store.prepare_work_plan(Some(config), "zh-CN", &[unit], PlanOptions::default()).unwrap();
+            let expires = expiry().parse::<u64>().unwrap();
+            let authorization = AuthorizeWorkPlan { action_id: ExecutionId::new(), plan_digest: plan.digest.clone(), confirmed: true,
+                effects: plan.authorization_effects().unwrap(), expires_at: expires };
+            let original = store.authorize_work_plan(&plan, &authorization).unwrap();
+            let attempt = original.input.as_ref().unwrap().attempt_id;
+            store.control_work_plan(&ControlWorkPlan { action_id: ExecutionId::new(), plan_id: plan.plan_id,
+                expected_generation: original.lease.generation, command: WorkPlanCommand::Pause, confirmed: false, expires_at: None }).unwrap();
+            let continuing = ControlWorkPlan { action_id: ExecutionId::new(), plan_id: plan.plan_id,
+                expected_generation: Revision::new(2).unwrap(), command: WorkPlanCommand::Continue, confirmed: true, expires_at: Some(expires) };
+            let continued = store.control_work_plan(&continuing).unwrap();
+            let old = json!({"planId":plan.plan_id,"actionId":authorization.action_id,"expectedGeneration":"1","expectedAttemptId":attempt});
+            let start = json!({"planId":plan.plan_id,"actionId":continued.action_id,"expectedGeneration":"3","expectedAttemptId":attempt});
+            let control = json!({"planId":plan.plan_id,"actionId":continuing.action_id,"expectedGeneration":"2","command":"continue",
+                "confirmed":true,"expiresAt":expires.to_string(),"checkerExecutions":[],"toolExecution":true,"applicationToolExecutions":[]});
+            let absent = json!({"planId":plan.plan_id,"actionId":ExecutionId::new(),"expectedGeneration":"3","command":"stop",
+                "confirmed":false,"expiresAt":null,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]});
+            (old, start, control, absent, FixedInput::capture(continued.input.unwrap()).unwrap())
+        });
+        let before = fixture.bytes();
+        let pending = fixture.call("read_work_plan_start_settlement", start.clone()).unwrap();
+        assert_eq!(pending["settlement"]["outcome"]["kind"], "pending");
+        assert_eq!(fixture.call("read_work_plan_control_settlement", absent.clone()).unwrap()["settlement"]["outcome"]["kind"], "pending");
+        let recorded = fixture.call("read_work_plan_control_settlement", continuing.clone()).unwrap();
+        assert_eq!(recorded["settlement"]["outcome"]["kind"], "recorded");
+        let mut original = continuing.clone(); original["projectId"] = fixture.context["projectId"].clone();
+        assert_eq!(recorded["request"], original);
+        assert!(recorded["request"].get("sessionToken").is_none());
+        assert_eq!(fixture.bytes(), before);
+        let wrong_attempt = { let mut wrong = start.clone(); wrong["expectedAttemptId"] = json!(ExecutionId::new()); wrong };
+        assert_eq!(fixture.call("read_work_plan_start_settlement", wrong_attempt).unwrap_err()["code"], "result-mismatch");
+        let stop_plan = input.envelope().automation.unwrap().plan_id;
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let active = sessions.active.as_mut().unwrap();
+            active.store.enqueue_execution(&input).unwrap();
+            active.store.control_work_plan(&ControlWorkPlan { action_id: ExecutionId::new(), plan_id: stop_plan,
+                expected_generation: Revision::new(3).unwrap(), command: WorkPlanCommand::Stop, confirmed: false, expires_at: None }).unwrap();
+            let host = active.execution.as_ref().unwrap();
+            assert!(host.work_plans.checker_consents.is_empty() && host.work_plans.tool_consents.is_empty());
+        });
+        let old_proof = fixture.call("read_work_plan_start_settlement", old_start.clone()).unwrap();
+        let start_proof = fixture.call("read_work_plan_start_settlement", start.clone()).unwrap();
+        let absent_proof = fixture.call("read_work_plan_control_settlement", absent.clone()).unwrap();
+        assert_eq!(old_proof["settlement"]["outcome"]["kind"], "fenced-not-applied");
+        assert_eq!(start_proof["settlement"]["outcome"]["kind"], "recorded");
+        assert_eq!(start_proof["settlement"]["outcome"]["receipt"]["expectedGeneration"], "3");
+        assert_eq!(start_proof["settlement"]["lease"]["generation"], "4");
+        assert_eq!(absent_proof["settlement"]["outcome"]["kind"], "fenced-not-applied");
+        fixture.reopen();
+        let before = fixture.bytes();
+        for (command, body, expected) in [
+            ("read_work_plan_start_settlement", old_start, old_proof),
+            ("read_work_plan_start_settlement", start.clone(), start_proof),
+            ("read_work_plan_control_settlement", absent, absent_proof),
+        ] {
+            assert_eq!(fixture.call(command, body.clone()).unwrap(), expected);
+            for field in ["projectId", "sessionToken"] {
+                let mut wrong = body.clone();
+                wrong[field] = if field == "sessionToken" { json!("old-session") } else { json!(ExecutionId::new()) };
+                assert!(fixture.call(command, wrong).is_err());
+            }
+        }
+        assert_eq!(fixture.call("read_work_plan_control_settlement", continuing).unwrap()["settlement"]["outcome"]["kind"], "recorded");
+        fixture.app.state::<AppState>().sessions.with(|sessions| assert!(sessions.active.as_ref().unwrap().execution.is_none()));
         assert_eq!(fixture.bytes(), before);
     }
 

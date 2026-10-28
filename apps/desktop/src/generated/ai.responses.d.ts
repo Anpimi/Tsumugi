@@ -476,6 +476,28 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type WorkPlanRequestOutcome2 =
+  | {
+      kind: "recorded";
+      receipt: WorkPlanReceiptView;
+    }
+  | {
+      kind: "pending";
+    }
+  | {
+      kind: "fenced-not-applied";
+    };
+export type WorkPlanRequestOutcome =
+  | {
+      kind: "recorded";
+      receipt: WorkPlanStartReceipt;
+    }
+  | {
+      kind: "pending";
+    }
+  | {
+      kind: "fenced-not-applied";
+    };
 export type TeamDiscussionAuthor =
   | {
       author: TeamMemberAuthor;
@@ -595,11 +617,13 @@ export interface Responses {
   workPlanAgentToolOutput: ExecutionOutputView;
   workPlanAuthorizationAction: WorkPlanActionReadView | null;
   workPlanControlAction: WorkPlanActionReadView | null;
+  workPlanControlSettlement: WorkPlanControlSettlementView;
   workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanGenerationStartRead: PluginStartActionRead | null;
   workPlanReceipt: WorkPlanReceiptView;
   workPlanRun: WorkPlanRunView;
   workPlanStartAction: WorkPlanStartReceipt | null;
+  workPlanStartSettlement: WorkPlanStartSettlementView;
   workPlanStatus: WorkPlanStatusView;
   workPlanTeamExecution: TeamExecutionView;
   workPlanTeamHistory: TeamHistoryPage;
@@ -1787,6 +1811,39 @@ export interface WorkPlanActionReadView {
   receipt: WorkPlanReceiptView;
   request: WorkPlanRecordedAction;
 }
+export interface WorkPlanControlSettlementView {
+  request: WorkPlanControlSettlementOriginal;
+  settlement: WorkPlanRequestSettlement2;
+}
+/**
+ * Request correspondence includes Host choices, while the settlement proves
+ * only the persisted Core transition and never restores those choices.
+ */
+export interface WorkPlanControlSettlementOriginal {
+  actionId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  applicationToolExecutions: ApplicationScopeBasis[];
+  checkerExecutions: ReviewCheckerKey[];
+  command: WorkPlanCommand;
+  confirmed: boolean;
+  expectedGeneration: Revision;
+  expiresAt: UnsignedDecimal | null;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  toolExecution: boolean;
+}
+/**
+ * A historical observation of one exact request, without restoring authority.
+ */
+export interface WorkPlanRequestSettlement2 {
+  lease: AutomationLease;
+  outcome: WorkPlanRequestOutcome2;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  state: WorkPlanState;
+}
 export interface WorkPlanGenerationPreflight {
   attemptId: ExecutionId;
   budget: ProviderBudget;
@@ -1878,6 +1935,27 @@ export interface WorkPlanStartReceipt {
   planId: ExecutionId;
   projectId: ExecutionId;
   taskId: ExecutionId;
+}
+export interface WorkPlanStartSettlementView {
+  request: WorkPlanStartSettlementOriginal;
+  settlement: WorkPlanRequestSettlement;
+}
+export interface WorkPlanStartSettlementOriginal {
+  actionId: ExecutionId;
+  expectedAttemptId: ExecutionId;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+}
+/**
+ * A historical observation of one exact request, without restoring authority.
+ */
+export interface WorkPlanRequestSettlement {
+  lease: AutomationLease;
+  outcome: WorkPlanRequestOutcome;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  state: WorkPlanState;
 }
 export interface WorkPlanStatusView {
   effects: AutomationEffect[];

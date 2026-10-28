@@ -153,6 +153,7 @@ export interface Requests {
   workPlanAuthorize: WorkPlanAuthorizeRequest;
   workPlanControl: WorkPlanControlRequest;
   workPlanControlAction: WorkPlanControlRequest;
+  workPlanControlSettlement: WorkPlanControlRequest;
   workPlanGenerationDiscard: WorkPlanGenerationDiscardRequest;
   workPlanGenerationPrepare: WorkPlanGenerationPrepareRequest;
   workPlanGenerationStart: WorkPlanGenerationStartRequest;
@@ -161,6 +162,7 @@ export interface Requests {
   workPlanRun: WorkPlanStatusRequest;
   workPlanStart: WorkPlanStartRequest;
   workPlanStartAction: WorkPlanStartRequest;
+  workPlanStartSettlement: WorkPlanStartSettlementRequest;
   workPlanStatus: WorkPlanStatusRequest;
   workPlanTeamExecution: WorkPlanTeamExecutionRequest;
   workPlanTeamHistory: WorkPlanTeamHistoryRequest;
@@ -969,6 +971,14 @@ export interface WorkPlanStatusRequest {
 }
 export interface WorkPlanStartRequest {
   actionId: ExecutionId;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanStartSettlementRequest {
+  actionId: ExecutionId;
+  expectedAttemptId: ExecutionId;
   expectedGeneration: Revision;
   planId: ExecutionId;
   projectId: ExecutionId;

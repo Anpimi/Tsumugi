@@ -94,6 +94,7 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
             edit_seq: Revision::new(1).unwrap(),
             message_edit_seq: None,
             pending: Some(pending.clone()),
+            revocations: vec![],
             proposal_edits: vec![],
         },
     };
@@ -108,7 +109,8 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
     write.value.edit_seq = Revision::new(2).unwrap();
     let resolve = ConversationDraftResolve {
         write: write.clone(),
-        pending: pending.clone(),
+        target: ConversationDraftResolveTarget::Pending { pending: pending.clone() },
+        disposition: ConversationDraftDisposition::Recorded,
     };
     assert!(
         call(
@@ -185,7 +187,8 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
     write.value.edit_seq = Revision::new(5).unwrap();
     let resolve = ConversationDraftResolve {
         write: write.clone(),
-        pending,
+        target: ConversationDraftResolveTarget::Pending { pending },
+        disposition: ConversationDraftDisposition::Recorded,
     };
     let settled = call(
         &window,
@@ -214,6 +217,6 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
         .is_err()
     );
     let mut injected = serde_json::to_value(&resolve).unwrap();
-    injected["pending"]["request"]["sessionToken"] = json!("not-allowed");
+    injected["target"]["pending"]["request"]["sessionToken"] = json!("not-allowed");
     assert!(serde_json::from_value::<ConversationDraftResolve>(injected).is_err());
 }

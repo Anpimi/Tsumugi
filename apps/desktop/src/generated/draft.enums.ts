@@ -17,4 +17,5 @@ export const StageModeValues = ["manual","assisted","skipped"] as const;
 export const TeamWorkKindValues = ["translation","review","evidence"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;
 export const WorkPlanCommandValues = ["pause","stop","take-over","continue"] as const;
+export const WorkPlanRevocationCommandValues = ["pause","stop","take-over"] as const;
 export const WorkStageValues = ["understanding","resources","generation","checks","delivery"] as const;

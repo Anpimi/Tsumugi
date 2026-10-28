@@ -144,6 +144,7 @@ macro_rules! handlers {
         strategy::read_context_strategy_default,strategy::list_context_strategy_defaults,strategy::read_strategy_action,
         review::plugin::prepare_strategy_evaluation_checks,review::plugin::run_strategy_evaluation_checks,
         work_plans::read_maintenance_assessment,work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,work_plans::read_work_plan_start_action,
+        work_plans::read_work_plan_start_settlement,work_plans::read_work_plan_control_settlement,
         work_plans::generation::prepare_work_plan_generation_component,
         work_plans::generation::start_work_plan_generation_component,
         work_plans::generation::read_work_plan_generation_component_start,

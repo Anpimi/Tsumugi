@@ -1,5 +1,5 @@
 import type { CommandFailure } from "../../../CommandFailure";
-import type { ConversationDraftPending } from "../../../conversationDraftCommands";
+import type { ConversationDraftRevocation, ConversationDraftPending } from "../../../conversationDraftCommands";
 import type { conversationCommands } from "../../../conversationCommands";
 import type { WorkPlanControlRequest } from "../../../generated/ai.requests";
 import type { WorkPlanReceiptView, WorkPlanStatusView, WorkPlanView } from "../../../workPlanCommands";
@@ -20,4 +20,17 @@ export function runReadyCurrent(ready: ConversationRunReady | undefined, status:
 }
 export function isRunPending(pending: ConversationDraftPending | null | undefined): pending is ConversationRunPending {
   return pending?.kind === "work-plan-start" || pending?.kind === "work-plan-control";
+}
+
+export type ConversationRevocationCommand = ConversationDraftRevocation["request"]["command"];
+export interface ConversationRevocationState {
+  busy: "submit" | "check" | null;
+  outcome: "unknown" | "absent" | "blocked" | null;
+  failure: CommandFailure | null;
+}
+export function revocationAllowed(command: ConversationRevocationCommand, state: WorkPlanStatusView["state"]) {
+  return state !== "stopped" && (command !== "pause" || state === "active") && (command !== "take-over" || state !== "taken-over");
+}
+export function revocationControlRequest(request: ConversationDraftRevocation["request"]) {
+  return { ...request, confirmed: false, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], expiresAt: null };
 }

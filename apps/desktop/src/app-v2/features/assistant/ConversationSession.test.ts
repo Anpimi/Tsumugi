@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConversationSession } from "./ConversationSession";
-import { canonicalConversationDraft, type ConversationDraftHead, type ConversationDraftPending } from "../../../conversationDraftCommands";
+import { canonicalConversationDraft, type ConversationDraftHead, type ConversationDraftPending, type ConversationDraftResolveTarget } from "../../../conversationDraftCommands";
 import type { PreparedConversationPlanning, ProjectConversation, ProjectConversationMessage } from "../../../conversationCommands";
 import type { conversationCommands } from "../../../conversationCommands";
 import type { conversationDraftCommands } from "../../../conversationDraftCommands";
@@ -14,11 +14,26 @@ import { conversationWorkPlanFixture } from "../../../testSupport/conversationWo
 import { validateResponseProposalWorkPlanReceipt } from "../../../generated/conversations.validators";
 import type { ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
 import type { workPlanCommands, WorkPlanStatusView } from "../../../workPlanCommands";
-import { validateResponseIdentity, validateResponseWorkPlanReceipt, validateResponseWorkPlanStatus, validateResponseWorkPlanStartAction, validateResponseWorkPlanControlAction, validateRequestWorkPlanControl } from "../../../generated/ai.validators";
+import { validateResponseIdentity, validateResponseWorkPlanReceipt, validateResponseWorkPlanStatus, validateResponseWorkPlanStartAction, validateRequestWorkPlanControl } from "../../../generated/ai.validators";
 import type { ConversationRunConfirmation } from "./conversationRun";
+import type { ConversationDraftRevocation } from "../../../generated/draft.responses";
+import type { WorkPlanStartSettlementView, WorkPlanControlSettlementView } from "../../../generated/ai.responses";
+import { validateResponseWorkPlanStartSettlement, validateResponseWorkPlanControlSettlement } from "../../../generated/ai.validators";
 
 const context = { projectId: "10000000-0000-4000-8000-000000000001", sessionToken: "session" };
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (value: unknown) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+function startSettlement(request: Parameters<typeof workPlanCommands.startSettlement>[0], outcome: WorkPlanStartSettlementView["settlement"]["outcome"], generation = request.expectedGeneration): WorkPlanStartSettlementView {
+  const { sessionToken: _token, ...original } = request;
+  const value: unknown = { request: original, settlement: { projectId: request.projectId, planId: request.planId,
+    lease: { planId: request.planId, generation }, state: "active", outcome } };
+  if (!validateResponseWorkPlanStartSettlement(value)) throw new Error("Invalid synthetic start settlement"); return value;
+}
+function controlSettlement(request: Parameters<typeof workPlanCommands.controlSettlement>[0], outcome: WorkPlanControlSettlementView["settlement"]["outcome"], generation = request.expectedGeneration): WorkPlanControlSettlementView {
+  const { sessionToken: _token, ...original } = request;
+  const value: unknown = { request: original, settlement: { projectId: request.projectId, planId: request.planId,
+    lease: { planId: request.planId, generation }, state: outcome.kind === "recorded" && outcome.receipt.lease.generation === generation ? outcome.receipt.state : "active", outcome } };
+  if (!validateResponseWorkPlanControlSettlement(value)) throw new Error("Invalid synthetic control settlement"); return value;
+}
 function harness() {
   let sequence = 1;
   const heads = new Map<string, ConversationDraftHead>();
@@ -28,18 +43,37 @@ function harness() {
     now: vi.fn(() => 100000),
     identity: () => `20000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`,
     read: vi.fn(async (request: { key: ConversationDraftHead["key"] }) => structuredClone(heads.get(request.key.conversationId) ?? { key: request.key, revision: "0", value: null, writerId: null })),
-    list: vi.fn(async () => ({ items: [...heads.values()].filter(head => head.value).map(head => ({ key: head.key, revision: head.revision, editSeq: head.value!.editSeq, hasPending: !!head.value!.pending })), next: null })),
+    list: vi.fn(async () => ({ items: [...heads.values()].filter(head => head.value).map(head => ({ key: head.key, revision: head.revision, editSeq: head.value!.editSeq, hasPending: !!head.value!.pending || !!head.value!.revocations?.length })), next: null })),
   };
   // The fixture journal records acknowledgements independently from the controller's input.
-  const write = vi.fn(async (request: Parameters<typeof conversationDraftCommands.write>[0]) => {
-    const previous = heads.get(request.write.key.conversationId);
-    const head = { ...structuredClone(request.write), revision: String(BigInt(previous?.revision ?? "0") + 1n) };
-    const result: unknown = { key: head.key, revision: head.revision, writerId: head.writerId,
-      value: canonicalConversationDraft(head.value) };
-    if (!validateResponseConversationWritten(result)) throw new Error("Invalid synthetic journal response");
-    heads.set(head.key.conversationId, result); return structuredClone(result);
+  type Write = Parameters<typeof conversationDraftCommands.write>[0]["write"];
+  const acknowledgements = new Map<string, ConversationDraftHead>();
+  const journal = { active: 0, maximum: 0,
+    acknowledge: vi.fn(async (_kind: "write" | "resolve", _write: Write, _target?: ConversationDraftResolveTarget) => {}) };
+  const commit = async (kind: "write" | "resolve", write: Write, target?: ConversationDraftResolveTarget) => {
+    journal.active++; journal.maximum = Math.max(journal.maximum, journal.active);
+    try {
+      expect(journal.active, "The journal has one writer across writes and resolutions").toBe(1);
+      const identity = JSON.stringify({ kind, write, target }), retry = acknowledgements.get(identity);
+      if (retry) { await journal.acknowledge(kind, write, target); return structuredClone(retry); }
+      const previous = heads.get(write.key.conversationId);
+      expect(write.expectedRevision, "Every new frame uses the acknowledged journal revision").toBe(previous?.revision ?? "0");
+      const result: unknown = { key: structuredClone(write.key), revision: String(BigInt(previous?.revision ?? "0") + 1n),
+        writerId: write.writerId, value: canonicalConversationDraft(structuredClone(write.value)) };
+      if (!validateResponseConversationWritten(result)) throw new Error("Invalid synthetic journal response");
+      heads.set(write.key.conversationId, result); acknowledgements.set(identity, structuredClone(result));
+      await journal.acknowledge(kind, write, target); return structuredClone(result);
+    } finally { journal.active--; }
+  };
+  const write = vi.fn(async (request: Parameters<typeof conversationDraftCommands.write>[0]) => commit("write", request.write));
+  const resolve = vi.fn(async (request: Parameters<typeof conversationDraftCommands.resolve>[0]) => {
+    const target = request.resolve.target;
+    if (target.kind === "revocation") return commit("resolve", request.resolve.write, target);
+    const decoded: unknown = { key: request.resolve.write.key, revision: "1", writerId: request.resolve.write.writerId,
+      value: { ...request.resolve.write.value, pending: target.pending } };
+    if (!validateResponseConversationWritten(decoded) || !decoded.value?.pending) throw new Error("Invalid synthetic resolution target");
+    return commit("resolve", request.resolve.write, { kind: "pending", pending: decoded.value.pending });
   });
-  const resolve = vi.fn(async (request: Parameters<typeof conversationDraftCommands.resolve>[0]) => write({ sessionToken: request.sessionToken, write: request.resolve.write }));
   const create = vi.fn(async (request: Parameters<typeof conversationCommands.create>[0]): Promise<ProjectConversation> => {
     const result = { projectId: request.projectId, conversationId: request.conversationId, title: request.title, ordinal: String(created.size + 1) };
     created.set(request.actionId, result); return result;
@@ -69,7 +103,7 @@ function harness() {
   const startPlan = vi.fn<typeof workPlanCommands.start>(async (_request, expectedAttemptId) => {
     if (!validateResponseIdentity(expectedAttemptId)) throw new Error("Invalid synthetic start identity"); return expectedAttemptId;
   });
-  const readPlanStart = vi.fn<typeof workPlanCommands.startAction>(async () => null);
+  const readPlanStartSettlement = vi.fn<typeof workPlanCommands.startSettlement>(async request => startSettlement(request, { kind: "pending" }));
   const controlPlan = vi.fn<typeof workPlanCommands.control>(async request => {
     if (!validateRequestWorkPlanControl(request)) throw new Error("Invalid synthetic control request");
     const state = { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[request.command];
@@ -77,12 +111,12 @@ function harness() {
       state, attemptId: request.command === "continue" ? ports.identity() : null, parentTask: null };
     if (!validateResponseWorkPlanReceipt(result)) throw new Error("Invalid synthetic control receipt"); return result;
   });
-  const readPlanControl = vi.fn<typeof workPlanCommands.controlAction>(async () => null);
+  const readPlanControlSettlement = vi.fn<typeof workPlanCommands.controlSettlement>(async request => controlSettlement(request, { kind: "pending" }));
   const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
-    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, startPlan, readPlanStart, controlPlan, readPlanControl };
+    captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
   const make = () => new ConversationSession(context, recorded, reveal, all);
   const owner = make();
-  return { owner, make, ports: all, heads, created, appended, recorded, reveal, current: () => {
+  return { owner, make, ports: all, heads, created, appended, recorded, reveal, journal, current: () => {
     const state = owner.getSnapshot(), input = state.activeId ? state.inputs.get(state.activeId) : undefined;
     if (!input) throw new Error("No current conversation input"); return input;
   } };
@@ -114,11 +148,12 @@ describe("ConversationSession", () => {
     const h = await readyWorkPlan(); h.owner.setWorkPlanConsent(h.conversationId, true);
     await h.owner.authorizeWorkPlan(h.conversationId, confirmation);
     const authorization = h.ports.authorizeProposalWorkPlan.mock.calls[0][0], authorized = h.receipt(authorization);
+    if (!authorized.receipt.attemptId) throw new Error("Missing authorized synthetic attempt");
     const status = checkedStatus({ plan: h.prepared.plan, lease: authorized.receipt.lease, state: authorized.receipt.state,
       expiresAt: authorization.authorization.expiresAt, effects: authorization.authorization.effects,
       toolInvocations: h.prepared.plan.tools ? { limit: h.prepared.plan.tools.maxInvocations, reserved: 0 } : null });
     h.ports.planStatus.mockResolvedValue(status);
-    return { ...h, status, link: authorized.link, authorized: authorized.receipt };
+    return { ...h, status, link: authorized.link, authorized: authorized.receipt, runAttemptId: authorized.receipt.attemptId };
   }
   const runConfirmation = (): ConversationRunConfirmation => ({ minutes: 7, confirmed: true, toolExecution: true,
     checkerExecutions: [{ profile: { id: "example.text-review", schemaVersion: 1, behaviorVersion: 1 },
@@ -164,9 +199,10 @@ describe("ConversationSession", () => {
     await h.owner.startRun(h.link, h.status);
     const pending = h.current().value.pending; if (pending?.kind !== "work-plan-start") throw new Error("Missing original start");
     expect(h.current().outcome).toBe("unknown"); h.owner.edit(h.conversationId, "B retained after start check"); await h.owner.flush();
-    h.ports.readPlanStart.mockResolvedValueOnce(startReceipt(pending, h.ports.identity()));
+    const request = { ...context, ...pending.request, expectedAttemptId: pending.expectedAttemptId };
+    h.ports.readPlanStartSettlement.mockResolvedValueOnce(startSettlement(request, { kind: "recorded", receipt: startReceipt(pending, h.ports.identity()) }));
     await h.owner.check(h.conversationId); await h.owner.retry(h.conversationId);
-    expect(h.ports.readPlanStart).toHaveBeenCalledExactlyOnceWith({ ...context, ...pending.request });
+    expect(h.ports.readPlanStartSettlement).toHaveBeenCalledExactlyOnceWith(request);
     expect(h.ports.startPlan).toHaveBeenCalledOnce(); expect(h.current().readyRuns.size).toBe(0);
     expect(h.current().value).toMatchObject({ text: "B retained after start check", pending: null });
     expect(h.current().notice).toBe("runStarted");
@@ -179,7 +215,7 @@ describe("ConversationSession", () => {
     expect(h.current().outcome).toBe("absent"); expect(h.owner.canRetryRun(h.conversationId)).toBe(true);
     expect(h.ports.startPlan).toHaveBeenCalledOnce();
     await h.owner.retry(h.conversationId);
-    expect(h.ports.readPlanStart).toHaveBeenCalledTimes(2);
+    expect(h.ports.readPlanStartSettlement).toHaveBeenCalledTimes(2);
     expect(h.ports.startPlan.mock.calls).toEqual(Array.from({ length: 2 }, () => [{ ...context, ...pending.request }, pending.expectedAttemptId]));
     expect(h.current().value.pending).toBeNull(); expect(h.current().readyRuns.size).toBe(0);
   });
@@ -188,19 +224,19 @@ describe("ConversationSession", () => {
     await h.owner.startRun(h.link, h.status);
     const pending = structuredClone(h.current().value.pending); h.owner.edit(h.conversationId, "B after uncertain start"); await h.owner.flush(); h.owner.retire();
     h.ports.planStatus.mockClear(); const reopened = h.make(); await reopened.initialize(); await reopened.open(h.conversationId);
-    expect(h.ports.readPlanStart).not.toHaveBeenCalled();
+    expect(h.ports.readPlanStartSettlement).not.toHaveBeenCalled();
     await reopened.check(h.conversationId); await reopened.retry(h.conversationId);
     expect(reopened.getSnapshot().inputs.get(h.conversationId)).toMatchObject({ outcome: "blocked", value: { text: "B after uncertain start", pending } });
     expect(reopened.canRetryRun(h.conversationId)).toBe(false); expect(h.ports.startPlan).toHaveBeenCalledOnce();
     expect(h.ports.planStatus).not.toHaveBeenCalled(); reopened.retire();
   });
-  it("keeps an uncertain start unresolved when the recorded attempt does not match", async () => {
+  it("keeps an uncertain start unresolved when its settlement reader rejects the recorded identity", async () => {
     const h = await readyRun(); h.ports.startPlan.mockRejectedValueOnce(new Error("Lost start acknowledgement"));
     await h.owner.startRun(h.link, h.status);
     const pending = h.current().value.pending; if (pending?.kind !== "work-plan-start") throw new Error("Missing original start");
-    h.ports.readPlanStart.mockResolvedValueOnce(startReceipt(pending, h.ports.identity(), h.ports.identity()));
+    h.ports.readPlanStartSettlement.mockRejectedValueOnce(new Error("Invalid recorded start identity"));
     await h.owner.check(h.conversationId); await h.owner.retry(h.conversationId);
-    expect(h.current().outcome).toBe("mismatch"); expect(h.current().value.pending).toEqual(pending);
+    expect(h.current().outcome).toBe("unknown"); expect(h.current().value.pending).toEqual(pending);
     expect(h.ports.startPlan).toHaveBeenCalledOnce(); expect(h.owner.canRetryRun(h.conversationId)).toBe(false);
   });
   it.each(["pause", "stop", "take-over"] as const)("journals %s at the exact generation without connection consent or a new expiry", async command => {
@@ -211,8 +247,8 @@ describe("ConversationSession", () => {
     const request = h.ports.controlPlan.mock.calls[0][0];
     expect(request).toEqual({ ...context, planId: h.link.planId, actionId: expect.any(String), expectedGeneration: "9007199254740993", command,
       confirmed: false, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], expiresAt: null });
-    const pendingWrite = h.ports.write.mock.calls.map(([request]) => request.write.value.pending).find(pending => pending?.kind === "work-plan-control");
-    expect(pendingWrite).toMatchObject({ conversationId: h.conversationId, request: { actionId: request.actionId, expectedGeneration: request.expectedGeneration } });
+    const slot = h.ports.write.mock.calls.flatMap(([request]) => request.write.value.revocations ?? []).find(slot => slot.request.actionId === request.actionId);
+    expect(slot?.request).toEqual({ projectId: context.projectId, planId: h.link.planId, actionId: request.actionId, expectedGeneration: request.expectedGeneration, command });
     expect(reopened.getSnapshot().inputs.get(h.conversationId)?.value.pending).toBeNull();
     expect(h.ports.startPlan).not.toHaveBeenCalled(); expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledOnce(); reopened.retire();
   });
@@ -251,7 +287,7 @@ describe("ConversationSession", () => {
     const reopened = h.make(); await reopened.initialize(); await reopened.open(h.conversationId); await reopened.check(h.conversationId); await reopened.retry(h.conversationId);
     expect(reopened.getSnapshot().inputs.get(h.conversationId)).toMatchObject({ outcome: "blocked", value: { pending } });
     expect(reopened.getSnapshot().inputs.get(h.conversationId)?.readyRuns.size).toBe(0);
-    expect(h.ports.readPlanControl.mock.calls.map(([request]) => request)).toEqual(Array.from({ length: 2 }, () => ({ ...context, ...pending.request })));
+    expect(h.ports.readPlanControlSettlement.mock.calls.map(([request]) => request)).toEqual(Array.from({ length: 2 }, () => ({ ...context, ...pending.request })));
     expect(pending.request.expiresAt).toBe("520"); expect(h.ports.controlPlan).toHaveBeenCalledOnce(); expect(h.ports.startPlan).not.toHaveBeenCalled(); reopened.retire();
   });
   it("settles a recorded continuation through its Core transition without restoring a fresh start ticket", async () => {
@@ -259,12 +295,11 @@ describe("ConversationSession", () => {
     h.ports.planStatus.mockResolvedValue(status); h.ports.controlPlan.mockRejectedValueOnce(new Error("Lost continuation acknowledgement"));
     await h.owner.controlRun(h.link, status, "continue", runConfirmation());
     const pending = h.current().value.pending; if (pending?.kind !== "work-plan-control") throw new Error("Missing original continuation");
-    const value: unknown = { projectId: context.projectId, request: { kind: "control", planId: pending.request.planId, actionId: pending.request.actionId,
-      expectedGeneration: pending.request.expectedGeneration, command: pending.request.command, confirmed: pending.request.confirmed, expiresAt: pending.request.expiresAt },
-    receipt: { actionId: pending.request.actionId, lease: { planId: pending.request.planId, generation: String(BigInt(pending.request.expectedGeneration) + 1n) },
-      state: "active", attemptId: h.ports.identity(), parentTask: null } };
-    if (!validateResponseWorkPlanControlAction(value) || value === null) throw new Error("Invalid synthetic recorded continuation");
-    h.ports.readPlanControl.mockResolvedValueOnce(value); await h.owner.check(h.conversationId);
+    const receipt: unknown = { actionId: pending.request.actionId, lease: { planId: pending.request.planId, generation: String(BigInt(pending.request.expectedGeneration) + 1n) },
+      state: "active", attemptId: h.ports.identity(), parentTask: null };
+    if (!validateResponseWorkPlanReceipt(receipt)) throw new Error("Invalid synthetic recorded continuation");
+    const value = controlSettlement({ ...context, ...pending.request }, { kind: "recorded", receipt }, receipt.lease.generation);
+    h.ports.readPlanControlSettlement.mockResolvedValueOnce(value); await h.owner.check(h.conversationId);
     expect(h.current().value.pending).toBeNull(); expect(h.current().readyRuns.size).toBe(0);
     expect(h.ports.controlPlan).toHaveBeenCalledOnce(); expect(h.ports.startPlan).not.toHaveBeenCalled();
   });
@@ -302,6 +337,148 @@ describe("ConversationSession", () => {
       expect(h.ports.startPlan).not.toHaveBeenCalled(); expect(h.ports.controlPlan).not.toHaveBeenCalled();
       expect(h.ports.write).toHaveBeenCalledTimes(writes); expect(h.current().runFailure?.planId).toBe(h.link.planId);
       expect(h.current().value).toMatchObject({ text: "B retained after status changed", pending: null });
+    });
+  });
+  describe("independent run revocations", () => {
+    const completeControl = (slot: ConversationDraftRevocation) => ({ ...context, ...slot.request, confirmed: false,
+      checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], expiresAt: null });
+    it.each(["pause", "stop", "take-over"] as const)("dispatches %s only after its durable acknowledgement while the original start is still awaiting a response", async command => {
+      const h = await readyRun(), started = deferred<string>(), durable = deferred<void>();
+      h.ports.startPlan.mockReturnValueOnce(started.promise);
+      const starting = h.owner.startRun(h.link, h.status);
+      await vi.waitFor(() => expect(h.ports.startPlan).toHaveBeenCalledOnce());
+      const primary = structuredClone(h.current().value.pending);
+      expect(h.owner.canRevokeRun(h.conversationId, h.status, command)).toBe(true);
+      h.journal.acknowledge.mockImplementationOnce(async () => durable.promise);
+      const revoking = h.owner.controlRun(h.link, h.status, command);
+      await vi.waitFor(() => expect(h.current().journalBusy).toBe(true));
+      const slot = h.current().value.revocations?.[0]; if (!slot) throw new Error("Missing durable revocation slot");
+      expect(h.heads.get(h.conversationId)?.value?.revocations).toEqual([slot]);
+      expect(h.ports.controlPlan).not.toHaveBeenCalled();
+      h.owner.edit(h.conversationId, "Message B while revoking"); durable.resolve(); await revoking;
+      expect(h.ports.controlPlan).toHaveBeenCalledExactlyOnceWith(completeControl(slot));
+      expect(h.current().value.pending).toEqual(primary); expect(h.current().value.revocations ?? []).toEqual([]);
+      expect(h.current().value.text).toBe("Message B while revoking"); expect(h.current().readyRuns.size).toBe(0);
+      started.resolve(h.runAttemptId); await starting; await h.owner.flush();
+      expect(h.current().value).toMatchObject({ pending: null, text: "Message B while revoking" });
+      expect(h.journal.maximum).toBe(1);
+    });
+
+    it.each(["primary-first", "revocation-first"] as const)("serializes journal resolutions with %s acknowledgements and retains another slot plus newer input", async order => {
+      const h = await readyRun(), started = deferred<string>(), paused = deferred<void>(), resolveAck = deferred<void>();
+      const control = h.ports.controlPlan.getMockImplementation()!;
+      h.ports.startPlan.mockReturnValueOnce(started.promise);
+      h.ports.controlPlan.mockImplementation(async request => {
+        if (request.command === "pause") { await paused.promise; return control(request); }
+        throw new Error("Lost later revocation acknowledgement");
+      });
+      const starting = h.owner.startRun(h.link, h.status);
+      await vi.waitFor(() => expect(h.ports.startPlan).toHaveBeenCalledOnce());
+      const pausing = h.owner.controlRun(h.link, h.status, "pause");
+      await vi.waitFor(() => expect(h.ports.controlPlan).toHaveBeenCalledOnce());
+      await h.owner.controlRun(h.link, h.status, "stop");
+      const retained = h.current().value.revocations?.find(slot => slot.request.command === "stop");
+      if (!retained) throw new Error("Missing later unresolved revocation");
+      h.owner.beginProposalEdit(h.revision); h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Proposal B" }));
+      h.owner.edit(h.conversationId, "Message B before the first resolution");
+      let held = false;
+      h.journal.acknowledge.mockImplementation(async kind => {
+        if (kind === "resolve" && !held) { held = true; await resolveAck.promise; }
+      });
+      if (order === "primary-first") started.resolve(h.runAttemptId); else paused.resolve();
+      await vi.waitFor(() => expect(held).toBe(true));
+      expect(h.current().journalBusy).toBe(true);
+      h.owner.edit(h.conversationId, "Message B during the old resolution acknowledgement");
+      h.owner.editProposal(h.conversationId, h.revision.proposalId, value => ({ ...value, summary: "Newest proposal B" }));
+      if (order === "primary-first") paused.resolve(); else started.resolve(h.runAttemptId);
+      expect(h.journal.active).toBe(1); resolveAck.resolve();
+      await Promise.all([starting, pausing]); await h.owner.flush();
+      expect(h.current().value).toMatchObject({ pending: null, text: "Message B during the old resolution acknowledgement",
+        proposalEdits: [expect.objectContaining({ content: expect.objectContaining({ summary: "Newest proposal B" }) })], revocations: [retained] });
+      expect(h.heads.get(h.conversationId)?.value).toEqual(canonicalConversationDraft(h.current().value));
+      expect(h.ports.resolve.mock.calls.slice(-2).map(([request]) => request.resolve.target.kind)).toEqual(order === "primary-first" ? ["pending", "revocation"] : ["revocation", "pending"]);
+      expect(h.journal.maximum).toBe(1); expect(h.ports.startPlan).toHaveBeenCalledOnce();
+    });
+
+    it("reopens unknown primary and revocation requests without replay and retries a withdrawal only explicitly with its original identity", async () => {
+      const h = await readyRun(); h.ports.startPlan.mockRejectedValueOnce(new Error("Lost start acknowledgement"));
+      await h.owner.startRun(h.link, h.status); h.ports.controlPlan.mockRejectedValueOnce(new Error("Lost pause acknowledgement"));
+      await h.owner.controlRun(h.link, h.status, "pause"); h.owner.edit(h.conversationId, "Message B across reopening"); await h.owner.flush();
+      const primary = structuredClone(h.current().value.pending), slot = structuredClone(h.current().value.revocations?.[0]);
+      if (!slot) throw new Error("Missing original revocation");
+      h.owner.retire(); const reopened = h.make(); await reopened.initialize(); await reopened.open(h.conversationId);
+      expect(h.ports.readPlanStartSettlement).not.toHaveBeenCalled(); expect(h.ports.readPlanControlSettlement).not.toHaveBeenCalled();
+      expect(h.ports.startPlan).toHaveBeenCalledOnce(); expect(h.ports.controlPlan).toHaveBeenCalledOnce();
+      await reopened.check(h.conversationId); await reopened.checkRevocation(h.conversationId, slot.request.actionId);
+      const input = () => reopened.getSnapshot().inputs.get(h.conversationId)!;
+      expect(input()).toMatchObject({ outcome: "blocked", value: { pending: primary, revocations: [slot], text: "Message B across reopening" } });
+      expect(input().revocationStates.get(slot.request.actionId)?.outcome).toBe("absent");
+      expect(input().readyRuns.size).toBe(0); expect(h.ports.controlPlan).toHaveBeenCalledOnce();
+      await reopened.retryRevocation(h.conversationId, slot.request.actionId);
+      expect(h.ports.controlPlan.mock.calls.map(([request]) => request)).toEqual([completeControl(slot), completeControl(slot)]);
+      expect(h.ports.readPlanControlSettlement.mock.calls.map(([request]) => request)).toEqual([completeControl(slot), completeControl(slot)]);
+      expect(input().value).toMatchObject({ pending: primary, text: "Message B across reopening" });
+      expect(input().value.revocations ?? []).toEqual([]); expect(h.ports.startPlan).toHaveBeenCalledOnce(); reopened.retire();
+    });
+
+    it.each(["recorded", "fenced-not-applied"] as const)("settles %s proof for each exact target without reading status or restoring permission", async disposition => {
+      const h = await readyRun(); h.ports.startPlan.mockRejectedValueOnce(new Error("Lost start acknowledgement"));
+      await h.owner.startRun(h.link, h.status); h.ports.controlPlan.mockRejectedValueOnce(new Error("Lost pause acknowledgement"));
+      await h.owner.controlRun(h.link, h.status, "pause");
+      const primary = h.current().value.pending, slot = h.current().value.revocations?.[0];
+      if (primary?.kind !== "work-plan-start" || !slot) throw new Error("Missing original run requests");
+      const request = { ...context, ...primary.request, expectedAttemptId: primary.expectedAttemptId };
+      h.ports.readPlanStartSettlement.mockResolvedValueOnce(startSettlement(request, disposition === "recorded"
+        ? { kind: disposition, receipt: startReceipt(primary, h.ports.identity()) } : { kind: disposition }, "2"));
+      const receipt = await h.ports.controlPlan.getMockImplementation()!(completeControl(slot));
+      h.ports.readPlanControlSettlement.mockResolvedValueOnce(controlSettlement(completeControl(slot), disposition === "recorded"
+        ? { kind: disposition, receipt } : { kind: disposition }, "2"));
+      h.ports.planStatus.mockClear(); h.owner.edit(h.conversationId, "B retained while checking");
+      await h.owner.check(h.conversationId);
+      expect(h.current().notice).toBe(disposition === "recorded" ? "runStarted" : "runNotApplied");
+      expect(h.current().value.revocations).toEqual([slot]);
+      await h.owner.checkRevocation(h.conversationId, slot.request.actionId); await h.owner.flush();
+      expect(h.current().notice).toBe(disposition === "recorded" ? "runPaused" : "runNotApplied");
+      expect(h.current().value).toMatchObject({ pending: null, text: "B retained while checking" });
+      expect(h.current().value.revocations ?? []).toEqual([]); expect(h.current().readyRuns.size).toBe(0);
+      expect(h.ports.resolve.mock.calls.slice(-2).map(([request]) => request.resolve)).toEqual([
+        expect.objectContaining({ target: { kind: "pending", pending: primary }, disposition }),
+        expect.objectContaining({ target: { kind: "revocation", revocation: slot }, disposition }),
+      ]);
+      expect(h.ports.planStatus).not.toHaveBeenCalled(); expect(h.ports.startPlan).toHaveBeenCalledOnce(); expect(h.ports.controlPlan).toHaveBeenCalledOnce();
+    });
+
+    it("blocks all new dispatch after a journal failure and never turns journal retry into a revocation", async () => {
+      const h = await readyRun(); h.ports.startPlan.mockRejectedValueOnce(new Error("Lost start acknowledgement")); await h.owner.startRun(h.link, h.status);
+      const primary = structuredClone(h.current().value.pending);
+      h.ports.write.mockRejectedValueOnce(new Error("Journal unavailable")); await h.owner.controlRun(h.link, h.status, "pause");
+      const slot = h.current().value.revocations?.[0]; if (!slot) throw new Error("Missing unwritten revocation input");
+      expect(h.current().failure?.kind).toBe("journal"); expect(h.ports.controlPlan).not.toHaveBeenCalled();
+      expect(h.owner.canRevokeRun(h.conversationId, h.status, "stop")).toBe(false);
+      await h.owner.controlRun(h.link, h.status, "stop"); expect(h.current().value.revocations).toEqual([slot]);
+      h.owner.edit(h.conversationId, "B retained after journal failure"); await h.owner.retryJournal(h.conversationId);
+      expect(h.ports.controlPlan).not.toHaveBeenCalled();
+      await h.owner.checkRevocation(h.conversationId, slot.request.actionId); expect(h.ports.controlPlan).not.toHaveBeenCalled();
+      await h.owner.retryRevocation(h.conversationId, slot.request.actionId); await h.owner.flush();
+      expect(h.ports.controlPlan).toHaveBeenCalledExactlyOnceWith(completeControl(slot));
+      expect(h.current().value).toMatchObject({ pending: primary, text: "B retained after journal failure" });
+      expect(h.journal.maximum).toBe(1);
+    });
+
+    it("does not mint a fresh start ticket from a late continuation acknowledgement after a withdrawal was requested", async () => {
+      const h = await readyRun(), status = checkedStatus({ ...h.status, state: "paused" }), continued = deferred<void>();
+      h.ports.planStatus.mockResolvedValue(status); const control = h.ports.controlPlan.getMockImplementation()!;
+      h.ports.controlPlan.mockImplementation(async request => {
+        if (request.command === "continue") { await continued.promise; return control(request); }
+        throw new Error("Withdrawal acknowledgement unavailable");
+      });
+      const continuing = h.owner.controlRun(h.link, status, "continue", runConfirmation());
+      await vi.waitFor(() => expect(h.ports.controlPlan).toHaveBeenCalledOnce());
+      await h.owner.controlRun(h.link, status, "stop");
+      const slot = h.current().value.revocations?.[0]; if (!slot) throw new Error("Missing stop request");
+      continued.resolve(); await continuing; await h.owner.flush();
+      expect(h.current().readyRuns.size).toBe(0); expect(h.current().value.pending).toBeNull(); expect(h.current().value.revocations).toEqual([slot]);
+      expect(h.ports.startPlan).not.toHaveBeenCalled();
     });
   });
   it("prepares the exact saved proposal and keeps incomplete questions or a local edit out of confirmation", async () => {

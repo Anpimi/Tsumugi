@@ -31,7 +31,7 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
   const live = useRef({ visible, disabled, mounted: true });
   useLayoutEffect(() => { live.current = { visible, disabled, mounted: true }; return () => { live.current.mounted = false; }; }, [disabled, visible]);
   const focus = useRef<{ origin: HTMLElement; preview: boolean } | null>(null);
-  const blocked = disabled || !visible || !!input.busy || !!input.value.pending || !!input.failure || !!planning.busy;
+  const blocked = disabled || !visible || (!!input.busy || input.journalBusy) || !!input.value.pending || !!input.failure || !!planning.busy;
   const allowed = () => !blocked && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
   const current = () => live.current.mounted && live.current.visible && !live.current.disabled && !owner.getSnapshot().retired
     && owner.getSnapshot().activeId === conversationId && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId })
@@ -44,11 +44,11 @@ export function ConversationPlanningPanel({ owner, input, visible, disabled, gat
   useEffect(() => () => gate.releaseOwner(inputOwner), [gate, inputOwner]);
   useEffect(() => { if (!visible) { gate.releaseOwner(inputOwner); owner.setPlanningConsent(conversationId, false); } }, [conversationId, gate, inputOwner, owner, visible]);
   useEffect(() => {
-    const ticket = focus.current; if (!ticket || planning.busy || input.busy) return;
+    const ticket = focus.current; if (!ticket || planning.busy || input.busy || input.journalBusy) return;
     focus.current = null;
     if (visible && (document.activeElement === ticket.origin || document.activeElement === document.body))
       (ticket.preview && planning.prepared ? previewRegion.current : root.current)?.focus();
-  }, [input.busy, planning.busy, planning.prepared, visible]);
+  }, [input.busy, input.journalBusy, planning.busy, planning.prepared, visible]);
   const prepared = planning.prepared;
   return <section ref={root} tabIndex={-1} className={styles.planning} aria-label={t("askTitle")}
     onFocusCapture={() => gate.setInputOwner(viewId, inputOwner)}

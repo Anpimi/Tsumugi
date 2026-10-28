@@ -108,7 +108,7 @@ To ask the assistant, explicitly select 1–16 saved messages and optionally att
 
 A valid planning suggestion can be saved as a proposal, then edited and saved as a new version; its history remains available and unfinished edits can be kept locally. You can review and explicitly confirm a work plan from a saved version after checking its materials, permissions and duration. Confirmation records the plan but does not start execution.
 
-The conversation panel can show the plan status, the most recently started work and accumulated model usage, and explicitly start, pause, stop, or take over a linked plan. For an ordinary plan that has started, expand **View generated results** to read the recorded translations and open a saved candidate in its entry.
+The conversation panel can show the plan status, the most recently started work and accumulated model usage, and explicitly start, pause, stop, or take over a linked plan. Pause, stop, and takeover can be requested even while another conversation request is awaiting a result. Check an uncertain control request in the panel; it is not automatically retried. For an ordinary plan that has started, expand **View generated results** to read the recorded translations and open a saved candidate in its entry.
 
 The displayed progress and results belong to that recorded start; team member progress and results are not yet shown. Ordinary paused or taken-over plans can be continued after a fresh review; team and MCP plans require their dedicated recovery flow or a new plan. Start is available only while the current session retains the direct confirmation receipt. See [Agent Work Plans](docs/work-plans.md) for result handling, recovery and limits.
 

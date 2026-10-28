@@ -1,10 +1,11 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/workPlanCommands.contract.json";
 import { workPlanCommands, type MaintenanceAssessment, type MaintenancePlanBasis } from "./workPlanCommands";
 import * as validators from "./generated/ai.validators";
 import type { Requests, WorkPlanControlRequest } from "./generated/ai.requests";
 import { hasUnknownOutcome } from "./projectCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import type { WorkPlanStartSettlementView, WorkPlanControlSettlementView } from "./generated/ai.responses";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -34,6 +35,123 @@ it("rejects malformed or differently bound start receipts rather than treating t
     await expect(workPlanCommands.startAction(request)).rejects.toThrow();
   }
   expect(invoke.mock.calls.every(([command])=>command==="read_work_plan_start_action")).toBe(true);
+});
+
+describe("pure work-plan request settlement", () => {
+  type StartRequest = Parameters<typeof workPlanCommands.startSettlement>[0];
+  type Outcome = "recorded" | "pending" | "fenced-not-applied";
+  const startRequest = (): StartRequest => ({ ...fixture.requests.start, expectedGeneration: "9007199254740993", expectedAttemptId: fixtureIdentity(710) });
+  const controlRequest = (): WorkPlanControlRequest => ({ ...fixture.requests.control, command: "continue", confirmed: true,
+    expectedGeneration: "9007199254740993", expiresAt: "18446744073709551615", toolExecution: true,
+    checkerExecutions: [{ profile: { id: "example.text-review", schemaVersion: 1, behaviorVersion: 1 },
+      provider: { plugin: { publisher: "example", id: "text-review", version: "0.1.0" }, packageDigest: "c".repeat(64), componentId: "worker", contributionId: "text-review-check" } }],
+    applicationToolExecutions: [{ instanceId: fixtureIdentity(711), activationGeneration: 2 }] });
+  function startProof(request: StartRequest, kind: Outcome): WorkPlanStartSettlementView {
+    const { sessionToken: _token, ...original } = request;
+    const value: unknown = { request: original, settlement: { projectId: request.projectId, planId: request.planId,
+      lease: { planId: request.planId, generation: kind === "pending" ? request.expectedGeneration : "9007199254740996" }, state: "stopped",
+      outcome: kind === "recorded" ? { kind, receipt: { projectId: request.projectId, planId: request.planId,
+        actionId: request.actionId, expectedGeneration: request.expectedGeneration, attemptId: request.expectedAttemptId, taskId: fixtureIdentity(712) } } : { kind } } };
+    if (!validators.validateResponseWorkPlanStartSettlement(value)) throw new Error("Invalid synthetic start settlement"); return value;
+  }
+  function controlProof(request: WorkPlanControlRequest, kind: Outcome): WorkPlanControlSettlementView {
+    const { sessionToken: _token, ...original } = structuredClone(request);
+    const value: unknown = { request: original, settlement: { projectId: request.projectId, planId: request.planId,
+      lease: { planId: request.planId, generation: kind === "pending" ? request.expectedGeneration : "9007199254740996" }, state: "stopped",
+      outcome: kind === "recorded" ? { kind, receipt: { actionId: request.actionId,
+        lease: { planId: request.planId, generation: String(BigInt(request.expectedGeneration) + 1n) },
+        state: { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[request.command],
+        attemptId: request.command === "continue" ? fixtureIdentity(713) : null, parentTask: null } } : { kind } } };
+    if (!validators.validateResponseWorkPlanControlSettlement(value)) throw new Error("Invalid synthetic control settlement"); return value;
+  }
+
+  it.each(["recorded", "pending", "fenced-not-applied"] as const)("reads the exact %s historical settlement without dispatching or granting current authority", async kind => {
+    const start = startRequest(), control = controlRequest(), started = startProof(start, kind), controlled = controlProof(control, kind);
+    expect(validators.validateRequestWorkPlanStartSettlement(start)).toBe(true);
+    expect(validators.validateRequestWorkPlanControlSettlement(control)).toBe(true);
+    invoke.mockResolvedValueOnce(started).mockResolvedValueOnce(controlled);
+    expect(await workPlanCommands.startSettlement(start)).toEqual(started);
+    expect(await workPlanCommands.controlSettlement(control)).toEqual(controlled);
+    expect(invoke.mock.calls).toEqual([["read_work_plan_start_settlement", { request: start }], ["read_work_plan_control_settlement", { request: control }]]);
+    if (kind === "recorded") {
+      expect(started.settlement.lease.generation).toBe("9007199254740996");
+      expect(controlled.settlement.state).toBe("stopped");
+      expect(controlled.settlement.outcome).toMatchObject({ kind: "recorded", receipt: { state: "active", lease: { generation: "9007199254740994" } } });
+    }
+  });
+
+  it("captures the original start identity and every Host choice before awaiting a settlement", async () => {
+    const start = startRequest(), control = controlRequest(), originalStart = structuredClone(start), originalControl = structuredClone(control);
+    const starts = startProof(start, "recorded"), controls = controlProof(control, "recorded");
+    let answerStart!: (value: unknown) => void, answerControl!: (value: unknown) => void;
+    invoke.mockImplementationOnce(() => new Promise(resolve => { answerStart = resolve; })).mockImplementationOnce(() => new Promise(resolve => { answerControl = resolve; }));
+    const readingStart = workPlanCommands.startSettlement(start), readingControl = workPlanCommands.controlSettlement(control);
+    start.expectedAttemptId = fixtureIdentity(714); start.actionId = fixtureIdentity(715); start.sessionToken = "changed-session";
+    control.checkerExecutions[0].provider.packageDigest = "d".repeat(64); control.applicationToolExecutions[0].activationGeneration = 3;
+    control.command = "pause"; control.toolExecution = false; control.confirmed = false; control.expiresAt = "1";
+    answerStart(starts); answerControl(controls);
+    expect(await readingStart).toEqual(starts); expect(await readingControl).toEqual(controls);
+    expect(invoke.mock.calls).toEqual([["read_work_plan_start_settlement", { request: originalStart }], ["read_work_plan_control_settlement", { request: originalControl }]]);
+  });
+
+  it("rejects differently bound requests, snapshots and recorded start identities", async () => {
+    const request = startRequest(), proof = startProof(request, "recorded");
+    if (proof.settlement.outcome.kind !== "recorded") throw new Error("Missing synthetic recorded start");
+    const receipt = proof.settlement.outcome.receipt;
+    const invalid = [
+      { ...proof, request: { ...proof.request, expectedAttemptId: fixtureIdentity(714) } },
+      { ...proof, request: { ...proof.request, actionId: fixtureIdentity(715) } },
+      { ...proof, settlement: { ...proof.settlement, projectId: fixtureIdentity(716) } },
+      { ...proof, settlement: { ...proof.settlement, planId: fixtureIdentity(717) } },
+      { ...proof, settlement: { ...proof.settlement, lease: { ...proof.settlement.lease, planId: fixtureIdentity(717) } } },
+      ...[{ ...receipt, attemptId: fixtureIdentity(714) }, { ...receipt, actionId: fixtureIdentity(715) },
+        { ...receipt, projectId: fixtureIdentity(716) }, { ...receipt, planId: fixtureIdentity(717) },
+        { ...receipt, expectedGeneration: "9007199254740992" }].map(receipt => ({ ...proof, settlement: { ...proof.settlement, outcome: { kind: "recorded", receipt } } })),
+    ];
+    for (const value of invalid) {
+      invoke.mockResolvedValueOnce(value); await expect(workPlanCommands.startSettlement(request)).rejects.toThrow();
+    }
+    expect(invoke.mock.calls.every(([command]) => command === "read_work_plan_start_settlement")).toBe(true);
+  });
+
+  it("binds complete control choices and the recorded transition without confusing a later snapshot with its receipt", async () => {
+    const request = controlRequest(), proof = controlProof(request, "recorded");
+    if (proof.settlement.outcome.kind !== "recorded") throw new Error("Missing synthetic recorded control");
+    const receipt = proof.settlement.outcome.receipt;
+    const invalid = [
+      ...[{ ...proof.request, checkerExecutions: [] }, { ...proof.request, applicationToolExecutions: [] },
+        { ...proof.request, toolExecution: false }, { ...proof.request, confirmed: false }, { ...proof.request, expiresAt: "1" },
+        { ...proof.request, command: "pause" }, { ...proof.request, expectedGeneration: "9007199254740992" }].map(original => ({ ...proof, request: original })),
+      ...[{ ...receipt, actionId: fixtureIdentity(715) }, { ...receipt, lease: { ...receipt.lease, planId: fixtureIdentity(717) } },
+        { ...receipt, lease: { ...receipt.lease, generation: "9007199254740995" } }, { ...receipt, state: "paused" },
+        { ...receipt, attemptId: null }].map(receipt => ({ ...proof, settlement: { ...proof.settlement, outcome: { kind: "recorded", receipt } } })),
+      { ...proof, settlement: { ...proof.settlement, lease: { ...proof.settlement.lease, generation: request.expectedGeneration } } },
+    ];
+    for (const value of invalid) {
+      invoke.mockResolvedValueOnce(value); await expect(workPlanCommands.controlSettlement(request)).rejects.toThrow();
+    }
+    expect(invoke.mock.calls.every(([command]) => command === "read_work_plan_control_settlement")).toBe(true);
+  });
+
+  it("requires an advancing generation for a fence and generated wire structure for all outcomes", async () => {
+    const start = startRequest(), control = controlRequest();
+    for (const [request, proof, call] of [[start, startProof(start, "fenced-not-applied"), () => workPlanCommands.startSettlement(start)],
+      [control, controlProof(control, "fenced-not-applied"), () => workPlanCommands.controlSettlement(control)]] as const) {
+      const invalid = [
+        { ...proof, settlement: { ...proof.settlement, lease: { ...proof.settlement.lease, generation: request.expectedGeneration } } },
+        { ...proof, settlement: { ...proof.settlement, lease: { ...proof.settlement.lease, generation: "0" } } },
+        { ...proof, request: { ...proof.request, sessionToken: "not-response-material" } },
+        { ...proof, settlement: { ...proof.settlement, outcome: { kind: "pending", receipt: {} } } },
+        { ...proof, settlement: { ...proof.settlement, outcome: { kind: "absent" } } },
+      ];
+      for (const value of invalid) { invoke.mockResolvedValueOnce(value); await expect(call()).rejects.toThrow(); }
+    }
+    const malformedStart = { ...start, expectedGeneration: "01", unexpected: true }, malformedControl = { ...control, unexpected: true };
+    const calls = invoke.mock.calls.length;
+    await expect(workPlanCommands.startSettlement(malformedStart)).rejects.toThrow();
+    await expect(workPlanCommands.controlSettlement(malformedControl)).rejects.toThrow();
+    expect(invoke).toHaveBeenCalledTimes(calls);
+  });
 });
 const requests: Pick<Requests, "workPlanPrepare" | "workPlanAuthorize" | "workPlanStart" | "workPlanControl" | "workPlanStatus" | "workPlanAction" | "workProtectionRead" | "workProtectionSet"> = {
   workPlanPrepare: { ...fixture.requests.prepare, options: {

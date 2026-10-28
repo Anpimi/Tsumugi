@@ -96,12 +96,85 @@ fn journal_before_action(
         write["value"]["proposalEdits"][0]["expectedRevisionId"] = pending["request"]["revisionId"].clone();
     }
     let resolve =
-        json!({"sessionToken":project["sessionToken"],"resolve":{"write":write,"pending":pending}});
+        json!({"sessionToken":project["sessionToken"],"resolve":{"write":write,"target":{"kind":"pending","pending":pending},"disposition":"recorded"}});
     assert!(
         !reject(window, "resolve_local_conversation_draft", resolve.clone()).is_null(),
         "missing original receipt cannot resolve the journal"
     );
     resolve
+}
+
+fn journal_revocations_with_unknown_continue(
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    project: &Value,
+    conversation: &Value,
+    paused: &Value,
+) {
+    let project_id = &project["metadata"]["projectId"];
+    let plan = &paused["lease"]["planId"];
+    let generation = &paused["lease"]["generation"];
+    let continuation = json!({"projectId":project_id,"planId":plan,"actionId":identity(),"expectedGeneration":generation,
+        "command":"continue","confirmed":true,"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[],"expiresAt":"9999999999"});
+    let primary = json!({"kind":"work-plan-control","conversationId":conversation,"request":continuation});
+    let pending_resolve = journal_before_action(window, project, primary);
+    let key = &pending_resolve["resolve"]["write"]["key"];
+    let before = call(window, "read_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"key":key}));
+    let seq = before["value"]["editSeq"].as_str().unwrap().parse::<u64>().unwrap() + 1;
+    let revocations = json!([
+        {"request":{"projectId":project_id,"planId":plan,"actionId":identity(),"expectedGeneration":generation,"command":"stop"},"submittedSeq":seq.to_string()},
+        {"request":{"projectId":project_id,"planId":plan,"actionId":identity(),"expectedGeneration":generation,"command":"take-over"},"submittedSeq":seq.to_string()}
+    ]);
+    let mut write = json!({"key":key,"expectedRevision":before["revision"],"writerId":before["writerId"],"value":before["value"]});
+    write["value"]["editSeq"] = json!(seq.to_string());
+    write["value"]["text"] = json!("Newer input B while continuing remains uncertain");
+    write["value"]["revocations"] = revocations.clone();
+    let saved = call(window, "write_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"write":write}));
+    write["expectedRevision"] = saved["revision"].clone();
+    write["value"]["editSeq"] = json!((seq + 1).to_string());
+    write["value"]["revocations"] = json!([revocations[1]]);
+    let mut resolve = json!({"sessionToken":project["sessionToken"],"resolve":{"write":write,
+        "target":{"kind":"revocation","revocation":revocations[0]},"disposition":"recorded"}});
+    assert_eq!(reject(window, "resolve_local_conversation_draft", resolve.clone())["code"], "outcome-unknown");
+    let mut false_fence = resolve.clone();
+    false_fence["resolve"]["disposition"] = json!("fenced-not-applied");
+    assert_eq!(reject(window, "resolve_local_conversation_draft", false_fence)["code"], "outcome-unknown");
+    let mut stop = revocations[0]["request"].clone();
+    stop["confirmed"] = json!(false);
+    stop["checkerExecutions"] = json!([]);
+    stop["toolExecution"] = json!(false);
+    stop["applicationToolExecutions"] = json!([]);
+    stop["expiresAt"] = Value::Null;
+    assert_eq!(call(window, "control_work_plan", in_session(project, stop))["state"], "stopped");
+    let mut wrong_disposition = resolve.clone();
+    wrong_disposition["resolve"]["disposition"] = json!("fenced-not-applied");
+    assert_eq!(reject(window, "resolve_local_conversation_draft", wrong_disposition)["code"], "result-mismatch");
+    let mut wrong_slot = resolve.clone();
+    wrong_slot["resolve"]["target"]["revocation"]["submittedSeq"] = json!("0");
+    assert!(!reject(window, "resolve_local_conversation_draft", wrong_slot).is_null());
+    let stopped = call(window, "resolve_local_conversation_draft", resolve.clone());
+    assert_eq!(stopped["value"]["pending"], saved["value"]["pending"]);
+    assert_eq!(stopped["value"]["text"], saved["value"]["text"]);
+    assert_eq!(stopped["value"]["revocations"], json!([revocations[1]]));
+    assert_eq!(call(window, "resolve_local_conversation_draft", resolve.clone()), stopped);
+
+    resolve["resolve"]["write"]["expectedRevision"] = stopped["revision"].clone();
+    resolve["resolve"]["write"]["value"]["editSeq"] = json!((seq + 2).to_string());
+    resolve["resolve"]["write"]["value"]["pending"] = Value::Null;
+    resolve["resolve"]["target"] = json!({"kind":"pending","pending":saved["value"]["pending"]});
+    assert_eq!(reject(window, "resolve_local_conversation_draft", resolve.clone())["code"], "result-mismatch");
+    resolve["resolve"]["disposition"] = json!("fenced-not-applied");
+    let settled_primary = call(window, "resolve_local_conversation_draft", resolve.clone());
+    assert!(settled_primary["value"]["pending"].is_null());
+    assert_eq!(settled_primary["value"]["text"], saved["value"]["text"]);
+    assert_eq!(settled_primary["value"]["revocations"], json!([revocations[1]]));
+
+    resolve["resolve"]["write"]["expectedRevision"] = settled_primary["revision"].clone();
+    resolve["resolve"]["write"]["value"]["editSeq"] = json!((seq + 3).to_string());
+    resolve["resolve"]["write"]["value"].as_object_mut().unwrap().remove("revocations");
+    resolve["resolve"]["target"] = json!({"kind":"revocation","revocation":revocations[1]});
+    let settled_all = call(window, "resolve_local_conversation_draft", resolve);
+    assert!(settled_all["value"].get("revocations").is_none());
+    assert_eq!(settled_all["value"]["text"], saved["value"]["text"]);
 }
 
 fn journal_after_action(
@@ -114,7 +187,7 @@ fn journal_after_action(
         resolve["resolve"]["write"]["value"]["text"]
     );
     assert!(saved["value"]["pending"].is_null());
-    if resolve["resolve"]["pending"]["kind"] == "proposal-revision" {
+    if resolve["resolve"]["target"]["pending"]["kind"] == "proposal-revision" {
         assert_eq!(saved["value"]["proposalEdits"], resolve["resolve"]["write"]["value"]["proposalEdits"]);
         assert_eq!(saved["value"]["messageEditSeq"], resolve["resolve"]["write"]["value"]["messageEditSeq"]);
     }
@@ -1352,11 +1425,11 @@ fn proposal_work_plan_flow(
     );
     assert_eq!(attempt, accepted["receipt"]["attemptId"]);
     let mut wrong_attempt = start_journal.clone();
-    wrong_attempt["resolve"]["pending"]["expectedAttemptId"] = json!(identity());
+    wrong_attempt["resolve"]["target"]["pending"]["expectedAttemptId"] = json!(identity());
     assert_eq!(reject(window, "resolve_local_conversation_draft", wrong_attempt)["code"], "result-mismatch");
     let mut wrong_thread = start_journal.clone();
     let foreign_thread = identity();
-    wrong_thread["resolve"]["pending"]["conversationId"] = json!(foreign_thread);
+    wrong_thread["resolve"]["target"]["pending"]["conversationId"] = json!(foreign_thread);
     wrong_thread["resolve"]["write"]["key"]["conversationId"] = json!(foreign_thread);
     assert!(!reject(window, "resolve_local_conversation_draft", wrong_thread).is_null());
     let candidate_read = in_session(
@@ -1448,9 +1521,11 @@ fn proposal_work_plan_flow(
     let controlled = call(window, "control_work_plan", in_session(&reopened, control_original.clone()));
     assert_eq!(controlled["state"], "paused");
     let mut changed_host_input = control_journal.clone();
-    changed_host_input["resolve"]["pending"]["request"]["toolExecution"] = json!(true);
+    changed_host_input["resolve"]["target"]["pending"]["request"]["toolExecution"] = json!(true);
     assert!(!reject(window, "resolve_local_conversation_draft", changed_host_input).is_null(), "the Core projection does not replace the journal's exact Host input identity");
     journal_after_action(window, &control_journal);
+    assert!(runtime_absent(app, &reopened));
+    journal_revocations_with_unknown_continue(window, &reopened, &revision["conversationId"], &controlled);
     assert!(runtime_absent(app, &reopened));
     assert_eq!(
         call(

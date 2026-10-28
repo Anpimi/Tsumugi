@@ -20,6 +20,7 @@ import type { InteractionGate } from "../../workspace/interactionGate";
 import type { ConversationInput, ConversationSession } from "./ConversationSession";
 import { runMatchesLink, type ConversationPlanLink } from "./conversationRun";
 import { emptyExecutionConsent, workPlanMinutesValid } from "./proposalWorkPlan";
+import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import { ConversationRunProgress } from "./ConversationRunProgress";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import styles from "./ConversationRunPanel.module.css";
@@ -108,7 +109,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
   const canRead = () => live.current.mounted && live.current.visible && !live.current.disabled && !reads.retired
     && !owner.getSnapshot().retired && owner.getSnapshot().activeId === link.conversationId
     && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
-  const blocked = disabled || !!input.busy || !!input.value.pending || !!input.failure || !!input.workPlan.busy || !!input.planning.busy;
+  const blocked = disabled || input.journalBusy || !!input.busy || !!input.value.pending || !!input.failure || !!input.workPlan.busy || !!input.planning.busy;
   const allowed = () => !blocked && canRead();
   function statusCurrent(expected: WorkPlanStatusView) {
     const record = reads.client.getQueryState<WorkPlanStatusView>(reads.key(statusKey));
@@ -135,7 +136,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
     if (live.current.mounted && live.current.visible && (document.activeElement === origin || document.activeElement === document.body)) statusRegion.current?.focus();
   }
   async function control(command: Exclude<WorkPlanCommand, "continue">, origin: HTMLElement) {
-    if (!status || !allowed() || !statusCurrent(status)) return;
+    if (!status || !canRead() || !owner.canRevokeRun(link.conversationId, status, command) || !statusCurrent(status)) return;
     const proof = capture(false);
     try { await owner.controlRun(link, status, command, null, proof.current); } finally { proof.dispose(); finishAction(origin); }
   }
@@ -187,9 +188,9 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
       </> : null}
       {status.state !== "stopped" ? <>
         <div className={styles.actions}>
-          {status.state === "active" ? <Button size="sm" disabled={blocked || !fresh} onClick={event => void control("pause", event.currentTarget)}>{t("runPause")}</Button> : null}
-          {status.state !== "taken-over" ? <Button size="sm" disabled={blocked || !fresh} onClick={event => void control("take-over", event.currentTarget)}>{t("runTakeOver")}</Button> : null}
-          <Button variant="danger" size="sm" disabled={blocked || !fresh} onClick={event => void control("stop", event.currentTarget)}>{t("runStop")}</Button>
+          {status.state === "active" ? <Button size="sm" disabled={!fresh || !owner.canRevokeRun(link.conversationId, status, "pause")} onClick={event => void control("pause", event.currentTarget)}>{t("runPause")}</Button> : null}
+          {status.state !== "taken-over" ? <Button size="sm" disabled={!fresh || !owner.canRevokeRun(link.conversationId, status, "take-over")} onClick={event => void control("take-over", event.currentTarget)}>{t("runTakeOver")}</Button> : null}
+          <Button variant="danger" size="sm" disabled={!fresh || !owner.canRevokeRun(link.conversationId, status, "stop")} onClick={event => void control("stop", event.currentTarget)}>{t("runStop")}</Button>
         </div><p>{t("runControlHelp")}</p>
       </> : <p>{t("runStoppedHelp")}</p>}
       {mayContinue && plan?.options.teamExecution ? <Banner tone="info">{t("runTeamRecovery")}</Banner> : null}
@@ -203,6 +204,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
           connectionCurrent={connectionCurrent} capture={() => capture(true)} onFinished={finishAction}/>: null}
       </> : null}
     </> : null}
+    <ConversationRunRevocations owner={owner} input={input} link={link} canRead={canRead} onFinished={finishAction}/>
     <ConversationRunProgress onOpenCandidate={onOpenCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}/>
   </div>;
 }

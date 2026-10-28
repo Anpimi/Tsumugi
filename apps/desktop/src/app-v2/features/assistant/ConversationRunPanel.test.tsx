@@ -8,7 +8,7 @@ import type { AttemptDetail } from "../../../executionCommands";
 import type { Requests } from "../../../generated/conversations.requests";
 import { validateResponseConversationWritten } from "../../../generated/draft.validators";
 import { validateResponseProposalWorkPlanReceipt } from "../../../generated/conversations.validators";
-import { validateResponseWorkPlanReceipt, validateResponseWorkPlanRun, validateResponseWorkPlanStatus } from "../../../generated/ai.validators";
+import { validateResponseWorkPlanReceipt, validateResponseWorkPlanRun, validateResponseWorkPlanStatus, validateResponseWorkPlanStartSettlement, validateResponseWorkPlanControlSettlement } from "../../../generated/ai.validators";
 import { validateResponseAttempt } from "../../../generated/execution.validators";
 import type { WorkPlanControlRequest } from "../../../generated/ai.requests";
 import type { ProviderBudget } from "../../../generated/ai.responses";
@@ -35,6 +35,7 @@ beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("zh-CN");
 afterEach(() => { cleanup(); disposals.splice(0).forEach(dispose => dispose()); });
 
 function calls(command: string) { return invoke.mock.calls.filter(([name]) => name === command); }
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { promise, resolve }; }
 function checkedStatus(value: unknown): WorkPlanStatusView {
   if (!validateResponseWorkPlanStatus(value)) throw new Error("Invalid synthetic run status");
   return value;
@@ -65,7 +66,8 @@ function harness({ state: initialState = "active", connection = false, unknownSt
     head: { key, revision: "0", writerId: null, value: null } as ConversationDraftHead,
     status: checkedStatus({ plan: fixture.prepared.plan, lease: { planId: link.planId, generation: "1" }, state: initialState,
       effects: ["save-candidate"], expiresAt: String(Math.floor(Date.now() / 1000) + 3600), toolInvocations: null }),
-    statusFails: false, connectionFails: false,
+    statusFails: false, connectionFails: false, controlFails: false, journalFails: false,
+    controlSettlements: new Map<string, "recorded" | "pending" | "fenced-not-applied">(),
     authorizations: [] as Requests["authorizeProposalWorkPlan"]["authorization"][], controls: [] as WorkPlanControlRequest[],
     journalEvents: [] as string[],
     run: checkedRun({ projectId: context.projectId, planId: link.planId, planDigest: link.planDigest,
@@ -75,17 +77,27 @@ function harness({ state: initialState = "active", connection = false, unknownSt
       progress: { total: 8, succeeded: 3, failed: 1, unknown: 1, queued: 1, running: 1, cancelled: 1, adopted: 2 },
       recovery: { ...structuredClone(executionWire.detail.recovery), attemptId: fixture.prepared.plan.attemptId }, nextOffset: 1 }),
   };
+  const journal = { active: 0, maximum: 0, acknowledge: vi.fn(async () => {}) };
+  const acknowledgements = new Map<string, ConversationDraftHead>();
   invoke.mockImplementation(async (command: string, { request }) => {
     if (command === "list_local_conversation_drafts") return { items: state.head.value ? [{ key, revision: state.head.revision,
-      editSeq: state.head.value.editSeq, hasPending: !!state.head.value.pending }] : [], next: null };
+      editSeq: state.head.value.editSeq, hasPending: !!state.head.value.pending || !!state.head.value.revocations?.length }] : [], next: null };
     if (command === "read_local_conversation_draft") return structuredClone(state.head);
     if (command === "write_local_conversation_draft" || command === "resolve_local_conversation_draft") {
-      const write = request.write ?? request.resolve.write;
-      const response: unknown = { key, revision: String(BigInt(state.head.revision) + 1n), writerId: write.writerId,
-        value: structuredClone(canonicalConversationDraft(write.value)) };
-      if (!validateResponseConversationWritten(response)) throw new Error("Invalid synthetic journal response");
-      state.head = response; state.journalEvents.push(response.value?.pending?.kind ?? "resolved");
-      return structuredClone(response);
+      journal.active++; journal.maximum = Math.max(journal.maximum, journal.active);
+      try {
+        expect(journal.active).toBe(1);
+        if (state.journalFails) throw { code: "storage-failed", outcome: "unknown", reason: "synthetic-journal-unavailable" };
+        const write = request.write ?? request.resolve.write, identity = JSON.stringify({ command, request }), retry = acknowledgements.get(identity);
+        if (retry) { await journal.acknowledge(); return structuredClone(retry); }
+        expect(write.expectedRevision).toBe(state.head.revision);
+        const response: unknown = { key, revision: String(BigInt(state.head.revision) + 1n), writerId: write.writerId,
+          value: structuredClone(canonicalConversationDraft(write.value)) };
+        if (!validateResponseConversationWritten(response)) throw new Error("Invalid synthetic journal response");
+        state.head = response; acknowledgements.set(identity, structuredClone(response));
+        state.journalEvents.push(response.value?.revocations?.length ? "revocation" : response.value?.pending?.kind ?? "resolved");
+        await journal.acknowledge(); return structuredClone(response);
+      } finally { journal.active--; }
     }
     if (command === "validate_conversation_proposal") return structuredClone(fixture.revision);
     if (command === "read_conversation_planning") return structuredClone(fixture.run);
@@ -110,6 +122,22 @@ function harness({ state: initialState = "active", connection = false, unknownSt
       if (state.runFails) throw { code: "storage-failed", outcome: "unchanged", reason: "synthetic-run-record-unavailable" };
       return structuredClone(state.run);
     }
+    if (command === "read_work_plan_start_settlement") {
+      const { sessionToken: _session, ...original } = request;
+      const response: unknown = { request: original, settlement: { projectId: request.projectId, planId: request.planId,
+        lease: state.status.lease, state: state.status.state, outcome: { kind: "pending" } } };
+      if (!validateResponseWorkPlanStartSettlement(response)) throw new Error("Invalid synthetic start settlement"); return response;
+    }
+    if (command === "read_work_plan_control_settlement") {
+      const { sessionToken: _session, ...original } = request, kind = state.controlSettlements.get(request.actionId) ?? "pending";
+      const response: unknown = { request: original, settlement: { projectId: request.projectId, planId: request.planId,
+        lease: state.status.lease, state: state.status.state, outcome: kind === "recorded" ? { kind, receipt: {
+          actionId: request.actionId, lease: { planId: request.planId, generation: String(BigInt(request.expectedGeneration) + 1n) },
+          state: { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[request.command as WorkPlanControlRequest["command"]],
+          attemptId: request.command === "continue" ? id(36006) : null, parentTask: null,
+        } } : { kind } } };
+      if (!validateResponseWorkPlanControlSettlement(response)) throw new Error("Invalid synthetic control settlement"); return response;
+    }
     if (command === "read_execution_attempt") {
       return structuredClone(state.detail);
     }
@@ -133,8 +161,12 @@ function harness({ state: initialState = "active", connection = false, unknownSt
     }
     if (command === "control_work_plan") {
       const { sessionToken: _session, ...recorded } = request;
-      expect(state.head.value?.pending).toMatchObject({ kind: "work-plan-control", request: recorded });
+      if (request.command === "continue") expect(state.head.value?.pending).toMatchObject({ kind: "work-plan-control", request: recorded });
+      else expect(state.head.value?.revocations).toContainEqual(expect.objectContaining({ request: {
+        projectId: request.projectId, planId: request.planId, actionId: request.actionId, expectedGeneration: request.expectedGeneration, command: request.command,
+      } }));
       state.controls.push(structuredClone(request)); state.journalEvents.push(`dispatch-${request.command}`);
+      if (state.controlFails) throw { code: "storage-failed", outcome: "unknown", reason: "synthetic-control-acknowledgement-lost" };
       const result: unknown = { actionId: request.actionId, lease: { planId: link.planId, generation: String(BigInt(request.expectedGeneration) + 1n) },
         state: { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[request.command as WorkPlanControlRequest["command"]],
         attemptId: request.command === "continue" ? id(36006) : null, parentTask: null };
@@ -184,7 +216,7 @@ function harness({ state: initialState = "active", connection = false, unknownSt
       lastStart: { projectId: context.projectId, planId: link.planId, actionId: link.actionId, expectedGeneration: "1",
         taskId: state.detail.taskId, attemptId: state.detail.attemptId }, budget: cumulativeBudget() });
   };
-  return { ...fixture, config, link, state, open, recordEarlierStart };
+  return { ...fixture, config, link, state, open, recordEarlierStart, journal };
 }
 async function expand() {
   fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runShow") }));
@@ -308,7 +340,7 @@ it("blocks dispatch during composition, another dialog, collapse and hiding whil
   expect(session.owner.canStartRun(conversationId, h.state.status)).toBe(true);
 });
 
-it("retains an unresolved original start and prevents a second start or control request", async () => {
+it("retains an unresolved original start while an independent pause waits for its durable acknowledgement", async () => {
   const h = harness({ unknownStart: true }), session = await h.open(); await session.authorize(); await expand();
   const start = screen.getByRole("button", { name: i18n.t("conversation.runStart") });
   await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
@@ -317,11 +349,72 @@ it("retains an unresolved original start and prevents a second start or control 
   const original = structuredClone(h.state.head.value?.pending);
   expect(original?.kind).toBe("work-plan-start");
   const pause = screen.getByRole("button", { name: i18n.t("conversation.runPause") });
-  expect(start).toBeDisabled(); expect(pause).toBeDisabled(); fireEvent.click(start); fireEvent.click(pause);
-  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runRefresh") }));
-  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("conversation.runRefresh") })).toBeEnabled());
+  expect(start).toBeDisabled(); expect(pause).toBeEnabled(); fireEvent.click(start);
+  const durable = deferred<void>(); h.journal.acknowledge.mockImplementationOnce(async () => durable.promise);
+  fireEvent.click(pause); await waitFor(() => expect(session.input().journalBusy).toBe(true));
+  expect(pause).toBeDisabled(); expect(screen.getByRole("button", { name: i18n.t("conversation.runStop") })).toBeDisabled();
+  expect(calls("control_work_plan")).toHaveLength(0);
+  act(() => session.owner.edit(conversationId, "Message B while pause is being saved"));
+  await act(async () => { durable.resolve(); });
+  await screen.findByRole("heading", { name: i18n.t("conversation.runStatePaused") }); await session.flush();
   expect(h.state.head.value?.pending).toEqual(original);
-  expect(calls("start_work_plan")).toHaveLength(1); expect(calls("control_work_plan")).toHaveLength(0);
+  expect(h.state.head.value?.text).toBe("Message B while pause is being saved");
+  expect(calls("start_work_plan")).toHaveLength(1); expect(calls("control_work_plan")).toHaveLength(1);
+  expect(h.state.controls[0]).toMatchObject({ command: "pause", confirmed: false, expectedGeneration: "1", expiresAt: null });
+  expect(session.input().notice).toBe("runPaused"); expect(h.journal.maximum).toBe(1);
+});
+
+it.each(["recorded", "fenced-not-applied"] as const)("checks a reopened unknown withdrawal as %s without replaying or presenting the other settlement", async kind => {
+  const h = harness({ unknownStart: true }), first = await h.open(); await first.authorize(); await expand();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runStart") }));
+  await waitFor(() => expect(first.input().outcome).toBe("unknown"));
+  const primary = structuredClone(first.input().value.pending); h.state.controlFails = true;
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runPause") }));
+  const unknown = await screen.findByRole("region", { name: i18n.t("conversation.runRevocationPause") });
+  await within(unknown).findByText(i18n.t("conversation.runRevocationUnknown"));
+  const slot = first.input().value.revocations?.[0]; if (!slot) throw new Error("Missing synthetic unknown pause");
+  act(() => first.owner.edit(conversationId, "Message B retained across reopening")); await first.flush();
+  first.view.unmount(); first.retire();
+  h.state.controlSettlements.set(slot.request.actionId, kind);
+  h.state.status = checkedStatus({ ...h.state.status, lease: { ...h.state.status.lease, generation: "2" }, state: kind === "recorded" ? "paused" : "stopped" });
+  const reopened = await h.open();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runShow") }));
+  const row = await screen.findByRole("region", { name: i18n.t("conversation.runRevocationPause") });
+  expect(calls("read_work_plan_control_settlement")).toHaveLength(0); expect(calls("control_work_plan")).toHaveLength(1);
+  fireEvent.click(within(row).getByRole("button", { name: i18n.t("conversation.runRevocationCheck") }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: i18n.t("conversation.runRevocationPause") })).not.toBeInTheDocument());
+  await reopened.flush();
+  expect(reopened.input().notice).toBe(kind === "recorded" ? "runPaused" : "runNotApplied");
+  expect(reopened.input().notice).not.toBe(kind === "recorded" ? "runNotApplied" : "runPaused");
+  expect(reopened.input().value).toMatchObject({ pending: primary, text: "Message B retained across reopening" });
+  expect(reopened.input().readyRuns.size).toBe(0);
+  expect(calls("read_work_plan_control_settlement")[0][1].request).toEqual({ ...context, ...slot.request,
+    confirmed: false, checkerExecutions: [], toolExecution: false, applicationToolExecutions: [], expiresAt: null });
+  expect(calls("resolve_local_conversation_draft").at(-1)?.[1].request.resolve).toMatchObject({ target: { kind: "revocation", revocation: slot }, disposition: kind });
+  expect(calls("control_work_plan")).toHaveLength(1); expect(calls("start_work_plan")).toHaveLength(1);
+});
+
+it("blocks withdrawing controls after a journal error and requires explicit retry after journal recovery", async () => {
+  const h = harness({ unknownStart: true }), session = await h.open(); await session.authorize(); await expand();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runStart") }));
+  await waitFor(() => expect(session.input().outcome).toBe("unknown"));
+  h.state.journalFails = true;
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("conversation.runPause") }));
+  await waitFor(() => expect(session.input().failure?.kind).toBe("journal"));
+  const row = screen.getByRole("region", { name: i18n.t("conversation.runRevocationPause") });
+  expect(within(row).getByRole("button", { name: i18n.t("conversation.runRevocationCheck") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("conversation.runStop") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("conversation.runTakeOver") })).toBeDisabled();
+  expect(calls("control_work_plan")).toHaveLength(0);
+  h.state.journalFails = false; await act(async () => { await session.owner.retryJournal(conversationId); });
+  expect(calls("control_work_plan")).toHaveLength(0);
+  fireEvent.click(within(row).getByRole("button", { name: i18n.t("conversation.runRevocationCheck") }));
+  await within(row).findByText(i18n.t("conversation.runRevocationAbsent"));
+  expect(calls("control_work_plan")).toHaveLength(0);
+  fireEvent.click(within(row).getByRole("button", { name: i18n.t("conversation.runRevocationRetry") }));
+  await screen.findByRole("heading", { name: i18n.t("conversation.runStatePaused") }); await session.flush();
+  expect(calls("control_work_plan")).toHaveLength(1); expect(calls("start_work_plan")).toHaveLength(1);
+  expect(session.input().value.pending?.kind).toBe("work-plan-start");
 });
 
 it("keeps the earlier started work and cumulative unknown usage after confirming continuation without a new start", async () => {

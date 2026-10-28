@@ -113,6 +113,29 @@ pub async fn list_local_conversation_drafts(
     )
     .await
 }
+
+fn confirm_disposition<R>(
+    outcome: tsumugi_core::application::WorkPlanRequestOutcome<R>,
+    expected: ConversationDraftDisposition,
+) -> Result<(), CommandError> {
+    use tsumugi_core::application::WorkPlanRequestOutcome;
+    let actual = match outcome {
+        WorkPlanRequestOutcome::Recorded { .. } => ConversationDraftDisposition::Recorded,
+        WorkPlanRequestOutcome::FencedNotApplied => ConversationDraftDisposition::FencedNotApplied,
+        WorkPlanRequestOutcome::Pending => {
+            return Err(map_error(ExecutionError::new(
+                ErrorCode::OutcomeUnknown, "conversation-drafts-pending",
+            )));
+        }
+    };
+    if actual != expected {
+        return Err(map_error(ExecutionError::new(
+            ErrorCode::ResultMismatch, "conversation-drafts-disposition",
+        )));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn resolve_local_conversation_draft(
     state: State<'_, AppState>,
@@ -132,7 +155,41 @@ pub async fn resolve_local_conversation_draft(
                     key.project_id,
                     CommandStage::DraftStorage,
                 )?;
-                let recorded = match &original.resolve.pending {
+                if let ConversationDraftResolveTarget::Revocation { revocation } = &original.resolve.target {
+                    let request = &revocation.request;
+                    if request.project_id != key.project_id {
+                        return Err(map_error(ExecutionError::new(
+                            ErrorCode::InvalidInput, "conversation-drafts-revocation",
+                        )));
+                    }
+                    active.store.read_conversation_proposal_work_plan(
+                        key.project_id, key.conversation_id, request.plan_id,
+                    ).map_err(map_error)?;
+                    let proof = active.store.work_plan_control_settlement(
+                        request.project_id,
+                        &tsumugi_core::application::ControlWorkPlan {
+                            action_id: request.action_id,
+                            plan_id: request.plan_id,
+                            expected_generation: request.expected_generation,
+                            command: request.command.into(),
+                            confirmed: false,
+                            expires_at: None,
+                        },
+                    ).map_err(map_error)?;
+                    return confirm_disposition(proof.outcome, original.resolve.disposition);
+                }
+                let ConversationDraftResolveTarget::Pending { pending } = &original.resolve.target else {
+                    unreachable!("revocation handled above");
+                };
+                if original.resolve.disposition == ConversationDraftDisposition::FencedNotApplied
+                    && !matches!(pending, ConversationDraftPending::WorkPlanStart { .. }
+                        | ConversationDraftPending::WorkPlanControl { .. })
+                {
+                    return Err(map_error(ExecutionError::new(
+                        ErrorCode::InvalidInput, "conversation-drafts-disposition",
+                    )));
+                }
+                let recorded = match pending {
                     ConversationDraftPending::Create { request, .. }
                         if request.project_id == key.project_id
                             && request.conversation_id == key.conversation_id =>
@@ -209,25 +266,17 @@ pub async fn resolve_local_conversation_draft(
                                 request.plan_id,
                             )
                             .map_err(map_error)?;
-                        match active
+                        let proof = active
                             .store
-                            .work_plan_start_action_read(
+                            .work_plan_start_settlement(
                                 request.project_id,
                                 request.plan_id,
                                 request.action_id,
                                 request.expected_generation,
+                                *expected_attempt_id,
                             )
-                            .map_err(map_error)?
-                        {
-                            Some(receipt) if receipt.attempt_id == *expected_attempt_id => true,
-                            Some(_) => {
-                                return Err(map_error(ExecutionError::new(
-                                    ErrorCode::ResultMismatch,
-                                    "conversation-drafts-work-plan-start",
-                                )));
-                            }
-                            None => false,
-                        }
+                            .map_err(map_error)?;
+                        return confirm_disposition(proof.outcome, original.resolve.disposition);
                     }
                     ConversationDraftPending::WorkPlanControl {
                         conversation_id,
@@ -246,9 +295,9 @@ pub async fn resolve_local_conversation_draft(
                             .map_err(map_error)?;
                         // Core records this transition projection. Host checker and tool
                         // inputs stay in the local journal and never reinstall consent.
-                        active
+                        let proof = active
                             .store
-                            .work_plan_control_action_read(
+                            .work_plan_control_settlement(
                                 request.project_id,
                                 &tsumugi_core::application::ControlWorkPlan {
                                     action_id: request.action_id,
@@ -261,8 +310,8 @@ pub async fn resolve_local_conversation_draft(
                                         .map(tsumugi_core::execution::UnsignedDecimal::get),
                                 },
                             )
-                            .map_err(map_error)?
-                            .is_some()
+                            .map_err(map_error)?;
+                        return confirm_disposition(proof.outcome, original.resolve.disposition);
                     }
                     _ => {
                         return Err(map_error(ExecutionError::new(

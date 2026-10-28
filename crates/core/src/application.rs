@@ -589,6 +589,27 @@ pub struct WorkPlanRunView {
     pub budget: Option<crate::ProviderBudget>,
 }
 
+/// A historical observation of one exact request, without restoring authority.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanRequestSettlement<R> {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub lease: AutomationLease,
+    pub state: WorkPlanState,
+    pub outcome: WorkPlanRequestOutcome<R>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum WorkPlanRequestOutcome<R> {
+    Recorded { receipt: R },
+    Pending,
+    FencedNotApplied,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkPlanReceipt {

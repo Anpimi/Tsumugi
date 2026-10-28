@@ -2,7 +2,7 @@ import { checkedInvoke } from "./ipc";
 import { sameAiConfig } from "./aiCommands";
 import type {
   WorkPlanPrepareRequest, WorkPlanAuthorizeRequest, WorkPlanStartRequest,
-  WorkPlanControlRequest, WorkPlanStatusRequest, WorkPlanActionRequest,
+  WorkPlanControlRequest, WorkPlanStatusRequest, WorkPlanActionRequest, WorkPlanStartSettlementRequest,
   WorkProtectionReadRequest, WorkProtectionSetRequest,
   WorkPlanAgentOpenRequest, WorkPlanAgentStartRequest, WorkPlanAgentToolStartRequest,
   WorkPlanAgentToolAttemptRequest, WorkPlanAgentToolOutputRequest,
@@ -403,6 +403,35 @@ export const workPlanCommands = {
       || value.receipt.actionId!==request.actionId || value.receipt.lease.planId!==request.planId
       || value.receipt.lease.generation!==(BigInt(request.expectedGeneration)+1n).toString() || value.receipt.state!==state
       || (request.command==="continue"?typeof value.receipt.attemptId!=="string":value.receipt.attemptId!==null||value.receipt.parentTask!==null))) invalidAcknowledgement();
+    return value;
+  },
+  startSettlement: async (input: WorkPlanStartSettlementRequest) => {
+    const request = structuredClone(input), { sessionToken: _token, ...original } = request;
+    if (!validators.validateRequestWorkPlanStartSettlement(request) || BigInt(request.expectedGeneration) === 0n) throw new Error("Invalid work-plan start settlement request");
+    const value = await checkedInvoke("read_work_plan_start_settlement", request, validators.validateResponseWorkPlanStartSettlement);
+    const proof = value.settlement, outcome = proof.outcome;
+    if (jsonIdentity(value.request) !== jsonIdentity(original) || proof.projectId !== request.projectId || proof.planId !== request.planId
+      || proof.lease.planId !== request.planId || BigInt(proof.lease.generation) === 0n
+      || outcome.kind === "pending" && BigInt(proof.lease.generation) > BigInt(request.expectedGeneration) || outcome.kind === "fenced-not-applied" && BigInt(proof.lease.generation) <= BigInt(request.expectedGeneration)
+      || outcome.kind === "recorded" && (outcome.receipt.projectId !== request.projectId || outcome.receipt.planId !== request.planId
+        || outcome.receipt.actionId !== request.actionId || outcome.receipt.expectedGeneration !== request.expectedGeneration
+        || outcome.receipt.attemptId !== request.expectedAttemptId || BigInt(proof.lease.generation) < BigInt(request.expectedGeneration))) invalidAcknowledgement();
+    return value;
+  },
+  controlSettlement: async (input: WorkPlanControlRequest) => {
+    const request = structuredClone(input), { sessionToken: _token, ...original } = request;
+    if (!validators.validateRequestWorkPlanControl(request) || BigInt(request.expectedGeneration) === 0n) throw new Error("Invalid work-plan control settlement request");
+    const value = await checkedInvoke("read_work_plan_control_settlement", request, validators.validateResponseWorkPlanControlSettlement);
+    const proof = value.settlement, outcome = proof.outcome;
+    const expected = { ...original, expiresAt: request.expiresAt ?? null };
+    const state = { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[request.command];
+    if (jsonIdentity(value.request) !== jsonIdentity(expected) || proof.projectId !== request.projectId || proof.planId !== request.planId
+      || proof.lease.planId !== request.planId || BigInt(proof.lease.generation) === 0n
+      || outcome.kind === "pending" && BigInt(proof.lease.generation) > BigInt(request.expectedGeneration) || outcome.kind === "fenced-not-applied" && BigInt(proof.lease.generation) <= BigInt(request.expectedGeneration)
+      || outcome.kind === "recorded" && (outcome.receipt.actionId !== request.actionId || outcome.receipt.lease.planId !== request.planId
+        || outcome.receipt.lease.generation !== (BigInt(request.expectedGeneration) + 1n).toString() || outcome.receipt.state !== state
+        || BigInt(proof.lease.generation) < BigInt(outcome.receipt.lease.generation)
+        || (request.command === "continue" ? typeof outcome.receipt.attemptId !== "string" : outcome.receipt.attemptId !== null || outcome.receipt.parentTask !== null))) invalidAcknowledgement();
     return value;
   },
   start: async (request: WorkPlanStartRequest, expectedAttemptId: string) => {

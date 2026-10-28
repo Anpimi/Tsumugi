@@ -23,7 +23,7 @@ export const conversationRunsEn = {
   runEffectReplaceSelection: "Replace the translations captured in this scope", runEffectAdoptResources: "Adopt resources", runEffectDeliver: "Produce a delivery",
   runEffectQueryTools: "Query the confirmed tools", runEffectPublishDiscussion: "Publish discussions in this plan", runEffectTeamWork: "Dispatch work to the confirmed team", runEffectTeamMessage: "Send messages within the confirmed team",
   runCumulativeBudget: "These are the original limits. Continuing keeps the plan’s accumulated usage and does not reset its budget.",
-  runPending: "An earlier request in this conversation still needs attention. Check its status or retry the original request when available. The original request is kept.",
+  runPending: "An earlier request still needs checking. You can pause, stop or take over now; check the original request before starting or continuing work.",
   runAbsent: "The original run request has no matching receipt yet. You may retry that same request only when its original permission is still current; no new request is created.",
   runBlocked: "The original request is kept, but its permission or current basis cannot be confirmed. It will not be sent again here. Check the current plan or continue in another conversation.",
   runActionFailed: "This action could not be prepared or confirmed. Read the current status again; any original request is kept in this conversation.",
@@ -34,7 +34,7 @@ export const conversationRunsEn = {
   runConnectionChanged: "The captured connection is unavailable or has changed. Check its current settings and review the original plan before confirming again.",
   runReadConnection: "Read connection settings again", runConnectionLoading: "Checking the captured connection…", runPause: "Pause work", runTakeOver: "Take over", runStop: "Stop this plan",
   runControlHelp: "Pause, stop and take over prevent this plan from starting new work and adopting results automatically. Requests already sent may keep running and incur charges.",
-  runStoppedHelp: "A stopped plan cannot continue. Prepare and explicitly confirm a new plan if more work is needed.",
+  runStoppedHelp: "This plan is stopped. To do more work, prepare and confirm a work plan again.",
   runTeamRecovery: "This team plan needs its original team recovery workflow and a new team confirmation. Generic continuation is unavailable here.",
   runMcpRecovery: "This MCP plan needs a newly prepared and explicitly confirmed MCP plan. Generic continuation cannot reuse its service permission.",
   runReviewContinue: "Review continuing this plan", runCloseContinue: "Close continuation review", runContinueTitle: "Confirm continuing the fixed plan",
@@ -47,6 +47,14 @@ export const conversationRunsEn = {
   runPaused: "The pause is recorded. Remote completion and charges are still unconfirmed.", runStopped: "The stop is recorded. Remote completion and charges are still unconfirmed.",
   runTakenOver: "Your takeover is recorded. This plan cannot start new work or adopt results automatically. Requests already sent may keep running and incur charges.",
   runContinued: "The continuation is confirmed for this project session. Choose Start this confirmed plan when ready.",
+  runNotApplied: "This request did not take effect and can no longer run. Your current input is kept.",
+  runRevocationsTitle: "Control requests to check", runRevocationPause: "Pause request", runRevocationStop: "Stop request", runRevocationTakeOver: "Takeover request",
+  runRevocationBusy: "Processing this request…", runRevocationUnknown: "Its outcome is still unconfirmed. The original request is kept; check it before retrying.",
+  runRevocationAbsent: "No receipt is recorded yet. You can explicitly check and retry the same request.",
+  runRevocationBlocked: "The outcome cannot be confirmed yet. Keep this request and check again.",
+  runRevocationCheck: "Check this request", runRevocationRetry: "Check and retry original request",
+  runRevocationsLimit: "This conversation has 32 control requests waiting to be checked. Check them before submitting another.",
+
 };
 
 export const conversationRunsZh: typeof conversationRunsEn = {
@@ -74,7 +82,7 @@ export const conversationRunsZh: typeof conversationRunsEn = {
   runEffectReplaceSelection: "替换当前固定范围内捕获的译文", runEffectAdoptResources: "采纳资源", runEffectDeliver: "生成交付产物",
   runEffectQueryTools: "查询已确认的工具", runEffectPublishDiscussion: "在这个计划内发表讨论", runEffectTeamWork: "向已确认的团队派发工作", runEffectTeamMessage: "在已确认的团队内发送消息",
   runCumulativeBudget: "这里是原计划上限。继续时会保留累计用量，不会重置预算。",
-  runPending: "这个对话中还有一个请求需要处理。请先核对状态，在允许时重试原请求。原请求仍会保留。",
+  runPending: "之前的请求还没核对清楚。可以先暂停、停止或接管；再次启动或继续前需处理原请求。",
   runAbsent: "原运行请求暂时没有匹配的回执。只有原权限仍有效时，才能重试同一个请求；不会创建新请求。",
   runBlocked: "原请求仍保留，但没能确认它的权限或当前依据，这里不会再次发送。请核对当前计划，或在另一个对话中继续。",
   runActionFailed: "这次操作没能准备好或确认成功。请重新读取当前状态；原请求仍保留在这个对话中。",
@@ -85,7 +93,7 @@ export const conversationRunsZh: typeof conversationRunsEn = {
   runConnectionChanged: "原计划捕获的连接不可用或已有变化。请检查当前设置，再重新核对原计划并确认。",
   runReadConnection: "重新读取连接设置", runConnectionLoading: "正在核对原计划的连接…", runPause: "暂停工作", runTakeOver: "由我接管", runStop: "停止这个计划",
   runControlHelp: "暂停、停止和接管会阻止计划再启动新工作和自动采纳。已发出的请求可能还会继续执行并产生费用。",
-  runStoppedHelp: "已停止的计划不能继续。还需处理时，请重新准备并明确确认一个新计划。",
+  runStoppedHelp: "计划已停止。还需继续处理时，请重新准备并确认工作计划。",
   runTeamRecovery: "这个团队计划需要原团队恢复流程及新的团队确认，这里不能使用通用续作。",
   runMcpRecovery: "这个 MCP 计划需要重新准备并明确确认新的 MCP 计划，通用续作不能复用它的服务授权。",
   runReviewContinue: "检查并继续这个计划", runCloseContinue: "关闭继续工作的确认", runContinueTitle: "确认继续这个计划",
@@ -98,4 +106,12 @@ export const conversationRunsZh: typeof conversationRunsEn = {
   runPaused: "暂停已记录，远端是否完成及费用仍未确认。", runStopped: "停止已记录，远端是否完成及费用仍未确认。",
   runTakenOver: "你的接管已记录，计划不能再启动新工作或自动采纳。已发出的请求可能还会继续执行并产生费用。",
   runContinued: "当前打开的项目已确认继续工作。准备好后，请点击“启动已确认的计划”。",
+  runNotApplied: "已确认这次请求未生效，旧请求也不会再执行。当前输入已保留。",
+  runRevocationsTitle: "待核对的控制请求", runRevocationPause: "暂停请求", runRevocationStop: "停止请求", runRevocationTakeOver: "接管请求",
+  runRevocationBusy: "正在处理这次请求…", runRevocationUnknown: "还不能确认这次请求是否生效。原请求已保留，请先核对。",
+  runRevocationAbsent: "还没有查到这次请求的回执，可以明确核对并重试原请求。",
+  runRevocationBlocked: "目前还不能确认结果，请保留原请求，稍后再核对。",
+  runRevocationCheck: "核对这个请求", runRevocationRetry: "核对并重试原请求",
+  runRevocationsLimit: "这个对话已有 32 个控制请求待核对，请先处理这些请求。",
+
 };

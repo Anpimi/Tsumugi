@@ -33,10 +33,10 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
   useEffect(() => discardSeq === null ? undefined : gate.pushDialog(dialogId), [dialogId, discardSeq, gate]);
   useEffect(() => {
     const origin = focus.current;
-    if (!origin || input.busy) return;
+    if (!origin || input.busy || input.journalBusy) return;
     focus.current = null;
     if (visible && (document.activeElement === origin || document.activeElement === document.body)) root.current?.focus();
-  }, [input.busy, visible]);
+  }, [input.busy, input.journalBusy, visible]);
   const base = useSessionQuery({ key: ["conversation", conversationId, "proposal", proposalId, "base", draft.expectedRevisionId], scopes: ["project"], enabled: visible,
     read: () => conversationCommands.readProposal({ ...context, conversationId, proposalId, revisionId: draft.expectedRevisionId }) });
   const latest = useSessionQuery({ key: ["conversation", conversationId, "proposal", proposalId, "latest"], scopes: ["project"], enabled: visible,
@@ -70,7 +70,7 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
         {latest.data.content.kind === "proposal" ? <><p>{t("proposalScope", { count: latest.data.content.unitIds.length })}</p>
           <ul>{latest.data.content.unitIds.map((unitId, index) => <li key={unitId}>{labels.get(unitId)?.key || t("proposalEntryNumber", { number: index + 1 })}</li>)}</ul>
           <p>{global(`ai.plan.policies.${latest.data.content.options.selectionPolicy}`)}</p></> : null}
-        <p>{t("proposalRebaseHelp")}</p><Button size="sm" disabled={blocked || !!input.busy || pending || readFailed || reading || !run} onClick={() => {
+        <p>{t("proposalRebaseHelp")}</p><Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || pending || readFailed || reading || !run} onClick={() => {
           if (allowed() && latest.data) { focusRequest.current = true; owner.acceptProposalBase(latest.data, draft.editSeq); }
         }}>{t("proposalUseLatestBase")}</Button></div> : null}
     </Banner> : null}
@@ -99,13 +99,13 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
       <p>{global(`ai.plan.policies.${content.options.selectionPolicy}`)}</p><p>{t("proposalKeepOptions")}</p>
     </div>
     {failure ? <Banner tone="error"><p>{t("proposalSaveFailed")}</p><CommandFailureDetails failure={failure}/></Banner> : null}
-    <div className={styles.actions}><Button variant="secondary" size="sm" disabled={blocked || !!input.busy || pending || readFailed || reading || changed || !base.data || !latest.data || !run || run.resultId !== base.data.origin.resultId || !validProposalContent(content, run)}
+    <div className={styles.actions}><Button variant="secondary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || pending || readFailed || reading || changed || !base.data || !latest.data || !run || run.resultId !== base.data.origin.resultId || !validProposalContent(content, run)}
       onClick={event => { if (allowed()) { focus.current = event.currentTarget; void owner.saveProposal(conversationId, proposalId, current); } }}>{t("proposalSaveVersion")}</Button>
-      <Button size="sm" disabled={blocked || !!input.busy || pending} onClick={() => { if (allowed()) setDiscardSeq(draft.editSeq); }}>{t("proposalDiscard")}</Button></div>
-    <p>{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.busy === "journal" || input.dirty ? "savingInput" : "inputSaved")}</p>
+      <Button size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || pending} onClick={() => { if (allowed()) setDiscardSeq(draft.editSeq); }}>{t("proposalDiscard")}</Button></div>
+    <p>{t(input.failure?.kind === "journal" ? "inputUnsaved" : input.journalBusy || input.dirty ? "savingInput" : "inputSaved")}</p>
     <Dialog open={discardSeq !== null && visible} title={t("proposalDiscardTitle")} description={t("proposalDiscardHelp")} closeLabel={t("proposalKeepEditing")}
       onOpenChange={open => { if (!open) setDiscardSeq(null); }} footer={<><Button onClick={() => setDiscardSeq(null)}>{t("proposalKeepEditing")}</Button>
-        <Button variant="danger" disabled={blocked || !!input.busy || pending || discardSeq !== draft.editSeq} onClick={() => {
+        <Button variant="danger" disabled={blocked || (!!input.busy || input.journalBusy) || pending || discardSeq !== draft.editSeq} onClick={() => {
           if (discardSeq !== null && gate.canDispatch({ viewId, source: "button", dialogId }) && owner.discardProposalEdit(conversationId, proposalId, discardSeq)) setDiscardSeq(null);
         }}>{t("proposalConfirmDiscard")}</Button></>}><p className={styles.text}>{content.summary || t("proposalEmptySummary")}</p></Dialog>
   </section>;
@@ -128,7 +128,7 @@ export function ConversationProposals({ revisions, ...props }: ContextProps & { 
         <p className={styles.text}>{revision.content.summary}</p>{revision.content.kind === "proposal" ? <p>{t("proposalScope", { count: revision.content.unitIds.length })}</p> : null}
         {revision.content.questions.length ? <p>{t("proposalQuestionsRemaining", { count: revision.content.questions.length })}</p> : null}
         <Button size="sm" disabled={disabled || !visible} onClick={() => { if (allowed()) { focusRequest.current = true; owner.beginProposalEdit(revision); } }}>{t(edits.some(edit => edit.proposalId === revision.proposalId) ? "proposalContinueEditing" : "proposalEdit")}</Button>
-        <Button size="sm" disabled={disabled || !visible || !!input.busy || !!input.workPlan.busy || !!input.value.pending} onClick={() => { if (allowed()) owner.beginWorkPlan(revision); }}>{t("planReviewOpen")}</Button>
+        <Button size="sm" disabled={disabled || !visible || (!!input.busy || input.journalBusy) || !!input.workPlan.busy || !!input.value.pending} onClick={() => { if (allowed()) owner.beginWorkPlan(revision); }}>{t("planReviewOpen")}</Button>
       </article>)}
     </section> : null}
   </>;

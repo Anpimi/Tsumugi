@@ -25,7 +25,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 6;
+const FORMAT: i64 = 7;
+const RUN_FORMAT: i64 = 6;
 const PROPOSAL_FORMAT: i64 = 5;
 const ACTION_FORMAT: i64 = 4;
 const CONVERSATION_FORMAT: i64 = 3;
@@ -462,7 +463,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection

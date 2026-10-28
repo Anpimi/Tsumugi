@@ -194,6 +194,7 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type WorkPlanRevocationCommand = "pause" | "stop" | "take-over";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -407,6 +408,10 @@ export interface ConversationDraftValue {
   messageEditSeq?: Revision | null;
   pending: ConversationDraftPending | null;
   proposalEdits?: ConversationProposalDraft[];
+  /**
+   * @maxItems 32
+   */
+  revocations?: ConversationDraftRevocation[];
   text: string;
 }
 export interface CreateProjectConversation {
@@ -810,6 +815,20 @@ export interface ConversationProposalDraft {
   editSeq: Revision;
   expectedRevisionId: ExecutionId;
   proposalId: ExecutionId;
+}
+export interface ConversationDraftRevocation {
+  request: WorkPlanRevocationOriginal;
+  submittedSeq: Revision;
+}
+/**
+ * A complete control request that can only withdraw authority.
+ */
+export interface WorkPlanRevocationOriginal {
+  actionId: ExecutionId;
+  command: WorkPlanRevocationCommand;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
 }
 export interface ConversationDraftPage {
   items: ConversationDraftSummary[];

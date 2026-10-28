@@ -35,6 +35,117 @@ fn pure_read(store: &ProjectStore, plan: &WorkPlan) -> WorkPlanRunView {
     value
 }
 
+fn pure_settlement<T>(store: &ProjectStore, read: impl FnOnce() -> T) -> T {
+    let before = files(store);
+    let changes = store.connection().unwrap().total_changes();
+    let reconciling = store.is_reconciling();
+    let authority = store.planning_authority_revision.load(std::sync::atomic::Ordering::Acquire);
+    let value = read();
+    assert_eq!(files(store), before);
+    assert_eq!(store.connection().unwrap().total_changes(), changes);
+    assert_eq!(store.is_reconciling(), reconciling);
+    assert_eq!(store.planning_authority_revision.load(std::sync::atomic::Ordering::Acquire), authority);
+    value
+}
+
+#[test]
+fn request_settlement_requires_a_monotonic_fence_and_prefers_exact_control_receipts() {
+    let (_directory, mut store, units) = fixture();
+    let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+    let authorization = consent(&plan);
+    let authorized = store.authorize_work_plan(&plan, &authorization).unwrap();
+    let attempt = authorized.input.as_ref().unwrap().attempt_id;
+    let pause = control(&plan, 1, WorkPlanCommand::Pause);
+    assert!(matches!(pure_settlement(&store, || store.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, authorization.action_id, authorized.lease.generation, attempt,
+    ).unwrap()).outcome, WorkPlanRequestOutcome::Pending));
+    assert!(matches!(pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &pause).unwrap()).outcome, WorkPlanRequestOutcome::Pending));
+    let paused = store.control_work_plan(&pause).unwrap();
+    let absent = control(&plan, 1, WorkPlanCommand::Stop);
+    let future = control(&plan, 9, WorkPlanCommand::Stop);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    let observed = pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &pause).unwrap());
+    assert_eq!(observed.project_id, plan.project_id);
+    assert_eq!(observed.plan_id, plan.plan_id);
+    assert_eq!(observed.lease, paused.lease);
+    assert_eq!(observed.state, WorkPlanState::Paused);
+    assert_eq!(observed.outcome, WorkPlanRequestOutcome::Recorded { receipt: paused });
+    assert!(matches!(pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &absent).unwrap()).outcome, WorkPlanRequestOutcome::FencedNotApplied));
+    assert!(matches!(pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &future).unwrap()).outcome, WorkPlanRequestOutcome::Pending));
+    assert!(matches!(pure_settlement(&store, || store.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, authorization.action_id, authorized.lease.generation, attempt,
+    ).unwrap()).outcome, WorkPlanRequestOutcome::FencedNotApplied));
+    let mut mismatched = pause.clone();
+    mismatched.confirmed = !mismatched.confirmed;
+    assert_eq!(pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &mismatched).unwrap_err()).code, ErrorCode::ResultMismatch);
+    assert_eq!(pure_settlement(&store, || store.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, authorization.action_id, authorized.lease.generation, ExecutionId::new(),
+    ).unwrap_err()).code, ErrorCode::ResultMismatch);
+    store.execution_unknown.store(false, std::sync::atomic::Ordering::Release);
+    let stop = control(&plan, 2, WorkPlanCommand::Stop);
+    store.control_work_plan(&stop).unwrap();
+    let at_stopped = control(&plan, 3, WorkPlanCommand::Continue);
+    assert!(matches!(pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &at_stopped).unwrap()).outcome, WorkPlanRequestOutcome::Pending));
+}
+
+#[test]
+fn start_settlement_distinguishes_later_reused_attempts_from_the_exact_enqueue() {
+    let (_directory, mut store, units) = fixture();
+    let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+    let authorization = consent(&plan);
+    let original = store.authorize_work_plan(&plan, &authorization).unwrap();
+    let attempt = original.input.as_ref().unwrap().attempt_id;
+    store.control_work_plan(&control(&plan, 1, WorkPlanCommand::Pause)).unwrap();
+    let continuing = control(&plan, 2, WorkPlanCommand::Continue);
+    let continued = store.control_work_plan(&continuing).unwrap();
+    assert_eq!(continued.input.as_ref().unwrap().attempt_id, attempt);
+    let input = FixedInput::capture(continued.input.clone().unwrap()).unwrap();
+    store.enqueue_execution(&input).unwrap();
+    let old = pure_settlement(&store, || store.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, authorization.action_id, original.lease.generation, attempt,
+    ).unwrap());
+    assert!(matches!(old.outcome, WorkPlanRequestOutcome::FencedNotApplied));
+    store.control_work_plan(&control(&plan, 3, WorkPlanCommand::Stop)).unwrap();
+    let exact = pure_settlement(&store, || store.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, continuing.action_id, continued.lease.generation, attempt,
+    ).unwrap());
+    let WorkPlanRequestOutcome::Recorded { receipt } = exact.outcome else { panic!("exact historical enqueue was lost") };
+    assert_eq!(receipt.expected_generation, continued.lease.generation);
+    assert_eq!(receipt.attempt_id, attempt);
+    assert_eq!(receipt.task_id, input.envelope().task_id);
+    assert_eq!(exact.lease.generation.get(), 4);
+    let path = store.directory().to_path_buf();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(path).unwrap();
+    assert!(matches!(pure_settlement(&reopened, || reopened.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, authorization.action_id, original.lease.generation, attempt,
+    ).unwrap()).outcome, WorkPlanRequestOutcome::FencedNotApplied));
+    assert!(matches!(pure_settlement(&reopened, || reopened.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, continuing.action_id, continued.lease.generation, attempt,
+    ).unwrap()).outcome, WorkPlanRequestOutcome::Recorded { .. }));
+}
+
+#[test]
+fn settlement_rejects_foreign_projects_and_corrupt_evidence_before_proving_absence() {
+    let (_directory, mut store, units) = fixture();
+    let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+    let authorization = consent(&plan);
+    let original = store.authorize_work_plan(&plan, &authorization).unwrap();
+    let attempt = original.input.as_ref().unwrap().attempt_id;
+    let pause = control(&plan, 1, WorkPlanCommand::Pause);
+    store.control_work_plan(&pause).unwrap();
+    assert_eq!(pure_settlement(&store, || store.work_plan_control_settlement(ExecutionId::new(), &pause).unwrap_err()).code, ErrorCode::Unauthorized);
+    assert_eq!(pure_settlement(&store, || store.work_plan_start_settlement(
+        ExecutionId::new(), plan.plan_id, authorization.action_id, original.lease.generation, attempt,
+    ).unwrap_err()).code, ErrorCode::Unauthorized);
+    store.connection().unwrap().execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1", params![authorization.action_id.to_string(), "0".repeat(64)]).unwrap();
+    let absent = control(&plan, 1, WorkPlanCommand::Stop);
+    assert_eq!(pure_settlement(&store, || store.work_plan_control_settlement(plan.project_id, &absent).unwrap_err()).code, ErrorCode::CorruptLedger);
+    assert_eq!(pure_settlement(&store, || store.work_plan_start_settlement(
+        plan.project_id, plan.plan_id, authorization.action_id, original.lease.generation, attempt,
+    ).unwrap_err()).code, ErrorCode::CorruptLedger);
+}
+
 #[test]
 fn run_view_tracks_started_generations_and_original_cumulative_budget_without_writes() {
     let (_directory, mut store, units) = fixture();

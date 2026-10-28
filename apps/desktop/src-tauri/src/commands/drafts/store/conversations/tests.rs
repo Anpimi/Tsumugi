@@ -19,6 +19,7 @@ fn setup() -> (tempfile::TempDir, DraftStore, ConversationDraftWrite) {
             edit_seq: rev(1),
             message_edit_seq: None,
             pending: None,
+            revocations: vec![],
             proposal_edits: vec![],
         },
     };
@@ -91,7 +92,8 @@ fn conversation_draft_reads_do_not_create_and_pending_identity_survives_newer_in
     );
     let resolved = ConversationDraftResolve {
         write: discard,
-        pending: original,
+        target: ConversationDraftResolveTarget::Pending { pending: original },
+        disposition: ConversationDraftDisposition::Recorded,
     };
     let settled = store.resolve_conversation(&resolved).unwrap();
     assert_eq!(settled.value.as_ref().unwrap().text, newer.value.text);
@@ -415,6 +417,153 @@ fn running_pending(write: &ConversationDraftWrite, control: bool) -> Conversatio
     }
 }
 
+fn revocation(write: &ConversationDraftWrite, plan: ExecutionId) -> ConversationDraftRevocation {
+    ConversationDraftRevocation {
+        request: WorkPlanRevocationOriginal {
+            project_id: write.key.project_id,
+            plan_id: plan,
+            action_id: ExecutionId::new(),
+            expected_generation: rev(1),
+            command: WorkPlanRevocationCommand::Stop,
+        },
+        submitted_seq: write.value.edit_seq,
+    }
+}
+
+#[test]
+fn revocation_slots_preserve_primary_other_slots_and_newer_input() {
+    let (_directory, store, mut write) = setup();
+    let plan = ExecutionId::new();
+    write.value.pending = Some(pending(&write));
+    write.value.proposal_edits = vec![proposal_draft(1)];
+    write.value.message_edit_seq = Some(rev(1));
+    let primary = write.value.pending.clone().unwrap();
+    write.value.revocations = vec![revocation(&write, plan), revocation(&write, plan)];
+    let original = write.value.revocations[0].clone();
+    let first = store.write_conversation(&write).unwrap();
+    assert_eq!(store.write_conversation(&write).unwrap(), first);
+    write.expected_revision = first.revision;
+    write.value.edit_seq = rev(2);
+    write.value.message_edit_seq = Some(rev(2));
+    write.value.text = "Newer B while both controls and the primary remain unknown".into();
+    write.value.revocations.push(revocation(&write, plan));
+    let second = store.write_conversation(&write).unwrap();
+    assert_eq!(DraftStore::at(store.directory.clone()).unwrap().read_conversation(&write.key).unwrap(), second);
+    assert!(store.list_conversations(write.key.project_id, None, 10).unwrap().items[0].has_pending);
+
+    let mut changed = write.clone();
+    changed.expected_revision = second.revision;
+    changed.value.edit_seq = rev(3);
+    changed.value.revocations.remove(0);
+    assert_eq!(store.write_conversation(&changed).unwrap_err().stage, "drafts-pending");
+    let mut replaced = changed.clone();
+    replaced.value.revocations = write.value.revocations.clone();
+    replaced.value.revocations[0].request.command = WorkPlanRevocationCommand::Pause;
+    assert_eq!(store.write_conversation(&replaced).unwrap_err().stage, "drafts-pending");
+    assert_eq!(store.clear_conversation(&ConversationDraftClear {
+        key: write.key.clone(), expected_revision: second.revision,
+    }).unwrap_err().stage, "drafts-pending");
+
+    let resolve = ConversationDraftResolve {
+        write: changed,
+        target: ConversationDraftResolveTarget::Revocation { revocation: original },
+        disposition: ConversationDraftDisposition::Recorded,
+    };
+    for alter in 0..5 {
+        let mut wrong = resolve.clone();
+        match alter {
+            0 => wrong.write.value.text.clear(),
+            1 => wrong.write.value.proposal_edits.clear(),
+            2 => wrong.write.value.pending = None,
+            3 => wrong.write.value.revocations.reverse(),
+            _ => {
+                let ConversationDraftResolveTarget::Revocation { revocation } = &mut wrong.target else { unreachable!() };
+                revocation.request.command = WorkPlanRevocationCommand::Pause;
+            }
+        }
+        assert_eq!(store.resolve_conversation(&wrong).unwrap_err().stage, "drafts-pending");
+    }
+    let third = store.resolve_conversation(&resolve).unwrap();
+    assert_eq!(store.resolve_conversation(&resolve).unwrap(), third);
+    assert_eq!(third.value, Some(resolve.write.value.clone()));
+    let mut primary_resolve = ConversationDraftResolve {
+        write: ConversationDraftWrite {
+            expected_revision: third.revision,
+            value: third.value.clone().unwrap(),
+            ..write.clone()
+        },
+        target: ConversationDraftResolveTarget::Pending { pending: primary },
+        disposition: ConversationDraftDisposition::Recorded,
+    };
+    primary_resolve.write.value.edit_seq = rev(4);
+    primary_resolve.write.value.pending = None;
+    let mut discarded = primary_resolve.clone();
+    discarded.write.value.revocations.clear();
+    assert_eq!(store.resolve_conversation(&discarded).unwrap_err().stage, "drafts-pending");
+    let fourth = store.resolve_conversation(&primary_resolve).unwrap();
+    assert_eq!(fourth.value.as_ref().unwrap().text, write.value.text);
+    assert_eq!(fourth.value.as_ref().unwrap().revocations, resolve.write.value.revocations);
+    assert!(store.list_conversations(write.key.project_id, None, 10).unwrap().items[0].has_pending);
+    assert_eq!(store.clear_conversation(&ConversationDraftClear {
+        key: write.key.clone(), expected_revision: fourth.revision,
+    }).unwrap_err().stage, "drafts-pending");
+}
+
+#[test]
+fn revocation_slots_reject_duplicate_scope_authority_and_capacity() {
+    let (_directory, store, mut write) = setup();
+    let plan = ExecutionId::new();
+    write.value.revocations = (0..32).map(|_| revocation(&write, plan)).collect();
+    let mut invalid = write.clone();
+    invalid.value.revocations.push(revocation(&write, plan));
+    assert_eq!(store.write_conversation(&invalid).unwrap_err().code, ErrorCode::LimitExceeded);
+    for alter in 0..5 {
+        let mut invalid = write.clone();
+        match alter {
+            0 => invalid.value.revocations[1] = invalid.value.revocations[0].clone(),
+            1 => invalid.value.revocations[0].request.project_id = ExecutionId::new(),
+            2 => invalid.value.revocations[0].request.expected_generation = rev(0),
+            3 => invalid.value.revocations[0].submitted_seq = rev(2),
+            _ => {
+                let primary = pending(&invalid);
+                invalid.value.revocations[0].request.action_id = pending_action(&primary);
+                invalid.value.pending = Some(primary);
+            }
+        }
+        assert_eq!(store.write_conversation(&invalid).unwrap_err().code, ErrorCode::InvalidInput);
+    }
+    for field in ["sessionToken", "confirmed", "checkerExecutions", "toolExecution", "applicationToolExecutions", "expiresAt"] {
+        let mut encoded = serde_json::to_value(&write).unwrap();
+        encoded["value"]["revocations"][0]["request"][field] = serde_json::json!(true);
+        assert!(serde_json::from_value::<ConversationDraftWrite>(encoded).is_err());
+    }
+    let mut encoded = serde_json::to_value(&write).unwrap();
+    encoded["value"]["revocations"][0]["request"]["command"] = serde_json::json!("continue");
+    assert!(serde_json::from_value::<ConversationDraftWrite>(encoded).is_err());
+    let first = store.write_conversation(&write).unwrap();
+    assert!(first.value.as_ref().unwrap().pending.is_none());
+    assert!(store.list_conversations(write.key.project_id, None, 10).unwrap().items[0].has_pending);
+    assert_eq!(store.clear_conversation(&ConversationDraftClear {
+        key: write.key.clone(), expected_revision: first.revision,
+    }).unwrap_err().stage, "drafts-pending");
+}
+
+#[test]
+fn earlier_formats_reject_revocation_slots_without_writes() {
+    let (_directory, store, mut write) = setup();
+    write.value.revocations = vec![revocation(&write, ExecutionId::new())];
+    store.write_conversation(&write).unwrap();
+    let path = store.directory.join(DATABASE);
+    for format in [ACTION_FORMAT, PROPOSAL_FORMAT, RUN_FORMAT] {
+        Connection::open(&path).unwrap().pragma_update(None, "user_version", format).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(store.read_conversation(&write.key).unwrap_err().code, ErrorCode::CorruptLedger);
+        assert_eq!(store.list_conversations(write.key.project_id, None, 10).unwrap_err().code, ErrorCode::CorruptLedger);
+        assert_eq!(store.write(&translation(write.key.project_id)).unwrap_err().code, ErrorCode::CorruptLedger);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+}
+
 #[test]
 fn running_original_requests_keep_scope_sticky_identity_and_newer_inputs() {
     for control in [false, true] {
@@ -495,7 +644,8 @@ fn running_original_requests_keep_scope_sticky_identity_and_newer_inputs() {
         );
         let resolve = ConversationDraftResolve {
             write: newer,
-            pending: original,
+            target: ConversationDraftResolveTarget::Pending { pending: original },
+            disposition: ConversationDraftDisposition::Recorded,
         };
         let settled = store.resolve_conversation(&resolve).unwrap();
         assert_eq!(settled.value, Some(resolve.write.value.clone()));
@@ -508,10 +658,12 @@ fn running_original_requests_keep_scope_sticky_identity_and_newer_inputs() {
 }
 
 #[test]
-fn formats_four_and_five_read_without_writes_and_upgrade_without_rewriting_heads() {
-    for format in [ACTION_FORMAT, PROPOSAL_FORMAT] {
+fn formats_four_to_six_read_without_writes_and_upgrade_without_rewriting_heads() {
+    for (format, control) in [(ACTION_FORMAT, false), (PROPOSAL_FORMAT, false), (RUN_FORMAT, false), (RUN_FORMAT, true)] {
         let (_directory, store, mut write) = setup();
-        if format == PROPOSAL_FORMAT {
+        if format == RUN_FORMAT {
+            write.value.pending = Some(running_pending(&write, control));
+        } else if format == PROPOSAL_FORMAT {
             write.value.proposal_edits = vec![proposal_draft(1)];
             write.value.message_edit_seq = Some(rev(1));
             write.value.pending = Some(revision_pending(&write));
@@ -567,7 +719,7 @@ fn formats_four_and_five_read_without_writes_and_upgrade_without_rewriting_heads
 }
 
 #[test]
-fn format_five_upgrade_abort_keeps_complete_original_or_committed_records() {
+fn format_six_upgrade_abort_keeps_complete_original_or_committed_records() {
     for stage in [
         "conversation-upgrade-before-ddl",
         "conversation-upgrade-after-ddl",
@@ -577,13 +729,13 @@ fn format_five_upgrade_abort_keeps_complete_original_or_committed_records() {
         let (directory, store, mut write) = setup();
         write.value.proposal_edits = vec![proposal_draft(1)];
         write.value.message_edit_seq = Some(rev(1));
-        write.value.pending = Some(revision_pending(&write));
+        write.value.pending = Some(running_pending(&write, true));
         let conversation = store.write_conversation(&write).unwrap();
         let old = translation(write.key.project_id);
         let first = store.write(&old).unwrap();
         Connection::open(store.directory.join(DATABASE))
             .unwrap()
-            .pragma_update(None, "user_version", PROPOSAL_FORMAT)
+            .pragma_update(None, "user_version", RUN_FORMAT)
             .unwrap();
         let mut next = old.clone();
         next.expected_revision = first.revision;
@@ -607,7 +759,7 @@ fn format_five_upgrade_abort_keeps_complete_original_or_committed_records() {
             if stage == "write-after-commit" {
                 FORMAT
             } else {
-                PROPOSAL_FORMAT
+                RUN_FORMAT
             }
         );
     }
@@ -732,7 +884,8 @@ fn proposal_edits_do_not_advance_message_identity_or_allow_forged_append_text() 
     let second = store.write_conversation(&proposal_only).unwrap();
     let mut resolve = ConversationDraftResolve {
         write: proposal_only,
-        pending: original,
+        target: ConversationDraftResolveTarget::Pending { pending: original },
+        disposition: ConversationDraftDisposition::Recorded,
     };
     resolve.write.expected_revision = second.revision;
     resolve.write.value.edit_seq = rev(3);
@@ -779,7 +932,8 @@ fn newer_message_sequence_preserves_b_and_edit_back_to_a_through_append_receipt(
         let with_proposal = store.write_conversation(&newer).unwrap();
         let mut resolve = ConversationDraftResolve {
             write: newer,
-            pending: original,
+            target: ConversationDraftResolveTarget::Pending { pending: original },
+            disposition: ConversationDraftDisposition::Recorded,
         };
         resolve.write.expected_revision = with_proposal.revision;
         resolve.write.value.edit_seq = rev(5);
@@ -914,7 +1068,8 @@ fn proposal_pending_matches_submitted_edit_and_retains_newer_edits_on_resolve() 
     let second = store.write_conversation(&newer).unwrap();
     let mut resolve = ConversationDraftResolve {
         write: newer,
-        pending: original,
+        target: ConversationDraftResolveTarget::Pending { pending: original },
+        disposition: ConversationDraftDisposition::Recorded,
     };
     resolve.write.expected_revision = second.revision;
     resolve.write.value.edit_seq = rev(3);

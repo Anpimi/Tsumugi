@@ -147,7 +147,49 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
     if let Some(pending) = &value.pending {
         validate_pending(key, pending, value.edit_seq, message_seq, &value.text)?;
     }
+    if value.revocations.len() > 32 {
+        return Err(fail(ErrorCode::LimitExceeded, "conversation-drafts-revocations"));
+    }
+    let mut actions = BTreeSet::new();
+    for revocation in &value.revocations {
+        validate_revocation(key, revocation, value.edit_seq)?;
+        if !actions.insert(revocation.request.action_id)
+            || value.pending.as_ref().is_some_and(|pending| {
+                pending_action(pending) == revocation.request.action_id
+            })
+        {
+            return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-revocations"));
+        }
+    }
     Ok(())
+}
+fn pending_action(pending: &ConversationDraftPending) -> ExecutionId {
+    match pending {
+        ConversationDraftPending::Create { request, .. } => request.action_id,
+        ConversationDraftPending::Append { request, .. } => request.action_id,
+        ConversationDraftPending::Planning { request, .. } => request.consent.action_id,
+        ConversationDraftPending::ProposalCapture { request, .. } => request.action_id,
+        ConversationDraftPending::ProposalRevision { request, .. } => request.action_id,
+        ConversationDraftPending::ProposalWorkPlan { request, .. } => request.action_id,
+        ConversationDraftPending::WorkPlanStart { request, .. } => request.action_id,
+        ConversationDraftPending::WorkPlanControl { request, .. } => request.action_id,
+    }
+}
+fn validate_revocation(
+    key: &ConversationDraftKey,
+    revocation: &ConversationDraftRevocation,
+    seq: Revision,
+) -> Result<()> {
+    if revocation.request.project_id != key.project_id
+        || revocation.request.expected_generation.get() == 0
+        || revocation.submitted_seq > seq
+    {
+        return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-revocation"));
+    }
+    Ok(())
+}
+fn has_pending(value: &ConversationDraftValue) -> bool {
+    value.pending.is_some() || !value.revocations.is_empty()
 }
 fn same_write(before: &ConversationDraftHead, r: &ConversationDraftWrite) -> bool {
     r.expected_revision <= before.revision
@@ -157,7 +199,7 @@ fn same_write(before: &ConversationDraftHead, r: &ConversationDraftWrite) -> boo
 fn apply_write(
     before: &ConversationDraftHead,
     r: &ConversationDraftWrite,
-    resolve: Option<&ConversationDraftPending>,
+    resolve: Option<&ConversationDraftResolveTarget>,
 ) -> Result<ConversationDraftHead> {
     if same_write(before, r) {
         return Ok(before.clone());
@@ -172,24 +214,39 @@ fn apply_write(
     {
         return Err(fail(ErrorCode::DependencyConflict, "drafts-edit-sequence"));
     }
+    let old = before.value.as_ref();
     match resolve {
-        Some(pending)
+        Some(ConversationDraftResolveTarget::Pending { pending })
             if r.value.pending.is_none()
-                && before
-                    .value
-                    .as_ref()
-                    .and_then(|value| value.pending.as_ref())
-                    == Some(pending) =>
+                && old.and_then(|value| value.pending.as_ref()) == Some(pending)
+                && old.is_some_and(|value| value.revocations == r.value.revocations) =>
         {
             ()
         }
+        Some(ConversationDraftResolveTarget::Revocation { revocation }) => {
+            let old = old.ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
+            let Some(index) = old.revocations.iter().position(|slot| {
+                slot.request.plan_id == revocation.request.plan_id
+                    && slot.request.action_id == revocation.request.action_id
+            }) else {
+                return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
+            };
+            let mut expected = old.clone();
+            if expected.revocations.remove(index) != *revocation {
+                return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
+            }
+            expected.edit_seq = r.value.edit_seq;
+            if expected != r.value {
+                return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
+            }
+        }
         Some(_) => return Err(fail(ErrorCode::DependencyConflict, "drafts-pending")),
-        None if before
-            .value
-            .as_ref()
-            .and_then(|value| value.pending.as_ref())
+        None if old.and_then(|value| value.pending.as_ref())
             .is_some_and(|pending| r.value.pending.as_ref() != Some(pending)) =>
         {
+            return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
+        }
+        None if old.is_some_and(|value| !r.value.revocations.starts_with(&value.revocations)) => {
             return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
         }
         None => (),
@@ -223,13 +280,13 @@ fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<Conver
         || head.revision != stored_revision(revision)?
         || head.writer_id.is_some() != value.is_some()
         || seq != value.map(|value| value.edit_seq.get() as i64)
-        || pending != i64::from(value.is_some_and(|value| value.pending.is_some()))
+        || pending != i64::from(value.is_some_and(has_pending))
         || value.is_some_and(|value| validate_value(key, value).is_err())
         || format < PROPOSAL_FORMAT
             && value.is_some_and(|value| {
                 !value.proposal_edits.is_empty() || value.message_edit_seq.is_some()
             })
-        || format < FORMAT
+        || format < RUN_FORMAT
             && value
                 .and_then(|value| value.pending.as_ref())
                 .is_some_and(|pending| {
@@ -239,6 +296,7 @@ fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Result<Conver
                             | ConversationDraftPending::WorkPlanControl { .. }
                     )
                 })
+        || format < FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
         || format == CONVERSATION_FORMAT
             && value
                 .and_then(|value| value.pending.as_ref())
@@ -273,7 +331,7 @@ fn read_head(
 }
 
 /// Validate every old head. Only format 3 needs its payload constraint rebuilt;
-/// formats 4 and 5 already have the current tables and limits.
+/// formats 4 through 6 already have the current tables and limits.
 pub(super) fn upgrade(c: &Connection, format: i64) -> Result<()> {
     let mut query = c.prepare("SELECT project_id,conversation_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM conversation_draft_heads ORDER BY project_id,conversation_id").map_err(sql)?;
     let rows = query
@@ -313,7 +371,7 @@ pub(super) fn upgrade(c: &Connection, format: i64) -> Result<()> {
     Ok(())
 }
 fn persist(c: &Connection, head: &ConversationDraftHead, payload: &[u8]) -> Result<()> {
-    c.execute("INSERT INTO conversation_draft_heads VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project_id,conversation_id) DO UPDATE SET revision=excluded.revision,edit_seq=excluded.edit_seq,has_pending=excluded.has_pending,payload=excluded.payload",params![head.key.project_id.to_string(),head.key.conversation_id.to_string(),head.revision.get() as i64,head.value.as_ref().map(|value|value.edit_seq.get() as i64),i64::from(head.value.as_ref().is_some_and(|value|value.pending.is_some())),payload]).map_err(sql)?;
+    c.execute("INSERT INTO conversation_draft_heads VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(project_id,conversation_id) DO UPDATE SET revision=excluded.revision,edit_seq=excluded.edit_seq,has_pending=excluded.has_pending,payload=excluded.payload",params![head.key.project_id.to_string(),head.key.conversation_id.to_string(),head.revision.get() as i64,head.value.as_ref().map(|value|value.edit_seq.get() as i64),i64::from(head.value.as_ref().is_some_and(has_pending)),payload]).map_err(sql)?;
     Ok(())
 }
 fn mutate_existing(
@@ -396,27 +454,39 @@ impl DraftStore {
         validate_value(&r.key, &r.value)?;
         self.mutate_conversation(&r.key, |before| apply_write(before, r, None))
     }
-    /// Called only after the Host reads the exact original committed receipt.
+    /// Called only after the Host proves the requested disposition of this slot.
     pub fn resolve_conversation(
         &self,
         r: &ConversationDraftResolve,
     ) -> Result<ConversationDraftHead> {
         validate_value(&r.write.key, &r.write.value)?;
-        validate_pending(
-            &r.write.key,
-            &r.pending,
-            r.write.value.edit_seq,
-            r.write
-                .value
-                .message_edit_seq
-                .unwrap_or(r.write.value.edit_seq),
-            &r.write.value.text,
-        )?;
-        if r.write.value.pending.is_some() {
-            return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
+        match &r.target {
+            ConversationDraftResolveTarget::Pending { pending } => {
+                validate_pending(
+                    &r.write.key, pending, r.write.value.edit_seq,
+                    r.write.value.message_edit_seq.unwrap_or(r.write.value.edit_seq),
+                    &r.write.value.text,
+                )?;
+                if r.write.value.pending.is_some()
+                    || r.disposition == ConversationDraftDisposition::FencedNotApplied
+                        && !matches!(pending, ConversationDraftPending::WorkPlanStart { .. }
+                            | ConversationDraftPending::WorkPlanControl { .. })
+                {
+                    return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
+                }
+            }
+            ConversationDraftResolveTarget::Revocation { revocation } => {
+                validate_revocation(&r.write.key, revocation, r.write.value.edit_seq)?;
+                if r.write.value.revocations.iter().any(|slot| {
+                    slot.request.plan_id == revocation.request.plan_id
+                        && slot.request.action_id == revocation.request.action_id
+                }) {
+                    return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
+                }
+            }
         }
         self.mutate_conversation(&r.write.key, |before| {
-            apply_write(before, &r.write, Some(&r.pending))
+            apply_write(before, &r.write, Some(&r.target))
         })
     }
     pub fn clear_conversation(&self, r: &ConversationDraftClear) -> Result<ConversationDraftHead> {
@@ -427,7 +497,7 @@ impl DraftStore {
             if before
                 .value
                 .as_ref()
-                .is_some_and(|value| value.pending.is_some())
+                .is_some_and(has_pending)
             {
                 return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
             }
@@ -501,7 +571,7 @@ impl DraftStore {
                     key,
                     revision: head.revision,
                     edit_seq: value.edit_seq,
-                    has_pending: value.pending.is_some(),
+                    has_pending: has_pending(&value),
                 });
             }
         }

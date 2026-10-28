@@ -213,6 +213,45 @@ pub struct WorkPlanControlOriginal {
     pub expires_at: Option<UnsignedDecimal>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum WorkPlanRevocationCommand {
+    Pause,
+    Stop,
+    TakeOver,
+}
+
+impl From<WorkPlanRevocationCommand> for WorkPlanCommand {
+    fn from(command: WorkPlanRevocationCommand) -> Self {
+        match command {
+            WorkPlanRevocationCommand::Pause => Self::Pause,
+            WorkPlanRevocationCommand::Stop => Self::Stop,
+            WorkPlanRevocationCommand::TakeOver => Self::TakeOver,
+        }
+    }
+}
+
+/// A complete control request that can only withdraw authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanRevocationOriginal {
+    pub project_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub expected_generation: Revision,
+    pub command: WorkPlanRevocationCommand,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationDraftRevocation {
+    pub request: WorkPlanRevocationOriginal,
+    pub submitted_seq: Revision,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -222,6 +261,9 @@ pub struct ConversationDraftValue {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_edit_seq: Option<Revision>,
     pub pending: Option<ConversationDraftPending>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+    pub revocations: Vec<ConversationDraftRevocation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proposal_edits: Vec<ConversationProposalDraft>,
 }
@@ -262,7 +304,24 @@ pub struct ConversationDraftWrite {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ConversationDraftResolve {
     pub write: ConversationDraftWrite,
-    pub pending: ConversationDraftPending,
+    pub target: ConversationDraftResolveTarget,
+    pub disposition: ConversationDraftDisposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConversationDraftResolveTarget {
+    Pending { pending: ConversationDraftPending },
+    Revocation { revocation: ConversationDraftRevocation },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConversationDraftDisposition {
+    Recorded,
+    FencedNotApplied,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

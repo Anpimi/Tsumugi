@@ -5,7 +5,13 @@ import type { Requests } from "./generated/draft.requests";
 import type { Responses } from "./generated/draft.responses";
 import { validateResponseConversationRead, validateResponseConversationWritten, validateResponseConversationResolved, validateResponseConversationCleared, validateResponseConversationPage } from "./generated/draft.validators";
 
-export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary, ConversationProposalDraft } from "./generated/draft.responses";
+export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary, ConversationProposalDraft, ConversationDraftRevocation } from "./generated/draft.responses";
+export type { ConversationDraftDisposition } from "./generated/draft.requests";
+type WireResolveTarget = Requests["conversationResolve"]["resolve"]["target"];
+// Local resolutions name a decoded head, with its defaulted fields complete.
+export type ConversationDraftResolveTarget =
+  | (Omit<Extract<WireResolveTarget, { kind: "pending" }>, "pending"> & { pending: ConversationDraftPending })
+  | Extract<WireResolveTarget, { kind: "revocation" }>;
 import type { ConversationDraftPending } from "./generated/draft.responses";
 type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
@@ -18,15 +24,19 @@ export function locallyReplayableConversationRequest(pending: ConversationDraftP
   return pending?.kind === "create" || pending?.kind === "append" || pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision";
 }
 export function canonicalConversationDraft(value: Requests["conversationWrite"]["write"]["value"]) {
-  const { proposalEdits, messageEditSeq, ...rest } = value;
-  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}) };
+  const { proposalEdits, messageEditSeq, revocations, ...rest } = value;
+  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}), ...(revocations?.length ? { revocations } : {}) };
 }
 function head(value: Head, key: Head["key"]) {
   const draft = value.value, pending = draft?.pending;
   const target = pending ? conversationPendingTarget(pending) : null;
-  const edits = draft?.proposalEdits ?? [];
+  const edits = draft?.proposalEdits ?? [], revocations = draft?.revocations ?? [];
+  const primaryAction = pending?.kind === "planning" ? pending.request.consent.actionId : pending ? pending.request.actionId : null;
   const messageSeq = draft ? draft.messageEditSeq ?? draft.editSeq : "0";
   return same(value.key, key) && (draft === null ? value.writerId === null : value.writerId !== null && BigInt(value.revision) > 0n
+    && revocations.length <= 32 && new Set(revocations.map(slot => slot.request.actionId)).size === revocations.length
+    && revocations.every(slot => slot.request.projectId === key.projectId && slot.request.actionId !== primaryAction
+      && BigInt(slot.request.expectedGeneration) > 0n && BigInt(slot.submittedSeq) <= BigInt(draft.editSeq))
     && BigInt(messageSeq) <= BigInt(draft.editSeq)
     && new Set(edits.map(edit => edit.proposalId)).size === edits.length && edits.every(edit => BigInt(edit.editSeq) <= BigInt(draft.editSeq) && edit.content.kind === "proposal"
       && (pending?.kind !== "proposal-revision" || pending.request.proposalId !== edit.proposalId || pending.submittedSeq !== edit.editSeq
@@ -53,8 +63,11 @@ export const conversationDraftCommands = {
   },
   resolve: (input: Requests["conversationResolve"]) => {
     const request = structuredClone(input);
+    const target = request.resolve.target;
     return checkedInvoke("resolve_local_conversation_draft", request,
-      (value): value is Head => validateResponseConversationResolved(value) && written(value, request.resolve.write) && value.value?.pending === null);
+      (value): value is Head => validateResponseConversationResolved(value) && written(value, request.resolve.write)
+        && (target.kind === "pending" ? value.value?.pending === null
+          : !(value.value?.revocations ?? []).some(slot => slot.request.actionId === target.revocation.request.actionId)));
   },
   clear: (request: Requests["conversationClear"]) => checkedInvoke("clear_local_conversation_draft", request,
     (value): value is Head => validateResponseConversationCleared(value) && head(value, request.clear.key) && value.value === null

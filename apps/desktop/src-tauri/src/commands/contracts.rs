@@ -611,6 +611,8 @@ struct AiRequests {
     work_plan_start: execution::work_plans::WorkPlanStartRequest,
     work_plan_start_action: execution::work_plans::WorkPlanStartRequest,
     work_plan_control_action: execution::work_plans::WorkPlanControlRequest,
+    work_plan_start_settlement: execution::work_plans::WorkPlanStartSettlementRequest,
+    work_plan_control_settlement: execution::work_plans::WorkPlanControlRequest,
     work_plan_authorization_action: execution::work_plans::WorkPlanAuthorizeRequest,
     work_plan_generation_prepare:
         execution::work_plans::generation::WorkPlanGenerationPrepareRequest,
@@ -697,6 +699,8 @@ struct AiResponses {
     work_plan_action: Option<execution::work_plans::WorkPlanReceiptView>,
     work_plan_start_action: Option<tsumugi_core::application::WorkPlanStartReceipt>,
     work_plan_control_action: Option<execution::work_plans::WorkPlanActionReadView>,
+    work_plan_start_settlement: execution::work_plans::WorkPlanStartSettlementView,
+    work_plan_control_settlement: execution::work_plans::WorkPlanControlSettlementView,
     work_plan_authorization_action: Option<execution::work_plans::WorkPlanActionReadView>,
     work_protection: tsumugi_core::application::WorkProtection,
 }
