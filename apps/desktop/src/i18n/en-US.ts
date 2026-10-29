@@ -1,10 +1,12 @@
 import { knowledgeEn } from "./knowledge";
+import { startupEn } from "./startup";
 import { sourceMaintenanceEn } from "./sourceMaintenance";
 import { strategyEn } from "./strategy";
 import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+startup: startupEn,
 knowledge: knowledgeEn,
 sourceMaintenance: sourceMaintenanceEn,
 conversation: conversationEn,

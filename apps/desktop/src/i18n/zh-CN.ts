@@ -1,4 +1,5 @@
 import { knowledgeZh } from "./knowledge";
+import { startupZh } from "./startup";
 import { sourceMaintenanceZh } from "./sourceMaintenance";
 import type { UiMessages } from "./types";
 import { workbenchPreviewZh } from "./workbenchPreview";
@@ -7,6 +8,7 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+startup: startupZh,
 knowledge: knowledgeZh,
 sourceMaintenance: sourceMaintenanceZh,
 conversation: conversationZh,

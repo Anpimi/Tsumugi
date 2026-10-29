@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { canonicalTranslationReuse } from "../../translationReuse";
-import type { ProjectView } from "../../projectCommands";
+import type { CreateProjectRequest, ProjectView } from "../../projectCommands";
 import type { ApplicationShutdownView } from "../../executionCommands";
 import { ProjectLifecycle, type LifecycleParticipant, type ProjectLifecyclePorts } from "./projectLifecycle";
 import draftFixture from "../../../test/fixtures/draftCommands.contract.json";
@@ -21,6 +21,7 @@ function deferred<T>() {
 }
 function fixture(overrides: Partial<ProjectLifecyclePorts> = {}) {
   const ports = {
+    create: vi.fn(async (_request: CreateProjectRequest) => second),
     open: vi.fn(async () => first), read: vi.fn(async () => first), close: vi.fn(async () => ({ closed: true })),
     status: vi.fn(async () => idle), quiesce: vi.fn(async () => idle),
     stopCleanup: vi.fn(async (request: { actionId: string }): Promise<ApplicationShutdownView> => ({ ...request, state: "stopped" })),
@@ -37,6 +38,67 @@ function owner(controller: ProjectLifecycle, status: "ready" | "dirty" | "blocke
   const unregister = controller.register(participant);
   return { state, participant, unregister };
 }
+
+describe("project creation through the existing lifecycle", () => {
+  const request: CreateProjectRequest = { destination: second.locator, displayName: "Project B", sourceLocale: "en", targetLocales: ["zh-CN"] };
+
+  it("captures the complete request and does not dispatch through an unresolved owner", async () => {
+    const { controller, ports } = fixture(); await controller.open(first.locator);
+    const draft = owner(controller, "dirty");
+    expect(await controller.create(request)).toBe(false); expect(ports.create).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().session?.project).toEqual(first);
+    draft.state.status = "ready";
+    const result = deferred<ProjectView>(); ports.create.mockImplementationOnce(() => result.promise);
+    const input = structuredClone(request), creating = controller.create(input);
+    await vi.waitFor(() => expect(ports.create).toHaveBeenCalledOnce());
+    input.displayName = "Later input"; input.targetLocales.push("fr");
+    expect(ports.create.mock.calls[0][0]).toEqual(request);
+    result.resolve(second); expect(await creating).toBe(true);
+    expect(controller.getSnapshot().session?.project).toEqual(second); controller.dispose();
+  });
+
+  it("keeps the old project and draft after a known creation failure", async () => {
+    const { controller, ports } = fixture(); await controller.open(first.locator);
+    const original = controller.getSnapshot().session, draft = owner(controller);
+    ports.create.mockRejectedValueOnce({ code: "destination-conflict", stage: "create", outcome: "rejected", recoveryRequired: false });
+    expect(await controller.create(request)).toBe(false);
+    expect(controller.getSnapshot().session).toBe(original); expect(original?.reads.retired).toBe(false);
+    expect(controller.getSnapshot().pending).toBeNull(); expect(draft.participant.prepareLeave).not.toHaveBeenCalled(); controller.dispose();
+  });
+
+  it("retains the original owner when B changes after creation was dispatched", async () => {
+    const { controller, ports } = fixture(); await controller.open(first.locator);
+    const original = controller.getSnapshot().session, draft = owner(controller), result = deferred<ProjectView>();
+    ports.create.mockImplementationOnce(() => result.promise); const creating = controller.create(request);
+    await vi.waitFor(() => expect(ports.create).toHaveBeenCalledOnce());
+    draft.state.status = "dirty"; draft.state.revision = "Newer B";
+    result.resolve(second); expect(await creating).toBe(false);
+    expect(controller.getSnapshot().session?.project).toEqual(second); expect(controller.getSnapshot().retainedSession).toBe(original);
+    expect(draft.state.revision).toBe("Newer B"); controller.dispose();
+  });
+
+  it("never repeats an uncertain create and opens its original destination only after an explicit request", async () => {
+    const { controller, ports } = fixture(); ports.create.mockRejectedValueOnce(new Error("Lost creation acknowledgement"));
+    expect(await controller.create(request)).toBe(false);
+    expect(controller.getSnapshot().pending).toMatchObject({ kind: "create", locator: request.destination, request });
+    expect(await controller.checkPending()).toBe(false); expect(await controller.create(request)).toBe(false);
+    expect(ports.create).toHaveBeenCalledOnce(); expect(ports.open).not.toHaveBeenCalled();
+    ports.open.mockResolvedValueOnce(second);
+    expect(await controller.openCreatedProject()).toBe(true);
+    expect(ports.open).toHaveBeenCalledExactlyOnceWith({ locator: request.destination });
+    expect(ports.create).toHaveBeenCalledOnce(); expect(controller.getSnapshot().pending).toBeNull();
+    expect(controller.getSnapshot().session?.project).toEqual(second); controller.dispose();
+  });
+
+  it("keeps the original uncertain request when opening its destination fails", async () => {
+    const { controller, ports } = fixture(); ports.create.mockRejectedValueOnce(new Error("Lost creation acknowledgement"));
+    await controller.create(request); const original = controller.getSnapshot().pending;
+    ports.open.mockRejectedValueOnce({ code: "missing-project", stage: "open", outcome: "rejected", recoveryRequired: false });
+    expect(await controller.openCreatedProject()).toBe(false);
+    expect(controller.getSnapshot().pending).toBe(original); expect(controller.getSnapshot().session).toBeNull();
+    expect(ports.create).toHaveBeenCalledOnce(); controller.dispose();
+  });
+});
 
 describe("real draft owner during native shutdown", () => {
   it("destroys the window after a durable owner retires while the application drains", async () => {

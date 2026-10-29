@@ -32,6 +32,7 @@ import { installSourceDraftPortsFixture } from "../testSupport/sourceDraftFixtur
 import { translationCaptureFixture, translationImportChoice, translationSelectionFixture } from "../testSupport/translationFixture";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
+vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
 const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null }));
 vi.mock("./features/execution/ExecutionOwnerHost", async original => {
   const module = await original<typeof import("./features/execution/ExecutionOwnerHost")>(), Actual = module.default;
@@ -96,6 +97,23 @@ beforeEach(async () => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); controller?.dispose(); });
+
+it("opens the real manual creation entry and adopts only its acknowledged project session", async () => {
+  const create = vi.fn(async () => project);
+  controller = new ProjectLifecycle({ create });
+  render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+  await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("startup.manual") }));
+  const dialog = await screen.findByRole("dialog", { name: i18n.t("startup.title") });
+  expect(dialog).toHaveAccessibleName("新建项目"); expect(create).not.toHaveBeenCalled();
+  for (const [key, value] of [["name", "New human project"], ["parent", "/synthetic"], ["folder", "project"], ["source", "en"], ["target", "zh-CN"]] as const) {
+    fireEvent.change(within(dialog).getByRole(key === "source" || key === "target" ? "combobox" : "textbox", { name: i18n.t(`startup.${key}`) }), { target: { value } });
+  }
+  await userEvent.setup().click(within(dialog).getByRole("button", { name: i18n.t("startup.addTarget") }));
+  await userEvent.setup().click(within(dialog).getByRole("button", { name: i18n.t("startup.create") }));
+  await waitFor(() => expect(controller.getSnapshot().session?.project).toEqual(project));
+  expect(create).toHaveBeenCalledExactlyOnceWith({ destination: project.locator, displayName: "New human project", sourceLocale: "en", targetLocales: ["zh-CN"] });
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: i18n.t("startup.title") })).not.toBeInTheDocument());
+});
 
 async function openImportWorkspace(opened: ProjectView = project) {
   const close = vi.fn(async () => ({ closed: true }));

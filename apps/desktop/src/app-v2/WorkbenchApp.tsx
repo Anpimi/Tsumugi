@@ -62,6 +62,7 @@ import type { SourceOwner, SourceReviewTarget } from "./features/source/sourceTy
 import type { SourceDrop } from "./features/source/SourcePreparationSheet";
 import styles from "./WorkbenchLayout.module.css";
 import appStyles from "./WorkbenchApp.module.css";
+import ManualProjectPlan from "./features/startup/ManualProjectPlan";
 
 const EntriesView = lazy(() => import("./features/entries/EntriesView"));
 const EntryDetails = lazy(() => import("./features/entries/EntryDetails"));
@@ -95,7 +96,7 @@ type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; re
   openSource: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
-type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void;
+type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
   sourceOwner: SourceOwner | null; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
   sourceTarget: SourceReviewTarget | null; setSourceTarget: (target: SourceReviewTarget | null) => void;
   sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
@@ -131,7 +132,7 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
     action={canRetry ? <Button onClick={onRetry}>{t("retryOwner")}</Button> : undefined}/>;
 }
 
-function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void }) {
+function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void }) {
   const [ExecutionOwnerHost, setExecutionOwnerHost] = useState(createExecutionOwnerHost), [KnowledgeOwnerHost, setKnowledgeOwnerHost] = useState(createKnowledgeOwnerHost);
   const [store] = useState(() => createWorkspaceStore({ initialLocale: session.project.metadata.targetLocales[0] ?? "" }));
   const [runtime, setRuntime] = useState<Runtime | null>(null);
@@ -327,7 +328,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   }, [store, gate, lifecycle]);
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
-  return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed,
+  return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed,
     sourceOwner: executionTasks ? sourceOwner : null, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop,
     clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
@@ -371,7 +372,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
 
 function WorkspaceShell() {
   const readStatus = useSessionReadStatus();
-  const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
+  const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
@@ -937,6 +938,7 @@ function WorkspaceShell() {
   return <div className={styles.frame} data-focus-mode={!importVisible && view?.focusMode || undefined} onCompositionStartCapture={() => gate.setComposing("workspace", true)} onCompositionEndCapture={() => gate.setComposing("workspace", false)}>
     <header className={styles.titlebar} data-tauri-drag-region>
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
+        { id: "create", label: t("startup.manual"), onSelect: () => { if (gate.canDispatch({ viewId: currentId, source: "button" })) requestCreate(); }, disabled: disabled || !commandsReady },
         { id: "open", label: message("openProject"), onSelect: () => dispatch("workspace.open-project"), disabled: disabled || !commandsReady }, { id: "close", label: message("closeProject"), onSelect: () => dispatch("workspace.close-project"), disabled: disabled || !commandsReady },
         { id: "source", label: t("sourceMaintenance.title"), onSelect: () => dispatch("source.import-upstream"), disabled: disabled || !commandsReady },
       ]} />
@@ -1079,16 +1081,24 @@ function WorkspaceShell() {
 
 export default function WorkbenchApp({ controller: suppliedController, native = isTauri() }: { controller?: ProjectLifecycle; native?: boolean } = {}) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
+  const { t: startup } = useTranslation(undefined, { keyPrefix: "startup" });
   const [stop, setStop] = useState<{ resolve: (allow: boolean) => void; current: () => boolean } | null>(null);
   const [gate] = useState(() => new InteractionGate());
   const [controller] = useState(() => suppliedController ?? new ProjectLifecycle({ confirmStop: (_project, _status, current) => new Promise(resolve => setStop({ resolve, current })) }));
   const state = useProjectLifecycle(controller), nativeClose = useNativeProjectClose(controller, native);
   const [locator, setLocator] = useState(""), [openPanel, setOpenPanel] = useState(false), [discard, setDiscard] = useState(false);
+  const [createPanel, setCreatePanel] = useState(false);
   const [recent, setRecent] = useState<RecentProject[]>(readRecentProjects), [pickerFailed, setPickerFailed] = useState(false);
   const [closeActionFailed, setCloseActionFailed] = useState(false);
   const busy = state.phase !== "idle", blocked = busy || !!state.pending || !!state.retainedSession || !!state.cleanup;
   const presentation = state.retainedSession ?? state.closingSession ?? state.session;
   const pathSequence = useRef(0);
+  const rememberedSession = useRef<string | null>(null);
+  const sessionIdentity = state.session ? `${state.session.project.metadata.projectId}:${state.session.project.sessionToken}` : null;
+  useEffect(() => {
+    if (sessionIdentity && sessionIdentity !== rememberedSession.current && state.session) setRecent(rememberProject(state.session.project));
+    rememberedSession.current = sessionIdentity;
+  }, [sessionIdentity, state.session]);
   useLayoutEffect(() => openPanel ? gate.pushDialog("project-open") : undefined, [gate, openPanel]);
   useLayoutEffect(() => stop ? gate.pushDialog("stop-running") : undefined, [gate, stop]);
   useLayoutEffect(() => discard ? gate.pushDialog("discard-workspace") : undefined, [gate, discard]);
@@ -1100,7 +1110,6 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
     const sequence = pathSequence.current;
     const success = await controller.open(path);
     const project = controller.getSnapshot().session?.project;
-    if (project) setRecent(rememberProject(project));
     if (success && sequence === pathSequence.current) setOpenPanel(false);
     else if (project && sequence !== pathSequence.current) setOpenPanel(true);
   }
@@ -1134,11 +1143,13 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       {error ? <Banner tone="error" action={state.pending?.kind === "runtime" || state.pending?.session && (state.pending.kind === "open" || state.pending.kind === "close") ? <Button disabled={busy} onClick={() => void controller.checkPending()}>{t("checkResult")}</Button> : undefined}>{errorText}</Banner> : null}
       {state.retainedSession ? <Banner tone="warning" action={<Button onClick={() => setDiscard(true)}>{t("discardRetained")}</Button>}>{t("retained")}</Banner> : null}
       {presentation ? <SessionReadProvider key={`${presentation.project.metadata.projectId}:${presentation.project.sessionToken}`} context={executionContext(presentation.project)} reads={presentation.reads} bridge={!presentation.reads.retired}>
-        <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} />
+        <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }} />
       </SessionReadProvider> : <main className={appStyles.welcome}><span className={appStyles.brand}>紡 Tsumugi</span><h1>{t("welcome")}</h1><p>{t("welcomeHelp")}</p>{openForm}
-        {recent.length ? <section className={appStyles.recent}><h2>{t("recent")}</h2>{recent.map(item => <Button key={item.locator} disabled={!native || blocked} onClick={() => void open(item.locator)}>{recentProjectName(item.locator)}</Button>)}</section> : null}
+        <Button disabled={!native || blocked} onClick={() => setCreatePanel(true)}>{startup("manual")}</Button>
+        {recent.length ? <section className={appStyles.recent}><h2>{t("recent")}</h2>{recent.map(item => <Button key={item.locator} disabled={!native || blocked} onClick={() => void open(item.locator)}>{recentProjectName(item.locator)}<small>{item.locator}</small></Button>)}</section> : null}
       </main>}
       <Dialog open={openPanel && !!presentation} onOpenChange={setOpenPanel} title={t("openProject")} description={t("welcomeHelp")} closeLabel={t("close")}>{openForm}</Dialog>
+      <ManualProjectPlan controller={controller} gate={gate} open={createPanel} onOpenChange={setCreatePanel} native={native}/>
       <Dialog open={!!stop} onOpenChange={value => { if (!value && stop) { stop.resolve(false); setStop(null); } }} title={t("stopTitle")} description={t("stopHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => { stop?.resolve(false); setStop(null); }}>{t("stay")}</Button><Button variant="danger" onClick={() => { if (stop) stop.resolve(stop.current()); setStop(null); }}>{t("stopAndLeave")}</Button></>}>{t("stopHelp")}</Dialog>
       <Dialog open={discard} onOpenChange={setDiscard} title={t("discardRetained")} description={t("discardHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => setDiscard(false)}>{t("stay")}</Button><Button variant="danger" onClick={() => { controller.discardRetained(); setDiscard(false); }}>{t("discardRetained")}</Button></>}>{t("discardHelp")}</Dialog>
     </div>

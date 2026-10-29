@@ -1,5 +1,5 @@
 import { executionCommands, executionContext, type ApplicationShutdownRequest, type ApplicationShutdownView, type RuntimeStatus, type SessionRequest } from "../../executionCommands";
-import { hasUnknownOutcome, isCommandError, projectCommands, type CloseProjectView, type OpenProjectRequest, type ProjectView, type ReadProjectRequest } from "../../projectCommands";
+import { hasUnknownOutcome, isCommandError, projectCommands, type CloseProjectView, type CreateProjectRequest, type OpenProjectRequest, type ProjectView, type ReadProjectRequest } from "../../projectCommands";
 import { SessionNavigation, type ExitDisposition, type SessionExitPermit } from "../../sessionNavigation";
 import { SessionReads } from "../../sessionReads";
 import type { WorkspaceArea } from "../../WorkbenchFrame";
@@ -10,7 +10,7 @@ export interface ProjectSession {
 }
 
 export interface LeaveIntent {
-  kind: "navigate" | "close-view" | "language" | "restore" | "open-project" | "close-project" | "close-window";
+  kind: "navigate" | "close-view" | "language" | "restore" | "create-project" | "open-project" | "close-project" | "close-window";
   viewId?: string;
 }
 
@@ -28,12 +28,14 @@ export type LifecycleFailureCode = "leave-blocked" | "leave-changed" | "command-
   | "runtime-pending" | "application-stopping" | "application-unknown" | "unknown-lifecycle" | "recovery-unavailable" | "destroy-failed";
 export interface LifecycleFailure { code: LifecycleFailureCode; cause?: unknown; ownerId?: string }
 
-export interface PendingLifecycle {
-  kind: "open" | "close" | "runtime" | "application-stop" | "application-resume";
+interface PendingLifecycleBase {
   session: ProjectSession | null;
-  locator?: string;
   observation?: "original-session-open" | "original-session-unavailable";
 }
+export type PendingLifecycle = PendingLifecycleBase & (
+  { kind: "create"; locator: string; request: CreateProjectRequest }
+  | { kind: "open" | "close" | "runtime" | "application-stop" | "application-resume"; locator?: string }
+);
 
 export interface ProjectLifecycleState {
   session: ProjectSession | null;
@@ -41,13 +43,14 @@ export interface ProjectLifecycleState {
   retainedSession: ProjectSession | null;
   /** Native close has settled Core, but still needs the original owners until destruction is authorized. */
   closingSession: ProjectSession | null;
-  phase: "idle" | "guarding" | "opening" | "reading" | "stopping" | "closing" | "cleanup" | "destroying" | "checking";
+  phase: "idle" | "guarding" | "creating" | "opening" | "reading" | "stopping" | "closing" | "cleanup" | "destroying" | "checking";
   pending: PendingLifecycle | null;
   cleanup: { request: ApplicationShutdownRequest; state: "stopping" | "stopped" | "unknown" } | null;
   failure: LifecycleFailure | null;
 }
 
 export interface ProjectLifecyclePorts {
+  create: (request: CreateProjectRequest) => Promise<ProjectView>;
   open: (request: OpenProjectRequest) => Promise<ProjectView>;
   read: (request: ReadProjectRequest) => Promise<ProjectView>;
   close: (request: { sessionToken: string }) => Promise<CloseProjectView>;
@@ -76,7 +79,7 @@ export class ProjectLifecycle {
 
   constructor(ports: Partial<ProjectLifecyclePorts> = {}) {
     this.ports = {
-      open: projectCommands.open, read: projectCommands.read, close: projectCommands.close,
+      create: projectCommands.create, open: projectCommands.open, read: projectCommands.read, close: projectCommands.close,
       status: executionCommands.status, quiesce: executionCommands.quiesce,
       stopCleanup: executionCommands.stopApplicationInstances, resumeCleanup: executionCommands.resumeApplicationInstances,
       createReads: project => new SessionReads(executionContext(project)), actionId: () => crypto.randomUUID(), ...ports,
@@ -205,17 +208,38 @@ export class ProjectLifecycle {
     session.reads.retire(); this.update({ retainedSession: session, closingSession: null });
   }
 
-  async open(locator: string) {
+  open(locator: string) {
+    return this.enterProject({ kind: "open", locator }, () => this.ports.open({ locator }));
+  }
+
+  create(input: CreateProjectRequest) {
+    const request = structuredClone(input);
+    Object.freeze(request.targetLocales); Object.freeze(request);
+    return this.enterProject({ kind: "create", locator: request.destination, request }, () => this.ports.create(request));
+  }
+
+  /** Explicitly opens the original destination; never retries an uncertain create. */
+  openCreatedProject() {
+    const pending = this.state.pending;
+    if (pending?.kind !== "create" || !pending.locator || this.state.retainedSession) return Promise.resolve(false);
+    const locator = pending.locator;
+    return this.enterProject({ kind: "open", locator }, () => this.ports.open({ locator }), pending);
+  }
+
+  private async enterProject(action: { kind: "open"; locator: string } | { kind: "create"; locator: string; request: CreateProjectRequest },
+    dispatch: () => Promise<ProjectView>, recovery?: PendingLifecycle) {
+    if (recovery && this.state.pending !== recovery) return false;
+    const locator = action.locator;
     if (!locator.trim()) { this.update({ failure: { code: "command-failed", cause: { field: "locator" } } }); return false; }
-    const ticket = this.begin("guarding"); if (!ticket) return false;
+    const ticket = this.begin("guarding", !!recovery); if (!ticket) return false;
     let permit: SessionExitPermit | null = null;
     let dispatched = false;
     try {
-      permit = await this.guard(ticket, { kind: "open-project" }, () => true);
+      permit = await this.guard(ticket, { kind: action.kind === "create" ? "create-project" : "open-project" }, () => !recovery || this.state.pending === recovery);
       if (!permit?.current()) return false;
-      this.update({ phase: "opening" });
+      this.update({ phase: action.kind === "create" ? "creating" : "opening" });
       dispatched = true;
-      const project = await this.ports.open({ locator });
+      const project = await dispatch();
       // The promise belongs to this exact request. A revoked leave permit cannot discard its Core ACK.
       if (!this.owns(ticket)) return false;
       const canLeave = permit.current(), previous = ticket.session;
@@ -228,11 +252,12 @@ export class ProjectLifecycle {
         if (this.disposed) reads.retire();
         this.update({ session: { project, reads } });
       }
+      if (recovery && this.state.pending === recovery) this.update({ pending: null });
       if (!canLeave) this.update({ failure: { code: "leave-changed" } });
       return canLeave;
     } catch (cause) {
       if (this.owns(ticket)) this.update(dispatched && hasUnknownOutcome(cause)
-        ? { pending: { kind: "open", session: ticket.session, locator }, failure: { code: "unknown-lifecycle", cause } }
+        ? { pending: recovery ?? { ...action, session: ticket.session }, failure: { code: "unknown-lifecycle", cause } }
         : { failure: { code: "command-failed", cause } });
       return false;
     } finally { permit?.release(); this.finish(ticket); }

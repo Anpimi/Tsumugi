@@ -20,7 +20,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@radix-ui/react-dialog";
-import { join as joinPath, sep as pathSeparator } from "@tauri-apps/api/path";
+import { join as joinPath } from "@tauri-apps/api/path";
+import { isSafeChildDirectoryName, previewDestination } from "./projectLocation";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import {
@@ -211,20 +212,6 @@ function localeLabel(t: TFunction, value: string, uiLocale: string) {
 
 function isPresetLocale(value: string): boolean {
   return languagePresets.some((preset) => preset.value === value);
-}
-
-function previewDestination(parentDirectory: string, directoryName: string): string {
-  const parent = parentDirectory.trim();
-  const child = directoryName.trim();
-  if (!parent || !child) return "";
-  return `${parent.replace(/[\\/]+$/, "")}${pathSeparator()}${child}`;
-}
-
-function isSafeChildDirectoryName(value: string): boolean {
-  const child = value.trim();
-  if (!child || child !== value || child === "." || child === "..") return false;
-  if (/[\\/:*?"<>|\u0000-\u001f]/.test(child) || /[. ]$/.test(child)) return false;
-  return !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(child);
 }
 
 function parseTargetLocales(raw: string) {
