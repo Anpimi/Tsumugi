@@ -1,3 +1,6 @@
+import { settingsWorkbenchEn } from "./settingsWorkbench";
+import { mcpWorkbenchEn } from "./mcpWorkbench";
+import { pluginWorkbenchEn } from "./pluginWorkbench";
 import { knowledgeEn } from "./knowledge";
 import { startupEn } from "./startup";
 import { sourceMaintenanceEn } from "./sourceMaintenance";
@@ -6,6 +9,8 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+settingsWorkbench: settingsWorkbenchEn,
+mcpWorkbench: mcpWorkbenchEn,
 startup: startupEn,
 knowledge: knowledgeEn,
 sourceMaintenance: sourceMaintenanceEn,
@@ -742,6 +747,7 @@ sourcePlugin: {
   failed: "The source operation could not be completed. Selected files and saved results are preserved. Check your installed plugins and task history. Expired or closed permissions cannot be renewed and require a new review.",
 },
 plugins: {
+  ...pluginWorkbenchEn,
   originalRemovalTitle: "Confirm removal of {{name}} {{version}}",
   originalRemovalEffect: "Continue the pending removal and verify that its files were deleted. Any tasks still using that installation must finish first. Newer installations, project content, saved results, history, and exports are preserved. Temporary recovery files may remain.",
   originalRemovalConsent: "I approve continuing this removal and verifying the result.",

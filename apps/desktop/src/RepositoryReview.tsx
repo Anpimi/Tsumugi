@@ -1,10 +1,14 @@
 import type { Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { PluginPermissions } from "./PluginPermissions";
+import { PackagePermissionReview } from "./PluginPermissions";
+import { Button } from "./design-system/Button";
+import { Field } from "./design-system/Field";
+import type { PluginPackageDetailsView } from "./pluginCommands";
 import type { PluginInventoryView, PluginRepositoryVerifiedView } from "./pluginCommands";
 
-export function RepositoryReview({ repository, selected, rollbacks, inventory, disabled, discardDisabled, headingRef, onSelect, onRollback, onInstall, onDiscard }: {
+export function RepositoryReview({ repository, approvedManifests, selected, rollbacks, inventory, disabled, discardDisabled, headingRef, onSelect, onRollback, onInstall, onDiscard }: {
   repository: PluginRepositoryVerifiedView;
+  approvedManifests?: ReadonlyMap<string, PluginPackageDetailsView["manifest"]>;
   selected: readonly string[];
   rollbacks: readonly string[];
   inventory: PluginInventoryView | undefined;
@@ -48,23 +52,20 @@ export function RepositoryReview({ repository, selected, rollbacks, inventory, d
         {conflict ? <p role="alert">{t("plugins.repositorySourceConflict")}</p> : null}
         <h5>{t("plugins.runtime")}</h5>
         <ul>{member.manifest.components.map(component => <li key={component.id}>{component.id}: {t(`plugins.runtimes.${component.runtime}`)}</li>)}</ul>
-        <h5>{t("plugins.permissionsTitle")}</h5>
-        <PluginPermissions permissions={member.manifest.permissions}/>
-        {member.manifest.contributions.map(contribution => contribution.contribution.kind === "capability"
-          ? <div key={contribution.id}><p>{t("plugins.capability", { name: contribution.id })}</p><PluginPermissions permissions={contribution.contribution.declaration.permissions}/></div> : null)}
+        <PackagePermissionReview manifest={member.manifest} approvedManifest={approvedManifests?.get(member.packageDigest)} review/>
         <details><summary>{t("plugins.fingerprint")}</summary><code>{member.packageDigest}</code><p>{t("plugins.files", { count: member.fileCount, bytes: member.byteCount })}</p></details>
-        <label className="plugin-consent"><input type="checkbox" checked={checked} disabled={disabled || (conflict && !checked)}
-          onChange={event => onSelect(member.packageDigest, event.target.checked)}/>{t("plugins.repositoryMemberConsent", { name: plugin.id, version: plugin.version })}</label>
+        <Field className="plugin-consent" label={t("plugins.repositoryMemberConsent", { name: plugin.id, version: plugin.version })}><input type="checkbox" checked={checked} disabled={disabled || (conflict && !checked)}
+          onChange={event => onSelect(member.packageDigest, event.target.checked)}/></Field>
         {member.kind === "rollback" ? <><p>{t("plugins.repositoryRollbackHelp")}</p>
-          <label className="plugin-consent"><input type="checkbox" checked={rollbacks.includes(member.packageDigest)} disabled={disabled || !checked || conflict}
-            onChange={event => onRollback(member.packageDigest, event.target.checked)}/>{t("plugins.repositoryRollbackConsent", { name: plugin.id, version: plugin.version })}</label>
+          <Field className="plugin-consent" label={t("plugins.repositoryRollbackConsent", { name: plugin.id, version: plugin.version })}><input type="checkbox" checked={rollbacks.includes(member.packageDigest)} disabled={disabled || !checked || conflict}
+            onChange={event => onRollback(member.packageDigest, event.target.checked)}/></Field>
         </> : null}
       </li>;
     })}</ul>
     <p>{t("plugins.repositoryInstallEffect")}</p>
     <p>{t("plugins.packPartial")}</p>
-    <div className="execution-actions"><button type="button" className="primary-button" disabled={disabled || chosen.length === 0 || rollbackMissing || chosen.some(conflicts) || expiryDate === null} onClick={onInstall}>
+    <div className="execution-actions"><Button type="button" variant="primary" disabled={disabled || chosen.length === 0 || rollbackMissing || chosen.some(conflicts) || expiryDate === null} onClick={onInstall}>
       {t(includesRollback ? "plugins.repositoryInstallRollback" : "plugins.repositoryInstall")}
-    </button><button type="button" className="secondary-button" disabled={discardDisabled} onClick={onDiscard}>{t("plugins.repositoryDiscard")}</button></div>
+    </Button><Button type="button" variant="secondary" disabled={discardDisabled} onClick={onDiscard}>{t("plugins.repositoryDiscard")}</Button></div>
   </section>;
 }

@@ -4,10 +4,14 @@ import { CommandFailureDetails, failureReason } from "./CommandFailure";
 import { useSessionReads } from "./SessionReadProvider";
 import { mcpShareStatusKey, useMcpSharing, validMcpRecipientLabel } from "./McpSharingSession";
 import type { McpShareView } from "./mcpCommands";
-import "./McpSharingPanel.css";
+import { Button } from "./design-system/Button";
+import { Field, TextArea, TextInput } from "./design-system/Field";
+import styles from "./McpSharingPanel.module.css";
 
 /** This presentation never owns or persists the recipient credential. */
-export function McpSharingPanel() {
+export function McpSharingPanel({ visible: presented = true, disabled = false, embedded = false, onDraftClosed }: {
+  visible?: boolean; disabled?: boolean; embedded?: boolean; onDraftClosed?: () => void;
+}) {
   const owner = useMcpSharing(), { state } = owner, reads = useSessionReads(), { t, i18n } = useTranslation();
   const [showConfiguration, setShowConfiguration] = useState(false), [visible, setVisible] = useState(document.visibilityState !== "hidden");
   const [expanded, setExpanded] = useState(true);
@@ -17,19 +21,19 @@ export function McpSharingPanel() {
   const snapshot = useCallback(() => reads.client.getQueryData<McpShareView>(reads.key(key)), [reads, identity]);
   const view = useSyncExternalStore(subscribe, snapshot);
   useEffect(() => { if (state.target) setExpanded(true); }, [state.target]);
-  useEffect(() => { if (state.target && expanded) heading.current?.focus({ preventScroll: true }); }, [state.target, expanded]);
+  useEffect(() => { if (state.target && expanded && presented) heading.current?.focus({ preventScroll: true }); }, [state.target, expanded, presented]);
   useEffect(() => { setShowConfiguration(false); }, [operation?.preparation.identity.shareId, operation?.closed]);
-  useEffect(() => { if (!expanded || !visible) setShowConfiguration(false); }, [expanded, visible]);
+  useEffect(() => { if (!expanded || !visible || !presented || reads.retired) setShowConfiguration(false); }, [expanded, visible, presented, reads.retired]);
   useEffect(() => { const changed = () => setVisible(document.visibilityState !== "hidden"); document.addEventListener("visibilitychange", changed);
     return () => document.removeEventListener("visibilitychange", changed); }, []);
   useEffect(() => {
-    if (!visible || !expanded || reads.retired || !operation || operation.closed || state.reading || state.readFailed
+    if (!visible || !presented || !expanded || reads.retired || !operation || operation.closed || state.reading || state.readFailed
       || !(state.busy === "authorizing" || operation.uncertain || state.revocation?.pending || state.revocation?.uncertain
         || view?.phase === "awaiting-pairing" || view?.phase === "connected" || view?.phase === "closing")
       || view?.phase === "closed" && view.callbacksDrained) return;
     const timer = window.setTimeout(() => { void owner.refresh(); }, 1000);
     return () => window.clearTimeout(timer);
-  }, [visible, expanded, reads, operation?.preparation.identity.shareId, operation?.authorization?.actionId, operation?.closed,
+  }, [visible, presented, expanded, reads, operation?.preparation.identity.shareId, operation?.authorization?.actionId, operation?.closed,
     state.reading, state.readFailed, state.busy, operation?.uncertain, state.revocation?.pending, state.revocation?.uncertain, view?.phase, view?.callbacksDrained]);
   if (!state.target) return null;
   const prepared = operation?.prepared, preview = prepared?.preview, payload = preview?.payload;
@@ -39,21 +43,19 @@ export function McpSharingPanel() {
     : reason === "mcp-share-current" ? "mcpSharing.currentChanged"
     : typeof state.failure !== "string" && state.failure?.code === "limit-exceeded" ? "mcpSharing.limitExceeded" : "mcpSharing.failed";
   const expiry = view?.expiresAtMs == null ? null : new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(Number(view.expiresAtMs)));
-  return <section className="mcp-sharing-panel" aria-labelledby="mcp-share-heading"><details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
-    <summary>{t("mcpSharing.title")}</summary><div className="mcp-sharing-content">
+  return <section hidden={!presented} className={styles.panel} data-embedded={embedded || undefined} aria-labelledby="mcp-share-heading"><details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary>{t("mcpSharing.title")}</summary><fieldset disabled={disabled || reads.retired} className={styles.content}>
     <h2 id="mcp-share-heading" ref={heading} tabIndex={-1}>{t("mcpSharing.title")}</h2>
     <p>{t("mcpSharing.help")}</p><p>{t("mcpSharing.entry", { key: state.target.key, locale: state.target.locale })}</p>
-    <label className="field"><span>{t("mcpSharing.recipient")}</span><input value={state.recipientLabel} maxLength={128}
-      onChange={event => owner.edit({ recipientLabel: event.target.value })} aria-invalid={state.recipientLabel !== "" && !validMcpRecipientLabel(state.recipientLabel)} aria-describedby="mcp-share-recipient-help" /></label>
-    <p id="mcp-share-recipient-help">{t("mcpSharing.recipientHelp")}</p>
-    {state.recipientLabel !== "" && !validMcpRecipientLabel(state.recipientLabel) ? <p role="alert">{t("mcpSharing.recipientInvalid")}</p> : null}
-    <label className="checkbox-label"><input type="checkbox" checked={state.shareTerms} onChange={event => owner.edit({ shareTerms: event.target.checked })} />{t("mcpSharing.terms")}</label>
-    <label className="checkbox-label"><input type="checkbox" checked={state.shareContext} onChange={event => owner.edit({ shareContext: event.target.checked })} />{t("mcpSharing.context")}</label>
+    <Field label={t("mcpSharing.recipient")} description={t("mcpSharing.recipientHelp")} error={state.recipientLabel !== "" && !validMcpRecipientLabel(state.recipientLabel) ? t("mcpSharing.recipientInvalid") : undefined}><TextInput value={state.recipientLabel} maxLength={128}
+      onChange={event => owner.edit({ recipientLabel: event.target.value })} /></Field>
+    <label className={styles.check}><input type="checkbox" checked={state.shareTerms} onChange={event => owner.edit({ shareTerms: event.target.checked })} />{t("mcpSharing.terms")}</label>
+    <label className={styles.check}><input type="checkbox" checked={state.shareContext} onChange={event => owner.edit({ shareContext: event.target.checked })} />{t("mcpSharing.context")}</label>
     <p>{t("mcpSharing.optionalHelp")}</p>
     {state.stale ? <p role="status">{t("mcpSharing.stale")}</p> : null}
     {operation && operation.editSeq !== state.editSeq ? <p role="status">{t("mcpSharing.changedInput")}</p> : null}
-    <div className="execution-actions"><button type="button" className="secondary-button" disabled={!!state.busy || !!state.revocation?.pending || !safeClosed || !validMcpRecipientLabel(state.recipientLabel)}
-      onClick={() => { void owner.prepare(); }}>{t("mcpSharing.preview")}</button></div>
+    <div className={styles.actions}><Button type="button" variant="secondary" disabled={!!state.busy || !!state.revocation?.pending || !safeClosed || !validMcpRecipientLabel(state.recipientLabel)}
+      onClick={() => { void owner.prepare(); }}>{t("mcpSharing.preview")}</Button></div>
     {state.busy ? <p role="status">{t(state.busy === "preparing" ? "mcpSharing.preparing" : "mcpSharing.authorizing")}</p> : null}
     {preview && payload && prepared ? <section aria-label={t("mcpSharing.previewTitle")}>
       <h3>{t("mcpSharing.previewTitle")}</h3>
@@ -69,10 +71,10 @@ export function McpSharingPanel() {
         : payload.manualContext ? <pre>{payload.manualContext.text === "" ? t("mcpSharing.empty") : payload.manualContext.text}</pre> : <p>{t("mcpSharing.noContext")}</p>}
       <details><summary>{t("mcpSharing.snapshot")}</summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
       <p>{t("mcpSharing.duration")}</p><p>{t("mcpSharing.bounds")}</p><p id="mcp-share-disclosure">{t("mcpSharing.disclosure")}</p>
-      <label className="checkbox-label"><input type="checkbox" checked={state.consent} disabled={!ready || !!state.busy} aria-describedby="mcp-share-disclosure"
+      <label className={styles.check}><input type="checkbox" checked={state.consent} disabled={!ready || !!state.busy} aria-describedby="mcp-share-disclosure"
         onChange={event => owner.setConsent(event.target.checked)} />{t("mcpSharing.consent")}</label>
-      <div className="execution-actions"><button type="button" className="primary-button" disabled={!ready || !state.consent || !!state.busy || !!state.revocation?.pending}
-        onClick={() => { void owner.authorize(); }}>{t("mcpSharing.authorize")}</button></div>
+      <div className={styles.actions}><Button type="button" variant="primary" disabled={!ready || !state.consent || !!state.busy || !!state.revocation?.pending}
+        onClick={() => { void owner.authorize(); }}>{t("mcpSharing.authorize")}</Button></div>
     </section> : null}
     {operation?.uncertain ? <p role="status">{t("mcpSharing.unknown")}</p> : null}
     {state.revocation?.uncertain ? <p role="status">{t("mcpSharing.revokeUnknown")}</p> : null}
@@ -80,21 +82,21 @@ export function McpSharingPanel() {
     {state.readFailed ? <p role="alert">{t("mcpSharing.readFailed")}</p> : null}
     {state.failure ? <div role="alert"><p>{t(failureMessage)}</p><CommandFailureDetails failure={state.failure} /></div> : null}
     {view ? <><p role="status">{t("mcpSharing.status", { status: t(`mcpSharing.statuses.${view.phase}`) })}</p>{expiry ? <p>{t("mcpSharing.expires", { expiry })}</p> : null}</> : null}
-    {operation ? <div className="execution-actions"><button type="button" className="secondary-button"
-      onClick={() => { void (state.reading ? owner.retryRead() : owner.refresh()); }}>{t(state.reading ? "mcpSharing.replaceRead" : state.readFailed ? "mcpSharing.retryRead" : "mcpSharing.check")}</button>
+    {operation ? <div className={styles.actions}><Button type="button" variant="secondary"
+      onClick={() => { void (state.reading ? owner.retryRead() : owner.refresh()); }}>{t(state.reading ? "mcpSharing.replaceRead" : state.readFailed ? "mcpSharing.retryRead" : "mcpSharing.check")}</Button>
       {state.reading ? <p>{t("mcpSharing.replaceReadHelp")}</p> : null}
-      <button type="button" className="secondary-button" disabled={operation.closed || !!state.revocation?.pending}
-        onClick={() => { setShowConfiguration(false); void owner.revoke(); }}>{t(operation.authorization ? "mcpSharing.revoke" : "mcpSharing.closeRequest")}</button>
+      <Button type="button" variant="secondary" disabled={operation.closed || !!state.revocation?.pending}
+        onClick={() => { setShowConfiguration(false); void owner.revoke(); }}>{t(operation.authorization ? "mcpSharing.revoke" : "mcpSharing.closeRequest")}</Button>
     </div> : null}
     {operation?.authorization && !operation.closed && !operation.configuration ? <><p>{t("mcpSharing.configurationUnavailable")}</p><p>{t("mcpSharing.recoverHelp")}</p>
-      <button type="button" className="secondary-button" disabled={!!state.busy || !!state.revocation?.pending || !!state.revocation}
-        onClick={() => { void owner.authorize(true); }}>{t("mcpSharing.recover")}</button></> : null}
+      <Button type="button" variant="secondary" disabled={!!state.busy || !!state.revocation?.pending || !!state.revocation}
+        onClick={() => { void owner.authorize(true); }}>{t("mcpSharing.recover")}</Button></> : null}
     {operation?.configuration && !operation.closed && !state.revocation ? <section aria-label={t("mcpSharing.configuration")}>
       <h3>{t("mcpSharing.configuration")}</h3><p>{t("mcpSharing.secretHelp")}</p>
-      <button type="button" className="secondary-button" aria-expanded={showConfiguration} onClick={() => setShowConfiguration(value => !value)}>{t(showConfiguration ? "mcpSharing.hideSecret" : "mcpSharing.showSecret")}</button>
-      {showConfiguration ? <label className="field"><span>{t("mcpSharing.configuration")}</span><textarea rows={9} readOnly spellCheck={false} autoComplete="off" value={JSON.stringify(operation.configuration, null, 2)} /></label> : null}
+      <Button type="button" variant="secondary" aria-expanded={showConfiguration} onClick={() => setShowConfiguration(value => !value)}>{t(showConfiguration ? "mcpSharing.hideSecret" : "mcpSharing.showSecret")}</Button>
+      {showConfiguration && presented && visible && !reads.retired ? <Field label={t("mcpSharing.configuration")}><TextArea rows={9} readOnly spellCheck={false} autoComplete="off" value={JSON.stringify(operation.configuration, null, 2)} /></Field> : null}
     </section> : null}
     <p>{t("mcpSharing.closeHelp")}</p><p>{t("mcpSharing.retained")}</p>
-    <button type="button" className="secondary-button" disabled={!!state.revocation?.pending || !safeClosed} onClick={() => owner.close()}>{t("mcpSharing.close")}</button>
-  </div></details></section>;
+    <Button type="button" variant="secondary" disabled={!!state.revocation?.pending || !safeClosed} onClick={() => { if (owner.close()) onDraftClosed?.(); }}>{t("mcpSharing.close")}</Button>
+  </fieldset></details></section>;
 }

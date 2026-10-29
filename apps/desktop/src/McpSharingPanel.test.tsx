@@ -11,6 +11,7 @@ import { WorkspaceViewMemory, WorkspaceViewProvider, type WorkspaceArea } from "
 import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
 import { mcpConfiguration, mcpPrepared, mcpProject, mcpTarget, mcpView } from "./testSupport/mcpSharingFixture";
 import { fixtureIdentity as id } from "./testSupport/executionFixture";
+import { installSourceDraftFixture } from "./testSupport/sourceDraftFixture";
 import execution from "../test/fixtures/executionCommands.contract.json";
 import commandErrors from "../test/fixtures/commandErrors.contract.json";
 import { i18n } from "./i18n";
@@ -20,8 +21,8 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 let owner: ReturnType<typeof sharingOwner.useMcpSharing>, canonical: McpShareView | null, sequence: number, area: WorkspaceArea;
 function Probe() { const value = sharingOwner.useMcpSharing(); useLayoutEffect(() => { owner = value; }); return null; }
-function Harness({ children }: { children?: ReactNode }) {
-  return <ApplicationReadProvider><ProjectSessionOwners project={mcpProject} bridge={false}><Probe /><McpSharingPanel />{children}</ProjectSessionOwners></ApplicationReadProvider>;
+function Harness({ children, visible = true }: { children?: ReactNode; visible?: boolean }) {
+  return <ApplicationReadProvider><ProjectSessionOwners project={mcpProject} bridge={false}><Probe /><McpSharingPanel visible={visible}/>{children}</ProjectSessionOwners></ApplicationReadProvider>;
 }
 const handle = createRef<ProjectSessionHandle>();
 function ProductionHarness() {
@@ -64,6 +65,7 @@ beforeEach(async () => {
     if (command === "read_execution_task_activity") return { total: "0", active: "0", attention: "0", saved: "0", rows: [] };
     throw new Error("Unexpected synthetic non-sharing read");
   });
+  installSourceDraftFixture();
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -107,8 +109,23 @@ it("renders shared text literally without executing content or fetching embedded
     canonical = mcpView(request.preparation); const prepared = mcpPrepared(request.preparation); prepared.preview.payload.source.text = text; return prepared;
   });
   open(); await preview();
-  expect(screen.getByText(/^<img src=/, { selector: "pre" }).textContent).toBe(text); expect(document.querySelector(".mcp-sharing-panel img")).toBeNull();
-  expect(document.querySelector(".mcp-sharing-panel a")).toBeNull(); expect(mcpCommands.authorize).not.toHaveBeenCalled();
+  expect(screen.getByText(/^<img src=/, { selector: "pre" }).textContent).toBe(text);
+  const panel = screen.getByRole("region", { name: "Share saved entry" });
+  expect(panel.querySelector("img")).toBeNull(); expect(panel.querySelector("a")).toBeNull(); expect(mcpCommands.authorize).not.toHaveBeenCalled();
+});
+
+it("hides the temporary credential on panel close and retains the original authorization on reopening", async () => {
+  const view = render(<Harness/>); act(() => { expect(owner.begin(mcpTarget)).toBe(true); }); await preview(); await authorize();
+  fireEvent.click(screen.getByRole("button", { name: "Show client config" }));
+  expect(screen.getByRole("textbox", { name: "One-time MCP client configuration" })).toBeInTheDocument();
+  const original = owner.current().operation?.authorization;
+  view.rerender(<Harness visible={false}/>);
+  expect(document.querySelector("textarea[autocomplete='off']")).toBeNull();
+  expect(owner.current().operation?.authorization).toBe(original); expect(mcpCommands.revoke).not.toHaveBeenCalled();
+  view.rerender(<Harness/>);
+  expect(screen.queryByRole("textbox", { name: "One-time MCP client configuration" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show client config" })).toBeInTheDocument();
+  expect(mcpCommands.authorize).toHaveBeenCalledTimes(1);
 });
 
 it("requires explicit reveal for the local credential and hides it again without persisting or rendering it elsewhere", async () => {

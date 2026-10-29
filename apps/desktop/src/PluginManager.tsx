@@ -1,13 +1,18 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref, type KeyboardEvent } from "react";
 import { useQuery, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import { pluginInventoryReadKey as inventoryKey, pluginRepositoriesReadKey as repositoriesKey, useApplicationQueryClient, usePluginReadReservation } from "./ApplicationReadProvider";
 import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, isCommandError } from "./projectCommands";
-import { pluginCommands, type PluginCandidateView, type PluginApprovalRemovalRequest, type PluginUninstallRequest, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView } from "./pluginCommands";
+import { pluginCommands, type PluginCandidateView, type PluginApprovalRemovalRequest, type PluginUninstallRequest, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PluginInventoryView } from "./pluginCommands";
 import "./PluginManager.css";
-import { PluginPermissions } from "./PluginPermissions";
+import { PackagePermissionReview } from "./PluginPermissions";
+import { Button } from "./design-system/Button";
+import { Field } from "./design-system/Field";
+import { Banner } from "./design-system/Feedback";
+import { Sheet } from "./design-system/Dialog";
+import { TabsRoot, TabsList, TabsTrigger, TabsContent } from "./design-system/Tabs";
 import { OfflinePackReview } from "./OfflinePackReview";
 import { RepositoryControls } from "./RepositoryControls";
 import { RepositoryReview } from "./RepositoryReview";
@@ -72,32 +77,89 @@ function failureMessage(failure: CommandFailure, unknown: boolean, trust = false
   return "plugins.failed";
 }
 
-/** Declarations describe requested access, independently of recorded approval. */
-function PackagePermissionReview({ manifest }: { manifest: PluginPackageDetailsView["manifest"] }) {
-  const { t } = useTranslation();
-  return <section className="plugin-permission-review" aria-label={t("plugins.permissionsTitle")}>
-    <h4>{t("plugins.permissionsTitle")}</h4>
-    <div className="plugin-permission-group" role="group" aria-label={t("plugins.packagePermissions")}>
-      <h5>{t("plugins.packagePermissions")}</h5><PluginPermissions permissions={manifest.permissions}/>
-    </div>
-    {manifest.contributions.map(contribution => contribution.contribution.kind === "capability"
-      ? <div className="plugin-permission-group" key={contribution.id} role="group" aria-label={t("plugins.capability", { name: contribution.id })}>
-        <h5>{t("plugins.capability", { name: contribution.id })}</h5><PluginPermissions permissions={contribution.contribution.declaration.permissions}/>
-      </div> : null)}
-  </section>;
-}
+type Manifest = PluginPackageDetailsView["manifest"];
+type ReviewMember = { manifest: Manifest; packageDigest: string; origin: { sourceId: string; publisherId: string } };
+const manualOrigin = { sourceId: "manual-local", publisherId: "manual-approval" };
 
+async function readPermissionBaselines(inventory: PluginInventoryView | undefined, members: ReviewMember[]) {
+  const result = new Map<string, Manifest>();
+  if (!inventory) return { revision: "", manifests: result };
+  await Promise.all(members.map(async member => {
+    // A baseline must have both an exact approval and a sealed installed image
+    // from the same publisher/source. Ambiguous prior versions are not guessed.
+    const approved = inventory.packageDecisions.filter(decision => decision.plugin.id === member.manifest.plugin.id
+      && decision.plugin.publisher === member.manifest.plugin.publisher && decision.origin.sourceId === member.origin.sourceId
+      && decision.origin.publisherId === member.origin.publisherId && inventory.packages.some(record => record.state === "sealed"
+        && record.packageDigest === decision.packageDigest && record.plugin.id === decision.plugin.id
+        && record.plugin.publisher === decision.plugin.publisher && record.plugin.version === decision.plugin.version
+        && record.origin.sourceId === decision.origin.sourceId && record.origin.publisherId === decision.origin.publisherId));
+    const exact = approved.find(decision => decision.packageDigest === member.packageDigest && decision.plugin.version === member.manifest.plugin.version);
+    const previous = exact ?? (approved.length === 1 ? approved[0] : undefined);
+    if (!previous) return;
+    try {
+      const view = await pluginCommands.package({ plugin: previous.plugin, packageDigest: previous.packageDigest });
+      if (view.packageDigest === previous.packageDigest && view.manifest.plugin.id === previous.plugin.id
+        && view.manifest.plugin.publisher === previous.plugin.publisher && view.manifest.plugin.version === previous.plugin.version) {
+        result.set(member.packageDigest, view.manifest);
+      }
+    } catch {
+      // The visible review explicitly reports that all requests need approval
+      // when an approved image cannot be read. It never reuses another package.
+    }
+  }));
+  return { revision: inventory.settingsRevision, manifests: result };
+}
 
 /** Application configuration stays mounted across project switches and panel
  * close. A rejected/unknown mutation retains its original request for recovery. */
-export interface PluginManagerHandle { open: () => void }
-export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boolean; onBusyChange: (busy: boolean) => void; ref?: Ref<PluginManagerHandle> }) {
+export interface PluginManagerHandle {
+  open: (returnTo?: HTMLElement) => void;
+  exitState: () => { blocked: boolean; revision: string };
+}
+export function PluginManager({ disabled, onBusyChange, hideTrigger = false, presentation = "dialog", onOpenChange, ref }: {
+  disabled: boolean;
+  onBusyChange: (busy: boolean) => void;
+  hideTrigger?: boolean;
+  presentation?: "dialog" | "workbench";
+  onOpenChange?: (open: boolean) => void;
+  ref?: Ref<PluginManagerHandle>;
+}) {
   const { t } = useTranslation();
   const client = useApplicationQueryClient();
   const [open, setOpen] = useState(false);
-  useImperativeHandle(ref, () => ({ open: () => setOpen(true) }));
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const panelFocus = useRef<HTMLDivElement>(null);
+  const composing = useRef(false);
+  const workbench = presentation === "workbench";
+  const [tab, setTab] = useState("installed");
+  const tabRef = useRef(tab);
+  const tabFocus = useRef<"installed" | "catalog" | "source" | null>(null);
+  const installedFocus = useRef<HTMLHeadingElement>(null);
+  function navigateTab(value: string, target: "installed" | "catalog" | "source") {
+    if (composing.current) return;
+    tabFocus.current = target;
+    changeTab(value);
+  }
+  function changeTab(value: string) {
+    if (composing.current) return;
+    tabRef.current = value;
+    setTab(value);
+    if (value === "sources") setRepositoriesVisible(true);
+  }
+  function changeOpen(value: boolean) {
+    if (running.current || (!value && composing.current)) return;
+    setOpen(value);
+    onOpenChange?.(value);
+  }
+  function preventCompositionAction(event: KeyboardEvent) {
+    if ((composing.current || event.nativeEvent.isComposing || event.keyCode === 229)
+      && ["Enter", " ", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
   usePluginReadReservation(running);
   const mounted = useRef(true);
   const [candidate, setCandidate] = useState<PluginCandidateView | null>(null);
@@ -121,9 +183,31 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   const [defaultsConsent, setDefaultsConsent] = useState<string | null>(null);
   const [verifiedRuntime, setVerifiedRuntime] = useState<string | null>(null);
   const [details, setDetails] = useState<PluginPackageDetailsView | null>(null);
+  const [permissionBaselines, setPermissionBaselines] = useState<{ revision: string; manifests: Map<string, Manifest> } | null>(null);
   const [failure, setFailure] = useState<CommandFailure | null>(null);
-  const [intent, setIntent] = useState<Intent | null>(null);
-  const [recovery, setRecovery] = useState<"none" | "retained" | "unknown">("none");
+  const [intent, renderIntent] = useState<Intent | null>(null);
+  const [recovery, renderRecovery] = useState<"none" | "retained" | "unknown">("none");
+  const intentRef = useRef<Intent | null>(null);
+  const recoveryRef = useRef(recovery);
+  const exitRevision = useRef(0);
+  function setIntent(value: Intent | null) {
+    if (intentRef.current !== value) exitRevision.current += 1;
+    intentRef.current = value;
+    renderIntent(value);
+  }
+  function setRecovery(value: typeof recovery | ((previous: typeof recovery) => typeof recovery)) {
+    const next = typeof value === "function" ? value(recoveryRef.current) : value;
+    if (recoveryRef.current !== next) exitRevision.current += 1;
+    recoveryRef.current = next;
+    renderRecovery(next);
+  }
+  useImperativeHandle(ref, () => ({
+    open: returnTo => {
+      returnFocus.current = returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+      changeOpen(true);
+    },
+    exitState: () => ({ blocked: running.current || recoveryRef.current !== "none", revision: String(exitRevision.current) }),
+  }));
   const unknown = recovery === "unknown";
   const originalRequired = recovery !== "none";
   const [saved, setSaved] = useState<TranslationKey | null>(null);
@@ -150,33 +234,46 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
   useEffect(() => {
     if (open && failure) failureFocus.current?.focus();
   }, [open, failure]);
+  useEffect(() => {
+    const target = tabFocus.current;
+    if (!target) return;
+    tabFocus.current = null;
+    if (target === "installed") installedFocus.current?.focus();
+    else if (target === "catalog") repositoryReviewFocus.current?.focus();
+    else repositoryTrigger.current?.focus();
+  }, [tab]);
   const cleanupIntent = cleanupSelection?.intent;
   useEffect(() => {
     if (cleanupIntent) cleanupFocus.current?.focus();
     else if (returnCleanupFocus.current) {
       returnCleanupFocus.current = false;
       if (cleanupTrigger.current?.isConnected && !cleanupTrigger.current.disabled) cleanupTrigger.current.focus();
-      else closeButton.current?.focus();
+      else (closeButton.current ?? panelFocus.current)?.focus();
     }
   }, [cleanupIntent]);
   useEffect(() => { setVerifiedRuntime(null); }, [query.dataUpdatedAt]);
-  useEffect(() => { if (pack) packFocus.current?.focus(); }, [pack]);
-  useEffect(() => { if (repositoriesVisible || repositorySelection) repositoryFocus.current?.focus(); }, [repositoriesVisible, repositorySelection]);
-  useEffect(() => { if (repository) repositoryReviewFocus.current?.focus(); }, [repository]);
+  useEffect(() => { if (open && pack && (!workbench || tabRef.current === "discover")) packFocus.current?.focus(); }, [open, pack, workbench]);
+  useEffect(() => { if (open && (repositoriesVisible || repositorySelection) && (!workbench || tabRef.current === "sources")) repositoryFocus.current?.focus(); }, [open, repositoriesVisible, repositorySelection, workbench]);
+  useEffect(() => { if (open && repository && (!workbench || tabRef.current === "discover")) repositoryReviewFocus.current?.focus(); }, [open, repository, workbench]);
   useEffect(() => {
-    if (!busy && focusAfterSuccess.current) { focusAfterSuccess.current = false; closeButton.current?.focus(); }
-  }, [busy]);
+    if (!busy && focusAfterSuccess.current) {
+      focusAfterSuccess.current = false;
+      if (workbench && tabRef.current === "installed") installedFocus.current?.focus();
+      else (closeButton.current ?? panelFocus.current)?.focus();
+    }
+  }, [busy, workbench]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, [client]);
 
   async function operation(work: () => Promise<void>) {
-    if (running.current) return;
+    if (disabled || running.current) return;
     running.current = true;
+    exitRevision.current += 1;
     setBusy(true);
     setFailure(null);
     setSaved(null);
     try { await work(); }
     catch (error) { if (mounted.current) setFailure(commandFailure(error)); }
-    finally { running.current = false; if (mounted.current) setBusy(false); }
+    finally { running.current = false; exitRevision.current += 1; if (mounted.current) setBusy(false); }
   }
   async function submit(next: Intent) {
     await operation(async () => {
@@ -191,6 +288,9 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
           const result = next.kind === "repository-refresh" ? await pluginCommands.refreshRepository(next.request, next.selection) : await pluginCommands.resumeRepository(next.request);
           if (!mounted.current) return;
           setRepository(result);
+          const baselines = await readPermissionBaselines(query.data, result.packages);
+          if (!mounted.current) return;
+          setPermissionBaselines(baselines);
           setRepositorySelection(null);
           setRepositoryConsent(false);
           setRepositoryMembers([]);
@@ -221,6 +321,8 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         setDefaultsConsent(null);
         setVerifiedRuntime(null);
         setDetails(null);
+        setPermissionBaselines(null);
+        if (workbench && tabRef.current === "discover") navigateTab("installed", "installed");
         setSaved(next.kind === "approval-removal" ? "plugins.approvalRemoved" : next.kind === "uninstall" ? "plugins.installationRemoved" : "plugins.saved");
         if (next.kind === "approval-removal" || next.kind === "uninstall" || next.kind === "pack" || next.kind === "repository-install") focusAfterSuccess.current = true;
       } catch (error) {
@@ -281,40 +383,78 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
     setFailure(null);
     setSaved(null);
   }
-  const unavailable = busy || originalRequired || query.isFetching || repositoriesQuery.isFetching || !query.data || query.isError;
+  const unavailable = disabled || busy || originalRequired || query.isFetching || repositoriesQuery.isFetching || !query.data || query.isError;
   const blocked = unavailable || cleanupSelection !== null;
-  const trustBlocked = busy || originalRequired || query.isFetching || repositoriesQuery.isFetching || cleanupSelection !== null;
+  const trustBlocked = disabled || busy || originalRequired || query.isFetching || repositoriesQuery.isFetching || cleanupSelection !== null;
   const inventory = query.data;
+  const approvedManifests = !query.isError && !query.isFetching && permissionBaselines?.revision === inventory?.settingsRevision ? permissionBaselines?.manifests : undefined;
   const trustIntent = intent?.kind === "repository-refresh" || intent?.kind === "repository-resume";
   const retainedMessage = trustIntent ? "plugins.repositoryPending" : intent?.kind === "approval-removal" || intent?.kind === "uninstall" ? "plugins.cleanupPending" : "plugins.pending";
-  return <Dialog open={open} onOpenChange={next => { if (!running.current) setOpen(next); }}>
-    <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled}>{t("plugins.open")}</button></DialogTrigger>
-    <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog plugin-manager" aria-busy={busy}
-      onOpenAutoFocus={event => { if (failure && failureFocus.current) { event.preventDefault(); failureFocus.current.focus(); } }}
-      onEscapeKeyDown={event => { if (running.current) event.preventDefault(); }} onInteractOutside={event => { if (running.current) event.preventDefault(); }}>
-      <div className="execution-heading"><div><DialogTitle>{t("plugins.title")}</DialogTitle><DialogDescription>{t("plugins.description")}</DialogDescription></div>
-        <button type="button" ref={closeButton} className="secondary-button" disabled={busy} onClick={() => setOpen(false)}>{t("plugins.close")}</button></div>
-      <div className="plugin-manager-body">
-      <p className="plugin-boundaries">{t("plugins.permissionBoundary")}</p>
-      <div className="execution-actions plugin-entry-actions"><button type="button" className="primary-button" disabled={blocked} onClick={() => void operation(async () => {
+  const discoveryContent = <>
+      {workbench ? <p className="plugin-tab-help">{t("plugins.discoverHelp")}</p> : null}
+      <div className="execution-actions plugin-entry-actions"><Button type="button" variant={candidate || pack || repository || inventory?.defaultsOffer ? "secondary" : "primary"} disabled={blocked} onClick={() => void operation(async () => {
         setConsent(false);
         const selected = await pluginCommands.select();
-        if (mounted.current && selected) { setCandidate(selected); setConsent(false); setPack(null); setPackMembers([]); clearRepositoryReview(); setIntent(null); }
-      })}>{t("plugins.choose")}</button>
-        <button type="button" ref={packTrigger} className="secondary-button" disabled={blocked} onClick={() => void operation(async () => {
+        if (mounted.current && selected) {
+          setCandidate(selected); setConsent(false); setPack(null); setPackMembers([]); clearRepositoryReview(); setIntent(null); setPermissionBaselines(null);
+          const baselines = await readPermissionBaselines(query.data, [{ ...selected, origin: manualOrigin }]);
+          if (mounted.current) setPermissionBaselines(baselines);
+        }
+      })}>{t("plugins.choose")}</Button>
+        <Button type="button" ref={packTrigger} variant="secondary" disabled={blocked} onClick={() => void operation(async () => {
           setPackMembers([]);
           const selected = await pluginCommands.selectPack();
-          if (mounted.current && selected) { setPack(selected); setPackMembers([]); setCandidate(null); setConsent(false); clearRepositoryReview(); setIntent(null); }
-        })}>{t("plugins.choosePack")}</button>
-        <button type="button" className="secondary-button" disabled={busy} aria-expanded={repositoriesVisible} aria-controls="plugin-repositories" onClick={() => setRepositoriesVisible(true)}>{t("plugins.repositoryTitle")}</button>
-        <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void query.refetch()}>{t("plugins.refresh")}</button></div>
-      {busy || query.isFetching ? <p className="plugin-feedback" data-tone="info" role="status">{t("plugins.loading")}</p> : null}
-      {query.isError ? <div className="plugin-feedback" data-tone={query.data ? "warning" : "error"} role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
-      {saved ? <p className="plugin-feedback" data-tone="success" role="status">{t(saved)}</p> : null}
-      {failure ? <div className="plugin-feedback" data-tone={originalRequired ? "warning" : "error"} role="alert" ref={failureFocus} tabIndex={-1}><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
-        <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching || repositoriesQuery.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
-        {!originalRequired && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setPack(null); setPackMembers([]); clearRepositoryReview(); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); if (repositoriesVisible) void repositoriesQuery.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
-      </div> : null}
+          if (mounted.current && selected) {
+            setPack(selected); setPackMembers([]); setCandidate(null); setConsent(false); clearRepositoryReview(); setIntent(null); setPermissionBaselines(null);
+            const baselines = await readPermissionBaselines(query.data, selected.packages.map(member => ({ ...member, origin: manualOrigin })));
+            if (mounted.current) setPermissionBaselines(baselines);
+          }
+        })}>{t("plugins.choosePack")}</Button>
+        {!workbench ? <Button variant="secondary" disabled={disabled || busy} aria-expanded={repositoriesVisible} aria-controls="plugin-repositories" onClick={() => setRepositoriesVisible(true)}>{t("plugins.repositoryTitle")}</Button> : null}
+      </div>
+      {repository ? <>{!inventory || query.isError ? <p role="alert">{t("plugins.repositoryInventoryUnavailable")}</p> : null}<RepositoryReview repository={repository} approvedManifests={approvedManifests} selected={repositoryMembers} rollbacks={repositoryRollbacks} inventory={inventory} disabled={blocked || intent !== null}
+        discardDisabled={busy || originalRequired || intent !== null} headingRef={repositoryReviewFocus} onSelect={selectRepositoryMember} onRollback={(digest, checked) => setRepositoryRollbacks(current => checked ? [...current, digest] : current.filter(item => item !== digest))}
+        onInstall={installRepositoryMembers} onDiscard={() => { clearRepositoryReview(); if (workbench) navigateTab("sources", "source"); else if (repositoryTrigger.current && !repositoryTrigger.current.disabled) repositoryTrigger.current.focus(); else (closeButton.current ?? panelFocus.current)?.focus(); }}/></> : null}
+      {inventory?.defaultsOffer ? <section className="plugin-section" aria-label={t("plugins.defaultsTitle")}>
+        <h3>{t("plugins.defaultsTitle")}</h3><p>{t("plugins.defaultsDescription")}</p>
+        <ul className="plugin-list">{inventory.defaultsOffer.packages.map(package_ => <li key={package_.packageDigest}>
+          <strong>{package_.displayName}</strong> · {package_.plugin.version}
+          <details><summary>{t("plugins.fingerprint")}</summary><code>{package_.packageDigest}</code></details>
+        </li>)}</ul>
+        <p>{t("plugins.defaultsEffect")}</p>
+        {inventory.defaultsOffer.availability !== "available" ? <p>{t(inventory.defaultsOffer.availability === "resources-unavailable" ? "plugins.defaultsUnavailable" : "plugins.runtimeUnavailable")}</p> : <>
+          <Field className="plugin-consent" label={t("plugins.defaultsConsent")}><input type="checkbox" disabled={blocked || intent !== null}
+            checked={defaultsConsent === inventory.defaultsOffer.selectionDigest}
+            onChange={event => setDefaultsConsent(event.target.checked ? inventory.defaultsOffer?.selectionDigest ?? null : null)}/></Field>
+          <Button type="button" variant={candidate || pack || repository ? "secondary" : "primary"} disabled={blocked || intent !== null || defaultsConsent !== inventory.defaultsOffer.selectionDigest}
+            onClick={() => { if (inventory.defaultsOffer) void submit({ kind: "defaults", request: {
+              id: inventory.defaultsOffer.id, selectionDigest: inventory.defaultsOffer.selectionDigest,
+              expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
+            } }); }}>{t("plugins.installDefaults")}</Button>
+        </>}
+      </section> : null}
+      {pack && inventory ? <OfflinePackReview pack={pack} approvedManifests={approvedManifests} selected={packMembers} inventory={inventory} disabled={blocked || intent !== null} headingRef={packFocus}
+        onSelect={(digest, checked) => setPackMembers(current => checked ? [...current, digest] : current.filter(member => member !== digest))}
+        onDiscard={() => { setPack(null); setPackMembers([]); packTrigger.current?.focus(); }}
+        onInstall={installSelectedPack}/> : null}
+      {candidate ? <section className="plugin-section plugin-install-review" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
+        <div className="plugin-review-layout"><div className="plugin-package-plan">
+        <p className="plugin-package-name"><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
+        <p>{t("plugins.declaredPublisher", { publisher: candidate.manifest.plugin.publisher })}</p>
+        <p>{t("plugins.manualTrust")}</p>
+        <h4>{t("plugins.runtime")}</h4><ul>{candidate.manifest.components.map(component => <li key={component.id}>{component.id}: {t(`plugins.runtimes.${component.runtime}`)}</li>)}</ul>
+        </div><PackagePermissionReview manifest={candidate.manifest} approvedManifest={approvedManifests?.get(candidate.packageDigest)} review/></div>
+        <details><summary>{t("plugins.fingerprint")}</summary><p><code>{candidate.packageDigest}</code></p><p>{t("plugins.files", { count: candidate.fileCount, bytes: candidate.byteCount })}</p></details>
+        <p>{t("plugins.installEffect")}</p>
+        <Field className="plugin-consent" label={t("plugins.consent")}><input type="checkbox" checked={consent} disabled={disabled || busy || originalRequired} onChange={event => setConsent(event.target.checked)}/></Field>
+        <div className="execution-actions plugin-install-actions"><Button type="button" variant="primary" disabled={blocked || !consent || intent !== null} onClick={() => {
+          if (query.data) void submit({ kind: "install", request: { ticket: candidate.ticket, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } });
+        }}>{t("plugins.install")}</Button>
+          <Button type="button" variant="secondary" disabled={disabled || busy || originalRequired} onClick={() => { setCandidate(null); setConsent(false); }}>{t("plugins.discard")}</Button></div>
+      </section> : null}
+  </>;
+  const sourceContent = <>
+      {workbench ? <p className="plugin-tab-help">{t("plugins.sourcesHelp")}</p> : null}
       {repositoriesVisible ? <RepositoryControls sources={repositoriesQuery.data} reading={repositoriesQuery.isFetching} readFailure={repositoriesQuery.isError ? commandFailure(repositoriesQuery.error) : null}
         selection={repositorySelection} consent={repositoryConsent} disabled={trustBlocked || intent !== null} readDisabled={busy} headingRef={repositoryFocus} chooseRef={repositoryTrigger}
         onChoose={() => void operation(async () => {
@@ -327,46 +467,9 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
         onRead={() => void repositoriesQuery.refetch()} onConsent={setRepositoryConsent}
         onRefresh={() => { if (repositorySelection && repositoryConsent) void submit({ kind: "repository-refresh", selection: repositorySelection,
           request: { ticket: repositorySelection.ticket, expectedRevision: repositorySelection.revision, actionId: crypto.randomUUID() } }); }} onResume={resumeRepository}/> : null}
-      {repository ? <>{!inventory || query.isError ? <p role="alert">{t("plugins.repositoryInventoryUnavailable")}</p> : null}<RepositoryReview repository={repository} selected={repositoryMembers} rollbacks={repositoryRollbacks} inventory={inventory} disabled={blocked || intent !== null}
-        discardDisabled={busy || originalRequired || intent !== null} headingRef={repositoryReviewFocus} onSelect={selectRepositoryMember} onRollback={(digest, checked) => setRepositoryRollbacks(current => checked ? [...current, digest] : current.filter(item => item !== digest))}
-        onInstall={installRepositoryMembers} onDiscard={() => { clearRepositoryReview(); if (repositoryTrigger.current && !repositoryTrigger.current.disabled) repositoryTrigger.current.focus(); else closeButton.current?.focus(); }}/></> : null}
-      {inventory?.defaultsOffer ? <section className="plugin-section" aria-label={t("plugins.defaultsTitle")}>
-        <h3>{t("plugins.defaultsTitle")}</h3><p>{t("plugins.defaultsDescription")}</p>
-        <ul className="plugin-list">{inventory.defaultsOffer.packages.map(package_ => <li key={package_.packageDigest}>
-          <strong>{package_.displayName}</strong> · {package_.plugin.version}
-          <details><summary>{t("plugins.fingerprint")}</summary><code>{package_.packageDigest}</code></details>
-        </li>)}</ul>
-        <p>{t("plugins.defaultsEffect")}</p>
-        {inventory.defaultsOffer.availability !== "available" ? <p>{t(inventory.defaultsOffer.availability === "resources-unavailable" ? "plugins.defaultsUnavailable" : "plugins.runtimeUnavailable")}</p> : <>
-          <label className="plugin-consent"><input type="checkbox" disabled={blocked || intent !== null}
-            checked={defaultsConsent === inventory.defaultsOffer.selectionDigest}
-            onChange={event => setDefaultsConsent(event.target.checked ? inventory.defaultsOffer?.selectionDigest ?? null : null)}/>{t("plugins.defaultsConsent")}</label>
-          <button type="button" className="primary-button" disabled={blocked || intent !== null || defaultsConsent !== inventory.defaultsOffer.selectionDigest}
-            onClick={() => { if (inventory.defaultsOffer) void submit({ kind: "defaults", request: {
-              id: inventory.defaultsOffer.id, selectionDigest: inventory.defaultsOffer.selectionDigest,
-              expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
-            } }); }}>{t("plugins.installDefaults")}</button>
-        </>}
-      </section> : null}
-      {pack && inventory ? <OfflinePackReview pack={pack} selected={packMembers} inventory={inventory} disabled={blocked || intent !== null} headingRef={packFocus}
-        onSelect={(digest, checked) => setPackMembers(current => checked ? [...current, digest] : current.filter(member => member !== digest))}
-        onDiscard={() => { setPack(null); setPackMembers([]); packTrigger.current?.focus(); }}
-        onInstall={installSelectedPack}/> : null}
-      {candidate ? <section className="plugin-section plugin-install-review" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
-        <div className="plugin-review-layout"><div className="plugin-package-plan">
-        <p className="plugin-package-name"><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
-        <p>{t("plugins.declaredPublisher", { publisher: candidate.manifest.plugin.publisher })}</p>
-        <p>{t("plugins.manualTrust")}</p>
-        <h4>{t("plugins.runtime")}</h4><ul>{candidate.manifest.components.map(component => <li key={component.id}>{component.id}: {t(`plugins.runtimes.${component.runtime}`)}</li>)}</ul>
-        </div><PackagePermissionReview manifest={candidate.manifest}/></div>
-        <details><summary>{t("plugins.fingerprint")}</summary><p><code>{candidate.packageDigest}</code></p><p>{t("plugins.files", { count: candidate.fileCount, bytes: candidate.byteCount })}</p></details>
-        <p>{t("plugins.installEffect")}</p>
-        <label className="plugin-consent"><input type="checkbox" checked={consent} disabled={busy || originalRequired} onChange={event => setConsent(event.target.checked)}/>{t("plugins.consent")}</label>
-        <div className="execution-actions plugin-install-actions"><button type="button" className="primary-button" disabled={blocked || !consent || intent !== null} onClick={() => {
-          if (query.data) void submit({ kind: "install", request: { ticket: candidate.ticket, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } });
-        }}>{t("plugins.install")}</button>
-          <button type="button" className="secondary-button" disabled={busy || originalRequired} onClick={() => { setCandidate(null); setConsent(false); }}>{t("plugins.discard")}</button></div>
-      </section> : null}
+      {workbench && repository ? <Banner tone="success" action={<Button variant="secondary" onClick={() => navigateTab("discover", "catalog")}>{t("plugins.openCatalog")}</Button>}>{t("plugins.sourceCatalogReady")}</Banner> : null}
+  </>;
+  const installedContent = <>
       {cleanupSelection ? <section className="plugin-section plugin-cleanup-review" aria-labelledby="plugin-cleanup-title">
         <h3 id="plugin-cleanup-title" tabIndex={-1} ref={cleanupFocus}>{t(cleanupSelection.original ? "plugins.originalRemovalTitle" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeTitle" : "plugins.uninstallTitle", {
           name: cleanupSelection.intent.request.package.plugin.id, version: cleanupSelection.intent.request.package.plugin.version,
@@ -376,54 +479,54 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
           <p>{t("plugins.origin", { source: cleanupSelection.intent.request.origin.sourceId, publisher: cleanupSelection.intent.request.origin.publisherId })}</p>
           {cleanupSelection.intent.kind === "uninstall" ? <p>{t("plugins.installationReference", { action: cleanupSelection.intent.request.originalInstallAction })}</p> : null}
         </details>
-        <label className="plugin-consent"><input type="checkbox" checked={cleanupSelection.consent} disabled={busy || originalRequired || intent !== null}
-          onChange={event => setCleanupSelection({ ...cleanupSelection, consent: event.target.checked })}/>{t(cleanupSelection.original ? "plugins.originalRemovalConsent" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeConsent" : "plugins.uninstallConsent")}</label>
-        <div className="execution-actions"><button type="button" className="primary-button" disabled={unavailable || intent !== null || !cleanupSelection.consent}
-          onClick={() => void submit(cleanupSelection.intent)}>{t(cleanupSelection.original ? "plugins.confirmOriginalRemoval" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.confirmRevoke" : "plugins.confirmUninstall")}</button>
-          <button type="button" className="secondary-button" disabled={busy || originalRequired || intent !== null} onClick={() => {
+        <Field className="plugin-consent" label={t(cleanupSelection.original ? "plugins.originalRemovalConsent" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.revokeConsent" : "plugins.uninstallConsent")}><input type="checkbox" checked={cleanupSelection.consent} disabled={disabled || busy || originalRequired || intent !== null}
+          onChange={event => setCleanupSelection({ ...cleanupSelection, consent: event.target.checked })}/></Field>
+        <div className="execution-actions"><Button type="button" variant="primary" disabled={unavailable || intent !== null || !cleanupSelection.consent}
+          onClick={() => void submit(cleanupSelection.intent)}>{t(cleanupSelection.original ? "plugins.confirmOriginalRemoval" : cleanupSelection.intent.kind === "approval-removal" ? "plugins.confirmRevoke" : "plugins.confirmUninstall")}</Button>
+          <Button type="button" variant="secondary" disabled={disabled || busy || originalRequired || intent !== null} onClick={() => {
             returnCleanupFocus.current = true; setCleanupSelection(null);
-          }}>{t("plugins.cancelCleanup")}</button></div>
+          }}>{t("plugins.cancelCleanup")}</Button></div>
       </section> : null}
-      {inventory ? <section className="plugin-section" aria-label={t("plugins.installed")}><h3>{t("plugins.installed")}</h3>
+      {inventory ? <section className="plugin-section" aria-label={t("plugins.installed")}><h3 ref={installedFocus} tabIndex={-1}>{t("plugins.installed")}</h3>
         {!inventory.packages.length ? <p>{t("plugins.empty")}</p> : <ul className="plugin-list">{inventory.packages.map(record => {
           const decision = inventory.packageDecisions.find(value => value.packageDigest === record.packageDigest && value.plugin.id === record.plugin.id && value.plugin.publisher === record.plugin.publisher && value.plugin.version === record.plugin.version);
           return <li key={record.packageDigest}><div><strong>{record.plugin.id}</strong> · {record.plugin.version}</div>
             <p>{t("plugins.declaredPublisher", { publisher: record.plugin.publisher })}</p>
             <p>{t(record.state === "recovery-required" ? "plugins.recovery" : !decision ? "plugins.unapproved" : decision.enabled ? "plugins.enabled" : "plugins.disabled")}</p>
             <details><summary>{t("plugins.fingerprint")}</summary><code>{record.packageDigest}</code><p>{t("plugins.origin", { source: record.origin.sourceId, publisher: record.origin.publisherId })}</p></details>
-            {decision ? <div className="execution-actions"><button type="button" className="secondary-button" disabled={blocked || intent !== null || (!decision.enabled && record.state !== "sealed")} onClick={() => {
+            {decision ? <div className="execution-actions"><Button type="button" variant="secondary" disabled={blocked || intent !== null || (!decision.enabled && record.state !== "sealed")} onClick={() => {
               if (query.data) void submit({ kind: "enable", request: { package: { plugin: record.plugin, packageDigest: record.packageDigest }, enabled: !decision.enabled, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } });
-            }}>{t(decision.enabled ? "plugins.disable" : "plugins.enable")}</button>
-              <button type="button" className="text-button" disabled={blocked} onClick={() => void operation(async () => { const view = await pluginCommands.package({ plugin: record.plugin, packageDigest: record.packageDigest }); if (mounted.current) setDetails(view); })}>{t("plugins.details")}</button>
-              <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "approval-removal", request: {
+            }}>{t(decision.enabled ? "plugins.disable" : "plugins.enable")}</Button>
+              <Button type="button" variant="link" disabled={blocked} onClick={() => void operation(async () => { const view = await pluginCommands.package({ plugin: record.plugin, packageDigest: record.packageDigest }); if (mounted.current) setDetails(view); })}>{t("plugins.details")}</Button>
+              <Button type="button" variant="secondary" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "approval-removal", request: {
                 package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, origin: decision.origin,
                 expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
-              } }, event.currentTarget)}>{t("plugins.revoke")}</button></div> : null}
-            <button type="button" className="secondary-button" disabled={blocked || intent !== null || record.state !== "sealed" || inventory.packageDecisions.some(value => value.packageDigest === record.packageDigest
+              } }, event.currentTarget)}>{t("plugins.revoke")}</Button></div> : null}
+            <Button type="button" variant="secondary" disabled={blocked || intent !== null || record.state !== "sealed" || inventory.packageDecisions.some(value => value.packageDigest === record.packageDigest
               || (value.plugin.id === record.plugin.id && value.plugin.publisher === record.plugin.publisher && value.plugin.version === record.plugin.version))}
               onClick={event => reviewCleanup({ kind: "uninstall", request: { package: { plugin: record.plugin, packageDigest: record.packageDigest }, origin: record.origin,
                 originalInstallAction: record.originalInstallAction, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
-              } }, event.currentTarget)}>{t("plugins.uninstall")}</button>
+              } }, event.currentTarget)}>{t("plugins.uninstall")}</Button>
             {inventory.packageDecisions.some(value => value.packageDigest === record.packageDigest
               || (value.plugin.id === record.plugin.id && value.plugin.publisher === record.plugin.publisher && value.plugin.version === record.plugin.version)) ? <p>{t("plugins.revokeFirst")}</p> : null}
           </li>;
         })}</ul>}
         {inventory.packageDecisions.filter(decision => !inventory.packages.some(record => record.packageDigest === decision.packageDigest)).map(decision => <div key={decision.packageDigest}><p>{t("plugins.approvedMissing", { name: decision.plugin.id, version: decision.plugin.version })}</p>
-          {decision.enabled ? <button type="button" disabled={blocked || intent !== null} onClick={() => { if (query.data) void submit({ kind: "enable", request: { package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, enabled: false, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } }); }}>{t("plugins.disable")}</button> : null}
-          <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "approval-removal", request: {
+          {decision.enabled ? <Button type="button" disabled={blocked || intent !== null} onClick={() => { if (query.data) void submit({ kind: "enable", request: { package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, enabled: false, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } }); }}>{t("plugins.disable")}</Button> : null}
+          <Button type="button" variant="secondary" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "approval-removal", request: {
             package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, origin: decision.origin,
             expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
-          } }, event.currentTarget)}>{t("plugins.revoke")}</button></div>)}
+          } }, event.currentTarget)}>{t("plugins.revoke")}</Button></div>)}
       </section> : null}
       {inventory?.uninstallations.length ? <section className="plugin-section" aria-label={t("plugins.previousRemovals")}>
         <details><summary>{t("plugins.previousRemovals")}</summary><p>{t("plugins.removalObservation")}</p>
           <ul className="plugin-list">{inventory.uninstallations.map(record => <li key={record.actionId}>
             <p><strong>{record.installation.plugin.id}</strong> · {record.installation.plugin.version}</p>
             <p>{t(record.state === "recovery-required" ? "plugins.removalPending" : "plugins.removalRecorded")}</p>
-            <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "uninstall", request: {
+            <Button type="button" variant="secondary" disabled={blocked || intent !== null} onClick={event => reviewCleanup({ kind: "uninstall", request: {
               package: { plugin: record.installation.plugin, packageDigest: record.installation.packageDigest }, origin: record.installation.origin,
               originalInstallAction: record.installation.originalInstallAction, expectedRevision: record.settingsRevision, actionId: record.actionId,
-            } }, event.currentTarget, true)}>{t("plugins.confirmRemoval")}</button>
+            } }, event.currentTarget, true)}>{t("plugins.confirmRemoval")}</Button>
           </li>)}</ul>
         </details>
       </section> : null}
@@ -438,11 +541,11 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
             <p>{t("plugins.nativeHostEffect")}</p>
             <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{offer.environmentDigest}</code><p>{offer.environment.executable.kind}: <code>{offer.environment.executable.value}</code></p></details>
             {approved ? <p>{t("plugins.nativeHostCurrentApproved")}</p> : <>
-              <label className="plugin-consent"><input type="checkbox" checked={nativeHostConsent === offer.environmentDigest} disabled={blocked || intent !== null}
-                onChange={event => setNativeHostConsent(event.target.checked ? offer.environmentDigest : null)}/>{t("plugins.nativeHostConsent")}</label>
-              <button type="button" className="primary-button" disabled={blocked || intent !== null || nativeHostConsent !== offer.environmentDigest} onClick={() => {
+              <Field className="plugin-consent" label={t("plugins.nativeHostConsent")}><input type="checkbox" checked={nativeHostConsent === offer.environmentDigest} disabled={blocked || intent !== null}
+                onChange={event => setNativeHostConsent(event.target.checked ? offer.environmentDigest : null)}/></Field>
+              <Button type="button" variant="secondary" disabled={blocked || intent !== null || nativeHostConsent !== offer.environmentDigest} onClick={() => {
                 void submit({ kind: "native-host", request: { environmentDigest: offer.environmentDigest, approved: true, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID() } });
-              }}>{t("plugins.nativeHostApprove")}</button>
+              }}>{t("plugins.nativeHostApprove")}</Button>
             </>}
           </>;
         })() : <p>{t(`plugins.nativeHostAvailability.${inventory.nativeHostOffer.reason}`)}</p>}
@@ -450,9 +553,9 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
           <p>{decision.environment.profile === "native-application-host-v1" ? t("plugins.nativeHostApproved", { version: decision.environment.hostVersion }) : null}</p>
           <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{decision.environmentDigest}</code></details>
           <p>{t("plugins.nativeHostRevokeEffect")}</p>
-          <button type="button" className="text-button" disabled={blocked || intent !== null} onClick={() => {
+          <Button type="button" variant="link" disabled={blocked || intent !== null} onClick={() => {
             void submit({ kind: "native-host", request: { environmentDigest: decision.environmentDigest, approved: false, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID() } });
-          }}>{t("plugins.nativeHostRevoke")}</button>
+          }}>{t("plugins.nativeHostRevoke")}</Button>
         </div>)}
       </section> : null}
       {inventory ? <section className="plugin-section" aria-label={t("plugins.runtimeTitle")}><h3>{t("plugins.runtimeTitle")}</h3>
@@ -463,10 +566,10 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
             <p>{t("plugins.runtimeSystem", { version: offer.minimumSystemVersion })}</p><p>{t("plugins.runtimeEffect")}</p>
             <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{offer.environmentDigest}</code><p>{t("plugins.files", { count: offer.fileCount, bytes: offer.byteCount })}</p></details>
             {offer.availability !== "available" ? <p>{t(`plugins.runtimeAvailability.${offer.availability}`)}</p> : <>
-              <label className="plugin-consent"><input type="checkbox" checked={runtimeConsent === offer.environmentDigest} disabled={blocked || intent !== null} onChange={event => setRuntimeConsent(event.target.checked ? offer.environmentDigest : null)}/>{t("plugins.runtimeConsent")}</label>
-              <button type="button" className="primary-button" disabled={blocked || intent !== null || runtimeConsent !== offer.environmentDigest} onClick={() => {
+              <Field className="plugin-consent" label={t("plugins.runtimeConsent")}><input type="checkbox" checked={runtimeConsent === offer.environmentDigest} disabled={blocked || intent !== null} onChange={event => setRuntimeConsent(event.target.checked ? offer.environmentDigest : null)}/></Field>
+              <Button type="button" variant="secondary" disabled={blocked || intent !== null || runtimeConsent !== offer.environmentDigest} onClick={() => {
                 void submit({ kind: "runtime", request: { id: offer.id, environmentDigest: offer.environmentDigest, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID() } });
-              }}>{t(record ? "plugins.confirmRuntime" : "plugins.installRuntime")}</button>
+              }}>{t(record ? "plugins.confirmRuntime" : "plugins.installRuntime")}</Button>
             </>}
           </div>;
         })}
@@ -476,9 +579,9 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
           return <li key={record.environmentDigest}><p>{t("plugins.bundledRuntime", { version: record.environment.toolVersion })}</p>
             <p>{t(record.state === "recovery-required" ? "plugins.runtimeRecovery" : approved ? "plugins.runtimeApproved" : "plugins.unapproved")}</p>
             <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{record.environmentDigest}</code></details>
-            {approved && record.state === "sealed" ? <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={() => void operation(async () => {
+            {approved && record.state === "sealed" ? <Button type="button" variant="secondary" disabled={blocked || intent !== null} onClick={() => void operation(async () => {
               setVerifiedRuntime(null); await pluginCommands.lookupRuntime({ environmentDigest: record.environmentDigest }); if (mounted.current) setVerifiedRuntime(record.environmentDigest);
-            })}>{t("plugins.verifyRuntime")}</button> : null}
+            })}>{t("plugins.verifyRuntime")}</Button> : null}
             {verifiedRuntime === record.environmentDigest ? <p className="plugin-feedback" data-tone={query.isError || query.isFetching ? "warning" : "success"} role="status">{t("plugins.runtimeVerified")}</p> : null}
           </li>;
         })}</ul>}
@@ -488,7 +591,55 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
       {details ? <section className="plugin-section plugin-installed-details" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><PackagePermissionReview manifest={details.manifest}/>
         <ul>{details.manifest.contributions.map(contribution => <li key={contribution.id}>{contribution.id} · {t(`plugins.contributions.${contribution.contribution.kind}`)}</li>)}</ul>
       </section> : null}
-      </div>
+  </>;
+  const content = <div className="plugin-manager-body" ref={panelFocus} tabIndex={-1} aria-busy={busy}
+      onKeyDownCapture={preventCompositionAction}
+      onCompositionStartCapture={() => { composing.current = true; }}
+      onCompositionEndCapture={() => { composing.current = false; }}
+      onClickCapture={event => { if (composing.current && event.detail === 0) { event.preventDefault(); event.stopPropagation(); } }}>
+      <p className="plugin-boundaries">{t("plugins.permissionBoundary")}</p>
+      <div className="plugin-refresh"><Button variant="ghost" disabled={disabled || busy || query.isFetching} onClick={() => void query.refetch()}>{t("plugins.refresh")}</Button></div>
+      {busy || query.isFetching ? <Banner tone="info" role="status">{t("plugins.loading")}</Banner> : null}
+      {query.isError ? <Banner tone={query.data ? "warning" : "error"} role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></Banner> : null}
+      {saved ? <Banner tone="success" role="status">{t(saved)}</Banner> : null}
+      {failure ? <Banner tone={originalRequired ? "warning" : "error"} role="alert" ref={failureFocus} tabIndex={-1}><p>{t(recovery === "retained" ? retainedMessage : failureMessage(failure, unknown, trustIntent))}</p>
+        <CommandFailureDetails failure={failure}/>{intent ? <Button type="button" variant="secondary" disabled={disabled || busy || query.isFetching || repositoriesQuery.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</Button> : null}
+        {!originalRequired && intent ? <Button type="button" variant="link" disabled={disabled || busy} onClick={() => { setIntent(null); setFailure(null); setCleanupSelection(null); setCandidate(null); setPack(null); setPackMembers([]); clearRepositoryReview(); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); if (repositoriesVisible) void repositoriesQuery.refetch(); }}>{t("plugins.reviewCurrent")}</Button> : null}
+      </Banner> : null}
+      {workbench ? <TabsRoot value={tab} onValueChange={changeTab}>
+        <TabsList aria-label={t("plugins.tabsLabel")}>
+          <TabsTrigger value="installed">{t("plugins.installedTab")}</TabsTrigger>
+          <TabsTrigger value="discover">{t("plugins.discoverTab")}</TabsTrigger>
+          <TabsTrigger value="sources">{t("plugins.sourcesTab")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="installed" forceMount hidden={tab !== "installed"}>{installedContent}</TabsContent>
+        <TabsContent value="discover" forceMount hidden={tab !== "discover"}>{discoveryContent}</TabsContent>
+        <TabsContent value="sources" forceMount hidden={tab !== "sources"}>{sourceContent}</TabsContent>
+      </TabsRoot> : <>{discoveryContent}{sourceContent}{installedContent}</>}
+    </div>;
+  const restoreTrigger = (event: Event) => {
+    if (returnFocus.current?.isConnected) { event.preventDefault(); returnFocus.current.focus(); }
+    composing.current = false;
+  };
+  if (workbench) return <Sheet open={open} closeDisabled={busy} onOpenChange={changeOpen} title={t("plugins.title")}
+    description={t("plugins.workbenchDescription")} closeLabel={t("plugins.close")} className="plugin-manager plugin-manager-workbench"
+    trigger={hideTrigger ? undefined : <Button variant="secondary" disabled={disabled}>{t("plugins.open")}</Button>}
+    onOpenAutoFocus={event => { if (failure && failureFocus.current) { event.preventDefault(); failureFocus.current.focus(); } }}
+    onCloseAutoFocus={restoreTrigger}
+    onEscapeKeyDown={event => { if (running.current || composing.current || event.isComposing || event.keyCode === 229) event.preventDefault(); }}
+    onInteractOutside={event => { if (running.current) event.preventDefault(); }}>
+    {content}
+  </Sheet>;
+  return <Dialog open={open} onOpenChange={changeOpen}>
+    {!hideTrigger ? <DialogTrigger asChild><Button variant="secondary" disabled={disabled}>{t("plugins.open")}</Button></DialogTrigger> : null}
+    <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog plugin-manager"
+      onOpenAutoFocus={event => { if (failure && failureFocus.current) { event.preventDefault(); failureFocus.current.focus(); } }}
+      onCloseAutoFocus={restoreTrigger}
+      onEscapeKeyDown={event => { if (running.current || composing.current || event.isComposing || event.keyCode === 229) event.preventDefault(); }}
+      onInteractOutside={event => { if (running.current) event.preventDefault(); }}>
+      <div className="execution-heading"><div><DialogTitle>{t("plugins.title")}</DialogTitle><DialogDescription>{t("plugins.description")}</DialogDescription></div>
+        <Button ref={closeButton} variant="secondary" disabled={disabled || busy} onClick={() => changeOpen(false)}>{t("plugins.close")}</Button></div>
+      {content}
     </DialogContent></DialogPortal>
   </Dialog>;
 }

@@ -28,6 +28,23 @@ beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset().
 }); });
 afterEach(cleanup);
 
+it.each([
+  { locale: "en-US", model: "Model identifier", check: "Check account status" },
+  { locale: "zh-CN", model: "模型标识（Model ID）", check: "查询账号状态" },
+])("keeps the subscription model label and validation connected in $locale", async copy => {
+  await i18n.changeLanguage(copy.locale);
+  render(<ApplicationReadProvider>
+    <ChatGptConnectionFields connection={connection} disabled={false} onChange={() => {}} modelInvalid/>
+    <p id="connection-model-error">Choose a model again</p>
+  </ApplicationReadProvider>);
+  const model = screen.getByRole("combobox", { name: copy.model });
+  expect(model).toHaveAttribute("id", "connection-chatgpt-model");
+  expect(model).toHaveAttribute("aria-invalid", "true");
+  expect(model).toHaveAccessibleDescription(`${i18n.t("connections.chatgpt.modelHelp")} Choose a model again`);
+  expect(screen.getByRole("button", { name: copy.check })).toBeEnabled();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
 it.each(["en-US", "zh-CN"])("requires explicit account and catalog actions without replacing a draft in %s", async locale => {
   await i18n.changeLanguage(locale); const user = userEvent.setup(); setup();
   expect(invoke).not.toHaveBeenCalled();

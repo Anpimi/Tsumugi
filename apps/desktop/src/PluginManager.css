@@ -47,3 +47,42 @@
   .plugin-manager .execution-heading { padding: 12px 16px; }
   .plugin-manager-body { padding-inline: 16px; }
 }
+
+.plugin-manager .plugin-refresh { display: flex; justify-content: flex-end; margin-block: var(--space-4); }
+.plugin-manager .plugin-tab-help { color: var(--color-text-secondary); margin-block: var(--space-6); }
+.plugin-manager .plugin-permission-list { list-style: none; padding-inline-start: 0; }
+.plugin-manager .plugin-permission-list > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-4); }
+.plugin-manager .plugin-permission-list > li > span:first-child { min-width: 0; flex: 1 1 16ch; }
+.plugin-manager .plugin-permission-list > li[data-new-permission="true"] { border-inline-start: var(--selection-width) solid var(--color-warning); background: var(--color-warning-soft); }
+.plugin-manager-workbench {
+  --text: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --surface: var(--color-bg-raised);
+  --canvas: var(--color-bg-canvas);
+  --border: var(--color-border-default);
+  --input-border: var(--color-border-strong);
+  --accent: var(--color-accent-text);
+  width: min(calc(var(--size-dock-wide) * 2), 100vw);
+  font-size: var(--text-base);
+  line-height: var(--line-base);
+}
+.plugin-manager-workbench .plugin-manager-body { padding: 0; overflow: visible; outline: none; }
+.plugin-manager-workbench [role="tabpanel"] { overflow: visible; }
+.plugin-manager-workbench .plugin-section { padding-block: var(--space-7); }
+.plugin-manager-workbench .plugin-section h3,
+.plugin-manager-workbench .plugin-package-name { font-size: var(--text-md); }
+.plugin-manager-workbench .plugin-section h4,
+.plugin-manager-workbench .plugin-section h5 { font-size: var(--text-base); }
+.plugin-manager-workbench :is(code, pre) { font-size: var(--text-sm); }
+.plugin-manager-workbench .execution-actions { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; }
+.plugin-manager-workbench .plugin-boundaries { font-size: var(--text-sm); margin-block: 0 var(--space-4); }
+.plugin-manager-workbench .plugin-entry-actions { margin-block: var(--space-6); }
+.plugin-manager-workbench .plugin-review-layout { gap: var(--space-6); margin-block: var(--space-6); }
+.plugin-manager-workbench .plugin-permission-review { padding: var(--space-5); border-radius: var(--radius-md); }
+.plugin-manager-workbench .plugin-permission-group { padding-block: var(--space-5); }
+.plugin-manager-workbench .plugin-list > li { padding-block: var(--space-6); }
+.plugin-manager-workbench .plugin-consent { gap: var(--space-4); margin-block: var(--space-6); }
+.plugin-manager-workbench .plugin-install-actions { bottom: calc(-1 * var(--space-7)); padding-block: var(--space-5); }
+.plugin-manager-workbench .plugin-cleanup-review { padding: var(--space-6); border-radius: var(--radius-md); }
+.plugin-manager .plugin-consent > input { order: -1; }
+.plugin-manager .plugin-consent { flex-direction: row; }

@@ -1,12 +1,16 @@
 import { useTranslation } from "react-i18next";
 import type { Ref } from "react";
 import type { PluginPackCandidateView, PluginInventoryView } from "./pluginCommands";
-import { PluginPermissions } from "./PluginPermissions";
+import { PackagePermissionReview } from "./PluginPermissions";
+import { Button } from "./design-system/Button";
+import { Field } from "./design-system/Field";
+import type { PluginPackageDetailsView } from "./pluginCommands";
 
 /** Review uses captured declarations. Each checkbox approves one exact member,
  * never all present or future members under a Pack's name. */
-export function OfflinePackReview({ pack, selected, inventory, disabled, headingRef, onSelect, onInstall, onDiscard }: {
+export function OfflinePackReview({ pack, approvedManifests, selected, inventory, disabled, headingRef, onSelect, onInstall, onDiscard }: {
   pack: PluginPackCandidateView;
+  approvedManifests?: ReadonlyMap<string, PluginPackageDetailsView["manifest"]>;
   selected: readonly string[];
   inventory: PluginInventoryView;
   disabled: boolean;
@@ -36,18 +40,15 @@ export function OfflinePackReview({ pack, selected, inventory, disabled, heading
           ? <p role="alert">{t("plugins.packSourceConflict")}</p> : null}
         <h5>{t("plugins.runtime")}</h5>
         <ul>{member.manifest.components.map(component => <li key={component.id}>{component.id}: {t(`plugins.runtimes.${component.runtime}`)}</li>)}</ul>
-        <h5>{t("plugins.permissionsTitle")}</h5>
-        <PluginPermissions permissions={member.manifest.permissions}/>
-        {member.manifest.contributions.map(contribution => contribution.contribution.kind === "capability"
-          ? <div key={contribution.id}><p>{t("plugins.capability", { name: contribution.id })}</p><PluginPermissions permissions={contribution.contribution.declaration.permissions}/></div> : null)}
+        <PackagePermissionReview manifest={member.manifest} approvedManifest={approvedManifests?.get(member.packageDigest)} review/>
         <details><summary>{t("plugins.fingerprint")}</summary><code>{member.packageDigest}</code><p>{t("plugins.files", { count: member.fileCount, bytes: member.byteCount })}</p></details>
-        <label className="plugin-consent"><input type="checkbox" disabled={disabled} checked={selected.includes(member.packageDigest)}
-          onChange={event => onSelect(member.packageDigest, event.target.checked)}/>{t("plugins.packMemberConsent", { name: plugin.id, version: plugin.version })}</label>
+        <Field className="plugin-consent" label={t("plugins.packMemberConsent", { name: plugin.id, version: plugin.version })}><input type="checkbox" disabled={disabled} checked={selected.includes(member.packageDigest)}
+          onChange={event => onSelect(member.packageDigest, event.target.checked)}/></Field>
       </li>;
     })}</ul>
     <p>{t("plugins.installEffect")}</p>
     <p>{t("plugins.packPartial")}</p>
-    <div className="execution-actions"><button type="button" className="primary-button" disabled={disabled || selected.length === 0 || selectedConflict} onClick={onInstall}>{t("plugins.packInstall")}</button>
-      <button type="button" className="secondary-button" disabled={disabled} onClick={onDiscard}>{t("plugins.discard")}</button></div>
+    <div className="execution-actions"><Button type="button" variant="primary" disabled={disabled || selected.length === 0 || selectedConflict} onClick={onInstall}>{t("plugins.packInstall")}</Button>
+      <Button type="button" variant="secondary" disabled={disabled} onClick={onDiscard}>{t("plugins.discard")}</Button></div>
   </section>;
 }

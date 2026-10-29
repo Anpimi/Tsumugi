@@ -5,6 +5,7 @@ import { createRef, useRef, useState } from "react";
 import { ApplicationReadProvider } from "./ApplicationReadProvider";
 import { ConnectionDraftProvider } from "./ConnectionDraftSession";
 import { ConnectionManager, type ConnectionManagerHandle } from "./ConnectionManager";
+import { Sheet } from "./design-system/Dialog";
 import { i18n } from "./i18n";
 import type { ConnectionReadView, ModelConnectionChange, ModelConnectionReceipt, ModelConnectionProfile } from "./connectionCommands";
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -24,6 +25,18 @@ function commit(request:ModelConnectionChange) {
   const receipt={actionId:request.actionId,requestDigest:"c".repeat(64),snapshot:structuredClone(current.snapshot)};actions.set(request.actionId,receipt);return receipt;
 }
 function setup(ref=createRef<ConnectionManagerHandle>()) {return {ref,...render(<ApplicationReadProvider><ConnectionDraftProvider><ConnectionManager disabled={false} ref={ref}/></ConnectionDraftProvider></ApplicationReadProvider>)};}
+function setupEmbedded(initialVisible = true) {
+  const ref = createRef<ConnectionManagerHandle>(), onReveal = vi.fn();
+  function Settings() {
+    const [visible, setVisible] = useState(initialVisible);
+    return <Sheet open onOpenChange={() => {}} title="Application settings" closeLabel="Close settings">
+      <button type="button" onClick={() => setVisible(false)}>General section</button>
+      <button type="button" onClick={() => setVisible(true)}>Connection section</button>
+      <ConnectionManager ref={ref} disabled={false} presentation="embedded" visible={visible} onReveal={() => { onReveal(); setVisible(true); }}/>
+    </Sheet>;
+  }
+  return { ref, onReveal, ...render(<ApplicationReadProvider><ConnectionDraftProvider><Settings/></ConnectionDraftProvider></ApplicationReadProvider>) };
+}
 async function fill(user:ReturnType<typeof userEvent.setup>,name="Synthetic A") {
   await user.type(screen.getByLabelText(i18n.t("connections.name")),name);
   await user.type(screen.getByLabelText(i18n.t("connections.endpoint")),"https://example.test/v1/chat/completions");
@@ -90,6 +103,110 @@ describe("connection settings consumer",()=>{
   it("requires a current discard confirmation before opening another record",async()=>{
     const user=userEvent.setup();setup();await open(user);await fill(user);await user.click(screen.getByRole("button",{name:i18n.t("connections.new")}));
     await screen.findByRole("heading",{name:i18n.t("connections.switchTitle")});await user.click(screen.getByRole("button",{name:i18n.t("connections.keepDraft")}));expect(screen.getByLabelText(i18n.t("connections.name"))).toHaveValue("Synthetic A");
+  });
+});
+
+describe("connections embedded in application settings", () => {
+  it.each([
+    { locale: "en-US", title: "Model connections", name: "Connection name", credential: "Credential environment variable", check: "Check account status" },
+    { locale: "zh-CN", title: "模型连接档案", name: "连接名称", credential: "凭据环境变量名", check: "查询账号状态" },
+  ])("keeps the connection labels and account action readable in $locale", async copy => {
+    await i18n.changeLanguage(copy.locale); setupEmbedded();
+    expect(await screen.findByRole("heading", { name: copy.title })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: copy.name })).toHaveAttribute("id", "connection-name");
+    expect(screen.getByRole("textbox", { name: copy.credential })).toHaveAttribute("id", "connection-credentialEnv");
+    expect(screen.getByRole("button", { name: copy.check })).toBeEnabled();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Application settings");
+    expect(screen.queryByRole("button", { name: i18n.t("connections.open") })).not.toBeInTheDocument();
+    expect(invoke.mock.calls.some(([command]) => command === "read_chatgpt_account")).toBe(false);
+  });
+
+  it("observes connections only in the visible section and keeps its draft when switching away and back", async () => {
+    const user = userEvent.setup(); setupEmbedded(false);
+    expect(invoke).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Connection section" }));
+    await screen.findByText(i18n.t("connections.empty")); await fill(user);
+    const name = screen.getByLabelText(i18n.t("connections.name"));
+    await user.click(screen.getByRole("button", { name: "General section" }));
+    expect(name).not.toBeVisible();
+    const reads = invoke.mock.calls.filter(([command]) => command === "read_model_connections").length;
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(invoke.mock.calls.filter(([command]) => command === "read_model_connections")).toHaveLength(reads);
+    await user.click(screen.getByRole("button", { name: "Connection section" }));
+    await screen.findByText(i18n.t("connections.empty"));
+    expect(screen.getByLabelText(i18n.t("connections.name"))).toBe(name);
+    expect(name).toHaveValue("Synthetic A");
+    expect(invoke.mock.calls.some(([command]) => command === "change_model_connections")).toBe(false);
+  });
+
+  it("preserves B and the original save while the connections section is hidden", async () => {
+    let resolve!: (value: ModelConnectionReceipt) => void, request!: ModelConnectionChange;
+    const write = new Promise<ModelConnectionReceipt>(yes => { resolve = yes; });
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "read_model_connections") return structuredClone(current);
+      if (command === "change_model_connections") { request = args.request; return write; }
+      throw new Error(command);
+    });
+    const user = userEvent.setup(); setupEmbedded();
+    await screen.findByText(i18n.t("connections.empty")); await fill(user);
+    await user.click(screen.getByRole("button", { name: i18n.t("connections.save") }));
+    await waitFor(() => expect(request).toBeDefined());
+    const name = screen.getByLabelText(i18n.t("connections.name"));
+    await user.clear(name); await user.type(name, "Newer B 日本語 مرحبا 👩🏽‍💻 é");
+    await user.click(screen.getByRole("button", { name: "General section" }));
+    await act(async () => { resolve(commit(request)); });
+    await user.click(screen.getByRole("button", { name: "Connection section" }));
+    await screen.findByText(i18n.t("connections.notices.saved-newer-draft"));
+    expect(name).toHaveValue("Newer B 日本語 مرحبا 👩🏽‍💻 é");
+    await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("connections.save") })).toBeEnabled());
+    expect(current.snapshot.profiles[0].name).toBe("Synthetic A");
+    expect(invoke.mock.calls.filter(([command]) => command === "change_model_connections")).toHaveLength(1);
+  });
+
+  it.each([
+    { locale: "en-US", unknown: "Could not confirm whether the save succeeded. Your pending request and newer edits are kept. Check the save status before saving again.", exit: "Unsaved connection draft", discard: "Discard draft and exit" },
+    { locale: "zh-CN", unknown: "保存结果尚不确定，原请求与最新修改均已保留。再次保存前，请先查询上次保存的状态。", exit: "存在未保存的连接草稿", discard: "丢弃草稿并退出" },
+  ])("reveals an unknown save for original-action recovery and holds the checked exit permit in $locale", async copy => {
+    await i18n.changeLanguage(copy.locale);
+    invoke.mockImplementation(async (command, args) => {
+      if (command === "read_model_connections") return structuredClone(current);
+      if (command === "change_model_connections") {
+        commit(args.request); throw { code: "outcome-unknown", stage: "model-connections", outcome: "unknown", recoveryRequired: true };
+      }
+      if (command === "read_model_connection_action") return actions.get(args.request.actionId);
+      throw new Error(command);
+    });
+    const user = userEvent.setup(), result = setupEmbedded();
+    await screen.findByText(i18n.t("connections.empty")); await fill(user);
+    await user.click(screen.getByRole("button", { name: i18n.t("connections.save") }));
+    await screen.findByRole("region", { name: i18n.t("connections.recoveryTitle") });
+    const request = invoke.mock.calls.find(([command]) => command === "change_model_connections")![1].request;
+    await user.click(screen.getByRole("button", { name: "General section" }));
+    let exit!: ReturnType<ConnectionManagerHandle["prepareExit"]>;
+    act(() => { exit = result.ref.current!.prepareExit(() => true); });
+    expect(await exit).toBeNull(); expect(result.onReveal).toHaveBeenCalledOnce();
+    await screen.findByRole("region", { name: i18n.t("connections.recoveryTitle") });
+    expect(screen.getByText(copy.unknown)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: i18n.t("connections.reconcile") }));
+    await screen.findByText(i18n.t("connections.notices.saved"));
+    await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("connections.refresh") })).toBeEnabled());
+    expect(invoke).toHaveBeenCalledWith("read_model_connection_action", { request: { actionId: request.actionId } });
+    expect(invoke.mock.calls.filter(([command]) => command === "change_model_connections")).toHaveLength(1);
+    const name = screen.getByLabelText(i18n.t("connections.name"));
+    await user.type(name, " B");
+    await user.click(screen.getByRole("button", { name: "General section" }));
+    let intentCurrent = true;
+    act(() => { exit = result.ref.current!.prepareExit(() => intentCurrent); });
+    await screen.findByRole("heading", { name: i18n.t("connections.exitTitle") });
+    expect(screen.getByRole("heading", { name: copy.exit })).toBeVisible();
+    expect(screen.getByRole("button", { name: copy.discard })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: i18n.t("connections.discardAndExit") }));
+    const permit = await exit;
+    expect(permit?.current()).toBe(true); expect(name).toBeDisabled();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    intentCurrent = false; expect(permit?.current()).toBe(false);
+    act(() => { permit?.release(); }); expect(name).toBeEnabled();
   });
 });
 

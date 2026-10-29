@@ -5,6 +5,11 @@ import { useApplicationQueryClient } from "./ApplicationReadProvider";
 import { chatGptCommands, type ChatGptAccountStatus, type ChatGptLoginView, type ChatGptModelCatalog } from "./ChatGptCommands";
 import { CommandFailureDetails, commandFailure, failureReason, type CommandFailure } from "./CommandFailure";
 import type { AiConnection } from "./connectionCommands";
+import { Button } from "./design-system/Button";
+import { Banner } from "./design-system/Feedback";
+import { Field } from "./design-system/Field";
+import fieldStyles from "./design-system/Field.module.css";
+import styles from "./ConnectionManager.module.css";
 
 const accountKey = ["application", "chatgpt", "account"] as const;
 /** Local status is read only on request or while this panel's explicit login is
@@ -60,67 +65,66 @@ export function ChatGptConnectionFields({ connection, disabled, onChange, modelI
     schedule();
     return () => { active = false; if (timer) clearTimeout(timer); };
   }, [pending, busy, stoppedLogin, query.refetch]);
-  return <section className="chatgpt-account connection-notice" aria-label={t("connections.chatgpt.title")} aria-busy={busy}>
+  return <section className={styles.account} aria-label={t("connections.chatgpt.title")} aria-busy={busy}>
     <h3>{t("connections.chatgpt.title")}</h3><p>{t("connections.chatgpt.help")}</p>
-    <div className="execution-actions">
-      <button type="button" disabled={disabled || busy || query.isFetching} onClick={() => {
+    <div className={styles.actions}>
+      <Button type="button" disabled={disabled || busy || query.isFetching} onClick={() => {
         const id = pending?.id;
         void query.refetch().then(result => {
           if (alive.current && id && result.isSuccess && result.data.login?.id !== id) setPending(before => before?.id === id ? null : before);
         });
-      }}>{t("connections.chatgpt.check")}</button>
-      <button type="button" disabled={disabled || busy || query.isFetching || !!login} onClick={() => { void action(async () => {
+      }}>{t("connections.chatgpt.check")}</Button>
+      <Button type="button" disabled={disabled || busy || query.isFetching || !!login} onClick={() => { void action(async () => {
         const login = await chatGptCommands.begin(null); if (alive.current) setPending(login);
-      }); }}>{t("connections.chatgpt.signIn")}</button>
-      {account ? <button type="button" disabled={disabled || busy || query.isFetching || !!login} onClick={() => { const id = account.id; void action(async () => {
+      }); }}>{t("connections.chatgpt.signIn")}</Button>
+      {account ? <Button type="button" disabled={disabled || busy || query.isFetching || !!login} onClick={() => { const id = account.id; void action(async () => {
         const next = await chatGptCommands.logout(id); if (alive.current) { accept(next); setCatalog(null); }
-      }); }}>{t("connections.chatgpt.logout")}</button> : null}
+      }); }}>{t("connections.chatgpt.logout")}</Button> : null}
     </div>
-    {status?.registrations.length ? <div>
-      <label htmlFor="chatgpt-registration">{t("connections.chatgpt.returningAccount")}</label>
-      <select id="chatgpt-registration" disabled={disabled || busy || !!login} value={registration} onChange={event => setRegistration(event.target.value)}>
+    {status?.registrations.length ? <div className={styles.accountSection}>
+      <Field id="chatgpt-registration" label={t("connections.chatgpt.returningAccount")}>
+      <select className={fieldStyles.input} disabled={disabled || busy || !!login} value={registration} onChange={event => setRegistration(event.target.value)}>
         <option value="">{t("connections.chatgpt.chooseAccount")}</option>
         {status.registrations.map(value => <option key={value.id} value={value.id}>{value.label}</option>)}
-      </select>
-      <button type="button" disabled={disabled || busy || query.isFetching || !!login || !status.registrations.some(value => value.id === registration)} onClick={() => { void action(async () => {
+      </select></Field>
+      <Button type="button" disabled={disabled || busy || query.isFetching || !!login || !status.registrations.some(value => value.id === registration)} onClick={() => { void action(async () => {
         const login = await chatGptCommands.begin(registration); if (alive.current) setPending(login);
-      }); }}>{t("connections.chatgpt.continue")}</button>
+      }); }}>{t("connections.chatgpt.continue")}</Button>
     </div> : null}
     {query.isFetching ? <p role="status">{t("connections.chatgpt.checking")}</p> : null}
     {account ? <p role="status">{t("connections.chatgpt.signedIn", { account: account.label })}</p>
       : status ? <p>{t("connections.chatgpt.signedOut")}</p> : <p>{t("connections.chatgpt.unchecked")}</p>}
-    {login ? <div role="status"><p>{t(pending && stoppedLogin !== pending.id ? "connections.chatgpt.pending" : "connections.chatgpt.pendingPaused")}</p><p>{t("connections.chatgpt.closeHelp")}</p>
-      <button type="button" disabled={disabled || busy} onClick={() => { const id = login.id; void action(async () => {
+    {login ? <Banner role="status"><p>{t(pending && stoppedLogin !== pending.id ? "connections.chatgpt.pending" : "connections.chatgpt.pendingPaused")}</p><p>{t("connections.chatgpt.closeHelp")}</p>
+      <Button type="button" disabled={disabled || busy} onClick={() => { const id = login.id; void action(async () => {
         const next = await chatGptCommands.cancel(id); if (alive.current) { accept(next); setPending(null); }
-      }); }}>{t("connections.chatgpt.cancel")}</button></div> : null}
+      }); }}>{t("connections.chatgpt.cancel")}</Button></Banner> : null}
     {status?.issue ? <p role="status">{t(`connections.chatgpt.issues.${status.issue}`)}</p> : null}
-    {query.isError ? <div role="alert"><p>{t("connections.chatgpt.readFailed")}</p><CommandFailureDetails failure={readFailure}/></div> : null}
-    {failure ? <div role="alert"><p>{t("connections.chatgpt.actionFailed")}</p><CommandFailureDetails failure={failure}/></div> : null}
+    {query.isError ? <Banner tone="error" role="alert"><p>{t("connections.chatgpt.readFailed")}</p><CommandFailureDetails failure={readFailure}/></Banner> : null}
+    {failure ? <Banner tone="error" role="alert"><p>{t("connections.chatgpt.actionFailed")}</p><CommandFailureDetails failure={failure}/></Banner> : null}
     {storageUnavailable ? <p>{t("connections.chatgpt.storageHelp")}</p> : null}
-    {status?.issue === "storage_unavailable" ? <div className="connection-notice">
+    {status?.issue === "storage_unavailable" ? <Banner tone="warning">
       <p>{t("connections.chatgpt.retryStorageHelp")}</p>
-      <button type="button" disabled={disabled || busy || query.isFetching} onClick={() => { void action(async () => {
+      <Button type="button" disabled={disabled || busy || query.isFetching} onClick={() => { void action(async () => {
         const next = await chatGptCommands.retryStorage();
         if (alive.current) { accept(next); setPending(null); setCatalog(null); }
-      }); }}>{t("connections.chatgpt.retryStorage")}</button>
-    </div> : null}
+      }); }}>{t("connections.chatgpt.retryStorage")}</Button>
+    </Banner> : null}
     <p>{t("connections.chatgpt.logoutHelp")}</p>
     {subscription ? <>
       <p>{t(selected ? "connections.chatgpt.selected" : "connections.chatgpt.accountUnavailable", { account: account?.label ?? "" })}</p>
-      {account && !selected ? <button type="button" disabled={disabled || busy} onClick={() => onChange({ ...connection, chatgptAccount: account.id, model: "" })}>{t("connections.chatgpt.useAccount", { account: account.label })}</button> : null}
+      {account && !selected ? <Button type="button" disabled={disabled || busy} onClick={() => onChange({ ...connection, chatgptAccount: account.id, model: "" })}>{t("connections.chatgpt.useAccount", { account: account.label })}</Button> : null}
       <p>{t("connections.chatgpt.accountChoiceHelp")}</p>
-      <button type="button" disabled={disabled || busy || !selected} onClick={() => { const id = connection.chatgptAccount; if (!id) return; void action(async () => {
+      <Button type="button" disabled={disabled || busy || !selected} onClick={() => { const id = connection.chatgptAccount; if (!id) return; void action(async () => {
         const result = await chatGptCommands.models(id);
         if (result.account !== id) throw new Error("Invalid ChatGPT catalog account acknowledgement");
         if (alive.current) setCatalog(result);
-      }); }}>{t("connections.chatgpt.refreshModels")}</button>
-      <label htmlFor="connection-chatgpt-model">{t("connections.model")}</label>
-      <select id="connection-chatgpt-model" value={connection.model} disabled={disabled || !models} aria-invalid={modelInvalid || undefined} aria-describedby={modelInvalid ? "connection-model-error" : undefined} onChange={event => onChange({ ...connection, model: event.target.value })}>
+      }); }}>{t("connections.chatgpt.refreshModels")}</Button>
+      <Field id="connection-chatgpt-model" label={t("connections.model")} description={models?.length === 0 ? t("connections.chatgpt.noModels") : t("connections.chatgpt.modelHelp")}>
+      {control => <select {...control} className={fieldStyles.input} value={connection.model} disabled={disabled || !models} aria-invalid={modelInvalid || undefined} aria-describedby={[control["aria-describedby"], modelInvalid ? "connection-model-error" : ""].filter(Boolean).join(" ") || undefined} onChange={event => onChange({ ...connection, model: event.target.value })}>
         <option value="">{t("connections.chatgpt.chooseModel")}</option>
         {connection.model && !models?.some(model => model.id === connection.model) ? <option value={connection.model}>{t("connections.chatgpt.retainedModel", { model: connection.model })}</option> : null}
         {models?.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
-      </select>
-      <p>{models?.length === 0 ? t("connections.chatgpt.noModels") : t("connections.chatgpt.modelHelp")}</p>
+      </select>}</Field>
       <p>{t("connections.chatgpt.budgetHelp")}</p>
     </> : null}
   </section>;

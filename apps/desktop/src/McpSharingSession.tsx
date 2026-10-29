@@ -46,13 +46,13 @@ export function validMcpRecipientLabel(value: string) { return !!value.trim() &&
 export const mcpShareStatusKey = (operation: Pick<Operation, "preparation" | "authorization">) => ["mcp-share-status", operation.preparation.identity.ownerId,
   operation.preparation.identity.generation, operation.preparation.identity.shareId, operation.authorization?.actionId ?? null] as const;
 
-function useSharing(project: ProjectView) {
-  const reads = useSessionReads(), mounted = useSessionAlive(), translations = useTranslationDraftSession();
+function useSharing(project: ProjectView, draftRevision: string | number | null) {
+  const reads = useSessionReads(), mounted = useSessionAlive();
   const [state, setState] = useState<State>(initialState), currentState = useRef(state), projectRef = useRef(project);
   const primary = useRef<object | null>(null), control = useRef<object | null>(null), reading = useRef<object | null>(null);
   const invalidations = useRef(0);
   const returnFocus = useRef<HTMLElement | null>(null), focusPending = useRef(false);
-  const draftSequence = useRef<string | null>(null);
+  const draftSequence = useRef(draftRevision);
   const [session] = useState(() => ({ ...reads.context }));
   function live() { return mounted.current && !reads.retired && reads.context.projectId === session.projectId && reads.context.sessionToken === session.sessionToken
     && projectRef.current.metadata.projectId === session.projectId && projectRef.current.sessionToken === session.sessionToken; }
@@ -62,11 +62,9 @@ function useSharing(project: ProjectView) {
   useLayoutEffect(() => {
     projectRef.current = project;
     const value = current(), target = value.target;
-    const draft = translations.current();
-    const sequence = draft ? JSON.stringify([draft.unitId, draft.locale, draft.sourceRevisionId, draft.editSeq, draft.text, draft.baseSelectionId, draft.baseRevisionId]) : null;
-    const previous = draftSequence.current; draftSequence.current = sequence;
-    if (target && (previous !== sequence && previous !== null || !project.metadata.targetLocales.includes(target.locale))) invalidate();
-  }, [project, translations.draft]);
+    const previous = draftSequence.current; draftSequence.current = draftRevision;
+    if (target && (previous !== draftRevision || !project.metadata.targetLocales.includes(target.locale))) invalidate();
+  }, [project, draftRevision]);
   useLayoutEffect(() => reads.subscribeChanges(scopes => {
     if (scopes.some(scope => scope === "source" || scope === "translation" || scope === "resources" || scope === "project")) invalidate();
   }), [reads]);
@@ -245,9 +243,15 @@ function useSharing(project: ProjectView) {
       value.operation?.preparation.identity, value.operation?.authorization, value.operation?.closed, value.operation?.uncertain,
       value.revocation?.request.actionId, value.revocation?.pending, value.revocation?.uncertain]; } };
 }
-type McpSharingOwner = ReturnType<typeof useSharing>;
+export type McpSharingOwner = ReturnType<typeof useSharing>;
 const Context = createContext<McpSharingOwner | null>(null);
+/** The caller supplies its existing translation owner's change revision, never a second draft owner. */
+export function McpSharingProvider({ project, draftRevision, children }: { project: ProjectView; draftRevision: string | number | null; children: ReactNode }) {
+  const owner = useSharing(project, draftRevision); return <Context.Provider value={owner}>{children}</Context.Provider>;
+}
 export function McpSharingSession({ project, children }: { project: ProjectView; children: ReactNode }) {
-  const owner = useSharing(project); return <Context.Provider value={owner}>{children}</Context.Provider>;
+  const translations = useTranslationDraftSession(), draft = translations.current();
+  const revision = draft ? JSON.stringify([draft.unitId, draft.locale, draft.sourceRevisionId, draft.editSeq, draft.text, draft.baseSelectionId, draft.baseRevisionId]) : null;
+  return <McpSharingProvider project={project} draftRevision={revision}>{children}</McpSharingProvider>;
 }
 export function useMcpSharing() { const owner = useContext(Context); if (!owner) throw new Error("Sharing requires a project session owner"); return owner; }

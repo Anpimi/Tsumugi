@@ -1,6 +1,5 @@
 import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { connectionReadOptions, useApplicationQueryClient } from "./ApplicationReadProvider";
 import { connectionDirty, useConnectionDraft, type ConnectionNotice } from "./ConnectionDraftSession";
@@ -9,7 +8,12 @@ import type { TranslationKey } from "./i18n/types";
 import type { ModelConnectionProfile } from "./connectionCommands";
 import type { SessionExitPermit } from "./sessionNavigation";
 import { ChatGptConnectionFields } from "./ChatGptConnectionFields";
-import "./ConnectionManager.css";
+import { Button } from "./design-system/Button";
+import { Dialog } from "./design-system/Dialog";
+import { Banner, EmptyState, LoadingState } from "./design-system/Feedback";
+import { Field, TextInput } from "./design-system/Field";
+import fieldStyles from "./design-system/Field.module.css";
+import styles from "./ConnectionManager.module.css";
 
 export interface ConnectionManagerHandle { prepareExit: (current: () => boolean) => Promise<SessionExitPermit | null>; open: (returnTo?: HTMLElement) => void }
 const reasons: Partial<Record<string, { field: string; message: TranslationKey }>> = {
@@ -31,12 +35,21 @@ const notices: Record<ConnectionNotice, TranslationKey> = {
   "not-applied": "connections.notices.not-applied", "draft-retained": "connections.notices.draft-retained", "unavailable": "connections.notices.unavailable",
   "exit-blocked": "connections.notices.exit-blocked", "exit-edited": "connections.notices.exit-edited",
 };
-export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disabled: boolean; hideTrigger?: boolean; ref?: Ref<ConnectionManagerHandle> }) {
+export interface ConnectionManagerProps {
+  disabled: boolean;
+  hideTrigger?: boolean;
+  presentation?: "dialog" | "embedded";
+  visible?: boolean;
+  onReveal?: () => void;
+  ref?: Ref<ConnectionManagerHandle>;
+}
+export function ConnectionManager({ disabled, hideTrigger = false, presentation = "dialog", visible = true, onReveal, ref }: ConnectionManagerProps) {
   const { t } = useTranslation(), owner = useConnectionDraft(), client = useApplicationQueryClient();
   const [open, setOpen] = useState(false), [showArchived, setShowArchived] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
   const [switchTarget, setSwitchTarget] = useState<{ profile: ModelConnectionProfile | null; seq: number } | null>(null);
-  const query = useQuery({ ...connectionReadOptions(), enabled: open }, client);
+  const embedded = presentation === "embedded";
+  const query = useQuery({ ...connectionReadOptions(), enabled: embedded ? visible : open }, client);
   const { state } = owner, { editor } = state;
   const confirmed = owner.currentView();
   const view = query.data;
@@ -44,13 +57,15 @@ export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disa
   const currentProfile = confirmed?.snapshot.profiles.find(profile => profile.id === editor.id);
   const subscription = editor.values.connection.tokenField === "chatgpt_subscription";
   const fieldReason = failureReason(state.failure), issue = fieldReason ? reasons[fieldReason] : undefined, field = issue?.field;
-  function fieldError(name: string) { return field === name && issue ? <p id={"connection-" + name + "-error"} role="alert">{t(issue.message)}</p> : null; }
+  function fieldError(name: string) { return field === name && issue ? <span role="alert">{t(issue.message)}</span> : undefined; }
   const close = () => { if (owner.current().exitHeld) return; if (owner.current().exitPrompt) owner.answerExit(false); setSwitchTarget(null); setOpen(false); };
-  useImperativeHandle(ref, () => ({ open: (returnTo?: HTMLElement) => {
+  function reveal(returnTo?: HTMLElement) {
+    if (embedded) { onReveal?.(); return; }
     if (!open) returnFocus.current = returnTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setOpen(true);
-  }, prepareExit: async current => {
-    if (connectionDirty(owner.current().editor) || owner.reserved()) setOpen(true);
+  }
+  useImperativeHandle(ref, () => ({ open: reveal, prepareExit: async current => {
+    if (connectionDirty(owner.current().editor) || owner.reserved()) reveal();
     return owner.prepareExit(current);
   } }));
   const nameInput = useRef<HTMLInputElement>(null);
@@ -69,74 +84,79 @@ export function ConnectionManager({ disabled, hideTrigger = false, ref }: { disa
   }
   const blocked = disabled || state.busy || state.pending !== null || state.exitPrompt || state.exitHeld || switchTarget !== null;
   const canSelect = !blocked && confirmed !== undefined;
-  return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }}>
-    {!hideTrigger ? <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled || state.exitHeld}>{t("connections.open")}</button></DialogTrigger> : null}
-    <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog connection-manager" aria-busy={state.busy}
-      onCloseAutoFocus={event => {
-        const target = returnFocus.current; returnFocus.current = null;
-        if (target?.isConnected && !target.matches(":disabled")) { event.preventDefault(); target.focus(); }
-      }} onEscapeKeyDown={event => { if (state.exitHeld) event.preventDefault(); }} onInteractOutside={event => { if (state.exitHeld) event.preventDefault(); }}>
-      <div className="execution-heading"><div><DialogTitle>{t("connections.title")}</DialogTitle><DialogDescription>{t("connections.description")}</DialogDescription></div>
-        <button type="button" className="secondary-button" disabled={state.exitHeld} onClick={close}>{t("connections.close")}</button></div>
-      {state.exitPrompt ? <section className="connection-notice" aria-label={t("connections.exitTitle")}>
+  const profiles = view?.snapshot.profiles.filter(profile => showArchived || !profile.archived).slice().sort((a, b) => a.name.localeCompare(b.name)) ?? [];
+  const content = <div className={styles.manager} aria-busy={state.busy}>
+      {state.exitPrompt ? <Banner tone="warning" role="region" aria-label={t("connections.exitTitle")}>
         <h3>{t("connections.exitTitle")}</h3><p>{t("connections.exitHelp")}</p>
-        <button type="button" onClick={() => owner.answerExit(false)}>{t("connections.continueEditing")}</button>
-        <button type="button" disabled={state.busy || state.pending !== null} onClick={() => { if (owner.answerExit(true)) setOpen(false); }}>{t("connections.discardAndExit")}</button>
-      </section> : null}
-      {switchTarget ? <section className="connection-notice" aria-label={t("connections.switchTitle")}><h3>{t("connections.switchTitle")}</h3><p>{t("connections.switchHelp")}</p>
-        <button type="button" onClick={() => setSwitchTarget(null)}>{t("connections.keepDraft")}</button>
-        <button type="button" disabled={owner.current().editor.seq !== switchTarget.seq} onClick={switchConfirmed}>{t("connections.discardAndOpen")}</button></section> : null}
-      <div className="connection-layout"><section className="connection-inventory" aria-label={t("connections.savedProfiles")}>
-        <div className="execution-actions"><button type="button" disabled={!canSelect} onClick={() => pick(null)}>{t("connections.new")}</button>
-          <button type="button" disabled={state.busy || state.exitHeld || query.isFetching} onClick={() => void owner.refresh().catch(() => {})}>{t("connections.refresh")}</button></div>
-        <label className="connection-toggle"><input type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)}/>{t("connections.showArchived")}</label>
-        {query.isFetching ? <p role="status">{t("connections.loading")}</p> : query.isError ? <div role="alert"><p>{t("connections.readFailed")}</p><CommandFailureDetails failure={commandFailure(query.error)}/></div>
-          : view ? <>{view.snapshot.profiles.filter(profile => showArchived || !profile.archived).length === 0 ? <p>{t("connections.empty")}</p> : null}
-          <ul className="connection-list">{view.snapshot.profiles.filter(profile => showArchived || !profile.archived).slice().sort((a,b) => a.name.localeCompare(b.name)).map(profile => <li key={profile.id}>
-            <button type="button" disabled={!canSelect} aria-pressed={editor.id === profile.id && editor.storeId === view.snapshot.storeId} onClick={() => pick(profile)}>{profile.name}</button>
+        <div className={styles.actions}><Button variant="secondary" onClick={() => owner.answerExit(false)}>{t("connections.continueEditing")}</Button>
+        <Button variant="danger" disabled={state.busy || state.pending !== null} onClick={() => { if (owner.answerExit(true) && !embedded) setOpen(false); }}>{t("connections.discardAndExit")}</Button></div>
+      </Banner> : null}
+      {switchTarget ? <Banner tone="warning" role="region" aria-label={t("connections.switchTitle")}><h3>{t("connections.switchTitle")}</h3><p>{t("connections.switchHelp")}</p>
+        <div className={styles.actions}><Button variant="secondary" onClick={() => setSwitchTarget(null)}>{t("connections.keepDraft")}</Button>
+        <Button variant="danger" disabled={owner.current().editor.seq !== switchTarget.seq} onClick={switchConfirmed}>{t("connections.discardAndOpen")}</Button></div></Banner> : null}
+      <div className={styles.layout}><section className={styles.inventory} aria-label={t("connections.savedProfiles")}><h3>{t("connections.savedProfiles")}</h3>
+        <div className={styles.actions}><Button variant="secondary" disabled={!canSelect} onClick={() => pick(null)}>{t("connections.new")}</Button>
+          <Button type="button" disabled={state.busy || state.exitHeld || query.isFetching} onClick={() => void owner.refresh().catch(() => {})}>{t("connections.refresh")}</Button></div>
+        <label className={styles.toggle}><input type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)}/>{t("connections.showArchived")}</label>
+        {query.isFetching ? <LoadingState label={t("connections.loading")}/> : query.isError ? <Banner tone="error" role="alert"><p>{t("connections.readFailed")}</p><CommandFailureDetails failure={commandFailure(query.error)}/></Banner>
+          : view ? <>{profiles.length === 0 ? <EmptyState title={t("connections.empty")}/> : null}
+          <ul className={styles.list}>{profiles.map(profile => <li key={profile.id}>
+            <Button type="button" className={styles.profile} disabled={!canSelect} aria-pressed={editor.id === profile.id && editor.storeId === view.snapshot.storeId} onClick={() => pick(profile)}>{profile.name}</Button>
             <p>{profile.connection.model}</p>{profile.archived ? <p>{t("connections.archived")}</p> : null}
-            <button type="button" disabled={!canSelect || owner.dirty} onClick={() => void owner.archive(profile, profile.archived, view)}>{t(profile.archived ? "connections.restore" : "connections.archive")}</button>
-          </li>)}</ul><p>{t("connections.capacity", { count: view.snapshot.profiles.length })}</p></> : null}
-      </section><section className="connection-editor" aria-label={t("connections.editProfile")}>
-        <form onSubmit={event => { event.preventDefault(); void owner.save(); }}>
-          <label htmlFor="connection-name">{t("connections.name")}</label><input id="connection-name" ref={nameInput} value={editor.values.name} disabled={state.exitHeld}
-            aria-invalid={field === "name" || field === "duplicate"} aria-describedby={"connection-name-help" + (field === "name" || field === "duplicate" ? " connection-" + field + "-error" : "")} onChange={event => change("name", event.target.value)}/>
-          <p id="connection-name-help">{t("connections.nameHelp", { count: Array.from(editor.values.name).length })}</p>
-          {fieldError("name")}{fieldError("duplicate")}
-          <label htmlFor="connection-authentication">{t("connections.authentication")}</label>
-          <select id="connection-authentication" value={subscription ? "chatgpt" : "api"} disabled={state.exitHeld} onChange={event => {
-            const values = owner.current().editor.values;
-            owner.edit({ ...values, connection: event.target.value === "chatgpt"
-              ? { endpoint: "https://api.openai.com/v1/responses", model: "", credentialEnv: "", tokenField: "chatgpt_subscription", chatgptAccount: null }
-              : { endpoint: "https://api.openai.com/v1/chat/completions", model: "", credentialEnv: "OPENAI_API_KEY", tokenField: "max_completion_tokens", chatgptAccount: null } });
-          }}><option value="api">{t("connections.api")}</option><option value="chatgpt">{t("connections.chatgpt.connection")}</option></select>
+            <Button type="button" disabled={!canSelect || owner.dirty} onClick={() => void owner.archive(profile, profile.archived, view)}>{t(profile.archived ? "connections.restore" : "connections.archive")}</Button>
+          </li>)}</ul><p className={styles.hint}>{t("connections.capacity", { count: view.snapshot.profiles.length })}</p></> : null}
+      </section><section className={styles.editor} aria-label={t("connections.editProfile")}><h3>{t("connections.editProfile")}</h3>
+        <form className={styles.form} onSubmit={event => { event.preventDefault(); void owner.save(); }}>
+          <Field id="connection-name" label={t("connections.name")} description={t("connections.nameHelp", { count: Array.from(editor.values.name).length })} error={fieldError("name") ?? fieldError("duplicate")}>
+            <TextInput ref={nameInput} value={editor.values.name} disabled={state.exitHeld} onChange={event => change("name", event.target.value)}/>
+          </Field>
+          <Field id="connection-authentication" label={t("connections.authentication")}>
+            <select className={fieldStyles.input} value={subscription ? "chatgpt" : "api"} disabled={state.exitHeld} onChange={event => {
+              const values = owner.current().editor.values;
+              owner.edit({ ...values, connection: event.target.value === "chatgpt"
+                ? { endpoint: "https://api.openai.com/v1/responses", model: "", credentialEnv: "", tokenField: "chatgpt_subscription", chatgptAccount: null }
+                : { endpoint: "https://api.openai.com/v1/chat/completions", model: "", credentialEnv: "OPENAI_API_KEY", tokenField: "max_completion_tokens", chatgptAccount: null } });
+            }}><option value="api">{t("connections.api")}</option><option value="chatgpt">{t("connections.chatgpt.connection")}</option></select>
+          </Field>
           <ChatGptConnectionFields connection={editor.values.connection} disabled={state.exitHeld || disabled || state.exitPrompt || switchTarget !== null} modelInvalid={field === "model"}
             onChange={connection => owner.edit({ ...owner.current().editor.values, connection })}/>
           {!subscription ? <>
-          {(["endpoint", "model", "credentialEnv"] as const).map(key => <div key={key}><label htmlFor={"connection-" + key}>{t(labels[key])}</label>
-            <input id={"connection-" + key} value={editor.values.connection[key]} disabled={state.exitHeld} spellCheck={false} autoCapitalize="none"
-              aria-invalid={field === key} aria-describedby={[key === "credentialEnv" ? "connection-credential-help" : "", field === key ? "connection-" + key + "-error" : ""].filter(Boolean).join(" ") || undefined} onChange={event => change(key, event.target.value)}/>{fieldError(key)}</div>)}
-          <p id="connection-credential-help">{t("connections.credentialHelp")}</p>
-          <label htmlFor="connection-tokenField">{t("connections.tokenField")}</label><select id="connection-tokenField" value={editor.values.connection.tokenField} disabled={state.exitHeld} aria-invalid={field === "tokenField"} aria-describedby={field === "tokenField" ? "connection-tokenField-error" : undefined} onChange={event => change("tokenField", event.target.value)}>
-            <option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select>
-          {fieldError("tokenField")}
-          </> : <>{fieldError("model")}{fieldError("subscription")}<p>{t("connections.chatgpt.endpoint")}</p></>}
-          {editor.baseline?.archived ? <p>{t("connections.archivedEdit")}</p> : null}
-          {fieldError("capacity")}{!issue && state.failure ? <p role="alert">{t("connections.failed")}</p> : null}
+            {(["endpoint", "model", "credentialEnv"] as const).map(key => <Field key={key} id={"connection-" + key} label={t(labels[key])} error={fieldError(key)} description={key === "credentialEnv" ? t("connections.credentialHelp") : undefined}>
+              <TextInput value={editor.values.connection[key]} disabled={state.exitHeld} spellCheck={false} autoCapitalize="none" onChange={event => change(key, event.target.value)}/>
+            </Field>)}
+            <Field id="connection-tokenField" label={t("connections.tokenField")} error={fieldError("tokenField")}>
+              <select className={fieldStyles.input} value={editor.values.connection.tokenField} disabled={state.exitHeld} onChange={event => change("tokenField", event.target.value)}>
+                <option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option>
+              </select>
+            </Field>
+          </> : <>{field === "model" ? <p id="connection-model-error">{fieldError("model")}</p> : null}{fieldError("subscription")}<p className={styles.hint}>{t("connections.chatgpt.endpoint")}</p></>}
+          {editor.baseline?.archived ? <Banner>{t("connections.archivedEdit")}</Banner> : null}
+          {fieldError("capacity")}{!issue && state.failure ? <Banner tone="error" role="alert">{t("connections.failed")}</Banner> : null}
           <CommandFailureDetails failure={state.failure}/>
-          <div className="execution-actions"><button type="submit" className="primary-button" disabled={blocked || !owner.dirty}>{t(state.busy ? "connections.saving" : "connections.save")}</button>
-            <button type="button" disabled={blocked || !owner.dirty} onClick={() => owner.discard()}>{t("connections.discardDraft")}</button></div>
+          <div className={styles.saveActions}><Button type="submit" variant="primary" pending={state.busy} disabled={blocked || !owner.dirty}>{t(state.busy ? "connections.saving" : "connections.save")}</Button>
+            <Button type="button" disabled={blocked || !owner.dirty} onClick={() => owner.discard()}>{t("connections.discardDraft")}</Button></div>
         </form>
-        {changed ? <section className="connection-notice"><h3>{t("connections.changedTitle")}</h3><p>{t("connections.changedHelp")}</p>
-          {currentProfile ? <><dl><dt>{t("connections.savedName")}</dt><dd>{currentProfile.name}</dd><dt>{t("connections.model")}</dt><dd>{currentProfile.connection.model}</dd><dt>{t("connections.endpoint")}</dt><dd>{currentProfile.connection.endpoint}</dd><dt>{t("connections.credentialEnv")}</dt><dd>{currentProfile.connection.credentialEnv || t("connections.noCredential")}</dd><dt>{t("connections.tokenField")}</dt><dd>{currentProfile.connection.tokenField}</dd>
+        {changed ? <Banner tone="warning" role="region" aria-label={t("connections.changedTitle")}><h3>{t("connections.changedTitle")}</h3><p>{t("connections.changedHelp")}</p>
+          {currentProfile ? <><dl className={styles.details}><dt>{t("connections.savedName")}</dt><dd>{currentProfile.name}</dd><dt>{t("connections.model")}</dt><dd>{currentProfile.connection.model}</dd><dt>{t("connections.endpoint")}</dt><dd>{currentProfile.connection.endpoint}</dd><dt>{t("connections.credentialEnv")}</dt><dd>{currentProfile.connection.credentialEnv || t("connections.noCredential")}</dd><dt>{t("connections.tokenField")}</dt><dd>{currentProfile.connection.tokenField}</dd>
             {currentProfile.connection.chatgptAccount ? <><dt>{t("connections.chatgpt.accountReference")}</dt><dd>{currentProfile.connection.chatgptAccount}</dd></> : null}</dl>
-            <button type="button" disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, true)}>{t("connections.keepAndReview")}</button>
-            <button type="button" disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, false)}>{t("connections.useSaved")}</button></> : <><p>{t("connections.unavailable")}</p><button type="button" disabled={blocked} onClick={() => owner.keepAsNew()}>{t("connections.saveAsNew")}</button></>}</section> : null}
-        {state.pending?.uncertain ? <section className="connection-notice" aria-label={t("connections.recoveryTitle")}><h3>{t("connections.recoveryTitle")}</h3><p>{t("connections.unknown")}</p>
-          <button type="button" disabled={state.busy || state.exitHeld} onClick={() => void owner.reconcile()}>{t("connections.reconcile")}</button>
-          {state.pending.retryAllowed ? <button type="button" disabled={state.busy || state.exitHeld} onClick={() => void owner.retry()}>{t("connections.retry")}</button> : null}</section> : null}
-        {state.notice ? <p role="status">{t(notices[state.notice])}</p> : null}
+            <div className={styles.actions}><Button variant="secondary" disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, true)}>{t("connections.keepAndReview")}</Button>
+            <Button disabled={blocked} onClick={() => confirmed && owner.reviewCurrent(confirmed, false)}>{t("connections.useSaved")}</Button></div></> : <><p>{t("connections.unavailable")}</p><Button variant="secondary" disabled={blocked} onClick={() => owner.keepAsNew()}>{t("connections.saveAsNew")}</Button></>}</Banner> : null}
+        {state.pending?.uncertain ? <Banner tone="warning" role="region" aria-label={t("connections.recoveryTitle")}><h3>{t("connections.recoveryTitle")}</h3><p>{t("connections.unknown")}</p>
+          <div className={styles.actions}><Button variant="secondary" disabled={state.busy || state.exitHeld} onClick={() => void owner.reconcile()}>{t("connections.reconcile")}</Button>
+          {state.pending.retryAllowed ? <Button disabled={state.busy || state.exitHeld} onClick={() => void owner.retry()}>{t("connections.retry")}</Button> : null}</div></Banner> : null}
+        {state.notice ? <Banner role="status">{t(notices[state.notice])}</Banner> : null}
       </section></div>
-    </DialogContent></DialogPortal>
+  </div>;
+  if (embedded) return <section className={styles.embedded} hidden={!visible} aria-label={t("connections.title")}>
+    <header className={styles.heading}><h2>{t("connections.title")}</h2><p>{t("connections.description")}</p></header>
+    {content}
+  </section>;
+  return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }} title={t("connections.title")} description={t("connections.description")} closeLabel={t("connections.close")} className={styles.dialog}
+    trigger={!hideTrigger ? <Button variant="secondary" disabled={disabled || state.exitHeld}>{t("connections.open")}</Button> : undefined}
+    onCloseAutoFocus={event => {
+      const target = returnFocus.current; returnFocus.current = null;
+      if (target?.isConnected && !target.matches(":disabled")) { event.preventDefault(); target.focus(); }
+    }} onEscapeKeyDown={event => { if (state.exitHeld) event.preventDefault(); }} onInteractOutside={event => { if (state.exitHeld) event.preventDefault(); }}>
+    {content}
   </Dialog>;
 }

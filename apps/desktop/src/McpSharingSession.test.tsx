@@ -3,8 +3,9 @@ import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApplicationReadProvider } from "./ApplicationReadProvider";
 import { ProjectSessionOwners } from "./ProjectSessionWorkbench";
-import { useMcpSharing, mcpShareStatusKey } from "./McpSharingSession";
-import { useSessionReads } from "./SessionReadProvider";
+import { McpSharingProvider, useMcpSharing, mcpShareStatusKey } from "./McpSharingSession";
+import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
+import { executionContext } from "./executionCommands";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { executionCommands } from "./executionCommands";
 import { mcpCommands, type McpShareView, type McpSharePreparation, type McpShareAuthorized } from "./mcpCommands";
@@ -19,6 +20,12 @@ function Probe() {
 }
 function Harness({ children }: { children?: ReactNode }) {
   return <ApplicationReadProvider><ProjectSessionOwners project={mcpProject} bridge={false}><Probe />{children}</ProjectSessionOwners></ApplicationReadProvider>;
+}
+function AdaptedProbe() { const value = useMcpSharing(); useLayoutEffect(() => { owner = value; }); return null; }
+function AdaptedHarness({ revision }: { revision: number }) {
+  return <SessionReadProvider context={executionContext(mcpProject)} bridge={false}>
+    <McpSharingProvider project={mcpProject} draftRevision={revision}><AdaptedProbe/></McpSharingProvider>
+  </SessionReadProvider>;
 }
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void;
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
@@ -55,6 +62,18 @@ it("does not read, create an identity or authorize anything until the user opens
   expect(mcpCommands.session).not.toHaveBeenCalled(); expect(mcpCommands.read).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
   begin(); expect(owner.state.shareTerms).toBe(false); expect(owner.state.shareContext).toBe(false);
   expect(mcpCommands.prepare).not.toHaveBeenCalled(); expect(mcpCommands.authorize).not.toHaveBeenCalled();
+});
+
+it("uses an explicit current draft revision without mounting a legacy translation owner", async () => {
+  const view = render(<AdaptedHarness revision={0}/>);
+  expect(mcpCommands.session).not.toHaveBeenCalled();
+  act(() => { expect(owner.begin(mcpTarget)).toBe(true); owner.edit({ recipientLabel: "Synthetic recipient" }); });
+  await prepare(); act(() => owner.setConsent(true)); expect(owner.state.consent).toBe(true);
+  const original = owner.current().operation?.prepared;
+  view.rerender(<AdaptedHarness revision={1}/>);
+  expect(owner.state.consent).toBe(false); expect(owner.state.stale).toBe(true);
+  expect(owner.current().operation?.prepared).toBe(original);
+  await act(async () => { await owner.authorize(); }); expect(mcpCommands.authorize).not.toHaveBeenCalled();
 });
 
 it("retains exact preview A and newer recipient B when preparation acknowledges late", async () => {

@@ -1,3 +1,6 @@
+import { settingsWorkbenchZh } from "./settingsWorkbench";
+import { mcpWorkbenchZh } from "./mcpWorkbench";
+import { pluginWorkbenchZh } from "./pluginWorkbench";
 import { knowledgeZh } from "./knowledge";
 import { startupZh } from "./startup";
 import { sourceMaintenanceZh } from "./sourceMaintenance";
@@ -8,6 +11,8 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+settingsWorkbench: settingsWorkbenchZh,
+mcpWorkbench: mcpWorkbenchZh,
 startup: startupZh,
 knowledge: knowledgeZh,
 sourceMaintenance: sourceMaintenanceZh,
@@ -732,6 +737,7 @@ sourcePlugin: {
   failed: "源内容操作未能完成，所选文件与已保存结果均已保留。请检查已安装的插件和任务记录。已过期或已关闭的授权无法续期，需重新确认后再试。",
 },
 plugins: {
+  ...pluginWorkbenchZh,
   originalRemovalTitle: "确认卸载 {{name}} {{version}}",
   originalRemovalEffect: "继续执行此前发起的卸载，并确认文件已从磁盘移除。仍在使用该安装的执行任务必须先结束。后续新安装的包、项目内容、已保存结果、历史记录与导出内容均会保留。临时恢复缓存可能保留。",
   originalRemovalConsent: "我同意继续执行此次卸载并确认其结果。",

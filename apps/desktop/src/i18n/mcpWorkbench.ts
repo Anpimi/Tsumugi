@@ -1,0 +1,33 @@
+export const mcpWorkbenchEn = {
+  queryTitle: "External term lookup", shareTitle: "Share saved material", close: "Close panel",
+  temporaryConnection: "External services use a temporary connection for each request. Connecting or finding tools does not authorize sharing project text.",
+  closeKeepsWork: "Closing this panel keeps drafts and pending requests. Reopen it to check the original request, stop a query, or revoke sharing.",
+  sessionRetired: "This project session has ended. Retained content remains visible; new external actions are unavailable.",
+  loadingEntries: "Reading saved entries…", entriesFailed: "Saved entries could not be read. Current inputs are retained.",
+  retryRead: "Read again", noEntries: "Import source entries before using project material.",
+  queryUnavailable: "The resource session is handling another query. Finish or discard that request in Knowledge before starting an external lookup.",
+  chooseSavedEntry: "Choose a saved entry and language. The preview uses saved content; unsaved translation drafts stay separate.",
+  searchEntries: "Find an entry on this page", searchPageHelp: "Search this page of up to 50 saved entries by key or source text. Use Next page to browse more entries.",
+  savedEntry: "Saved entry", chooseEntry: "Choose an entry", noMatches: "No saved entries match on this page.",
+  firstPage: "First page", nextPage: "Next page", targetLocale: "Target language", chooseLocale: "Choose a language",
+  loadingSnapshot: "Checking the saved entry…", snapshotFailed: "The saved entry changed or could not be read. Read it again before sharing.",
+  beginShare: "Prepare sharing options", discardQuery: "Discard query draft", keepQuery: "Keep draft",
+  discardTitle: "Discard this query draft?", discardHelp: "This clears the local endpoint, credential variable name, entry selection and query text. Pending external requests must finish or stop before the draft can be discarded.",
+};
+
+export const mcpWorkbenchZh = {
+  queryTitle: "外部术语检索", shareTitle: "分享已保存材料", close: "关闭面板",
+  temporaryConnection: "每次请求使用临时外部连接。连接服务或获取工具列表，不代表允许发送项目文本。",
+  closeKeepsWork: "关闭面板会保留草稿和待处理请求。重新打开后，可核对原请求、停止查询或撤回分享权限。",
+  sessionRetired: "此项目会话已经结束，仍可查看保留内容，但无法发起新的外部操作。",
+  loadingEntries: "正在读取已保存条目…", entriesFailed: "无法读取已保存条目，当前输入已保留。",
+  retryRead: "重新读取", noEntries: "请先导入源文条目，再使用项目材料。",
+  queryUnavailable: "资源会话正在处理其他查询。请先在“知识”中完成或丢弃该请求，再发起外部检索。",
+  chooseSavedEntry: "请选择已保存条目和目标语言。预览使用已保存内容，未保存的译文草稿会单独保留。",
+  searchEntries: "在本页查找条目", searchPageHelp: "按条目名称或源文搜索本页最多 50 个已保存条目，更多条目可通过“下一页”查看。",
+  savedEntry: "已保存条目", chooseEntry: "选择条目", noMatches: "本页没有匹配的已保存条目。",
+  firstPage: "第一页", nextPage: "下一页", targetLocale: "目标语言", chooseLocale: "选择语言",
+  loadingSnapshot: "正在核对已保存条目…", snapshotFailed: "已保存条目已更改或无法读取，请重新读取后再分享。",
+  beginShare: "设置分享内容", discardQuery: "丢弃查询草稿", keepQuery: "保留草稿",
+  discardTitle: "丢弃此查询草稿？", discardHelp: "将清除本地填写的服务地址、凭据变量名、条目选择和查询文本。待处理的外部请求必须先完成或停止，才能丢弃草稿。",
+};

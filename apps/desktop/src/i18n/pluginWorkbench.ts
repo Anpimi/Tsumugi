@@ -1,0 +1,33 @@
+export const pluginWorkbenchEn = {
+  workbenchDescription: "Manage installed extensions, review local packages, and check trusted sources.",
+  tabsLabel: "Extension management",
+  installedTab: "Installed",
+  discoverTab: "Discover",
+  sourcesTab: "Sources",
+  discoverHelp: "Choose a local package or offline Pack, or review the bundled extensions. Signed repositories are managed in Sources.",
+  sourcesHelp: "Trusting a source verifies its catalog. Each package still needs its own installation approval and enablement; running it requires separate permission.",
+  sourceCatalogReady: "A verified source catalog is ready for package review in Discover.",
+  openCatalog: "Review source packages",
+  permissionNew: "New request",
+  permissionNeedsApproval: "Needs approval",
+  permissionPreviouslyApproved: "Previously approved request",
+  permissionReviewAll: "No readable, approved package is available for comparison. Review every request before approving this package.",
+  permissionComparison: "Compared with the exact approved package for version {{version}}. Highlighted requests were not present in that package. This comparison grants no permission.",
+};
+
+export const pluginWorkbenchZh = {
+  workbenchDescription: "管理已安装扩展、核对本地插件包，以及查看可信来源。",
+  tabsLabel: "扩展管理",
+  installedTab: "已安装",
+  discoverTab: "发现",
+  sourcesTab: "来源",
+  discoverHelp: "可以选择本地插件包、离线 Pack，或核对随应用提供的扩展。签名仓库请在“来源”中管理。",
+  sourcesHelp: "信任来源只用于核验目录。每个插件包仍需单独批准安装和启用，实际运行还需要另行许可。",
+  sourceCatalogReady: "已核验的来源目录已就绪，可以到“发现”逐个核对插件包。",
+  openCatalog: "核对来源插件包",
+  permissionNew: "新增申请",
+  permissionNeedsApproval: "待批准",
+  permissionPreviouslyApproved: "此前已批准的申请",
+  permissionReviewAll: "目前没有可读取且已获批准的插件包可供比较，请在批准前逐项核对全部申请。",
+  permissionComparison: "这里与此前已批准的 {{version}} 版本准确插件包比较。高亮项是旧包中没有的申请；此比较不会授予权限。",
+};

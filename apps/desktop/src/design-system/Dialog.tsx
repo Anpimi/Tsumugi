@@ -11,13 +11,14 @@ export type DialogProps = Pick<ComponentProps<typeof Primitive.Content>, "onOpen
   title: string;
   description?: string;
   closeLabel: string;
+  closeDisabled?: boolean;
   trigger?: ReactElement;
   children: ReactNode;
   footer?: ReactNode;
   className?: string;
 };
 
-function DialogSurface({ open, onOpenChange, title, description, closeLabel, trigger, children, footer, className, side, onOpenAutoFocus, onCloseAutoFocus, ...contentProps }: DialogProps & { side?: "left" | "right" }) {
+function DialogSurface({ open, onOpenChange, title, description, closeLabel, closeDisabled, trigger, children, footer, className, side, onOpenAutoFocus, onCloseAutoFocus, ...contentProps }: DialogProps & { side?: "left" | "right" }) {
   const descriptionId = useId();
   const previousFocus = useRef<HTMLElement | null>(null);
   return (
@@ -42,7 +43,7 @@ function DialogSurface({ open, onOpenChange, title, description, closeLabel, tri
               <Primitive.Title className={styles.title}>{title}</Primitive.Title>
               {description ? <Primitive.Description id={descriptionId} className={styles.description}>{description}</Primitive.Description> : null}
             </div>
-            <Primitive.Close asChild><IconButton label={closeLabel}><X /></IconButton></Primitive.Close>
+            <Primitive.Close asChild><IconButton label={closeLabel} disabled={closeDisabled}><X /></IconButton></Primitive.Close>
           </header>
           <div className={styles.body}>{children}</div>
           {footer ? <footer className={styles.footer}>{footer}</footer> : null}

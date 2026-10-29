@@ -37,11 +37,13 @@ import { validateResponseDelivery } from "./generated/release.validators";
 import type { PluginStartRequest as TranslationPluginStartRequest, TranslationAdoptRequest, TranslationSelectRequest, TranslationDecision } from "./translationCommands";
 import { validateRequestPluginStart as validateTranslationPluginStart, validateRequestAdopt, validateRequestSelect } from "./generated/translation.validators";
 import type { ProjectView } from "./projectCommands";
+import type { CommandBindings } from "./commandBindings";
 import { validateResponseProjectView } from "./generated/validators";
 
 type PlainWorkbenchCommandId = "source.import-upstream" | "translation.hide-candidate-batch" | "translation.open-retained-candidate-batch" | "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
   | "workspace.agent" | "workspace.details" | "workspace.decisions" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
+  | "workspace.settings" | "workspace.extensions" | "workspace.mcp-query" | "workspace.mcp-share"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.import" | "translation.refresh-import" | "translation.reset-import"
   | "translation.inspect-focused-candidates" | "translation.open-retained-candidate" | "translation.discard-retained-candidate-inputs" | "translation.stage-focused-ai" | "translation.refresh-candidates" | "translation.first-candidate-page" | "translation.next-candidate-page"
@@ -638,7 +640,7 @@ interface CommandMetadata {
   nameKey: TranslationKey;
   category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena" | "tasks" | "release";
   scope: CommandScope;
-  binding: "Mod+S" | "Mod+O" | "Mod+Shift+W" | "Mod+T" | "Mod+W" | "Mod+L" | "Mod+I" | "Mod+F" | "Mod+K" | "Mod+Enter" | "Mod+Shift+F" | "Mod+Shift+A" | "Escape" | null;
+  binding: string | null;
   risk: "reads-strategy" | "retries-strategy-action" | "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch" | "reads-review"
     | "writes-resources" | "captures-resources" | "reads-resources" | "runs-resource-tool" | "stops-application-component" | "retries-resource-action" | "opens-translation" | "opens-review"
@@ -1517,6 +1519,7 @@ function validSourcePayload(payload: CommandPayload | undefined): payload is Sou
 /** UI commands only. Native authorization and request validation remain at their mutation boundaries. */
 export class WorkbenchCommands {
   private registrations = new Map<WorkbenchCommandId, { token: symbol; command: WorkbenchCommand }>();
+  constructor(private readonly bindings?: CommandBindings) {}
 
   register(command: WorkbenchCommand): () => void {
     const token = Symbol(command.id);
@@ -1707,7 +1710,7 @@ export class WorkbenchCommands {
 
   private description(command: WorkbenchCommand, payload?: CommandPayload): WorkbenchCommandDescription {
     const { availability: _availability, handler: _handler, ...description } = command;
-    return { ...description, availability: availability(command, payload) };
+    return { ...description, binding: this.bindings ? this.bindings.resolve(command.id, command.binding) : command.binding, availability: availability(command, payload) };
   }
 }
 

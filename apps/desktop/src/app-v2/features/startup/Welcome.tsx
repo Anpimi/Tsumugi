@@ -6,9 +6,9 @@ import { recentProjectName, type RecentProject } from "../../../recentProjects";
 import type { InteractionGate } from "../../workspace/interactionGate";
 import styles from "../../WorkbenchApp.module.css";
 
-export default function Welcome({ recent, restoreCandidate, native, blocked, gate, onOpen, onChoose, onManual, onOpenExisting }: {
+export default function Welcome({ recent, restoreCandidate, native, blocked, gate, onOpen, onChoose, onManual, onOpenExisting, onSettings, onExtensions }: {
   recent: RecentProject[]; restoreCandidate: RecentProject | null; native: boolean; blocked: boolean; gate: InteractionGate;
-  onOpen: (locator: string) => void; onChoose: () => void; onManual: () => void; onOpenExisting: () => void;
+  onOpen: (locator: string) => void; onChoose: () => void; onManual: () => void; onOpenExisting: () => void; onSettings?: () => void; onExtensions?: () => void;
 }) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "startup" });
   const latest = recent[0] ?? restoreCandidate;
@@ -33,6 +33,6 @@ export default function Welcome({ recent, restoreCandidate, native, blocked, gat
     {recent.length ? <section className={styles.recent}><h2>{t("recentTitle")}</h2>{recent.map(item => <Button key={item.locator} disabled={!native || blocked} onClick={() => onOpen(item.locator)}>
       <span>{recentProjectName(item.locator)}</span><small title={item.locator}>{item.locator}</small><time dateTime={Number.isFinite(item.lastOpenedAt) && Number.isFinite(new Date(item.lastOpenedAt).getTime()) ? new Date(item.lastOpenedAt).toISOString() : undefined}>{t("lastOpened", { time: date(item.lastOpenedAt) })}</time>
     </Button>)}</section> : null}
-    <div className={styles.welcomeActions}><Button disabled={!native || blocked} onClick={onOpenExisting}>{t("openExisting")}</Button><Button disabled={!native || blocked} onClick={onManual}>{t("manual")}</Button></div>
+    <div className={styles.welcomeActions}><Button disabled={!native || blocked} onClick={onOpenExisting}>{t("openExisting")}</Button><Button disabled={!native || blocked} onClick={onManual}>{t("manual")}</Button>{onSettings ? <Button disabled={blocked} onClick={onSettings}>{i18n.t("settingsWorkbench.title")}</Button> : null}{onExtensions ? <Button disabled={blocked || !native} onClick={onExtensions}>{i18n.t("plugins.title")}</Button> : null}</div>
   </main>;
 }

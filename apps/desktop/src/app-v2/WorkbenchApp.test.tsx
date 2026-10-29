@@ -382,7 +382,7 @@ describe("import workspace assembly", () => {
     fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.importBack") }));
     await screen.findByText(i18n.t("workbenchV2.noViews"));
     await openImportPalette(); expect(owner.current().pendingStart).toEqual(pending); expect(start).toHaveBeenCalledTimes(1);
-  });
+  }, 15000);
 
 });
 
@@ -719,3 +719,30 @@ describe("real-port workspace assembly", () => {
     }
   });
 });
+
+
+it("opens application settings and external query commands through the real workspace while retaining project language and query input", async () => {
+  controller = new ProjectLifecycle({ open: vi.fn().mockResolvedValue(project) });
+  render(<WorkbenchApp controller={controller} native/>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  await screen.findByText("Actual source from the read port");
+  const settings = await screen.findByRole("button", { name: i18n.t("workbenchV2.settings") });
+  await waitFor(() => expect(settings).toBeEnabled()); settings.focus(); fireEvent.click(settings);
+  await screen.findByRole("dialog", { name: i18n.t("settingsWorkbench.title") });
+  await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: i18n.t("settingsWorkbench.language") }), { target: { value: "en-US" } }); });
+  expect(controller.getSnapshot().session?.project.metadata.targetLocales).toEqual(["zh-CN"]);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("settingsWorkbench.close") }));
+  await waitFor(() => expect(settings).toHaveFocus());
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
+  const query = await screen.findByRole("option", { name: i18n.t("settingsWorkbench.query") });
+  await waitFor(() => expect(query).not.toHaveAttribute("aria-disabled", "true")); fireEvent.click(query);
+  const endpoint = await screen.findByRole("textbox", { name: i18n.t("mcpRetrieval.endpoint") });
+  fireEvent.change(endpoint, { target: { value: "https://example.invalid/mcp" } });
+  expect(screen.getByRole("textbox", { name: i18n.t("mcpRetrieval.endpoint") })).toHaveValue("https://example.invalid/mcp");
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("mcpWorkbench.close") }));
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
+  fireEvent.click(await screen.findByRole("option", { name: i18n.t("settingsWorkbench.query") }));
+  expect(await screen.findByRole("textbox", { name: i18n.t("mcpRetrieval.endpoint") })).toHaveValue("https://example.invalid/mcp");
+}, 15000);

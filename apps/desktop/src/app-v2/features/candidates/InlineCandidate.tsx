@@ -10,6 +10,7 @@ import { Banner } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { WorkbenchCommands, TranslationStageCommandPayload, CommandAvailability } from "../../../workbenchCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
+import { workspaceCommandMetadata } from "../../../commandBindings";
 import type { TranslationDrafts } from "../editor/translationDrafts";
 import type { CandidateOwners } from "./candidateTypes";
 import { candidateDraftKey, candidateStagePayload, canStageCandidate, sameCandidateCapture, stageCandidate, type CandidateEvidence } from "./candidateActions";
@@ -67,7 +68,7 @@ export default function InlineCandidate({ project, target, drafts, owners, comma
       commands.register({ ...meta, id: "translation.stage-inline-candidate", nameKey: "translation.addCandidate", risk: "writes-translation", payloadKind: "translation-stage", availability: input => availability(input), handler: input => { void stage(input); } }),
       commands.register({ ...meta, id: "translation.edit-inline-candidate", nameKey: "translation.openEditor", risk: "opens-translation", payloadKind: "translation-stage", availability: input => availability(input), handler: input => { void stage(input); } }),
       commands.register({ ...meta, id: "translation.inspect-inline-candidate", nameKey: "candidateDecisions.inspect", risk: "changes-view", payloadKind: "translation-stage", availability: input => availability(input, false), handler: input => { if (input.evidence.kind === "revision") onInspect(input.evidence.revisionId); } }),
-      commands.register({ ...meta, id: "translation.stage-focused-ai", nameKey: "translation.addCandidate", risk: "writes-translation", binding: "Mod+Shift+A",
+      commands.register({ ...meta, ...workspaceCommandMetadata("translation.stage-focused-ai"), risk: "writes-translation",
         availability: () => (gate.getSnapshot().inputOwner === null || gate.getSnapshot().inputOwner?.ownerId === `entry-list-${viewId}`) && payload ? availability(payload) : unavailable,
         handler: () => { if (payload) void stage(payload); } }),
     ];

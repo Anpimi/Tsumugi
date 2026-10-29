@@ -1,0 +1,33 @@
+export const settingsWorkbenchEn = {
+  title: "Settings", description: "These settings apply to this app. Your project languages and text stay as they are.",
+  sections: "Settings sections", general: "General", appearance: "Appearance", connections: "Connections", shortcuts: "Shortcuts", about: "About", close: "Close settings",
+  language: "Interface language", languageHelp: "Changes menus, labels and messages. It does not translate your project content.",
+  systemAppearance: "Follow system appearance", appearanceHelp: "Tsumugi uses your system's light or dark appearance. Change it in your system settings.", light: "Light appearance is active", dark: "Dark appearance is active",
+  shortcutHelp: "Use Mod for ⌘ on Mac or Ctrl on Windows. For example: Mod+Shift+S. Leave the field empty to remove a shortcut.",
+  shortcutLabel: "Shortcut for {{command}}", apply: "Apply", restore: "Restore default shortcuts", saved: "Shortcut saved.", restored: "Default shortcuts restored.",
+  invalid: "Use Mod with a letter, number, comma or Enter, or use Escape or F1–F12. You can also add Shift or Alt.",
+  reserved: "This shortcut belongs to text editing or quitting the app. Choose another one.", conflict: "{{command}} already uses this shortcut. Choose another one or remove its shortcut first.",
+  storage: "Could not save the shortcut. Your existing shortcuts and new input are kept. Try again.", invalidStored: "Saved shortcuts could not be read. Defaults are in use; you can set them again here.",
+  unapplied: "Some shortcut changes have not been applied. Apply them or discard these changes before quitting.", discardShortcuts: "Discard unapplied shortcut changes",
+  extensions: "Manage extensions", extensionsHelp: "Install and enable extensions, review their permissions, or manage signed sources.",
+  mcp: "MCP services", mcpHelp: "Look up external terminology or share selected project material. Each request still needs its own permission.",
+  query: "Look up external terminology", share: "Share project material", needsProject: "Open a project to query or share its material.", projectLoading: "Project tools are still loading. Try again once the project is ready.",
+  version: "Version {{version}}", versionLoading: "Reading app version…", versionFailed: "Could not read the app version.", retryVersion: "Read version again", desktopVersion: "The installed version is available in the desktop app.",
+};
+
+export const settingsWorkbenchZh = {
+  title: "设置", description: "这些设置用于当前应用。项目语言和已有内容保持原样。",
+  sections: "设置分区", general: "通用", appearance: "外观", connections: "连接", shortcuts: "快捷键", about: "关于", close: "关闭设置",
+  language: "界面语言", languageHelp: "修改菜单、标签和提示的语言，不会翻译项目内容。",
+  systemAppearance: "跟随系统外观", appearanceHelp: "Tsumugi 跟随系统使用浅色或深色外观，请在系统设置中切换。", light: "当前使用浅色外观", dark: "当前使用深色外观",
+  shortcutHelp: "Mod 在 Mac 上代表 ⌘，在 Windows 上代表 Ctrl。例如 Mod+Shift+S。留空可以取消该快捷键。",
+  shortcutLabel: "{{command}}的快捷键", apply: "应用", restore: "恢复默认快捷键", saved: "快捷键已保存。", restored: "已恢复默认快捷键。",
+  invalid: "请使用 Mod 加字母、数字、逗号或 Enter，也可以使用 Escape 或 F1–F12。可再加 Shift 或 Alt。",
+  reserved: "这个快捷键用于编辑文字或退出应用，请换一个。", conflict: "“{{command}}”已使用这个快捷键。请换一个，或先取消它的快捷键。",
+  storage: "快捷键没能保存。原有快捷键和新输入都已保留，可以重试。", invalidStored: "无法读取已保存的快捷键，当前使用默认值。可以在这里重新设置。",
+  unapplied: "还有快捷键修改未应用，请先应用或丢弃这些修改，再退出应用。", discardShortcuts: "丢弃未应用的快捷键修改",
+  extensions: "管理扩展", extensionsHelp: "安装和启用扩展、核对权限，或管理签名来源。",
+  mcp: "MCP 服务", mcpHelp: "查询外部术语，或分享选定的项目材料。每次请求仍需单独许可。",
+  query: "查询外部术语", share: "分享项目材料", needsProject: "打开项目后，可以查询或分享其中的材料。", projectLoading: "项目工具还在加载，请就绪后重试。",
+  version: "版本 {{version}}", versionLoading: "正在读取应用版本…", versionFailed: "没能读取应用版本。", retryVersion: "重新读取版本", desktopVersion: "请在桌面应用中查看已安装版本。",
+};

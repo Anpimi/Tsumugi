@@ -320,3 +320,31 @@ it.each(["missing-member", "wrong-origin"])("keeps installation unconfirmed afte
   expect(packageCheckbox("signed-tools", "2.0.0")).toBeDisabled();
   expect(onBusy).toHaveBeenLastCalledWith(true);
 });
+
+it("moves a verified source catalog into Discover without installing or losing member approval on tab changes", async () => {
+  const user = userEvent.setup();
+  render(<PluginManager disabled={false} onBusyChange={onBusy} presentation="workbench"/>, { wrapper: ApplicationReadProvider });
+  await user.click(screen.getByRole("button", { name: i18n.t("plugins.open") }));
+  await user.click(await screen.findByRole("tab", { name: i18n.t("plugins.sourcesTab") }));
+  const choose = await screen.findByRole("button", { name: i18n.t("plugins.repositoryChoose") });
+  await waitFor(() => expect(choose).toBeEnabled());
+  await user.click(choose);
+  await user.click(await screen.findByRole("checkbox", { name: i18n.t("plugins.repositoryTrustConsent") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("plugins.repositoryRefresh") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("plugins.openCatalog") }));
+  const review = await screen.findByRole("region", { name: i18n.t("plugins.repositoryCatalog", { name: repository.displayName }) });
+  expect(within(review).getByRole("heading", { name: i18n.t("plugins.repositoryCatalog", { name: repository.displayName }) })).toHaveFocus();
+  expect(calls("install_repository_packages")).toHaveLength(0);
+  const consent = screen.getByRole("checkbox", { name: i18n.t("plugins.repositoryMemberConsent", { name: "signed-tools", version: "2.0.0" }) });
+  await waitFor(() => expect(consent).toBeEnabled());
+  await user.click(consent);
+  await user.click(screen.getByRole("tab", { name: i18n.t("plugins.sourcesTab") }));
+  await user.click(screen.getByRole("tab", { name: i18n.t("plugins.discoverTab") }));
+  expect(consent).toBeChecked();
+  await user.click(screen.getByRole("button", { name: i18n.t("plugins.repositoryInstall") }));
+  await waitFor(() => expect(screen.getByRole("tab", { name: i18n.t("plugins.installedTab") })).toHaveAttribute("aria-selected", "true"));
+  expect(calls("install_repository_packages")).toHaveLength(1);
+  expect(installRequest().ticket).toBe(repository.ticket);
+  expect(installRequest().members).toHaveLength(1);
+  expect(calls("set_plugin_enabled")).toHaveLength(0);
+});

@@ -25,13 +25,13 @@ function Bridge({ project, lifecycle, onOwner, onReveal, onParticipant }: Props)
       completion.current = value.state.completionVersion;
       reads.invalidate(["resources"]);
     }
-    if (published.current?.state === value.state && published.current?.journal === value.journal && published.current?.inFlight() === value.inFlight()) return;
+    if (published.current?.state === value.state && published.current?.journal === value.journal && published.current?.tool.state === value.tool.state && published.current?.tool.mcp.state === value.tool.mcp.state && published.current?.inFlight() === value.inFlight()) return;
     published.current = value; callbacks.current.onOwner(value);
   });
   useLayoutEffect(() => () => { published.current = null; callbacks.current.onOwner(null); }, []);
   useLayoutEffect(() => {
     function inspect(intent: LeaveIntent) {
-      if (!["open-project", "close-project", "close-window"].includes(intent.kind)) return { status: "ready" as const, revision: "retained-knowledge-session" };
+      if (!["create-project", "open-project", "close-project", "close-window"].includes(intent.kind)) return { status: "ready" as const, revision: "retained-knowledge-session" };
       const current = owner.current;
       return { status: knowledgeBlocked(current) ? "blocked" as const : current.journal.dirty || current.tool.hasDraft() ? "dirty" as const : "ready" as const,
         revision: JSON.stringify([current.current(), current.inFlight(), current.tool.blocked(), current.tool.hasDraft()]) };

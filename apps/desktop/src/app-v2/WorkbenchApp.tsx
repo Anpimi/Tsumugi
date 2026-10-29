@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { useStore } from "zustand";
 import { isTauri } from "@tauri-apps/api/core";
@@ -6,6 +6,8 @@ import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, ChevronDown, Circle, CircleDot, Command, Layers, PanelRight, Pin, Plus, Search, Settings, Sparkles, X } from "lucide-react";
 import { ApplicationReadProvider } from "../ApplicationReadProvider";
+import { ApplicationSettingsProvider, useApplicationSettings } from "./features/settings/ApplicationSettings";
+import ProjectMcpHost, { type ProjectMcpHandle } from "./features/settings/ProjectMcpHost";
 import { SessionReadProvider, useSessionReadStatus } from "../SessionReadProvider";
 import { CommandFailureDetails } from "../CommandFailure";
 import { executionContext } from "../executionCommands";
@@ -136,6 +138,8 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
 }
 
 function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
+  const settings = useApplicationSettings(), mcp = useRef<ProjectMcpHandle>(null), mcpParticipant = useRef<LifecycleParticipant | null>(null);
+  const publishMcpParticipant = useCallback((value: LifecycleParticipant | null) => { mcpParticipant.current = value; }, []);
   const [ExecutionOwnerHost, setExecutionOwnerHost] = useState(createExecutionOwnerHost), [KnowledgeOwnerHost, setKnowledgeOwnerHost] = useState(createKnowledgeOwnerHost);
   const [store] = useState(() => createWorkspaceStore({ initialLocale: session.project.metadata.targetLocales[0] ?? "" }));
   const [runtime, setRuntime] = useState<Runtime | null>(null);
@@ -196,7 +200,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const knowledgeParticipant = useRef<LifecycleParticipant | null>(null);
   const publishKnowledgeParticipant = useCallback((participant: LifecycleParticipant | null) => { knowledgeParticipant.current = participant; }, []);
   const requestKnowledge = useCallback(() => setKnowledgeRequested(true), []);
-  const revealKnowledge = useCallback(() => { requestKnowledge(); setKnowledgeReveal(value => value + 1); }, [requestKnowledge]);
+  const revealKnowledge = useCallback(() => { if (mcp.current?.revealQuery()) return; requestKnowledge(); setKnowledgeReveal(value => value + 1); }, [requestKnowledge]);
   const publishKnowledgeOwner = useCallback((owner: KnowledgeOwner | null) => { if (owner) knowledgeHadOwner.current = true; setKnowledgeOwner(owner); }, []);
   const failKnowledgeLoad = useCallback(() => setKnowledgeLoadFailed(true), []);
   const retryKnowledgeLoad = (execution: boolean) => {
@@ -339,6 +343,16 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     initialize();
     return () => { alive = false; unlistenGate(); unlistenLifecycle(); next?.dispose(); };
   }, [store, gate, lifecycle]);
+  useLayoutEffect(() => lifecycle.register({ id: "project-mcp-sharing", area: "resources", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-mcp-sharing" }
+      : mcpParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "mcp-owner-loading" },
+    prepareLeave: (intent, proof, current) => mcpParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: () => mcp.current?.open("share"),
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId]);
+  useLayoutEffect(() => {
+    if (!runtime || !drafts) return;
+    return settings.registerMcp({ open: (kind, origin) => mcp.current?.open(kind, origin), revealQuery: () => mcp.current?.revealQuery() ?? false });
+  }, [settings.registerMcp, runtime, drafts]);
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
   return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed,
@@ -378,6 +392,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     {comparisonsRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("comparisonUnavailable")} description={t("comparisonUnavailableHelp")} />}><Suspense fallback={null}>
       <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
     </Suspense></FeatureBoundary> : null}
+    {drafts ? <ProjectMcpHost ref={mcp} project={session.project} lifecycle={lifecycle} gate={gate} drafts={drafts} knowledgeOwner={executionTasks ? knowledgeOwner : null} onParticipant={publishMcpParticipant}/> : null}
     {startupHandoff ? <StartupHandoff request={startupHandoff} owner={executionTasks ? sourceOwner : null} lifecycle={lifecycle} gate={gate} disabled={readOnly} onHandled={onStartupHandled} onOpen={revealSource}/> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <ExecutionTaskHandleProvider value={executionTasks}><RouterProvider router={runtime.router} /></ExecutionTaskHandleProvider>
@@ -385,6 +400,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
 }
 
 function WorkspaceShell() {
+  const settings = useApplicationSettings();
   const readStatus = useSessionReadStatus();
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
@@ -539,13 +555,13 @@ function WorkspaceShell() {
       if (!alive) return;
       setRegistries(previous => {
         const next = new Map(previous);
-        for (const id of [...store.getState().viewOrder, null]) if (!next.has(id)) next.set(id, new Owner());
+        for (const id of [...store.getState().viewOrder, null]) if (!next.has(id)) next.set(id, new Owner(settings.bindings));
         for (const id of next.keys()) if (id !== null && !store.getState().views[id]) next.delete(id);
         return next;
       });
     }).catch(() => { if (alive) setCommandFailed(true); });
     return () => { alive = false; };
-  }, [ids, store]);
+  }, [ids, store, settings.bindings]);
   const commands = registries.get(currentId);
   const commandsReady = !!commands && registeredCommands === commands;
   const scope = useMemo(() => ({ ...executionContext(session.project), area: "translation" as const }), [session.project.sessionToken, session.project.metadata.projectId]);
@@ -626,13 +642,14 @@ function WorkspaceShell() {
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
-      openDecisions: () => openDecisions(),
+      openDecisions: () => openDecisions(), openSettings: () => settings.open(), openExtensions: () => settings.openExtensions(),
+      openMcpQuery: settings.openMcpQuery, openMcpShare: settings.openMcpShare,
       openImport: () => actions.current.openImport(), canOpenImport: () => actions.current.canOpenImport(),
       openSource: () => actions.current.openSource(),
       confirm: advance => actions.current.confirm(advance), exitEditor: () => actions.current.exitEditor(), toggleFocus: () => actions.current.toggleFocus(),
       isEditing: () => actions.current.isEditing(), canConfirm: () => actions.current.canConfirm(), canAdvance: () => actions.current.canAdvance() }, onError: () => setCommandFailed(true) });
     setRegisteredCommands(commands); return remove;
-  }, [commands, currentId, gate, store, runtime, lifecycle, scope, narrow, readOnly]);
+  }, [commands, currentId, gate, store, runtime, lifecycle, scope, narrow, readOnly, settings.open, settings.openExtensions, settings.openMcpQuery, settings.openMcpShare]);
   const dispatcher = useMemo(() => createWorkspaceCommandDispatcher({ gate, modifier: navigator.platform.includes("Mac") ? "meta" : "ctrl", getContext: () => {
     const id = store.getState().activeViewId, owner = registries.get(id), actualScope = currentScope();
     return owner && owner === registeredCommands && actualScope ? { viewId: id, scope: actualScope, commands: owner } : null;
@@ -656,7 +673,7 @@ function WorkspaceShell() {
   useEffect(() => {
     if (!isTauri() || !commandsReady) return;
     return installWorkspaceMenu(dispatcher.list({ source: "native-menu" }), key => t(key), id => dispatcher.dispatch(id, { source: "native-menu", viewId: currentId }), () => setCommandFailed(true));
-  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, actions.current.canConfirm()]);
+  }, [dispatcher, commandsReady, currentId, i18n.resolvedLanguage, settings.bindingsRevision, disabled, interaction.intentOwner, draftState.hydration, draftState.mutationReserved, view?.editing, recoveryKey !== null, actions.current.canConfirm()]);
   useEffect(() => () => { paletteRelease.current?.(); drawerRelease.current?.(); }, [gate]);
   const activeLocale = view?.locale ?? session.project.metadata.targetLocales[0] ?? "";
   const importNeedsAttention = !!importOwners && (importOwners.imports.current().busy || importOwners.imports.hasPending()
@@ -1008,7 +1025,7 @@ function WorkspaceShell() {
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
         }}>{icon}</IconButton>{id === "decisions" ? <span id={decisionBadgeId} className={styles.activityCount}><DecisionBadge page={decisionFeed.first.data} loading={decisionFeed.first.isFetching} error={decisionFeed.first.error}/></span> : null}</div>)}
-        <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled title={message("comingLater")}><Command /></IconButton><IconButton label={message("settings")} disabled title={message("comingLater")}><Settings /></IconButton></div>
+        <div className={styles.activityBottom}><IconButton label={message("extensions")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.extensions")}><Command /></IconButton><IconButton label={message("settings")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.settings")}><Settings /></IconButton></div>
       </nav>
       <SplitView key={currentId} className={styles.workspaceSplit} elementRef={split} disabled={disabled} onLayoutChanged={(layout, meta) => {
         if (!meta.isUserInteraction || !view || narrow) return;
@@ -1093,6 +1110,11 @@ function WorkspaceShell() {
   </div>;
 }
 
+function WorkspaceWelcome(props: ComponentProps<typeof Welcome>) {
+  const settings = useApplicationSettings();
+  return <Welcome {...props} onSettings={() => settings.open()} onExtensions={() => settings.openExtensions()}/>;
+}
+
 export default function WorkbenchApp({ controller: suppliedController, native = isTauri() }: { controller?: ProjectLifecycle; native?: boolean } = {}) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const { t: startup } = useTranslation(undefined, { keyPrefix: "startup" });
@@ -1174,7 +1196,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
   const error = state.failure;
   const errorText = error?.code === "unknown-lifecycle" || error?.code === "recovery-unavailable" ? t("unknown") : error?.code === "leave-blocked" ? t("leaveBlocked") : error?.code === "leave-changed" ? t("leaveChanged")
     : error?.code === "application-stopping" || error?.code === "application-unknown" || error?.code === "runtime-pending" ? t("cleanupPending") : error?.code === "read-failed" ? t("readFailed") : error?.code === "destroy-failed" ? t("windowCloseFailed") : t("actionFailed");
-  return <ApplicationReadProvider>
+  return <ApplicationReadProvider><ApplicationSettingsProvider lifecycle={controller} gate={gate} native={native}>
     <div className={appStyles.app}>
       {!native ? <Banner>{t("desktopRequired")}</Banner> : null}
       {nativeClose.state === "failed" ? <Banner tone="error">{t("nativeCloseFailed")}</Banner> : null}
@@ -1187,7 +1209,7 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       {presentation ? <SessionReadProvider key={`${presentation.project.metadata.projectId}:${presentation.project.sessionToken}`} context={executionContext(presentation.project)} reads={presentation.reads} bridge={!presentation.reads.retired}>
         <ProjectWorkspace session={presentation} lifecycle={controller} gate={gate} readOnly={presentation !== state.session || !!state.retainedSession} requestOpen={() => setOpenPanel(true)} requestCreate={() => { setOpenPanel(false); setCreatePanel(true); }}
           startupHandoff={startupHandoff?.projectId === presentation.project.metadata.projectId && startupHandoff.sessionToken === presentation.project.sessionToken ? startupHandoff : null} onStartupHandled={() => setStartupHandoff(null)}/>
-      </SessionReadProvider> : <Welcome recent={recent} restoreCandidate={restoreCandidate} native={native} blocked={blocked || createPanel || openPanel} gate={gate}
+      </SessionReadProvider> : <WorkspaceWelcome recent={recent} restoreCandidate={restoreCandidate} native={native} blocked={blocked || createPanel || openPanel} gate={gate}
         onOpen={path => void open(path)} onChoose={() => setCreatePanel(true)} onManual={() => setCreatePanel(true)} onOpenExisting={() => setOpenPanel(true)}/>}
       {startupDropFailure ? <Banner tone="error" action={<Button disabled={!native || blocked} onClick={() => setCreatePanel(true)}>{startup("chooseSourceFolder")}</Button>}>{startup("sourceSelectionFailed")}<CommandFailureDetails failure={startupDropFailure}/></Banner> : null}
       <Dialog open={openPanel} onOpenChange={setOpenPanel} title={t("openProject")} description={t("welcomeHelp")} closeLabel={t("close")}>{openForm}</Dialog>
@@ -1195,5 +1217,5 @@ export default function WorkbenchApp({ controller: suppliedController, native = 
       <Dialog open={!!stop} onOpenChange={value => { if (!value && stop) { stop.resolve(false); setStop(null); } }} title={t("stopTitle")} description={t("stopHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => { stop?.resolve(false); setStop(null); }}>{t("stay")}</Button><Button variant="danger" onClick={() => { if (stop) stop.resolve(stop.current()); setStop(null); }}>{t("stopAndLeave")}</Button></>}>{t("stopHelp")}</Dialog>
       <Dialog open={discard} onOpenChange={setDiscard} title={t("discardRetained")} description={t("discardHelp")} closeLabel={t("stay")} footer={<><Button onClick={() => setDiscard(false)}>{t("stay")}</Button><Button variant="danger" onClick={() => { controller.discardRetained(); setDiscard(false); }}>{t("discardRetained")}</Button></>}>{t("discardHelp")}</Dialog>
     </div>
-  </ApplicationReadProvider>;
+  </ApplicationSettingsProvider></ApplicationReadProvider>;
 }

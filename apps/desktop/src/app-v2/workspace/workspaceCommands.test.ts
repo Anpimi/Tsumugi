@@ -1,16 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchCommands, type CommandScope } from "../../workbenchCommands";
+import { CommandBindings, COMMAND_BINDINGS_STORAGE_KEY, workspaceCommandMetadata } from "../../commandBindings";
 import { InteractionGate } from "./interactionGate";
-import { createWorkspaceCommandDispatcher, registerWorkspaceCommands, type WorkspaceCommandContext } from "./workspaceCommands";
+import { createWorkspaceCommandDispatcher, registerWorkspaceCommands, workspaceCommandCatalog, type WorkspaceCommandContext } from "./workspaceCommands";
 import { createWorkspaceStore } from "./workspaceStore";
+import { i18n } from "../../i18n";
 
 const scope: CommandScope = { projectId: "project-a", sessionToken: "session-a", area: "translation" };
 const navigation = () => ({ open: vi.fn(async () => true), activate: vi.fn(async () => true), close: vi.fn(async () => true), update: vi.fn(async () => true) });
+beforeEach(() => { localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
+afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 
 describe("workspace commands in the existing registry", () => {
   it("stages focused AI only from the current list and respects input, IME and modal ownership", () => {
     const gate = new InteractionGate(), commands = new WorkbenchCommands(), stage = vi.fn(); gate.setVisibleOwner("one");
-    commands.register({ id: "translation.stage-focused-ai", nameKey: "translation.addCandidate", category: "translation", risk: "writes-translation", confirmation: "none", binding: "Mod+Shift+A", scope,
+    commands.register({ ...workspaceCommandMetadata("translation.stage-focused-ai"), category: "translation", risk: "writes-translation", confirmation: "none", scope,
       availability: () => ({ enabled: true }), handler: stage });
     const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: "one", scope, commands }), modifier: "meta" });
     const key = () => new KeyboardEvent("keydown", { key: "A", metaKey: true, shiftKey: true, cancelable: true });
@@ -153,5 +157,127 @@ describe("workspace commands in the existing registry", () => {
     expect(confirm).toHaveBeenLastCalledWith(false);
     close(); recovery = false;
     expect(commands.describe("translation.confirm-next", scope)?.availability.enabled).toBe(true);
+  });
+});
+
+describe("configured workspace keyboard dispatch", () => {
+  function setup(modifier: "meta" | "ctrl" = "meta") {
+    const bindings = new CommandBindings(workspaceCommandCatalog), commands = new WorkbenchCommands(bindings);
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "one", kind: "entries", locale: "zh-CN" }] });
+    const gate = new InteractionGate(); gate.setVisibleOwner("one");
+    const openProject = vi.fn(), openSettings = vi.fn(), openExtensions = vi.fn(), confirm = vi.fn();
+    registerWorkspaceCommands({ commands, store, gate, viewId: "one", scope, getCurrentScope: () => scope, navigation: navigation(),
+      actions: { openProject, openSettings, openExtensions, confirm, canConfirm: () => true }, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: "one", scope, commands }), modifier });
+    return { bindings, commands, gate, dispatcher, openProject, openSettings, openExtensions, confirm };
+  }
+  const key = (value: string, modifiers: KeyboardEventInit = { metaKey: true }) => new KeyboardEvent("keydown", { key: value, cancelable: true, ...modifiers });
+
+  it.each(["en-US", "zh-CN"])("uses the rebound shortcut immediately and retires the old key in %s", async locale => {
+    await i18n.changeLanguage(locale);
+    const { bindings, dispatcher, openProject } = setup();
+    expect(dispatcher.handleKeyDown(key("o"), "one")).toBe(true);
+    expect(bindings.set("workspace.open-project", "Alt+Mod+P")).toEqual({ kind: "saved" });
+    const oldKey = key("o"), wrongModifiers = key("p"), rebound = key("p", { metaKey: true, altKey: true });
+    expect(dispatcher.handleKeyDown(oldKey, "one")).toBe(false);
+    expect(oldKey.defaultPrevented).toBe(false);
+    expect(dispatcher.handleKeyDown(wrongModifiers, "one")).toBe(false);
+    expect(dispatcher.handleKeyDown(rebound, "one")).toBe(true);
+    expect(rebound.defaultPrevented).toBe(true);
+    const described = dispatcher.list().find(command => i18n.t(command.nameKey) === i18n.t("workbenchV2.openProject"));
+    expect(described).toMatchObject({ id: "workspace.open-project", binding: "Mod+Alt+P" });
+    expect(openProject).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps old dispatch after conflicts or storage failures and permits explicit unbinding", () => {
+    const { bindings, dispatcher, openProject } = setup();
+    expect(bindings.set("workspace.open-project", "Mod+K").kind).toBe("conflict");
+    expect(dispatcher.handleKeyDown(key("o"), "one")).toBe(true);
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Synthetic storage unavailable"); });
+    expect(bindings.set("workspace.open-project", "Mod+P")).toEqual({ kind: "storage" });
+    expect(dispatcher.handleKeyDown(key("p"), "one")).toBe(false);
+    expect(dispatcher.handleKeyDown(key("o"), "one")).toBe(true);
+    write.mockRestore();
+    expect(bindings.set("workspace.open-project", "")).toEqual({ kind: "saved" });
+    expect(dispatcher.handleKeyDown(key("o"), "one")).toBe(false);
+    expect(dispatcher.list().find(command => command.id === "workspace.open-project")?.binding).toBeNull();
+    expect(dispatcher.dispatch("workspace.open-project", { viewId: "one", source: "native-menu" })).toBe(true);
+    expect(openProject).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["meta", "ctrl"] as const)("opens settings through the default comma with %s and keeps extensions in the same registry", modifier => {
+    const { dispatcher, openSettings, openExtensions } = setup(modifier);
+    expect(dispatcher.handleKeyDown(key(",", { metaKey: modifier === "meta", ctrlKey: modifier === "ctrl" }), "one")).toBe(true);
+    expect(dispatcher.handleKeyDown(key(",", { metaKey: modifier !== "meta", ctrlKey: modifier !== "ctrl" }), "one")).toBe(false);
+    expect(dispatcher.list().find(command => command.id === "workspace.settings")).toMatchObject({ nameKey: "settingsWorkbench.title", binding: "Mod+,", availability: { enabled: true } });
+    expect(dispatcher.list().find(command => command.id === "workspace.extensions")).toMatchObject({ nameKey: "plugins.title", binding: null, availability: { enabled: true } });
+    expect(dispatcher.dispatch("workspace.extensions", { viewId: "one", source: "palette" })).toBe(true);
+    expect(openSettings).toHaveBeenCalledTimes(1); expect(openExtensions).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves settings and extension actions unavailable when the host does not supply them", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] }), gate = new InteractionGate(), commands = new WorkbenchCommands();
+    registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => scope, navigation: navigation(), actions: {}, onError: vi.fn() });
+    expect(commands.describe("workspace.settings", scope)?.availability.enabled).toBe(false);
+    expect(commands.describe("workspace.extensions", scope)?.availability.enabled).toBe(false);
+    expect(commands.dispatch("workspace.settings", scope)).toBe(false);
+    expect(commands.dispatch("workspace.extensions", scope)).toBe(false);
+  });
+
+  it("retains editor ownership, composition, modal and intent gates after rebinding", () => {
+    const { bindings, gate, dispatcher, confirm } = setup();
+    expect(bindings.set("translation.confirm", "Mod+Alt+S")).toEqual({ kind: "saved" });
+    const event = () => key("s", { metaKey: true, altKey: true });
+    gate.setInputOwner("one", "entry-search-one");
+    expect(dispatcher.handleKeyDown(event(), "one", "entry-search-one")).toBe(false);
+    gate.setInputOwner("one", "segment-editor-one");
+    expect(dispatcher.handleKeyDown(key("s"), "one", "segment-editor-one")).toBe(false);
+    expect(dispatcher.handleKeyDown(event(), "one", "segment-editor-stale")).toBe(false);
+    expect(dispatcher.handleKeyDown(event(), "one", "segment-editor-one")).toBe(true);
+    gate.setComposing("segment-editor-one", true);
+    expect(dispatcher.handleKeyDown(event(), "one", "segment-editor-one")).toBe(false);
+    gate.setComposing("segment-editor-one", false);
+    expect(dispatcher.handleKeyDown(key("s", { metaKey: true, altKey: true, isComposing: true }), "one", "segment-editor-one")).toBe(false);
+    const ime = event(); Object.defineProperty(ime, "keyCode", { value: 229 });
+    expect(dispatcher.handleKeyDown(ime, "one", "segment-editor-one")).toBe(false);
+    const close = gate.pushDialog("settings");
+    expect(dispatcher.handleKeyDown(event(), "one", "segment-editor-one")).toBe(false); close();
+    const intent = gate.acquireIntent("switch-project"); expect(intent).not.toBeNull();
+    expect(dispatcher.handleKeyDown(event(), "one", "segment-editor-one")).toBe(false); intent?.release();
+    expect(confirm).toHaveBeenCalledTimes(1); expect(confirm).toHaveBeenLastCalledWith(false);
+  });
+
+  it("rebinds the actual focused-AI command without broadening list ownership or its availability", () => {
+    const { bindings, commands, gate, dispatcher } = setup(), stage = vi.fn();
+    let available = true;
+    commands.register({ ...workspaceCommandMetadata("translation.stage-focused-ai"), category: "translation", risk: "writes-translation", confirmation: "none", scope,
+      availability: () => ({ enabled: available }), handler: stage });
+    expect(bindings.set("translation.stage-focused-ai", "Mod+Alt+A")).toEqual({ kind: "saved" });
+    const event = () => key("a", { metaKey: true, altKey: true });
+    expect(dispatcher.handleKeyDown(key("a", { metaKey: true, shiftKey: true }), "one")).toBe(false);
+    gate.setInputOwner("one", "segment-editor-one");
+    expect(dispatcher.handleKeyDown(event(), "one", "segment-editor-one")).toBe(false);
+    gate.setInputOwner("one", "entry-list-one");
+    expect(dispatcher.handleKeyDown(event(), "one", "entry-list-one")).toBe(true);
+    available = false;
+    expect(dispatcher.handleKeyDown(event(), "one", "entry-list-one")).toBe(false);
+    expect(stage).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes MCP actions through the same registry only when the host supplies their real capabilities", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] }), gate = new InteractionGate(), commands = new WorkbenchCommands();
+    const openMcpQuery = vi.fn(), openMcpShare = vi.fn();
+    const register = (available: boolean) => registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => scope, navigation: navigation(),
+      actions: available ? { openMcpQuery, openMcpShare } : {}, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: null, scope, commands }), modifier: "meta" });
+    const removeUnavailable = register(false);
+    expect(dispatcher.dispatch("workspace.mcp-query", { viewId: null, source: "palette" })).toBe(false);
+    expect(dispatcher.dispatch("workspace.mcp-share", { viewId: null, source: "native-menu" })).toBe(false);
+    register(true); removeUnavailable();
+    expect(dispatcher.list().find(command => command.id === "workspace.mcp-query")).toMatchObject({ nameKey: "settingsWorkbench.query", binding: null, availability: { enabled: true } });
+    expect(dispatcher.list().find(command => command.id === "workspace.mcp-share")).toMatchObject({ nameKey: "settingsWorkbench.share", binding: null, availability: { enabled: true } });
+    expect(dispatcher.dispatch("workspace.mcp-query", { viewId: null, source: "palette" })).toBe(true);
+    expect(dispatcher.dispatch("workspace.mcp-share", { viewId: null, source: "native-menu" })).toBe(true);
+    expect(openMcpQuery).toHaveBeenCalledTimes(1); expect(openMcpShare).toHaveBeenCalledTimes(1);
   });
 });
