@@ -38,6 +38,8 @@ import type { EditorCommand, SegmentEditorHandle } from "./features/editor/Segme
 import type { LifecycleParticipant } from "./platform/projectLifecycle";
 import type { ImportOwners } from "./features/import/importTypes";
 import type { DeliveryOwnerHandle } from "./features/delivery/deliveryTypes";
+import type { StrategyOwner } from "../StrategyDraftSession";
+import type { StrategyIntent } from "./features/strategy/StrategyView";
 import type { CandidateOwners } from "./features/candidates/candidateTypes";
 import type { ReviewOwner } from "./features/review/reviewTypes";
 import type { CandidateBatchSnapshot } from "./features/candidates/CandidateBatchSession";
@@ -82,6 +84,8 @@ const ReviewBatchPanel = lazy(() => import("./features/review/ReviewBatchPanel")
 const TranslationImportPanel = lazy(() => import("./features/import/TranslationImportPanel"));
 const createDeliveryOwnerHost = () => lazy(() => import("./features/delivery/DeliveryOwnerHost"));
 const DeliveryView = lazy(() => import("./features/delivery/DeliveryView"));
+const createStrategyOwnerHost = () => lazy(() => import("./features/strategy/StrategyOwnerHost"));
+const StrategyView = lazy(() => import("./features/strategy/StrategyView"));
 const CandidateOwnerHost = lazy(() => import("./features/candidates/CandidateOwnerHost"));
 const CandidateRecovery = lazy(() => import("./features/candidates/CandidateRecovery"));
 const CandidateBatchPanel = lazy(() => import("./features/candidates/CandidateBatchPanel"));
@@ -104,6 +108,7 @@ type KnowledgeOpenIntent = { newView: boolean; restoreDraft: boolean; viewId: st
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openSource: () => void;
   openDelivery: () => Promise<boolean>;
+  openStrategy: () => Promise<boolean>;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
@@ -112,6 +117,7 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
   drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
   importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void;
+  strategyOwner: StrategyOwner | null; requestStrategy: () => void; strategyReveal: number; strategyLoadFailed: boolean; retryStrategy: () => void;
   deliveryOwner: DeliveryOwnerHandle | null; executionTasks: ReturnType<typeof useExecutionTaskSession> | null;
   requestDelivery: () => void; deliveryReveal: number; deliveryLoadFailed: boolean; canRetryDelivery: boolean; retryDelivery: () => void;
   candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void;
@@ -145,6 +151,11 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
     action={canRetry ? <Button onClick={onRetry}>{t("retryOwner")}</Button> : undefined}/>;
 }
 
+function StrategyLoadFailure({ onFailure }: { onFailure: () => void }) {
+  const reported = useRef(false);
+  useEffect(() => { if (!reported.current) { reported.current = true; onFailure(); } }, [onFailure]);
+  return null;
+}
 function DeliveryLoadFailure({ onFailure }: { onFailure: () => void }) {
   useLayoutEffect(onFailure, [onFailure]);
   return null;
@@ -190,6 +201,29 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     if (deliveryStatus.current.hadOwner) return;
     setDeliveryLoadFailed(false); setDeliveryOwnerHost(() => createDeliveryOwnerHost()); setDeliveryAttempt(value => value + 1); requestDelivery();
   }, [requestDelivery]);
+  const [StrategyOwnerHost, setStrategyOwnerHost] = useState(createStrategyOwnerHost), [strategyAttempt, setStrategyAttempt] = useState(0);
+  const [strategyRequested, setStrategyRequested] = useState(false), [strategyOwner, setStrategyOwner] = useState<StrategyOwner | null>(null);
+  const [strategyReveal, setStrategyReveal] = useState(0), [strategyLoadFailed, setStrategyLoadFailed] = useState(false);
+  const strategyStatus = useRef({ hadOwner: false });
+  const strategyParticipant = useRef<LifecycleParticipant | null>(null);
+  const requestStrategy = useCallback(() => setStrategyRequested(true), []);
+  const revealStrategy = useCallback(() => { requestStrategy(); setStrategyReveal(value => value + 1); }, [requestStrategy]);
+  const publishStrategyOwner = useCallback((owner: StrategyOwner | null) => {
+    if (!owner && strategyStatus.current.hadOwner) return;
+    if (owner) strategyStatus.current.hadOwner = true;
+    setStrategyOwner(owner);
+  }, []);
+  const publishStrategyParticipant = useCallback((value: LifecycleParticipant | null) => { strategyParticipant.current = value; }, []);
+  const retryStrategy = useCallback(() => {
+    if (strategyStatus.current.hadOwner) return;
+    setStrategyLoadFailed(false); setStrategyOwnerHost(() => createStrategyOwnerHost()); setStrategyAttempt(value => value + 1); requestStrategy();
+  }, [requestStrategy]);
+  useLayoutEffect(() => lifecycle.register({ id: "context-strategy", area: "ai", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-strategy-presentation" }
+      : strategyParticipant.current?.inspect(intent) ?? { status: strategyStatus.current.hadOwner ? "blocked" : "ready", revision: strategyStatus.current.hadOwner ? "strategy-owner-unavailable" : "strategy-not-edited" },
+    prepareLeave: (intent, proof, current) => strategyParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: revealStrategy,
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealStrategy]);
   const [candidatesRequested, setCandidatesRequested] = useState(false), [candidateOwners, setCandidateOwners] = useState<CandidateOwners | null>(null);
   const candidateStatus = useRef({ requested: false, owners: null as CandidateOwners | null });
   const requestCandidates = useCallback(() => { candidateStatus.current.requested = true; setCandidatesRequested(true); }, []);
@@ -400,6 +434,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
+    strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
     deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery: !deliveryStatus.current.hadOwner, retryDelivery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
@@ -439,6 +474,10 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     {deliveryRequested ? <FeatureBoundary key={`delivery-owner-${deliveryAttempt}`} fallback={<DeliveryLoadFailure onFailure={failDeliveryLoad}/>}><Suspense fallback={null}>
       <DeliveryOwnerHost project={session.project} lifecycle={lifecycle} gate={gate} onOwner={publishDeliveryOwner} onParticipant={publishDeliveryParticipant} onReveal={revealDelivery}/>
     </Suspense></FeatureBoundary> : null}
+    {strategyRequested && drafts ? <FeatureBoundary key={`strategy-owner-${strategyAttempt}`} fallback={<StrategyLoadFailure onFailure={() => setStrategyLoadFailed(true)}/>}><Suspense fallback={null}>
+      <StrategyOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishStrategyOwner}
+        onParticipant={publishStrategyParticipant} onReveal={revealStrategy}/>
+    </Suspense></FeatureBoundary> : null}
     {startupHandoff ? <StartupHandoff request={startupHandoff} owner={executionTasks ? sourceOwner : null} lifecycle={lifecycle} gate={gate} disabled={readOnly} onHandled={onStartupHandled} onOpen={revealSource}/> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <ExecutionTaskHandleProvider value={executionTasks}><RouterProvider router={runtime.router} /></ExecutionTaskHandleProvider>
@@ -451,6 +490,7 @@ function WorkspaceShell() {
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
+    strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
     deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery, retryDelivery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
@@ -461,9 +501,13 @@ function WorkspaceShell() {
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
   const lifecycleState = useProjectLifecycle(lifecycle);
+  const [strategyIntent, setStrategyIntent] = useState<StrategyIntent | undefined>(undefined);
+  const strategyIntentSequence = useRef(0);
+  const [strategyRequestTarget, setStrategyRequestTarget] = useState<{actionId: string; submittedSeq: string} | undefined>(undefined);
   const [knowledgeReview, setKnowledgeReview] = useState<KnowledgeReviewTarget | null>(null);
   const observedKnowledgeOpenIntent = useRef<KnowledgeOpenIntent | null>(null);
   useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
+  useLayoutEffect(() => { if (view?.kind === "runs") requestStrategy(); }, [view?.kind, requestStrategy]);
   useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
@@ -544,7 +588,10 @@ function WorkspaceShell() {
   const sourceSubscribe = sourceOwner?.subscribe, readSourceActivity = sourceOwner?.getDecisionActivity;
   const sourceActivity = useMemo(() => sourceSubscribe && readSourceActivity ? { subscribe: sourceSubscribe, getDecisionActivity: readSourceActivity } : null,
     [sourceSubscribe, readSourceActivity]);
-  const decisionFeed = useDecisionFeed(session.reads, [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
+  const strategySubscribe = strategyOwner?.subscribe, readStrategyActivity = strategyOwner?.getDecisionActivity;
+  const strategyActivity = useMemo(() => strategySubscribe && readStrategyActivity ? { subscribe: strategySubscribe, getDecisionActivity: readStrategyActivity } : null,
+    [strategySubscribe, readStrategyActivity]);
+  const decisionFeed = useDecisionFeed(session.reads, strategyActivity ? [drafts, conversations, resourceActivity, sourceActivity, strategyActivity] : [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
     view?.kind === "decisions" && !importVisible, !readOnly);
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
@@ -648,11 +695,11 @@ function WorkspaceShell() {
     if (commandsReady && commands) commands.dispatch("review.batch-preview", scope, payload);
   }
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
-    openSource, openDelivery: async () => false,
+    openSource, openDelivery: async () => false, openStrategy: async () => false,
     openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
   actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
-    openSource, openDelivery: () => openDelivery(),
+    openSource, openDelivery: () => openDelivery(), openStrategy: () => openStrategy(),
     openImport: async () => {
       requestImport();
       if (!importOwners) {
@@ -691,6 +738,7 @@ function WorkspaceShell() {
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
+      openStrategy: () => actions.current.openStrategy(),
       openDecisions: () => openDecisions(), openDelivery: () => actions.current.openDelivery(), openSettings: () => settings.open("general", paletteHandoff.current ?? undefined), openExtensions: () => settings.openExtensions(paletteHandoff.current ?? undefined),
       openReferences: settings.openReferences ? () => settings.openReferences?.(paletteHandoff.current ?? undefined) : undefined,
       openMcpQuery: settings.openMcpQuery ? () => settings.openMcpQuery?.(paletteHandoff.current ?? undefined) : undefined,
@@ -741,6 +789,22 @@ function WorkspaceShell() {
       && now.session?.project.sessionToken === session.project.sessionToken
       && store.getState().activeViewId === currentId && (actual?.focus ?? null) === (view?.focus ?? null)
       && actual?.dock === view?.dock;
+  }
+  async function openStrategy(unitId?: string, locale = activeLocale, parentDialogId?: string, requestTarget?: {actionId: string; submittedSeq: string}) {
+    if (disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
+    if (parentDialogId === "workspace-dock" && narrow && drawer) closeDrawer();
+    const origin = document.activeElement;
+    requestStrategy();
+    const workspace = store.getState(), existing = [...workspace.viewOrder].reverse().find(id => workspace.views[id].kind === "runs");
+    try {
+      const accepted = await (existing ? runtime.navigation.activate(existing) : runtime.navigation.open({ kind: "runs", locale }));
+      if (accepted) {
+        setStrategyRequestTarget(requestTarget);
+        setStrategyIntent(unitId ? { unitId, locale, sequence: ++strategyIntentSequence.current } : undefined);
+        if (document.activeElement === origin || document.activeElement === document.body) main.current?.focus();
+      }
+      return accepted;
+    } catch { setCommandFailed(true); return false; }
   }
   async function openDelivery(newView = false, target?: DeliveryNavigationTarget, locale = activeLocale) {
     const now = lifecycle.getSnapshot(), origin = document.activeElement;
@@ -799,6 +863,10 @@ function WorkspaceShell() {
       if (destination.kind === "conversation-request") {
         if (!conversations || !await conversations.open(destination.conversationId) || !current()) return false;
         intent.release(); revealConversation({ conversationId: destination.conversationId, slot: destination.slot, actionId: destination.actionId, focus: focusRetained() }); return true;
+      }
+      if (destination.kind === "strategy-request") {
+        if (!current()) return false;
+        intent.release(); return await openStrategy(undefined, activeLocale, undefined, destination);
       }
       if (destination.kind === "resource-request") {
         if (!knowledgeOwner || knowledgeOwner.journal.hydration !== "ready") return false;
@@ -1089,7 +1157,7 @@ function WorkspaceShell() {
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
         patch={patch => { if (view) store.getState().patch(view.id, patch); }} onReviewEdit={openReviewEditor} onEdit={(unitId, locale) => openCandidateEditor(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         comparisonOwner={comparisonOwner} requestComparisons={requestComparisons} onOpenComparison={comparison => openSavedComparison(comparison, narrow && drawer ? "workspace-dock" : undefined)}
-        reviewOwner={reviewOwner}
+        reviewOwner={reviewOwner} onOpenStrategy={(unitId, locale) => openStrategy(unitId, locale, narrow && drawer ? "workspace-dock" : undefined)}
         parentDialogId={narrow && drawer ? "workspace-dock" : undefined} onPresented={reportPresented}/>}</Suspense></FeatureBoundary></TabsContent>
     </TabsRoot>;
   }
@@ -1111,6 +1179,8 @@ function WorkspaceShell() {
     {commandFailed ? <Banner tone="error">{message("actionFailed")}</Banner> : null}
     {knowledgeOwner && (knowledgeBlocked(knowledgeOwner) || knowledgeHasDraft(knowledgeOwner)) && view?.kind !== "knowledge" || !knowledgeOwner && knowledgeReveal > 0 && view?.kind !== "knowledge" ? <Banner tone="warning"
       action={<Button disabled={disabled} onClick={() => { void openKnowledgeDraft().catch(() => setCommandFailed(true)); }}>{t("knowledge.backToDraft")}</Button>}>{t(knowledgeOwner ? "knowledge.draftKept" : "knowledge.readingTerms")}</Banner> : null}
+    {view?.kind !== "runs" && (strategyOwner && (strategyOwner.dirty() || strategyOwner.reserved() || strategyOwner.journalFailure) || !strategyOwner && strategyReveal > 0) ? <Banner tone="warning"
+      action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.strategy")}>{message("strategyOpen")}</Button>}>{message("strategyKept")}</Banner> : null}
     {view?.kind !== "delivery" && (deliveryOwner && (deliveryOwner.buildDirty || deliveryOwner.deliveryDirty || deliveryOwner.prepared || deliveryOwner.checkReview || deliveryOwner.workflow || deliveryOwner.reserved())
       || !deliveryOwner && deliveryReveal > 0) ? <Banner tone="warning"
       action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.delivery")}>{t("deliveryWorkbench.backToDelivery")}</Button>}>{t("deliveryWorkbench.ownerKept")}</Banner> : null}
@@ -1167,7 +1237,7 @@ function WorkspaceShell() {
           if (pixels !== view.dockSize) store.getState().patch(view.id, { dockSize: pixels });
         }
       }}>
-        <SplitPanel minSize={0} className={styles.mainPanel}><main ref={main} tabIndex={view?.kind === "decisions" || view?.kind === "delivery" ? -1 : undefined} className={styles.main}>
+        <SplitPanel minSize={0} className={styles.mainPanel}><main ref={main} tabIndex={view?.kind === "decisions" || view?.kind === "delivery" || view?.kind === "runs" ? -1 : undefined} className={styles.main}>
           <div className={styles.viewTabs} aria-label={message("views")} role="navigation">{state.viewOrder.map(id => {
             const item = state.views[id], name = item.kind === "entries" ? message("viewName", { locale: item.locale }) : message(item.kind);
             return <div key={id} className={appStyles.viewTab} data-active={id === currentId || undefined}>
@@ -1188,6 +1258,11 @@ function WorkspaceShell() {
             {knowledgeOwner ? <KnowledgeView project={session.project} owner={knowledgeOwner} view={view} drafts={drafts} onEditTranslation={openCandidateEditor} onRevealTranslationDraft={(unitId, locale) => revealDraft({ projectId: session.project.metadata.projectId, unitId, locale })} disabled={disabled} gate={gate} current={knowledgeCurrent}
               patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }} reviewTarget={knowledgeReview?.proposal.projectId === session.project.metadata.projectId ? knowledgeReview : null} onReviewOpened={() => setKnowledgeReview(null)}/>
               : <LoadingState label={t("knowledge.readingTerms")}/>}
+          </Suspense></FeatureBoundary> : view.kind === "runs" ? <FeatureBoundary key="strategy-presentation" fallback={<ErrorState title={message("strategyLoadFailed")}/>}><Suspense fallback={<LoadingState label={message("strategyLoading")}/>}>
+            {strategyLoadFailed ? <ErrorState title={message("strategyLoadFailed")} action={<Button onClick={retryStrategy}>{message("strategyRetry")}</Button>}/>
+              : strategyOwner ? <StrategyView project={session.project} owner={strategyOwner} commands={commandsReady ? commands : null} tasks={executionTasks} visible disabled={disabled} gate={gate} viewId={view.id} intent={strategyIntent} requestTarget={strategyRequestTarget}
+                onOpenConnections={() => settings.open("connections")} onOpenEntry={async (unitId, locale) => { try { return await inspectCandidate(unitId, locale, null); } catch { setCommandFailed(true); return false; } }}/>
+              : <LoadingState label={message("strategyLoading")}/>}
           </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
             {deliveryLoadFailed ? <ErrorState title={t("deliveryWorkbench.ownerFailed")} action={canRetryDelivery ? <Button onClick={retryDelivery}>{t("deliveryWorkbench.retryOwner")}</Button> : undefined}/>
               : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}

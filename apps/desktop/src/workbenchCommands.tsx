@@ -42,7 +42,7 @@ import { validateResponseProjectView } from "./generated/validators";
 
 type PlainWorkbenchCommandId = "source.import-upstream" | "translation.hide-candidate-batch" | "translation.open-retained-candidate-batch" | "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
-  | "workspace.agent" | "workspace.details" | "workspace.decisions" | "workspace.delivery" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
+  | "workspace.agent" | "workspace.details" | "workspace.decisions" | "workspace.delivery" | "workspace.strategy" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "workspace.references" | "workspace.settings" | "workspace.extensions" | "workspace.mcp-query" | "workspace.mcp-share"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "translation.import" | "translation.refresh-import" | "translation.reset-import"

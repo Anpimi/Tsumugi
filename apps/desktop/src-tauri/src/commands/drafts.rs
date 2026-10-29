@@ -1,6 +1,10 @@
 //! Application-local input recovery, separate from project business mutations.
 mod store;
 mod types;
+mod strategy_types;
+pub use strategy_types::*;
+pub(super) mod strategy;
+pub use strategy::*;
 mod resource_types;
 pub use resource_types::*;
 mod source_types;

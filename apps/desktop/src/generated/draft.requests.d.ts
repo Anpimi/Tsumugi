@@ -530,6 +530,117 @@ export type SourceDraftPreparationRef =
       request: SourceDraftCheckPrepareRequest;
     };
 export type SourceDraftDisposition = "recorded" | "confirmed-not-applied" | "preparation-expired";
+export type StrategyDraftPending =
+  | {
+      editSeq: Revision;
+      kind: "candidate";
+      request: StrategyCaptureOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      candidate: ContextStrategyCandidate;
+      editSeq: Revision;
+      kind: "suite";
+      request: StrategySuiteOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      editSeq: Revision;
+      kind: "prepare";
+      request: StrategyPrepareOriginal;
+      submittedSeq: Revision;
+      suite: StrategySuiteView;
+    }
+  | {
+      editSeq: Revision;
+      kind: "start";
+      request: StrategyStartOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      draftSeq: Revision;
+      editSeq: Revision;
+      kind: "judgment";
+      request: StrategyJudgmentOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      editSeq: Revision;
+      kind: "promote";
+      request: StrategyPromoteOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      editSeq: Revision;
+      kind: "withdraw";
+      request: StrategyWithdrawOriginal;
+      submittedSeq: Revision;
+    }
+  | {
+      attemptId: ExecutionId;
+      editSeq: Revision;
+      kind: "save-candidate";
+      request: StrategySaveOriginal;
+      submittedSeq: Revision;
+      unitId: ExecutionId;
+    }
+  | {
+      editSeq: Revision;
+      kind: "prepare-check";
+      locale: string;
+      request: StrategyCheckOriginal;
+      submittedSeq: Revision;
+      unitId: ExecutionId;
+    }
+  | {
+      editSeq: Revision;
+      kind: "check";
+      request: StrategyCheckStartOriginal;
+      submittedSeq: Revision;
+    };
+export type ContextResourceStatus =
+  "selected" | "withdrawn" | "conflict" | "ambiguous" | "missing-files" | "shadowed" | "outside-scope";
+/**
+ * Pinned local decisions are separate from raw SDK facts and the provider projection.
+ */
+export type ProjectFactCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      decisions: ContextFactDecision[];
+      kind: "selected";
+      manual: boolean;
+      scope: SourceContextRequest;
+    };
+export type SourceContextCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      kind: "selected";
+      value: SelectedSourceContext;
+    };
+export type SourceContextDirection = "before" | "after";
+/**
+ * A pointer only; omitted text and rationale never enter the capture.
+ */
+export type SourceContextOmissionSample =
+  | {
+      blockIndex: number;
+      factIndex: number;
+      kind: "fact";
+      reason: SourceContextOmissionReason;
+    }
+  | {
+      kind: "neighbor";
+      occurrenceId: ExecutionId;
+      reason: SourceContextOmissionReason;
+    };
+export type SourceContextOmissionReason = "not-selected" | "byte-budget" | "item-limit";
+export type StrategyPreference = "candidate-preferred" | "equivalent" | "baseline-preferred";
+export type StrategyDraftDisposition = "recorded" | "prepared" | "confirmed-not-applied" | "rejected";
+export type StrategyDraftRole = "calibration" | "holdout";
 /**
  * A frozen original request, without any session token or execution authority.
  */
@@ -572,6 +683,13 @@ export interface Requests {
   sourceRead: SourceDraftReadRequest;
   sourceResolve: SourceDraftResolveRequest;
   sourceWrite: SourceDraftWriteRequest;
+  strategyAction: StrategyDraftActionRequest;
+  strategyClear: StrategyDraftClearRequest;
+  strategyClose: StrategyDraftActionRequest;
+  strategyList: StrategyDraftListRequest;
+  strategyRead: StrategyDraftReadRequest;
+  strategyResolve: StrategyDraftResolveRequest;
+  strategyWrite: StrategyDraftWriteRequest;
   write: DraftWriteRequest;
 }
 export interface DraftClearRequest {
@@ -2335,6 +2453,392 @@ export interface SourceDraftReceiptRef {
 export interface SourceDraftWriteRequest {
   sessionToken: string;
   write: SourceDraftWrite;
+}
+export interface StrategyDraftActionRequest {
+  key: StrategyDraftKey;
+  pending: StrategyDraftPending;
+  sessionToken: string;
+}
+export interface StrategyDraftKey {
+  projectId: ExecutionId;
+}
+export interface StrategyCaptureOriginal {
+  capture: CaptureContextStrategy;
+  projectId: ExecutionId;
+}
+export interface CaptureContextStrategy {
+  actionId: ExecutionId;
+  basis: CorrectionTermBasis;
+  exceptions: string;
+  reason: string;
+  sourceContext: SourceContextSelection;
+}
+export interface ContextStrategyCandidate {
+  candidateId: ExecutionId;
+  digest: string;
+  /**
+   * Exact reads project `current` from the original correction chain;
+   * immutable action receipts retain its value at capture time.
+   */
+  evidence: CorrectionTermEvidence;
+  exceptions: string;
+  locale: string;
+  projectId: ExecutionId;
+  reason: string;
+  sourceContext: SourceContextSelection;
+}
+export interface StrategySuiteOriginal {
+  capture: CaptureStrategySuite;
+  projectId: ExecutionId;
+}
+export interface CaptureStrategySuite {
+  actionId: ExecutionId;
+  calibrationUnitIds: ExecutionId[];
+  candidateId: ExecutionId;
+  config: AiConfig;
+  holdoutUnitIds: ExecutionId[];
+  projectId: ExecutionId;
+}
+export interface StrategyPrepareOriginal {
+  capture: CaptureStrategyEvaluation;
+  projectId: ExecutionId;
+}
+export interface CaptureStrategyEvaluation {
+  actionId: ExecutionId;
+  candidateId: ExecutionId;
+  projectId: ExecutionId;
+  suiteId: ExecutionId;
+}
+export interface StrategySuiteView {
+  candidateId: ExecutionId;
+  digest: string;
+  locale: string;
+  preview: ArenaPreviewView;
+  projectId: ExecutionId;
+  request: CaptureStrategySuite;
+  suiteId: ExecutionId;
+  units: StrategySuiteUnit[];
+}
+export interface ArenaPreviewView {
+  config: ArenaConfig;
+  digest: string;
+  items: ArenaItemView[];
+}
+export interface ArenaConfig {
+  blind: boolean;
+  concurrency: number;
+  maxItems: number;
+  maxRequests: number;
+  parentAttemptId?: ExecutionId | null;
+  variants: AiConfig[];
+}
+export interface ArenaItemView {
+  item: AiItemView;
+  slot: number;
+  sourceOrder: number;
+}
+export interface AiItemView {
+  context?: ContextRevision | null;
+  contextResources?: ContextResourceCapture | null;
+  nativeKey: string;
+  omissions: string[];
+  projectContext: ProjectFactCapture;
+  resourceBaseline: UnsignedDecimal;
+  sourceContext: SourceContextCapture;
+  sourceLocale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  sourceText: string;
+  targetLocale: string;
+  terms: SharedTerm[];
+  unitId: ExecutionId;
+}
+/**
+ * Historical captures omit this field when empty so old input encoding stays stable.
+ */
+export interface ContextResourceCapture {
+  entries: ContextResourceResolutionEntry[];
+  scope: SourceContextRequest;
+}
+export interface ContextResourceResolutionEntry {
+  missingPaths: string[];
+  revision: ContextResourceRevision;
+  status: ContextResourceStatus;
+}
+export interface ContextFactDecision {
+  request: ContextFactWrite;
+}
+export interface SelectedSourceContext {
+  contentRevision: Revision;
+  facts: SelectedSourceFact[];
+  localUnitId: string;
+  neighbors: SourceContextNeighbor[];
+  observations: SourceContextObservations;
+  omissions: SourceContextOmissions;
+  scope: SourceContextRequest;
+  selection: SourceContextSelection;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
+}
+export interface SourceContextNeighbor {
+  adjacentTo: SourceContextAdjacency[];
+  occurrence: SourceContextOccurrence;
+  sourceRevisionId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface SourceContextAdjacency {
+  /**
+   * The neighbor's position relative to this selected occurrence.
+   */
+  direction: SourceContextDirection;
+  occurrenceId: ExecutionId;
+}
+export interface SourceContextOccurrence {
+  localOccurrenceId: string;
+  occurrenceId: ExecutionId;
+  source: SourceReference;
+}
+/**
+ * Missing, explicitly empty and unknown schema observations are distinct.
+ */
+export interface SourceContextObservations {
+  emptyBlocks: number;
+  knownBlocks: number;
+  knownFacts: number;
+  missingBlocks: boolean;
+  neighborOccurrences: number;
+  unknownBlocks: number;
+  unknownRequiredBlocks: number;
+  unknownSamples: UnknownSourceBlockSample[];
+}
+export interface UnknownSourceBlockSample {
+  blockIndex: number;
+  handling: ExtensionHandling;
+  schema: ContractRef;
+  target: ContentTarget;
+}
+export interface SourceContextOmissions {
+  byteBudget: number;
+  extracted: number;
+  inferred: number;
+  itemLimit: number;
+  neighbors: number;
+  notSelected: number;
+  samples: SourceContextOmissionSample[];
+}
+export interface SharedTerm {
+  protected: boolean;
+  revisionId: ExecutionId;
+  source: string;
+  target: string;
+}
+export interface StrategySuiteUnit {
+  holdout: boolean;
+  reviewBasis: ReviewBasis;
+  sourceBinding: SourceReviewBinding;
+  sourceRevisionId: ExecutionId;
+  terms: TermResolution;
+  unitId: ExecutionId;
+}
+export interface ReviewBasis {
+  contextRevisionId?: ExecutionId | null;
+  revisionId?: ExecutionId | null;
+  selectionId?: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  termRevisionIds: ExecutionId[];
+}
+export interface SourceReviewBinding {
+  checker: PluginExecutionBinding;
+  declaration: ReviewDeclaration;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
+export interface TermResolution {
+  entries: TermResolutionEntry[];
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TermResolutionEntry {
+  conflicting: TermRevision[];
+  selected?: TermRevision | null;
+  source: string;
+}
+export interface StrategyStartOriginal {
+  attemptId: ExecutionId;
+  confirmed: boolean;
+  digest: string;
+  evaluationId: ExecutionId;
+  projectId: ExecutionId;
+}
+export interface StrategyJudgmentOriginal {
+  judgment: StrategyJudgmentRequest;
+  projectId: ExecutionId;
+}
+export interface StrategyJudgmentRequest {
+  actionId: ExecutionId;
+  /**
+   * Explicit human reports, never provider/clock measurements.
+   */
+  elapsedSeconds?: number | null;
+  evaluationId: ExecutionId;
+  expectedJudgmentId?: ExecutionId | null;
+  modifiedCharacters?: number | null;
+  notes: string;
+  preference: StrategyPreference;
+  projectId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface StrategyPromoteOriginal {
+  projectId: ExecutionId;
+  promotion: PromoteContextStrategy;
+}
+export interface PromoteContextStrategy {
+  actionId: ExecutionId;
+  evaluationId: ExecutionId;
+  expectedRevisionId?: ExecutionId | null;
+  projectId: ExecutionId;
+}
+export interface StrategyWithdrawOriginal {
+  projectId: ExecutionId;
+  withdrawal: WithdrawContextStrategy;
+}
+export interface WithdrawContextStrategy {
+  actionId: ExecutionId;
+  expectedRevisionId?: ExecutionId | null;
+  locale: string;
+  projectId: ExecutionId;
+}
+export interface StrategySaveOriginal {
+  actionId: ExecutionId;
+  evaluationId: ExecutionId;
+  itemId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+}
+export interface StrategyCheckOriginal {
+  check: StrategyCheckRequest;
+  projectId: ExecutionId;
+}
+export interface StrategyCheckRequest {
+  actionId: ExecutionId;
+  evaluationId: ExecutionId;
+  itemId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+}
+export interface StrategyCheckStartOriginal {
+  check: StrategyCheckOriginal;
+  executions: StrategyCheckerOriginal[];
+  projectId: ExecutionId;
+}
+export interface StrategyCheckerOriginal {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  unsandboxedExecution: boolean;
+}
+export interface StrategyDraftClearRequest {
+  clear: StrategyDraftClear;
+  sessionToken: string;
+}
+export interface StrategyDraftClear {
+  expectedRevision: Revision;
+  key: StrategyDraftKey;
+}
+export interface StrategyDraftListRequest {
+  after?: StrategyDraftKey | null;
+  key: StrategyDraftKey;
+  limit: number;
+  sessionToken: string;
+}
+export interface StrategyDraftReadRequest {
+  key: StrategyDraftKey;
+  sessionToken: string;
+}
+export interface StrategyDraftResolveRequest {
+  resolve: StrategyDraftResolve;
+  sessionToken: string;
+}
+export interface StrategyDraftResolve {
+  disposition: StrategyDraftDisposition;
+  pending: StrategyDraftPending;
+  write: StrategyDraftWrite;
+}
+export interface StrategyDraftWrite {
+  expectedRevision: Revision;
+  key: StrategyDraftKey;
+  value: StrategyDraftValue;
+  writerId: ExecutionId;
+}
+export interface StrategyDraftValue {
+  candidate?: ContextStrategyCandidate | null;
+  candidateEditSeq: Revision;
+  candidateSavedSeq: Revision;
+  config: AiConfig;
+  correctionUnit: string;
+  editSeq: Revision;
+  evaluationId?: ExecutionId | null;
+  evidence?: CorrectionTermEvidence | null;
+  exceptions: string;
+  journalSeq: Revision;
+  judgments: {
+    [k: string]: StrategyJudgmentDraft;
+  };
+  locale: string;
+  numberDrafts?: {
+    "config-concurrency"?: StrategyNumberDraft;
+    "config-max-items"?: StrategyNumberDraft;
+    "config-max-output-tokens"?: StrategyNumberDraft;
+    "config-max-requests"?: StrategyNumberDraft;
+    "config-max-retries"?: StrategyNumberDraft;
+    "config-timeout-seconds"?: StrategyNumberDraft;
+    "source-context-max-bytes"?: StrategyNumberDraft;
+    "source-context-max-items"?: StrategyNumberDraft;
+  };
+  pending?: StrategyDraftPending | null;
+  reason: string;
+  roles: {
+    [k: string]: StrategyDraftRole;
+  };
+  sourceContext: SourceContextSelection;
+  suite?: StrategySuiteView | null;
+  suiteEditSeq: Revision;
+  suiteSavedSeq: Revision;
+}
+export interface StrategyJudgmentDraft {
+  editSeq: Revision;
+  elapsed: string;
+  modified: string;
+  notes: string;
+  preference?: StrategyPreference | null;
+  savedSeq: Revision;
+}
+export interface StrategyNumberDraft {
+  previous: number;
+  text: string;
+}
+export interface StrategyDraftWriteRequest {
+  sessionToken: string;
+  write: StrategyDraftWrite;
 }
 export interface DraftWriteRequest {
   sessionToken: string;

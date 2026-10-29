@@ -149,3 +149,17 @@ it("marks a retained later cursor as changed when the first page basis advances 
   await waitFor(() => expect(h.result.current.one.page.data?.basis).toBe(basis));
   expect(h.result.current.one.changed).toBe(false);
 });
+
+it("includes a fifth strategy owner and refreshes when its active request finishes", async () => {
+  const owners = [owner(id(87000)), owner(id(87001)), owner(id(87002)), owner(id(87003)), owner(id(87004))] as const;
+  const read = vi.fn(async (request: DecisionPageRequest) => page("f".repeat(64), request.cursor ?? null, request.activity));
+  const h = harness(read, { owners });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  expect(read.mock.calls[0][0].activity).toHaveLength(5);
+  const action: DecisionClientAction = { key: { kind: "strategy" }, slot: "strategy", actionId: id(87100), submittedSeq: "3" };
+  act(() => owners[4].observe([action]));
+  await waitFor(() => expect(read.mock.lastCall?.[0].activity?.[4]?.actions).toEqual([action]));
+  act(() => owners[4].observe([]));
+  await waitFor(() => expect(read.mock.lastCall?.[0].activity?.[4]?.actions).toEqual([]));
+  expect(h.result.current.one.first.data?.localActions?.activity?.[4]?.actions).toEqual([]);
+});

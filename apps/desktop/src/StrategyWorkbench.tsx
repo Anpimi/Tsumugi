@@ -27,10 +27,17 @@ export function StrategyWorkbench(props: Props) {
 function StrategyPanel({ area, project, active, disabled, config, onOpenConnections }: Props) {
   const { t } = useTranslation(), owner = useStrategyDraftSession(), reads = useSessionReads(), state = owner.state;
   const [connectionOpen, setConnectionOpen] = useState(false), [presetName, setPresetName] = useState("custom");
-  const [expanded, setExpanded] = useState(() => owner.dirty() || owner.reserved()), [after, setAfter] = useState(0);
+  const [expanded, setExpanded] = useState(() => owner.dirty() || !!owner.current().pending || owner.current().busy), [after, setAfter] = useState(0);
   const [candidateOffset, setCandidateOffset] = useState(0), [evaluationOffset, setEvaluationOffset] = useState(0), [historyOffset, setHistoryOffset] = useState(0);
   const failureRef = useRef<HTMLDivElement>(null), context = reads.context;
   const enabled = active && expanded && !reads.retired;
+  const hydrated = useRef(!state.hydrating);
+  useEffect(() => {
+    if (!state.hydrating && !hydrated.current) {
+      hydrated.current = true;
+      if (owner.dirty() || owner.current().pending) setExpanded(true);
+    }
+  }, [state.hydrating, owner]);
   const registry = useWorkbenchCommands();
   const commandScope = { ...context, area };
   function checkAvailability() {
@@ -100,6 +107,9 @@ function StrategyPanel({ area, project, active, disabled, config, onOpenConnecti
         <option value="">{t("strategy.chooseLocale")}</option>{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}
       </select></label>
       {!owner.available() ? <p role="alert">{t("ai.errors.ai-locale")}</p> : null}
+      {state.journalFailure ? <div role="alert"><p>{t("strategyView.localFailure")}</p><CommandFailureDetails failure={state.journalFailure}/>
+        <button type="button" className="secondary-button" disabled={state.busy || state.journalBusy} onClick={() => void owner.retryJournal()}>{t("strategyView.retryLocal")}</button></div>
+        : state.hydrating ? <p role="status">{t("strategyView.localLoading")}</p> : null}
       {loading ? <p role="status">{t("strategy.loading")}</p> : null}
       {failure ? <div role="alert" tabIndex={-1} ref={failureRef}><p>{t(localFailure ?? (state.pending?.uncertain ? "strategy.unknown" : rejectedGate ?? (state.notice === "recordedReadFailed" ? "strategy.recordedReadFailed" : "strategy.failed")))}</p>
         <CommandFailureDetails failure={failure} /><button type="button" className="secondary-button" disabled={state.busy} onClick={refresh}>{t("strategy.refresh")}</button></div> : null}

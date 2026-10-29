@@ -4,8 +4,10 @@
 use super::types::*;
 use super::resource_types::*;
 use super::source_types::*;
+use super::strategy_types::*;
 mod conversations;
 mod resources;
+mod strategies;
 mod sources;
 mod pending;
 pub use pending::{PendingActionRef, PendingJournalKey, PendingJournalSlot, PendingSnapshot};
@@ -31,7 +33,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 15;
+const FORMAT: i64 = 16;
+const STRATEGY_FORMAT:i64=16;
 const TEAM_QUESTION_FORMAT: i64 = 15;
 const TEAM_RECOVERY_FORMAT: i64 = 14;
 const SOURCE_ACTION_FORMAT: i64 = 12;
@@ -357,6 +360,7 @@ impl DraftStore {
         tx.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
         tx.execute_batch(resources::HEAD_SQL).map_err(sql)?;
         tx.execute_batch(sources::HEAD_SQL).map_err(sql)?;
+        tx.execute_batch(strategies::HEAD_SQL).map_err(sql)?;
         tx.pragma_update(None, "application_id", APPLICATION_ID)
             .map_err(sql)?;
         tx.pragma_update(None, "user_version", FORMAT)
@@ -480,7 +484,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | REUSE_ORIGIN_FORMAT | RESOURCE_FORMAT | SOURCE_FORMAT | SOURCE_ACTION_FORMAT | TEAM_DRAFT_FORMAT | TEAM_RECOVERY_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | REUSE_ORIGIN_FORMAT | RESOURCE_FORMAT | SOURCE_FORMAT | SOURCE_ACTION_FORMAT | TEAM_DRAFT_FORMAT | TEAM_RECOVERY_FORMAT | TEAM_QUESTION_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -513,6 +517,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
         expected.push(("source_draft_heads".into(), "table".into(), sources::HEAD_SQL.into()));
         expected.sort();
     }
+    if format>=STRATEGY_FORMAT {expected.push(("strategy_draft_heads".into(),"table".into(),strategies::HEAD_SQL.into()));expected.sort();}
     if schema != expected {
         return Err(fail(ErrorCode::CorruptLedger, "drafts-schema"));
     }
@@ -547,13 +552,16 @@ fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
     if format < SOURCE_FORMAT {
         connection.execute_batch(sources::HEAD_SQL).map_err(sql)?;
     }
+    if format<STRATEGY_FORMAT{connection.execute_batch(strategies::HEAD_SQL).map_err(sql)?;}
     connection.pragma_update(None,"user_version",FORMAT).map_err(sql)?;
     test_hook("conversation-upgrade-after-ddl", Some(connection));
     Ok(())
 }
 
 fn journal_usage(connection:&Connection,format:i64,project:ExecutionId) -> Result<(i64,i64,i64,i64)> {
-    let records = if format >= SOURCE_FORMAT {
+    let records = if format>=STRATEGY_FORMAT {
+        "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads UNION ALL SELECT project_id,payload FROM resource_draft_heads UNION ALL SELECT project_id,payload FROM source_draft_heads UNION ALL SELECT project_id,payload FROM strategy_draft_heads)"
+    } else if format >= SOURCE_FORMAT {
         "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads UNION ALL SELECT project_id,payload FROM resource_draft_heads UNION ALL SELECT project_id,payload FROM source_draft_heads)"
     } else if format >= RESOURCE_FORMAT {
         "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads UNION ALL SELECT project_id,payload FROM resource_draft_heads)"
@@ -925,6 +933,7 @@ mod tests;
 
 #[cfg(test)]
 fn set_legacy_format(c:&Connection,format:i64)->rusqlite::Result<()>{
+    if format<STRATEGY_FORMAT{c.execute_batch("DROP TABLE IF EXISTS strategy_draft_heads")?;}
     if format<SOURCE_FORMAT {c.execute_batch("DROP TABLE IF EXISTS source_draft_heads")?;}
     if format<RESOURCE_FORMAT {c.execute_batch("DROP TABLE IF EXISTS resource_draft_heads")?;}
     c.pragma_update(None,"user_version",format)

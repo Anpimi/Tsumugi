@@ -21,7 +21,9 @@ import type { AiItem } from "./aiCommands";
 import { validateResponseCorrectionBasis } from "./generated/resource.validators";
 import errorWire from "../test/fixtures/commandErrors.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
+import { strategyDraftCommands } from "./strategyDraftCommands";
+import { installStrategyDraftFixture } from "./testSupport/strategyDraftFixture";
+import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
 import { validateResponseSuite } from "./generated/strategy.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -32,6 +34,7 @@ const project: ProjectView = { sessionToken: "strategy-session", locator: "isola
   metadata: { projectId: resourceWire.responses.correctionBasis.basis.projectId, displayName: "Synthetic strategies", sourceLocale: "en", targetLocales: ["zh-CN", "ja"], metadataRevision: "1" } };
 let owner: ReturnType<typeof useStrategyDraftSession>, ai: ReturnType<typeof useAiPreparation>, reads: ReturnType<typeof useSessionReads>;
 let evidence: CorrectionTermEvidence;
+let journal: ReturnType<typeof installStrategyDraftFixture>;
 function Probe() { const value = useStrategyDraftSession(), session = useSessionReads(); useLayoutEffect(() => { owner = value; reads = session; }); return null; }
 function AiProbe() { const value = useAiPreparation(); useLayoutEffect(() => { ai = value; }); return null; }
 function Harness({ current = project, withAi = false, showProbe = true }: { current?: ProjectView; withAi?: boolean; showProbe?: boolean }) {
@@ -70,7 +73,7 @@ function withoutConnectionProfile(request: Parameters<typeof strategyCommands.su
   const canonical = structuredClone(request); delete canonical.config.connectionProfile; return canonical;
 }
 beforeEach(() => {
-  vi.restoreAllMocks(); invoke.mockReset(); invoke.mockImplementation(async (command: string) => { if (command === "read_context_strategy_default") return null; throw new Error(command); });
+  vi.restoreAllMocks(); journal = installStrategyDraftFixture(); invoke.mockReset(); invoke.mockImplementation(async (command: string) => { if (command === "read_context_strategy_default") return null; throw new Error(command); });
   const source: unknown = structuredClone(resourceWire.responses.correctionBasis); if (!validateResponseCorrectionBasis(source)) throw new Error("Invalid canonical correction fixture"); evidence = source;
   const editor: unknown = structuredClone(reviewWire.responses.editor); if (!validateResponseEditor(editor)) throw new Error("Invalid canonical editor fixture");
   if (!editor.translations.current) throw new Error("Saved selection fixture required");
@@ -85,9 +88,11 @@ beforeEach(() => {
 });
 afterEach(() => { bridgeStops.splice(0).forEach(stop => stop()); cleanup(); });
 async function correction() {
+  await waitFor(() => expect(owner.hydrating).toBe(false));
   act(() => owner.edit("correctionUnit", evidence.basis.unitId));
-  await act(async () => owner.inspectCorrection());
+  await act(async () => { await owner.flush(); await owner.inspectCorrection(); });
   act(() => { owner.edit("sourceContext", { ...defaultAiConfig.sourceContext, extracted: true }); owner.edit("reason", "Saved correction A"); owner.edit("exceptions", "No inferred context or other languages"); });
+  await act(async () => { await owner.flush(); });
 }
 
 it.each(["ipc-ack", "owner-ack", "lost-ack", "manual-reconcile"] as const)("accepts an omitted no-profile suite through %s", async mode => {
@@ -115,10 +120,10 @@ it.each(["ipc-ack", "owner-ack", "lost-ack", "manual-reconcile"] as const)("acce
     }
     throw new Error(command);
   });
-  await act(async () => owner.captureSuite());
+  await act(async () => { await owner.flush(); await owner.captureSuite(); });
   if (mode === "manual-reconcile") {
     expect(owner.state.pending?.uncertain).toBe(true); expect(owner.state.pending?.retryAllowed).toBe(true);
-    await act(async () => owner.reconcile());
+    await act(async () => { await owner.flush(); await owner.reconcile(); });
   }
   expect(owner.state.pending).toBeNull(); expect(owner.state.suite).toEqual(original); expect(owner.state.failure).toBeNull();
   expect(owner.dirty()).toBe(false); expect(owner.state.consent).toBe(false);
@@ -149,7 +154,7 @@ it.each(["config", "candidate", "calibration", "holdout", "slot", "source-order"
     expect(validateResponseSuite(value)).toBe(true); return value;
   });
   vi.spyOn(strategyCommands, "action").mockResolvedValue(null);
-  await act(async () => owner.captureSuite());
+  await act(async () => { await owner.flush(); await owner.captureSuite(); });
   expect(owner.state.pending?.uncertain).toBe(true); expect(owner.state.suite).toBeNull(); expect(owner.dirty()).toBe(true);
 });
 
@@ -172,9 +177,9 @@ it("keeps an unknown original action, checks absence, and retries only the same 
   expect(owner.state.pending?.uncertain).toBe(true); expect(owner.reset()).toBe(false);
   act(() => owner.edit("reason", "Newer B"));
   const read = vi.spyOn(strategyCommands, "action").mockResolvedValue(null);
-  await act(async () => owner.reconcile()); expect(read).toHaveBeenCalledWith(expect.objectContaining({ actionId: fixtureIdentity(2410) }));
+  await act(async () => { await owner.flush(); await owner.reconcile(); }); expect(read).toHaveBeenCalledWith(expect.objectContaining({ actionId: fixtureIdentity(2410) }));
   expect(owner.state.pending?.retryAllowed).toBe(true);
-  await act(async () => owner.retry()); expect(vi.mocked(strategyCommands.capture).mock.calls[1][0]).toBe(original);
+  await act(async () => { await owner.flush(); await owner.retry(); }); expect(vi.mocked(strategyCommands.capture).mock.calls[1][0]).toBe(original);
   expect(owner.state.reason).toBe("Newer B"); expect(owner.dirty()).toBe(true);
 });
 
@@ -183,17 +188,18 @@ it("does not settle an unknown candidate from a foreign saved action", async () 
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce(new Error("Synthetic connection loss")); await act(async () => owner.capture());
   const pending = owner.state.pending; if (pending?.kind !== "candidate") throw new Error("Original capture required");
   vi.spyOn(strategyCommands, "action").mockResolvedValue({ kind: "candidate", request: { ...pending.request.capture, reason: "Foreign" }, candidate: candidate() });
-  await act(async () => owner.reconcile()); expect(owner.state.pending?.uncertain).toBe(true); expect(owner.state.pending?.retryAllowed).toBe(false); expect(owner.state.candidate).toBeNull();
+  await act(async () => { await owner.flush(); await owner.reconcile(); }); expect(owner.state.pending?.uncertain).toBe(true); expect(owner.state.pending?.retryAllowed).toBe(false); expect(owner.state.candidate).toBeNull();
 });
 
 it("releases a missing original capture after its exact receipt-first stale rejection", async () => {
   render(<Harness />, project); await correction();
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce(new Error("Synthetic lost acknowledgement")); await act(async () => owner.capture());
   const original = owner.state.pending?.request;
-  vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => owner.reconcile());
+  vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => { await owner.flush(); await owner.reconcile(); });
   act(() => { owner.edit("reason", "Newer hypothesis B"); reads.invalidate(["source"]); });
+  journal.proveNext("confirmed-not-applied");
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce({ ...errorWire.errors[0], reason: "strategy-correction-stale" });
-  await act(async () => owner.retry()); expect(vi.mocked(strategyCommands.capture).mock.calls[1][0]).toBe(original);
+  await act(async () => { await owner.flush(); await owner.retry(); }); expect(vi.mocked(strategyCommands.capture).mock.calls[1][0]).toBe(original);
   expect(owner.state.pending).toBeNull(); expect(owner.state.reason).toBe("Newer hypothesis B"); expect(owner.state.stale).toBe(true); expect(owner.dirty()).toBe(true);
   act(() => expect(owner.reset()).toBe(true));
 });
@@ -201,15 +207,15 @@ it("releases a missing original capture after its exact receipt-first stale reje
 it("keeps unknown writes pending after Host preflight rejection without receipt-first proof", async () => {
   render(<Harness />, project); await correction();
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce(new Error("Synthetic lost acknowledgement")); await act(async () => owner.capture());
-  vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => owner.reconcile());
+  vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => { await owner.flush(); await owner.reconcile(); });
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce({ ...errorWire.errors[0], reason: "connection-profile-current" });
-  await act(async () => owner.retry()); expect(owner.state.pending?.uncertain).toBe(true); expect(owner.reset()).toBe(false);
+  await act(async () => { await owner.flush(); await owner.retry(); }); expect(owner.state.pending?.uncertain).toBe(true); expect(owner.reset()).toBe(false);
 });
 
 it("rejects late correction reads after a locale change or retired project session", async () => {
-  const rendered = render(<Harness />, project); const response = deferred<CorrectionTermEvidence>();
+  const rendered = render(<Harness />, project); await waitFor(() => expect(owner.hydrating).toBe(false)); const response = deferred<CorrectionTermEvidence>();
   vi.mocked(resourceCommands.correctionBasis).mockReturnValueOnce(response.promise);
-  act(() => owner.edit("correctionUnit", evidence.basis.unitId)); let reading!: Promise<void>;
+  act(() => owner.edit("correctionUnit", evidence.basis.unitId)); await act(async () => { await owner.flush(); }); let reading!: Promise<void>;
   act(() => { reading = owner.inspectCorrection(); }); await waitFor(() => expect(resourceCommands.correctionBasis).toHaveBeenCalledOnce());
   expect(owner.setLocale("ja")).toBe(false);
   const old = owner; const next = { ...project, sessionToken: "new-session" }; rendered.rerender(<Harness current={next} />, next);
@@ -296,7 +302,7 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
   const evaluationRead = vi.spyOn(strategyCommands, "evaluation").mockImplementation(async () => observedView());
   const start = vi.spyOn(strategyCommands, "start").mockRejectedValueOnce(new Error("Synthetic lost start acknowledgement")).mockResolvedValue(attemptId);
   act(() => { owner.copyConfig({ ...baseline, shareTerms: true, shareContext: true }); owner.edit("roles", { [item.unitId]: "calibration", [holdout]: "holdout" }); });
-  await act(async () => owner.captureSuite());
+  await act(async () => { await owner.flush(); await owner.captureSuite(); });
   expect(suiteWrite).toHaveBeenCalledOnce(); expect(suite.request.config).toMatchObject({ model: baseline.model, maxRequests: 4, shareTerms: false, shareContext: false, contextStrategy: null, sourceContext: defaultAiConfig.sourceContext });
   if (bridge) {
     const observation = deferred<void>(); evaluationRead.mockImplementationOnce(async () => { const captured = observedView(); await observation.promise; return captured; });
@@ -320,8 +326,8 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
   expect(start.mock.calls[0][0].digest).not.toBe(prepared.preview.digest);
   expect(owner.state.pending?.uncertain).toBe(true);
   const originalStart = start.mock.calls[0][0]; vi.spyOn(strategyCommands, "startAction").mockResolvedValue(null);
-  await act(async () => owner.reconcile()); expect(owner.state.pending?.retryAllowed).toBe(true);
-  await act(async () => owner.retry()); expect(start.mock.calls[1][0]).toBe(originalStart);
+  await act(async () => { await owner.flush(); await owner.reconcile(); }); expect(owner.state.pending?.retryAllowed).toBe(true);
+  await act(async () => { await owner.flush(); await owner.retry(); }); expect(start.mock.calls[1][0]).toBe(originalStart);
   let arena = arenaViewFixture(item, suite.preview.config);
   const originalArena = structuredClone(arena);
   const rows: ArenaView["rows"] = [item.unitId, holdout].flatMap((unitId, sourceOrder) => arena.rows.map((row, slot) => ({ ...row,
@@ -365,7 +371,7 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
         adoption: { receipt: recovered, action: { ...executionWire.action, actionId: pending.request.actionId, projectId: project.metadata.projectId,
           attemptId, unitId: pending.unitId, operation: "arena-translation", resultIds: [row.resultId!], parameters: null } } });
       const preparing = vi.spyOn(executionCommands, "prepare");
-      await act(async () => owner.reconcile()); expect(owner.state.pending).toBeNull(); expect(actionRead).toHaveBeenCalledWith(pending.request);
+      await act(async () => { await owner.flush(); await owner.reconcile(); }); expect(owner.state.pending).toBeNull(); expect(actionRead).toHaveBeenCalledWith(pending.request);
       expect(preparing).not.toHaveBeenCalled();
     }
     act(freshView); await act(async () => owner.prepareCheck(view, row));
@@ -383,16 +389,17 @@ it.each([false, true])("orchestrates fixed Arena and Review requests with a real
     request: { ...request.judgment, elapsedSeconds: request.judgment.elapsedSeconds ?? null, modifiedCharacters: request.judgment.modifiedCharacters ?? null, expectedJudgmentId: request.judgment.expectedJudgmentId ?? null },
     baselineResultId: rows[2].resultId!, candidateResultId: rows[3].resultId! }));
   act(() => { freshView(); owner.editJudgment(holdout, { preference: "candidate-preferred", notes: "Human comparison of these two exact results", elapsed: "31536001", modified: "3" }); });
-  await act(async () => owner.judge(view, holdout)); expect(judgment).not.toHaveBeenCalled(); expect(owner.state.failure).toBe("strategy-report");
+  await act(async () => { await owner.flush(); await owner.judge(view, holdout); }); expect(judgment).not.toHaveBeenCalled(); expect(owner.state.failure).toBe("strategy-report");
   act(() => owner.editJudgment(holdout, { elapsed: "12" }));
-  await act(async () => owner.judge(view, holdout)); expect(judgment).toHaveBeenCalledWith(expect.objectContaining({ judgment: expect.objectContaining({ unitId: holdout, preference: "candidate-preferred", elapsedSeconds: 12, modifiedCharacters: 3, expectedJudgmentId: null }) }));
+  await act(async () => { await owner.flush(); await owner.judge(view, holdout); }); expect(judgment).toHaveBeenCalledWith(expect.objectContaining({ judgment: expect.objectContaining({ unitId: holdout, preference: "candidate-preferred", elapsedSeconds: 12, modifiedCharacters: 3, expectedJudgmentId: null }) }));
   const promote = vi.spyOn(strategyCommands, "promote").mockRejectedValueOnce(new Error("Synthetic lost default acknowledgement")).mockResolvedValue(revision(savedCandidate));
   act(freshView); await act(async () => owner.changeDefault(view, false, null, () => true));
   expect(promote).toHaveBeenCalledWith(expect.objectContaining({ promotion: expect.objectContaining({ evaluationId: view.evaluation.evaluationId, expectedRevisionId: null }) }));
   expect(owner.state.pending?.uncertain).toBe(true); const originalPromotion = owner.state.pending?.request;
-  vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => owner.reconcile());
+  vi.spyOn(strategyCommands, "action").mockResolvedValue(null); await act(async () => { await owner.flush(); await owner.reconcile(); });
+  journal.proveNext("confirmed-not-applied");
   promote.mockRejectedValueOnce({ ...errorWire.errors[0], reason: "strategy-default-current" });
-  await act(async () => owner.retry()); expect(promote.mock.calls[1][0]).toBe(originalPromotion); expect(owner.state.pending).toBeNull();
+  await act(async () => { await owner.flush(); await owner.retry(); }); expect(promote.mock.calls[1][0]).toBe(originalPromotion); expect(owner.state.pending).toBeNull();
   act(freshView); await act(async () => owner.changeDefault(view, false, fixtureIdentity(2950), () => true));
   expect(promote.mock.calls[2][0].promotion.expectedRevisionId).toBe(fixtureIdentity(2950)); expect(owner.state.pending).toBeNull();
   const originalPrepare = vi.mocked(strategyCommands.prepare).getMockImplementation()!;
@@ -422,16 +429,16 @@ it("rejects a default that became stale while its immutable candidate was being 
 });
 
 it("keeps stale candidate evidence visible and refuses a new evaluation set", async () => {
-  render(<Harness />, project); const stale = candidate(); stale.evidence.current = false;
+  render(<Harness />, project); await waitFor(() => expect(owner.hydrating).toBe(false)); const stale = candidate(); stale.evidence.current = false;
   act(() => { expect(owner.chooseCandidate(stale)).toBe(true); owner.copyConfig({ ...defaultAiConfig, endpoint: "http://127.0.0.1:4000/v1/chat/completions", model: "synthetic", maxRequests: 4 });
     owner.edit("roles", { [stale.evidence.basis.unitId]: "calibration", [fixtureIdentity(2960)]: "holdout" }); });
-  const captureSuite = vi.spyOn(strategyCommands, "suite"); await act(async () => owner.captureSuite());
+  const captureSuite = vi.spyOn(strategyCommands, "suite"); await act(async () => { await owner.flush(); await owner.captureSuite(); });
   expect(captureSuite).not.toHaveBeenCalled(); expect(owner.state.candidate?.evidence.sourceText).toBe(evidence.sourceText); expect(owner.state.stale).toBe(true);
 });
 
 
 it.each(["candidate", "withdraw"] as const)("automatically confirms original %s once and never repeats its write or identity", async kind => {
-  render(<Harness />, project); if (kind === "candidate") await correction();
+  render(<Harness />, project); await waitFor(() => expect(owner.hydrating).toBe(false)); if (kind === "candidate") await correction();
   let original!: StrategyActionReceipt;
   const candidateRead = vi.spyOn(strategyCommands, "candidate").mockImplementation(async () => {
     if (original.kind !== "candidate") throw new Error("Candidate proof required"); return original.candidate;
@@ -463,7 +470,7 @@ it("pins a recovered original candidate before a failed current read without off
   await act(async () => owner.capture());
   expect(owner.state.pending).toBeNull(); expect(owner.state.candidate?.candidateId).toBe(fixtureIdentity(2410));
   expect(owner.state.notice).toBe("recordedReadFailed"); expect(owner.state.stale).toBe(true);
-  await act(async () => owner.retry()); expect(strategyCommands.capture).toHaveBeenCalledOnce();
+  await act(async () => { await owner.flush(); await owner.retry(); }); expect(strategyCommands.capture).toHaveBeenCalledOnce();
 });
 
 it("keeps one original read flight through consumer removal, preserving newer hypothesis B", async () => {
@@ -488,8 +495,8 @@ it("retains the original request when a successful lookup belongs to another cap
   const read = vi.spyOn(strategyCommands, "action").mockImplementationOnce(async () => ({ ...original, request: { ...original.request, reason: "Foreign input" } })).mockImplementation(async () => original);
   vi.spyOn(strategyCommands, "candidate").mockImplementation(async () => original.candidate);
   await act(async () => owner.capture()); const pending = owner.state.pending;
-  expect(pending?.retryAllowed).toBe(false); await act(async () => owner.retry()); expect(strategyCommands.capture).toHaveBeenCalledOnce();
-  await act(async () => owner.reconcile()); expect(owner.state.pending).toBeNull(); expect(read).toHaveBeenCalledTimes(2);
+  expect(pending?.retryAllowed).toBe(false); await act(async () => { await owner.flush(); await owner.retry(); }); expect(strategyCommands.capture).toHaveBeenCalledOnce();
+  await act(async () => { await owner.flush(); await owner.reconcile(); }); expect(owner.state.pending).toBeNull(); expect(read).toHaveBeenCalledTimes(2);
   expect(read.mock.calls[1][0]).toEqual(read.mock.calls[0][0]);
 });
 
@@ -502,5 +509,44 @@ it("does not settle a retired strategy owner from a late original read", async (
   const retained = owner.state.pending; act(() => reads.retire());
   await act(async () => { response.resolve(original); await writing; });
   expect(owner.current().pending).toBe(retained); expect(owner.current().candidate).toBeNull();
-  await act(async () => owner.reconcile()); expect(read).toHaveBeenCalledOnce();
+  await act(async () => { await owner.flush(); await owner.reconcile(); }); expect(read).toHaveBeenCalledOnce();
+});
+
+
+it("releases a freshly rejected promotion while preserving newer judgment input for correction", async () => {
+  render(<Harness />, project); await waitFor(() => expect(owner.hydrating).toBe(false));
+  const selected = candidate(), capture = suiteCapture({ ...defaultAiConfig, endpoint: "http://127.0.0.1:9/v1/chat/completions", model: "synthetic-promotion", maxRequests: 4 });
+  const suite = suiteFixture(capture, selected), evaluationId = fixtureIdentity(2402), holdout = capture.holdoutUnitIds[0];
+  if (!holdout) throw new Error("A separate holdout entry is required");
+  const view: StrategyEvaluationView = { candidate: selected, suite, current: true, checks: [], judgments: [],
+    evaluation: { evaluationId, projectId: project.metadata.projectId, locale: "zh-CN", candidateId: selected.candidateId, suiteId: suite.suiteId,
+      attemptId: fixtureIdentity(2980), inputDigest: "e".repeat(64), request: { actionId: evaluationId, projectId: project.metadata.projectId, candidateId: selected.candidateId, suiteId: suite.suiteId } },
+    slots: suite.preview.items.map((row, index) => ({ itemId: fixtureIdentity(2981 + index), unitId: row.item.unitId, slot: row.slot, resultId: fixtureIdentity(2991 + index) })) };
+  act(() => { expect(owner.chooseCandidate(selected)).toBe(true); expect(owner.selectEvaluation(evaluationId)).toBe(true); });
+  await act(async () => { await owner.flush(); });
+  act(() => reads.client.setQueryData(reads.key(strategyKeys.evaluation(evaluationId)), view));
+  const observed = reads.client.getQueryData<StrategyEvaluationView>(reads.key(strategyKeys.evaluation(evaluationId)));
+  if (!observed) throw new Error("The exact evaluation observation is required");
+  const response = deferred<ContextStrategyDefaultRevision>(), promote = vi.spyOn(strategyCommands, "promote").mockReturnValueOnce(response.promise);
+  let promoting!: Promise<void>; act(() => { promoting = owner.changeDefault(observed, false, null, () => true); });
+  await waitFor(() => expect(promote).toHaveBeenCalledOnce());
+  act(() => owner.editJudgment(holdout, { preference: "candidate-preferred", notes: "Newer independent comparison B", elapsed: "12", modified: "3" }));
+  await act(async () => { await owner.flush(); });
+  const newer = structuredClone(owner.state.judgments[holdout]);
+  if (!newer) throw new Error("The newer judgment draft must exist");
+  const failure = { ...errorWire.errors[0], reason: "strategy-judgments-incomplete", conflict: null };
+  if (!isCommandError(failure)) throw new Error("A known fresh Native rejection is required");
+  journal.rejectNext(failure);
+  await act(async () => { response.reject(failure); await promoting; await owner.flush(); });
+  expect(owner.state.pending).toBeNull(); expect(owner.state.failure).toEqual(failure); expect(owner.state.notice).toBeNull();
+  expect(owner.state.judgments[holdout]).toEqual(newer);
+  expect(vi.mocked(strategyDraftCommands.resolve).mock.lastCall?.[0].resolve.disposition).toBe("rejected");
+  const judged = vi.spyOn(strategyCommands, "judgment").mockImplementation(async request => ({ judgmentId: request.judgment.actionId,
+    request: { ...request.judgment, expectedJudgmentId: request.judgment.expectedJudgmentId ?? null, elapsedSeconds: request.judgment.elapsedSeconds ?? null, modifiedCharacters: request.judgment.modifiedCharacters ?? null },
+    baselineResultId: observed.slots.find(row => row.unitId === holdout && row.slot === 0)!.resultId!,
+    candidateResultId: observed.slots.find(row => row.unitId === holdout && row.slot === 1)!.resultId! }));
+  await act(async () => { await owner.judge(observed, holdout); await owner.flush(); });
+  expect(judged).toHaveBeenCalledOnce(); expect(owner.state.pending).toBeNull();
+  expect(owner.state.judgments[holdout]).toMatchObject({ notes: "Newer independent comparison B", savedSeq: newer.editSeq });
+  expect(promote).toHaveBeenCalledOnce();
 });

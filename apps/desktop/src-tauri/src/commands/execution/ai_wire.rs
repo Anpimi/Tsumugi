@@ -14,7 +14,7 @@ pub use tsumugi_core::ai::{AiConfig, arena::ArenaConfig};
 pub use tsumugi_core::ProviderBudget;
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiItemView {
     pub unit_id: ExecutionId,
@@ -175,7 +175,7 @@ pub fn index(value: usize) -> Result<u32, ExecutionError> {
         .map_err(|_| ExecutionError::new(ErrorCode::CorruptLedger, "arena-wire-index"))
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArenaItemView {
     pub slot: u32,
@@ -199,7 +199,7 @@ impl TryFrom<ArenaItem> for ArenaItemView {
     }
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ArenaPreviewView {
     pub config: ArenaConfig,

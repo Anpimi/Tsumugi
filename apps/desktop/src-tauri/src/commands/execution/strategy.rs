@@ -7,6 +7,7 @@ use tsumugi_core::{
     CaptureContextStrategy, CaptureStrategyEvaluation, CaptureStrategySuite,
     ContextStrategyCandidate, ContextStrategyCandidatePage, ContextStrategyDefaultPage,
     ContextStrategyDefaultRevision, PromoteContextStrategy, StrategyCheckReceipt,
+    StrategyActionRequest,StrategyCandidateSaveRequest,
     StrategyEvaluation, StrategyEvaluationPage, StrategyEvaluationSlot, StrategyJudgment,
     StrategyJudgmentRequest, StrategySuiteUnit, WithdrawContextStrategy,
 };
@@ -14,10 +15,96 @@ use tsumugi_core::{
 #[derive(Default)]
 pub(super) struct StrategySession {
     prepared: Option<(ExecutionId, ExecutionId, String)>,
+    rejected:Option<(StrategyMutationOriginal,CommandError)>,
+}
+#[derive(Clone,Debug,Eq,PartialEq)]
+enum StrategyMutationOriginal {Action(StrategyActionRequest),Save(StrategyCandidateSaveRequest)}
+impl StrategyMutationOriginal {
+    fn pending(p:&crate::commands::drafts::StrategyDraftPending)->Option<Self>{
+        use crate::commands::drafts::StrategyDraftPending as P;
+        Some(match p {
+            P::Candidate{request,..}=>Self::Action(StrategyActionRequest::Candidate(request.capture.clone())),
+            P::Suite{request,..}=>Self::Action(StrategyActionRequest::Suite(request.capture.clone())),
+            P::Prepare{request,..}=>Self::Action(StrategyActionRequest::Prepare(request.capture.clone())),
+            P::Judgment{request,..}=>Self::Action(StrategyActionRequest::Judgment(request.judgment.clone())),
+            P::Promote{request,..}=>Self::Action(StrategyActionRequest::Promote(request.promotion.clone())),
+            P::Withdraw{request,..}=>Self::Action(StrategyActionRequest::Withdraw(request.withdrawal.clone())),
+            P::SaveCandidate{request,..}=>Self::Save(StrategyCandidateSaveRequest{project_id:request.project_id,evaluation_id:request.evaluation_id,
+                action_id:request.action_id,item_id:request.item_id,result_id:request.result_id}),
+            _=>return None,
+        })
+    }
+    fn recorded(&self,store:&ProjectStore)->Result<bool,ExecutionError>{
+        match self {
+            Self::Action(r)=>{
+                let (project,id)=match r {
+                    StrategyActionRequest::Candidate(r)=>(r.basis.project_id,r.action_id),
+                    StrategyActionRequest::Suite(r)=>(r.project_id,r.action_id),
+                    StrategyActionRequest::Prepare(r)=>(r.project_id,r.action_id),
+                    StrategyActionRequest::Judgment(r)=>(r.project_id,r.action_id),
+                    StrategyActionRequest::Promote(r)=>(r.project_id,r.action_id),
+                    StrategyActionRequest::Withdraw(r)=>(r.project_id,r.action_id),
+                    StrategyActionRequest::Check(r)=>(r.project_id,r.action_id),
+                };Ok(store.strategy_action_observation(project,id)?.is_some())
+            }
+            Self::Save(r)=>Ok(store.strategy_candidate_save_action_observation(r)?.is_some_and(|v|v.adoption.receipt.is_some())),
+        }
+    }
 }
 impl StrategySession {
     pub(super) fn stop(&mut self) {
         self.prepared = None;
+    }
+    fn completed<T>(&mut self,store:&ProjectStore,request:StrategyMutationOriginal,result:Result<T,CommandError>)->Result<T,CommandError>{
+        if let Err(error)=&result {
+            if error.outcome==crate::commands::CommandOutcome::Rejected&&!error.recovery_required
+                &&!matches!(error.code,CommandErrorCode::Busy|CommandErrorCode::StorageFailed|CommandErrorCode::OutcomeUnknown)
+                &&request.recorded(store).is_ok_and(|recorded|!recorded){
+                self.rejected=Some((request,error.clone()));
+            }
+        }else if self.rejected.as_ref().is_some_and(|(old,_)|old==&request){self.rejected=None;}
+        result
+    }
+    pub(in crate::commands) fn rejection(&self,p:&crate::commands::drafts::StrategyDraftPending)->Option<CommandError>{
+        let original=StrategyMutationOriginal::pending(p)?;
+        self.rejected.as_ref().filter(|(r,_)|*r==original).map(|(_,error)|error.clone())
+    }
+}
+
+/// Local recovery never constructs an execution host or recreates a preparation.
+pub(in crate::commands) fn draft_rejection(active:&crate::commands::ActiveSession,
+    pending:&crate::commands::drafts::StrategyDraftPending)->Option<CommandError>{
+    active.execution.as_ref().and_then(|host|host.strategy.rejection(pending))
+}
+pub(in crate::commands) fn observe_draft(active:&mut crate::commands::ActiveSession,
+    key:&crate::commands::drafts::StrategyDraftKey,pending:&crate::commands::drafts::StrategyDraftPending,close:bool)
+    ->Result<Option<crate::commands::drafts::StrategyDraftDisposition>,CommandError>{
+    use crate::commands::drafts::{StrategyDraftDisposition as D,StrategyDraftPending as P};
+    let found=crate::commands::drafts::strategy::observe_strategy_pending(&active.store,key,pending).map_err(map_read)?;
+    if found!=Some(D::Recorded)&&active.execution.as_ref().is_some_and(|h|h.strategy.rejection(pending).is_some()){
+        return Ok(Some(D::Rejected));
+    }
+    if found==Some(D::Recorded)||found.is_some()&&(!close||!matches!(pending,P::Check{..}|P::PrepareCheck{..})){return Ok(found);}
+    match pending {
+        P::Start{request,..}=>{
+            let expected=(request.evaluation_id,request.attempt_id,request.digest.clone());
+            let prepared=active.execution.as_ref().is_some_and(|host|host.strategy.prepared.as_ref()==Some(&expected));
+            if close&&prepared {active.execution.as_mut().expect("observed host").strategy.prepared=None;}
+            Ok((!prepared||close||!request.confirmed).then_some(D::ConfirmedNotApplied))
+        }
+        P::PrepareCheck{request,..}=>{
+            if let Some(host)=active.execution.as_mut(){host.review.strategy_draft_observation(&mut active.store,&mut host.runtime,
+                &request.check,None,close)}else{Ok(Some(D::ConfirmedNotApplied))}
+        }
+        P::Check{request,..}=>{
+            if let Some(host)=active.execution.as_mut(){host.review.strategy_draft_observation(&mut active.store,&mut host.runtime,
+                &request.check.check,Some(&request.executions),close)}else{
+                for e in &request.executions {
+                    if active.store.strategy_checker_request_closed(e.grant_id,e.attempt_id,&e.input_digest,e.expires_at_ms.get(),e.unsandboxed_execution).map_err(map_read)?==Some(false){return Ok(None);}
+                }Ok(Some(D::ConfirmedNotApplied))
+            }
+        }
+        _=>Ok(None),
     }
 }
 
@@ -116,7 +203,7 @@ pub struct Prepared {
     pub can_start: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct StrategySuiteView {
@@ -278,10 +365,14 @@ pub async fn capture_context_strategy(
                     CommandStage::ExecutionAdopt,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                allow_strategy_action(host, store, request.project_id, request.capture.action_id)?;
-                store
-                    .capture_context_strategy(&request.capture)
-                    .map_err(map_adopt)
+                let original=StrategyMutationOriginal::Action(StrategyActionRequest::Candidate(request.capture.clone()));
+                let result=(||{
+                    allow_strategy_action(host, store, request.project_id, request.capture.action_id)?;
+                    store
+                        .capture_context_strategy(&request.capture)
+                        .map_err(map_adopt)
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await
@@ -362,22 +453,26 @@ pub async fn capture_strategy_suite(
                     CommandStage::ExecutionAdopt,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                allow_strategy_action(host, store, request.project_id, request.capture.action_id)?;
-                if store
-                    .read_strategy_action(request.project_id, request.capture.action_id)
-                    .map_err(map_read)?
-                    .is_none()
-                {
-                    connections::verify_configs(
-                        connections.as_ref(),
-                        std::slice::from_ref(&request.capture.config),
-                    )?;
-                }
-                store
-                    .capture_strategy_suite(&request.capture)
-                    .map_err(map_adopt)?
-                    .try_into()
-                    .map_err(map_adopt)
+                let original=StrategyMutationOriginal::Action(StrategyActionRequest::Suite(request.capture.clone()));
+                let result=(||{
+                    allow_strategy_action(host, store, request.project_id, request.capture.action_id)?;
+                    if store
+                        .read_strategy_action(request.project_id, request.capture.action_id)
+                        .map_err(map_read)?
+                        .is_none()
+                    {
+                        connections::verify_configs(
+                            connections.as_ref(),
+                            std::slice::from_ref(&request.capture.config),
+                        )?;
+                    }
+                    store
+                        .capture_strategy_suite(&request.capture)
+                        .map_err(map_adopt)?
+                        .try_into()
+                        .map_err(map_adopt)
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await
@@ -403,52 +498,56 @@ pub async fn prepare_strategy_evaluation(
                     CommandStage::ExecutionRead,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                let recorded = store
-                    .read_strategy_action(request.project_id, request.capture.action_id)
-                    .map_err(map_read)?
-                    .is_some();
-                if !recorded {
-                    host.allow_mutation()?;
+                let original=StrategyMutationOriginal::Action(StrategyActionRequest::Prepare(request.capture.clone()));
+                let result=(||{
+                    let recorded = store
+                        .read_strategy_action(request.project_id, request.capture.action_id)
+                        .map_err(map_read)?
+                        .is_some();
+                    if !recorded {
+                        host.allow_mutation()?;
+                        let suite = store
+                            .read_strategy_suite(request.project_id, request.capture.suite_id)
+                            .map_err(map_read)?;
+                        connections::verify_configs(
+                            connections.as_ref(),
+                            &suite.preview.config.variants,
+                        )?;
+                    }
+                    let evaluation = store
+                        .capture_strategy_evaluation(&request.capture)
+                        .map_err(map_adopt)?;
+                    let input = store
+                        .strategy_evaluation_input(request.project_id, evaluation.evaluation_id)
+                        .map_err(map_read)?;
                     let suite = store
-                        .read_strategy_suite(request.project_id, request.capture.suite_id)
+                        .read_strategy_suite(request.project_id, evaluation.suite_id)
                         .map_err(map_read)?;
-                    connections::verify_configs(
-                        connections.as_ref(),
-                        &suite.preview.config.variants,
-                    )?;
-                }
-                let evaluation = store
-                    .capture_strategy_evaluation(&request.capture)
-                    .map_err(map_adopt)?;
-                let input = store
-                    .strategy_evaluation_input(request.project_id, evaluation.evaluation_id)
-                    .map_err(map_read)?;
-                let suite = store
-                    .read_strategy_suite(request.project_id, evaluation.suite_id)
-                    .map_err(map_read)?;
-                let identity = (
-                    evaluation.evaluation_id,
-                    input.envelope().attempt_id,
-                    input.digest().to_owned(),
-                );
-                // Reading a saved preparation after reopening does not recreate consent
-                // or grant the new session authority to enqueue that old experiment.
-                if !recorded {
-                    store
-                        .check_strategy_evaluation_current(
-                            request.project_id,
-                            evaluation.evaluation_id,
-                        )
-                        .map_err(map_read)?;
-                    host.strategy.prepared = Some(identity.clone());
-                }
-                let can_start = host.strategy.prepared.as_ref() == Some(&identity);
-                Ok(Prepared {
-                    evaluation,
-                    preview: suite.preview.try_into().map_err(map_read)?,
-                    attempt_id: identity.1,
-                    can_start,
-                })
+                    let identity = (
+                        evaluation.evaluation_id,
+                        input.envelope().attempt_id,
+                        input.digest().to_owned(),
+                    );
+                    // Reading a saved preparation after reopening does not recreate consent
+                    // or grant the new session authority to enqueue that old experiment.
+                    if !recorded {
+                        store
+                            .check_strategy_evaluation_current(
+                                request.project_id,
+                                evaluation.evaluation_id,
+                            )
+                            .map_err(map_read)?;
+                        host.strategy.prepared = Some(identity.clone());
+                    }
+                    let can_start = host.strategy.prepared.as_ref() == Some(&identity);
+                    Ok(Prepared {
+                        evaluation,
+                        preview: suite.preview.try_into().map_err(map_read)?,
+                        attempt_id: identity.1,
+                        can_start,
+                    })
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await
@@ -554,88 +653,92 @@ pub async fn save_strategy_evaluation_candidate(
                     CommandStage::ExecutionAdopt,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                let evaluation = store
-                    .read_strategy_evaluation(request.project_id, request.evaluation_id)
-                    .map_err(map_read)?;
-                let input = store
-                    .strategy_evaluation_input(request.project_id, request.evaluation_id)
-                    .map_err(map_read)?;
-                let mut execution_units = input
-                    .envelope()
-                    .units
-                    .iter()
-                    .filter(|unit| unit.item_ids.as_slice() == [request.item_id]);
-                let execution_unit_id = execution_units
-                    .next()
-                    .map(|unit| unit.unit_id)
-                    .ok_or_else(|| {
-                        map_adopt(ExecutionError::new(
+                let original=StrategyMutationOriginal::Save(StrategyCandidateSaveRequest{project_id:request.project_id,evaluation_id:request.evaluation_id,action_id:request.action_id,item_id:request.item_id,result_id:request.result_id});
+                let result=(||{
+                    let evaluation = store
+                        .read_strategy_evaluation(request.project_id, request.evaluation_id)
+                        .map_err(map_read)?;
+                    let input = store
+                        .strategy_evaluation_input(request.project_id, request.evaluation_id)
+                        .map_err(map_read)?;
+                    let mut execution_units = input
+                        .envelope()
+                        .units
+                        .iter()
+                        .filter(|unit| unit.item_ids.as_slice() == [request.item_id]);
+                    let execution_unit_id = execution_units
+                        .next()
+                        .map(|unit| unit.unit_id)
+                        .ok_or_else(|| {
+                            map_adopt(ExecutionError::new(
+                                ErrorCode::ResultMismatch,
+                                "strategy-candidate-unit",
+                            ))
+                        })?;
+                    if execution_units.next().is_some() {
+                        return Err(map_adopt(ExecutionError::new(
                             ErrorCode::ResultMismatch,
                             "strategy-candidate-unit",
-                        ))
-                    })?;
-                if execution_units.next().is_some() {
-                    return Err(map_adopt(ExecutionError::new(
-                        ErrorCode::ResultMismatch,
-                        "strategy-candidate-unit",
-                    )));
-                }
-                let result = store
-                    .execution_result(evaluation.attempt_id, request.result_id)
-                    .map_err(map_adopt)?;
-                if result.envelope().item_id != request.item_id {
-                    return Err(map_adopt(ExecutionError::new(
-                        ErrorCode::ResultMismatch,
-                        "strategy-candidate-result",
-                    )));
-                }
-                // The original Arena validator reads the payload to bind the
-                // result to its source unit, independently of its adoption unit.
-                tsumugi_core::ai::arena::validate_output(&input, &result).map_err(map_adopt)?;
-                // The original adoption action owns both normal retries and uncertain
-                // results. Its complete fixed request is checked before receipt reads.
-                match store.adoption_action(request.action_id) {
-                    Ok(action) => {
-                        if action.project_id != request.project_id
-                            || action.attempt_id != evaluation.attempt_id
-                            || action.unit_id != execution_unit_id
-                            || action.result_ids != vec![request.result_id]
-                            || action.operation != tsumugi_core::ai::arena::OPERATION
-                            || !action.parameters.is_null()
-                        {
-                            return Err(map_adopt(ExecutionError::new(
-                                ErrorCode::DependencyConflict,
-                                "strategy-candidate-action",
-                            )));
-                        }
-                        if let Some(receipt) = store
-                            .adoption_receipt(request.action_id)
-                            .map_err(map_adopt)?
-                        {
-                            return Ok(receipt);
-                        }
+                        )));
                     }
-                    Err(error)
-                        if error.code == ErrorCode::InvalidInput
-                            && error.stage == "execution-storage" => {}
-                    Err(error) => return Err(map_adopt(error)),
-                }
-                host.allow_mutation()?;
-                store
-                    .check_strategy_evaluation_current(request.project_id, request.evaluation_id)
-                    .map_err(map_adopt)?;
-                let action = store
-                    .prepare_adoption_with_id(
-                        request.action_id,
-                        evaluation.attempt_id,
-                        execution_unit_id,
-                        vec![request.result_id],
-                        serde_json::Value::Null,
-                    )
-                    .map_err(map_adopt)?;
-                store
-                    .adopt_execution(&action, &tsumugi_core::ArenaAdoptionHandler)
-                    .map_err(map_adopt)
+                    let result = store
+                        .execution_result(evaluation.attempt_id, request.result_id)
+                        .map_err(map_adopt)?;
+                    if result.envelope().item_id != request.item_id {
+                        return Err(map_adopt(ExecutionError::new(
+                            ErrorCode::ResultMismatch,
+                            "strategy-candidate-result",
+                        )));
+                    }
+                    // The original Arena validator reads the payload to bind the
+                    // result to its source unit, independently of its adoption unit.
+                    tsumugi_core::ai::arena::validate_output(&input, &result).map_err(map_adopt)?;
+                    // The original adoption action owns both normal retries and uncertain
+                    // results. Its complete fixed request is checked before receipt reads.
+                    match store.adoption_action(request.action_id) {
+                        Ok(action) => {
+                            if action.project_id != request.project_id
+                                || action.attempt_id != evaluation.attempt_id
+                                || action.unit_id != execution_unit_id
+                                || action.result_ids != vec![request.result_id]
+                                || action.operation != tsumugi_core::ai::arena::OPERATION
+                                || !action.parameters.is_null()
+                            {
+                                return Err(map_adopt(ExecutionError::new(
+                                    ErrorCode::DependencyConflict,
+                                    "strategy-candidate-action",
+                                )));
+                            }
+                            if let Some(receipt) = store
+                                .adoption_receipt(request.action_id)
+                                .map_err(map_adopt)?
+                            {
+                                return Ok(receipt);
+                            }
+                        }
+                        Err(error)
+                            if error.code == ErrorCode::InvalidInput
+                                && error.stage == "execution-storage" => {}
+                        Err(error) => return Err(map_adopt(error)),
+                    }
+                    host.allow_mutation()?;
+                    store
+                        .check_strategy_evaluation_current(request.project_id, request.evaluation_id)
+                        .map_err(map_adopt)?;
+                    let action = store
+                        .prepare_adoption_with_id(
+                            request.action_id,
+                            evaluation.attempt_id,
+                            execution_unit_id,
+                            vec![request.result_id],
+                            serde_json::Value::Null,
+                        )
+                        .map_err(map_adopt)?;
+                    store
+                        .adopt_execution(&action, &tsumugi_core::ArenaAdoptionHandler)
+                        .map_err(map_adopt)
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await
@@ -818,10 +921,14 @@ pub async fn record_strategy_judgment(
                     CommandStage::ExecutionAdopt,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                allow_strategy_action(host, store, request.project_id, request.judgment.action_id)?;
-                store
-                    .record_strategy_judgment(&request.judgment)
-                    .map_err(map_adopt)
+                let original=StrategyMutationOriginal::Action(StrategyActionRequest::Judgment(request.judgment.clone()));
+                let result=(||{
+                    allow_strategy_action(host, store, request.project_id, request.judgment.action_id)?;
+                    store
+                        .record_strategy_judgment(&request.judgment)
+                        .map_err(map_adopt)
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await
@@ -846,15 +953,19 @@ pub async fn promote_context_strategy(
                     CommandStage::ExecutionAdopt,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                allow_strategy_action(
-                    host,
-                    store,
-                    request.project_id,
-                    request.promotion.action_id,
-                )?;
-                store
-                    .promote_context_strategy(&request.promotion)
-                    .map_err(map_adopt)
+                let original=StrategyMutationOriginal::Action(StrategyActionRequest::Promote(request.promotion.clone()));
+                let result=(||{
+                    allow_strategy_action(
+                        host,
+                        store,
+                        request.project_id,
+                        request.promotion.action_id,
+                    )?;
+                    store
+                        .promote_context_strategy(&request.promotion)
+                        .map_err(map_adopt)
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await
@@ -879,15 +990,19 @@ pub async fn withdraw_context_strategy(
                     CommandStage::ExecutionAdopt,
                 )?;
                 let (host, store) = active.execution_parts()?;
-                allow_strategy_action(
-                    host,
-                    store,
-                    request.project_id,
-                    request.withdrawal.action_id,
-                )?;
-                store
-                    .withdraw_context_strategy(&request.withdrawal)
-                    .map_err(map_adopt)
+                let original=StrategyMutationOriginal::Action(StrategyActionRequest::Withdraw(request.withdrawal.clone()));
+                let result=(||{
+                    allow_strategy_action(
+                        host,
+                        store,
+                        request.project_id,
+                        request.withdrawal.action_id,
+                    )?;
+                    store
+                        .withdraw_context_strategy(&request.withdrawal)
+                        .map_err(map_adopt)
+                })();
+                host.strategy.completed(store,original,result)
             },
         )
         .await

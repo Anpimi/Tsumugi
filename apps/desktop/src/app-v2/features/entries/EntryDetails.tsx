@@ -39,10 +39,11 @@ interface Props {
   onOpenComparison: (view: ComparisonView) => Promise<boolean>;
   reviewOwner?: ReviewOwner | null;
   onReviewEdit?: (request: EntryReviewEditorRequest, proof: () => boolean) => Promise<boolean>;
+  onOpenStrategy?: (unitId: string, locale: string) => Promise<boolean>;
   onPresented: (viewId: string, kind: "candidates" | "protection" | "comparison" | "review", visible: boolean) => void;
 }
 export default function EntryDetails({ project, view, locale, disabled, visible, drafts, owners, commands, gate, patch, onEdit, parentDialogId,
-  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner, onReviewEdit }: Props) {
+  comparisonOwner, requestComparisons, onOpenComparison, onPresented, reviewOwner, onReviewEdit, onOpenStrategy }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   const reads = useSessionReads(), unitId = view?.focus ?? null;
   const comparisonButton = useRef<HTMLButtonElement>(null), previousComparison = useRef({ viewId: view?.id, unitId, open: view?.candidateCompareOpen });
@@ -70,6 +71,7 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
   const review = !decision ? t("noCurrentReview") : decision.basis !== target.basis ? t("needsReview") : decision.kind === "approve" ? t("approved") : t("changesRequested");
   const checkStatus = !check ? t("noCurrentCheck") : check.basis !== target.basis ? t("checkOutdated") : t(`checkOutcome.${check.outcome}`);
   const candidatePanel = view.detailTab === "candidates" || view.detailTab === "history";
+  const savedCorrection = query.data.translations.current?.previousEventId != null && query.data.translations.rows.some(row => row.revisionId === target.revisionId && row.originKind === "manual" && row.actionId === query.data?.translations.current?.actionId);
   return <TabsRoot className={local.root} value={view.detailTab} onValueChange={value => {
     const tab = tabs.find(item => item === value); if (tab) patch({ detailTab: tab, candidateInitialRevisionId: null, decisionFinding: null });
   }}>
@@ -90,6 +92,7 @@ export default function EntryDetails({ project, view, locale, disabled, visible,
         viewId={view.id} disabled={disabled} visible={visible} parentDialogId={parentDialogId}/></Suspense> : null}
       <h3>{t("source", { locale: "" })}</h3><p className={local.text}><TokenizedText text={target.sourceText} /></p>
       <h3>{t("translation", { locale })}</h3><p className={local.text}>{target.translationText === null ? t("noTranslation") : target.translationText === "" ? t("editorEmptySelection") : <TokenizedText text={target.translationText} />}</p>
+      {onOpenStrategy && savedCorrection ? <Button disabled={disabled || !visible} onClick={() => { if (view && gate.canDispatch({ viewId: view.id, source: "button", dialogId: parentDialogId })) void onOpenStrategy(unitId, locale); }}>{t("strategyEntryOpen")}</Button> : null}
     </TabsContent>
     <TabsContent value="context" className={styles.details}>
       <h2>{t("context")}</h2><p className={local.text}>{context ? <TokenizedText text={context.text} /> : t("entryContextEmpty")}</p>

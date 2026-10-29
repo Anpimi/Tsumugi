@@ -8,8 +8,8 @@ const schema16 = {"type":"string"};
 const schema14 = {"additionalProperties":false,"description":"Captured from the original live Session owners. Consumers discard a response\nif these observations have changed; these are not permissions or receipts.","properties":{"actions":{"items":{"$ref":"#/definitions/DecisionClientAction"},"type":"array"},"ownerId":{"$ref":"#/definitions/ExecutionId"},"revision":{"$ref":"#/definitions/Revision"}},"required":["ownerId","revision","actions"],"type":"object"};
 const schema21 = {"pattern":"^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$","type":"string"};
 const schema15 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"key":{"$ref":"#/definitions/DecisionJournalKey"},"slot":{"$ref":"#/definitions/DecisionJournalSlot"},"submittedSeq":{"$ref":"#/definitions/Revision"}},"required":["key","slot","actionId","submittedSeq"],"type":"object"};
-const schema20 = {"enum":["primary","revocation","resource-fact","source-hook-stop"],"type":"string"};
-const schema17 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation","type":"string"},"locale":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","unitId","locale"],"type":"object"},{"additionalProperties":false,"properties":{"conversationId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"conversation","type":"string"}},"required":["kind","conversationId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"resource","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"source","type":"string"}},"required":["kind"],"type":"object"}]};
+const schema20 = {"enum":["primary","revocation","resource-fact","source-hook-stop","strategy"],"type":"string"};
+const schema17 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation","type":"string"},"locale":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","unitId","locale"],"type":"object"},{"additionalProperties":false,"properties":{"conversationId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"conversation","type":"string"}},"required":["kind","conversationId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"resource","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"source","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"strategy","type":"string"}},"required":["kind"],"type":"object"}]};
 
 function validate15(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -387,16 +387,94 @@ if(_valid0){
 valid0 = true;
 passing0 = 3;
 }
-}
-}
-}
-if(!valid0){
-const err23 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const _errs29 = errors;
+if(errors === _errs29){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing4;
+if((data.kind === undefined) && (missing4 = "kind")){
+const err23 = {instancePath,schemaPath:"#/oneOf/4/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err23];
 }
 else {
 vErrors.push(err23);
+}
+errors++;
+}
+else {
+const _errs31 = errors;
+for(const key4 in data){
+if(!(key4 === "kind")){
+const err24 = {instancePath,schemaPath:"#/oneOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err24];
+}
+else {
+vErrors.push(err24);
+}
+errors++;
+break;
+}
+}
+if(_errs31 === errors){
+if(data.kind !== undefined){
+let data7 = data.kind;
+if(typeof data7 !== "string"){
+const err25 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err25];
+}
+else {
+vErrors.push(err25);
+}
+errors++;
+}
+if("strategy" !== data7){
+const err26 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/const",keyword:"const",params:{allowedValue: "strategy"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err26];
+}
+else {
+vErrors.push(err26);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err27 = {instancePath,schemaPath:"#/oneOf/4/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err27];
+}
+else {
+vErrors.push(err27);
+}
+errors++;
+}
+}
+var _valid0 = _errs29 === errors;
+if(_valid0 && valid0){
+valid0 = false;
+passing0 = [passing0, 4];
+}
+else {
+if(_valid0){
+valid0 = true;
+passing0 = 4;
+}
+}
+}
+}
+}
+if(!valid0){
+const err28 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err28];
+}
+else {
+vErrors.push(err28);
 }
 errors++;
 validate15.errors = vErrors;
@@ -470,7 +548,7 @@ if(typeof data2 !== "string"){
 validate14.errors = [{instancePath:instancePath+"/slot",schemaPath:"#/definitions/DecisionJournalSlot/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((data2 === "primary") || (data2 === "revocation")) || (data2 === "resource-fact")) || (data2 === "source-hook-stop"))){
+if(!(((((data2 === "primary") || (data2 === "revocation")) || (data2 === "resource-fact")) || (data2 === "source-hook-stop")) || (data2 === "strategy"))){
 validate14.errors = [{instancePath:instancePath+"/slot",schemaPath:"#/definitions/DecisionJournalSlot/enum",keyword:"enum",params:{allowedValues: schema20.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
@@ -4646,10 +4724,10 @@ return errors === 0;
 }
 
 const schema109 = {"additionalProperties":false,"properties":{"action":{"$ref":"#/definitions/DecisionClientAction"},"requestKind":{"$ref":"#/definitions/DecisionLocalRequestKind"}},"required":["action","requestKind"],"type":"object"};
-const schema117 = {"enum":["source-lineage-correction","save","selection","merge","create","append","planning","proposal-capture","proposal-revision","proposal-work-plan","work-plan-start","work-plan-control","team-message","team-publication","team-recovery","team-question-response","resource-typed-context-save","resource-typed-context-withdraw","resource-knowledge-decision","resource-correction","resource-term","resource-context","resource-decision","resource-capture","resource-fact","source-capture","source-start","source-prepare-check","source-start-check","source-finish-check","source-adopt","source-hook-stop"],"type":"string"};
+const schema117 = {"enum":["strategy-candidate","strategy-suite","strategy-prepare","strategy-start","strategy-judgment","strategy-promote","strategy-withdraw","strategy-save-candidate","strategy-prepare-check","strategy-check","source-lineage-correction","save","selection","merge","create","append","planning","proposal-capture","proposal-revision","proposal-work-plan","work-plan-start","work-plan-control","team-message","team-publication","team-recovery","team-question-response","resource-typed-context-save","resource-typed-context-withdraw","resource-knowledge-decision","resource-correction","resource-term","resource-context","resource-decision","resource-capture","resource-fact","source-capture","source-start","source-prepare-check","source-start-check","source-finish-check","source-adopt","source-hook-stop"],"type":"string"};
 const schema110 = {"additionalProperties":false,"properties":{"actionId":{"$ref":"#/definitions/ExecutionId"},"key":{"$ref":"#/definitions/DecisionJournalKey"},"slot":{"$ref":"#/definitions/DecisionJournalSlot"},"submittedSeq":{"$ref":"#/definitions/Revision"}},"required":["key","slot","actionId","submittedSeq"],"type":"object"};
-const schema115 = {"enum":["primary","revocation","resource-fact","source-hook-stop"],"type":"string"};
-const schema112 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation","type":"string"},"locale":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","unitId","locale"],"type":"object"},{"additionalProperties":false,"properties":{"conversationId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"conversation","type":"string"}},"required":["kind","conversationId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"resource","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"source","type":"string"}},"required":["kind"],"type":"object"}]};
+const schema115 = {"enum":["primary","revocation","resource-fact","source-hook-stop","strategy"],"type":"string"};
+const schema112 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"translation","type":"string"},"locale":{"type":"string"},"unitId":{"$ref":"#/definitions/ExecutionId"}},"required":["kind","unitId","locale"],"type":"object"},{"additionalProperties":false,"properties":{"conversationId":{"$ref":"#/definitions/ExecutionId"},"kind":{"const":"conversation","type":"string"}},"required":["kind","conversationId"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"resource","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"source","type":"string"}},"required":["kind"],"type":"object"},{"additionalProperties":false,"properties":{"kind":{"const":"strategy","type":"string"}},"required":["kind"],"type":"object"}]};
 
 function validate45(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -5059,16 +5137,94 @@ if(_valid0){
 valid0 = true;
 passing0 = 3;
 }
-}
-}
-}
-if(!valid0){
-const err25 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+const _errs29 = errors;
+if(errors === _errs29){
+if(data && typeof data == "object" && !Array.isArray(data)){
+let missing4;
+if((data.kind === undefined) && (missing4 = "kind")){
+const err25 = {instancePath,schemaPath:"#/oneOf/4/required",keyword:"required",params:{missingProperty: missing4},message:"must have required property '"+missing4+"'"};
 if(vErrors === null){
 vErrors = [err25];
 }
 else {
 vErrors.push(err25);
+}
+errors++;
+}
+else {
+const _errs31 = errors;
+for(const key4 in data){
+if(!(key4 === "kind")){
+const err26 = {instancePath,schemaPath:"#/oneOf/4/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key4},message:"must NOT have additional properties"};
+if(vErrors === null){
+vErrors = [err26];
+}
+else {
+vErrors.push(err26);
+}
+errors++;
+break;
+}
+}
+if(_errs31 === errors){
+if(data.kind !== undefined){
+let data7 = data.kind;
+if(typeof data7 !== "string"){
+const err27 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/type",keyword:"type",params:{type: "string"},message:"must be string"};
+if(vErrors === null){
+vErrors = [err27];
+}
+else {
+vErrors.push(err27);
+}
+errors++;
+}
+if("strategy" !== data7){
+const err28 = {instancePath:instancePath+"/kind",schemaPath:"#/oneOf/4/properties/kind/const",keyword:"const",params:{allowedValue: "strategy"},message:"must be equal to constant"};
+if(vErrors === null){
+vErrors = [err28];
+}
+else {
+vErrors.push(err28);
+}
+errors++;
+}
+}
+}
+}
+}
+else {
+const err29 = {instancePath,schemaPath:"#/oneOf/4/type",keyword:"type",params:{type: "object"},message:"must be object"};
+if(vErrors === null){
+vErrors = [err29];
+}
+else {
+vErrors.push(err29);
+}
+errors++;
+}
+}
+var _valid0 = _errs29 === errors;
+if(_valid0 && valid0){
+valid0 = false;
+passing0 = [passing0, 4];
+}
+else {
+if(_valid0){
+valid0 = true;
+passing0 = 4;
+}
+}
+}
+}
+}
+if(!valid0){
+const err30 = {instancePath,schemaPath:"#/oneOf",keyword:"oneOf",params:{passingSchemas: passing0},message:"must match exactly one schema in oneOf"};
+if(vErrors === null){
+vErrors = [err30];
+}
+else {
+vErrors.push(err30);
 }
 errors++;
 validate45.errors = vErrors;
@@ -5151,7 +5307,7 @@ if(typeof data2 !== "string"){
 validate44.errors = [{instancePath:instancePath+"/slot",schemaPath:"#/definitions/DecisionJournalSlot/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((data2 === "primary") || (data2 === "revocation")) || (data2 === "resource-fact")) || (data2 === "source-hook-stop"))){
+if(!(((((data2 === "primary") || (data2 === "revocation")) || (data2 === "resource-fact")) || (data2 === "source-hook-stop")) || (data2 === "strategy"))){
 validate44.errors = [{instancePath:instancePath+"/slot",schemaPath:"#/definitions/DecisionJournalSlot/enum",keyword:"enum",params:{allowedValues: schema115.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
@@ -5237,7 +5393,7 @@ if(typeof data1 !== "string"){
 validate43.errors = [{instancePath:instancePath+"/requestKind",schemaPath:"#/definitions/DecisionLocalRequestKind/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-if(!((((((((((((((((((((((((((((((((data1 === "source-lineage-correction") || (data1 === "save")) || (data1 === "selection")) || (data1 === "merge")) || (data1 === "create")) || (data1 === "append")) || (data1 === "planning")) || (data1 === "proposal-capture")) || (data1 === "proposal-revision")) || (data1 === "proposal-work-plan")) || (data1 === "work-plan-start")) || (data1 === "work-plan-control")) || (data1 === "team-message")) || (data1 === "team-publication")) || (data1 === "team-recovery")) || (data1 === "team-question-response")) || (data1 === "resource-typed-context-save")) || (data1 === "resource-typed-context-withdraw")) || (data1 === "resource-knowledge-decision")) || (data1 === "resource-correction")) || (data1 === "resource-term")) || (data1 === "resource-context")) || (data1 === "resource-decision")) || (data1 === "resource-capture")) || (data1 === "resource-fact")) || (data1 === "source-capture")) || (data1 === "source-start")) || (data1 === "source-prepare-check")) || (data1 === "source-start-check")) || (data1 === "source-finish-check")) || (data1 === "source-adopt")) || (data1 === "source-hook-stop"))){
+if(!((((((((((((((((((((((((((((((((((((((((((data1 === "strategy-candidate") || (data1 === "strategy-suite")) || (data1 === "strategy-prepare")) || (data1 === "strategy-start")) || (data1 === "strategy-judgment")) || (data1 === "strategy-promote")) || (data1 === "strategy-withdraw")) || (data1 === "strategy-save-candidate")) || (data1 === "strategy-prepare-check")) || (data1 === "strategy-check")) || (data1 === "source-lineage-correction")) || (data1 === "save")) || (data1 === "selection")) || (data1 === "merge")) || (data1 === "create")) || (data1 === "append")) || (data1 === "planning")) || (data1 === "proposal-capture")) || (data1 === "proposal-revision")) || (data1 === "proposal-work-plan")) || (data1 === "work-plan-start")) || (data1 === "work-plan-control")) || (data1 === "team-message")) || (data1 === "team-publication")) || (data1 === "team-recovery")) || (data1 === "team-question-response")) || (data1 === "resource-typed-context-save")) || (data1 === "resource-typed-context-withdraw")) || (data1 === "resource-knowledge-decision")) || (data1 === "resource-correction")) || (data1 === "resource-term")) || (data1 === "resource-context")) || (data1 === "resource-decision")) || (data1 === "resource-capture")) || (data1 === "resource-fact")) || (data1 === "source-capture")) || (data1 === "source-start")) || (data1 === "source-prepare-check")) || (data1 === "source-start-check")) || (data1 === "source-finish-check")) || (data1 === "source-adopt")) || (data1 === "source-hook-stop"))){
 validate43.errors = [{instancePath:instancePath+"/requestKind",schemaPath:"#/definitions/DecisionLocalRequestKind/enum",keyword:"enum",params:{allowedValues: schema117.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }

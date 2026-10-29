@@ -9,12 +9,13 @@ pub enum DecisionJournalKey {
     Conversation { conversation_id: ExecutionId },
     Resource,
     Source,
+    Strategy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub enum DecisionJournalSlot { Primary, Revocation, ResourceFact, SourceHookStop }
+pub enum DecisionJournalSlot { Primary, Revocation, ResourceFact, SourceHookStop, Strategy }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,6 +42,8 @@ pub struct DecisionClientActivity {
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DecisionLocalRequestKind {
+    StrategyCandidate,StrategySuite,StrategyPrepare,StrategyStart,StrategyJudgment,StrategyPromote,
+    StrategyWithdraw,StrategySaveCandidate,StrategyPrepareCheck,StrategyCheck,
     SourceLineageCorrection,
     Save, Selection, Merge, Create, Append, Planning, ProposalCapture,
     ProposalRevision, ProposalWorkPlan, WorkPlanStart, WorkPlanControl, TeamMessage, TeamPublication, TeamRecovery, TeamQuestionResponse,

@@ -5,6 +5,7 @@ use crate::commands::drafts::{
     PendingJournalKey, PendingJournalSlot, PendingSnapshot,
     ResourceDraftPending, ResourceDraftResolveTarget, ResourceDraftDisposition,
     SourceDraftPending, SourceDraftResolveTarget, SourceDraftDisposition,
+    StrategyDraftPending,StrategyDraftDisposition,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -54,7 +55,8 @@ pub(super) fn validate_activity(
                     return Err(failure(ErrorCode::InvalidInput, "decision-activity"));
                 }
             }
-            if matches!(action.key,DecisionJournalKey::Resource)
+            if matches!(action.key,DecisionJournalKey::Strategy)&&action.slot!=DecisionJournalSlot::Strategy
+                || matches!(action.key,DecisionJournalKey::Resource)
                 && !matches!(action.slot,DecisionJournalSlot::Primary|DecisionJournalSlot::ResourceFact)
                 || matches!(action.key,DecisionJournalKey::Source)
                     && !matches!(action.slot,DecisionJournalSlot::Primary|DecisionJournalSlot::SourceHookStop)
@@ -85,6 +87,7 @@ fn reference(
         }
         PendingJournalKey::Resource(key) if key.project_id==project=>DecisionJournalKey::Resource,
         PendingJournalKey::Source(key) if key.project_id==project=>DecisionJournalKey::Source,
+        PendingJournalKey::Strategy(key) if key.project_id==project=>DecisionJournalKey::Strategy,
         _ => {
             return Err(failure(
                 ErrorCode::CorruptLedger,
@@ -148,8 +151,22 @@ fn reference(
             SourceDraftPending::CorrectLineage { .. }=>DecisionLocalRequestKind::SourceLineageCorrection,
         },
         PendingJournalSlot::SourceHookStop(_)=>DecisionLocalRequestKind::SourceHookStop,
+        PendingJournalSlot::Strategy(p)=>match p {
+            StrategyDraftPending::Candidate{..}=>DecisionLocalRequestKind::StrategyCandidate,
+            StrategyDraftPending::Suite{..}=>DecisionLocalRequestKind::StrategySuite,
+            StrategyDraftPending::Prepare{..}=>DecisionLocalRequestKind::StrategyPrepare,
+            StrategyDraftPending::Start{..}=>DecisionLocalRequestKind::StrategyStart,
+            StrategyDraftPending::Judgment{..}=>DecisionLocalRequestKind::StrategyJudgment,
+            StrategyDraftPending::Promote{..}=>DecisionLocalRequestKind::StrategyPromote,
+            StrategyDraftPending::Withdraw{..}=>DecisionLocalRequestKind::StrategyWithdraw,
+            StrategyDraftPending::SaveCandidate{..}=>DecisionLocalRequestKind::StrategySaveCandidate,
+            StrategyDraftPending::PrepareCheck{..}=>DecisionLocalRequestKind::StrategyPrepareCheck,
+            StrategyDraftPending::Check{..}=>DecisionLocalRequestKind::StrategyCheck,
+        },
     };
-    let slot = if matches!(row.slot, PendingJournalSlot::Revocation(_)) {
+    let slot = if matches!(row.slot,PendingJournalSlot::Strategy(_)){
+        DecisionJournalSlot::Strategy
+    } else if matches!(row.slot, PendingJournalSlot::Revocation(_)) {
         DecisionJournalSlot::Revocation
     } else if matches!(row.slot,PendingJournalSlot::ResourceFact(_)){
         DecisionJournalSlot::ResourceFact
@@ -241,6 +258,11 @@ fn observe(
                 Some(SourceDraftDisposition::PreparationExpired)|None=>DecisionLocalOutcome::ReceiptAbsent,
             });
         }
+        (PendingJournalKey::Strategy(key),PendingJournalSlot::Strategy(p))=>return Ok(match drafts::strategy::observe_strategy_pending(store,key,p)?{
+            Some(StrategyDraftDisposition::Recorded|StrategyDraftDisposition::Prepared)=>DecisionLocalOutcome::Recorded,
+            Some(StrategyDraftDisposition::ConfirmedNotApplied)=>DecisionLocalOutcome::FencedNotApplied,
+            Some(StrategyDraftDisposition::Rejected)|None=>DecisionLocalOutcome::ReceiptAbsent,
+        }),
         _ => return Err(failure(ErrorCode::CorruptLedger, "decision-journal-slot")),
     };
     Ok(if recorded {
@@ -260,6 +282,7 @@ fn targets(row: &PendingActionRef) -> Vec<DecisionTarget> {
         }],
         PendingJournalKey::Resource(_)=>vec![DecisionTarget::Project],
         PendingJournalKey::Source(_)=>vec![DecisionTarget::Project],
+        PendingJournalKey::Strategy(_)=>vec![DecisionTarget::Project],
     };
     let plan = match &row.slot {
         PendingJournalSlot::Conversation(ConversationDraftPending::WorkPlanStart {
@@ -351,11 +374,13 @@ pub(super) fn project(
                 }
                 DecisionJournalKey::Resource=>"resource".into(),
                 DecisionJournalKey::Source=>"source".into(),
+                DecisionJournalKey::Strategy=>"strategy".into(),
             };
             let slot = match reference.action.slot {
                 DecisionJournalSlot::Revocation=>"revocation",
                 DecisionJournalSlot::ResourceFact=>"resource-fact",
                 DecisionJournalSlot::SourceHookStop=>"source-hook-stop",
+                DecisionJournalSlot::Strategy=>"strategy",
                 DecisionJournalSlot::Primary=>"primary",
             };
             let bytes = serde_json::to_vec(&(

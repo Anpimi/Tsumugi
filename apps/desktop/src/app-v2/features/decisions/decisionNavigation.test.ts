@@ -1,3 +1,5 @@
+import { defaultAiConfig } from "../../../aiCommands";
+import { validateResponseStrategyRead } from "../../../generated/draft.validators";
 import { describe, expect, it, vi } from "vitest";
 import translationWire from "../../../../test/fixtures/translation-commands.json";
 import resourceWire from "../../../../test/fixtures/resourceDraftCommands.contract.json";
@@ -17,7 +19,7 @@ import { DecisionNavigationChanged, resolveDecisionNavigation, type DecisionNavi
 const ctx = { projectId: id(60000), sessionToken: "synthetic-decision-session" };
 function ports(overrides: Partial<DecisionNavigationPorts> = {}): DecisionNavigationPorts {
   const unexpected = vi.fn(async () => { throw new Error("Unexpected reader"); });
-  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, resourceDraft: unexpected, sourceDraft: unexpected, sourceTarget: unexpected, proposal: unexpected, knowledgeDecision: unexpected, teamQuestion: unexpected, proposalWorkPlan: unexpected, ...overrides };
+  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, resourceDraft: unexpected, sourceDraft: unexpected, strategyDraft: unexpected, sourceTarget: unexpected, proposal: unexpected, knowledgeDecision: unexpected, teamQuestion: unexpected, proposalWorkPlan: unexpected, ...overrides };
 }
 function item(action: DecisionItem["action"], targets: DecisionItem["targets"], locale: string | null = "zh-CN"): DecisionItem {
   const source = action.kind === "compare-candidate" ? "translation-candidate" : action.kind === "review-translation" ? "human-review"
@@ -208,4 +210,24 @@ describe("decision navigation", () => {
     const failure = new Error("Decision navigation target changed");
     await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ revision: async () => { throw failure; } }))).rejects.toBe(failure);
   });
+  it("opens the exact strategy request and rejects a different attempt", async () => {
+    const attemptId = id(60800), actionId = id(60801);
+    const value: unknown = { key: { projectId: ctx.projectId }, revision: "7", writerId: id(60802),
+      value: { journalSeq: "5", editSeq: "3", locale: "zh-CN", correctionUnit: "", evidence: null,
+        sourceContext: defaultAiConfig.sourceContext, reason: "Unfinished explanation", exceptions: "", config: defaultAiConfig,
+        roles: {}, candidate: null, suite: null, evaluationId: id(60803), judgments: {}, candidateEditSeq: "3", candidateSavedSeq: "1",
+        suiteEditSeq: "2", suiteSavedSeq: "2", pending: { kind: "start", submittedSeq: "5", editSeq: "3",
+          request: { projectId: ctx.projectId, evaluationId: id(60803), attemptId, digest: "d".repeat(64), confirmed: true } } } };
+    if (!validateResponseStrategyRead(value) || !value.value?.pending) throw new Error("Invalid synthetic strategy journal");
+    const head = value, row = item({ kind: "inspect-local-request", reference: { requestKind: "strategy-start", action: {
+      key: { kind: "strategy" }, slot: "strategy", actionId: attemptId, submittedSeq: "5" } } }, [{ kind: "project" }], null);
+    const read = vi.fn<DecisionNavigationPorts["strategyDraft"]>().mockResolvedValue(head);
+    await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ strategyDraft: read }))).resolves.toEqual({ kind: "strategy-request", actionId: attemptId, submittedSeq: "5" });
+    expect(read).toHaveBeenCalledWith({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } });
+    const replaced = structuredClone(head);
+    if (!replaced.value?.pending || replaced.value.pending.kind !== "start") throw new Error("Missing synthetic original request");
+    replaced.value.pending.request.attemptId = actionId;
+    await expect(resolveDecisionNavigation(ctx, row, () => true, ports({ strategyDraft: async () => replaced }))).rejects.toBeInstanceOf(DecisionNavigationChanged);
+  });
+
 });

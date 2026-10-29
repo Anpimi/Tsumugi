@@ -1,3 +1,4 @@
+import { strategyViewEn } from "./strategyView";
 import { conversationTeamQuestionsEn } from "./conversationTeamQuestions";
 import { conversationTeamRecoveryEn } from "./conversationTeamRecovery";
 import { conversationRunHistoryEn } from "./conversationRunHistory";
@@ -16,6 +17,7 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+  strategyView: strategyViewEn,
   conversationTeamQuestions: conversationTeamQuestionsEn,
 conversationRunHistory: conversationRunHistoryEn,
 conversationTeamRecovery: conversationTeamRecoveryEn,

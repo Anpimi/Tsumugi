@@ -470,6 +470,32 @@ pub(super) fn validate_associated_input(
 }
 
 impl ProjectStore {
+    /// Inspect an original Strategy checker grant without restoring its epoch.
+    /// None means no grant was recorded, not a proof that a Host call finished.
+    pub fn strategy_checker_request_closed(&self,grant:ExecutionId,attempt:ExecutionId,digest:&str,
+        expires:u64,unsandboxed:bool)->Result<Option<bool>,ExecutionError>{
+        let c=self.connection().map_err(|_|denied())?;
+        super::review::read_snapshot(c,|c|{
+            let record=for_attempt(c,attempt)?;
+            let Some(record)=record else {
+                if for_grant(c,grant)?.is_some(){return Err(failure(ErrorCode::ResultMismatch,"plugin-grant-identity"));}
+                if self.execution_input_if_present(attempt)?.is_some(){return Err(failure(ErrorCode::CorruptLedger,"plugin-grant-record"));}
+                return Ok(None);
+            };
+            check_direct_start_identity(&record,grant,attempt,digest,expires,PluginConsent{unsandboxed_execution:unsandboxed,application_execution:false})?;
+            if let Some(input)=self.execution_input_if_present(attempt)?{check_project(c,&input)?;check_record(&record,&input)?;}
+            Ok(Some(record.revoked||self.plugin_authority.require_generation(record.generation).is_err()))
+        })
+    }
+    /// Explicitly withdraw this original checker grant through its existing row.
+    pub fn close_strategy_checker_request(&mut self,grant:ExecutionId,attempt:ExecutionId,digest:&str,
+        expires:u64,unsandboxed:bool)->Result<Option<bool>,ExecutionError>{
+        let status=self.strategy_checker_request_closed(grant,attempt,digest,expires,unsandboxed)?;
+        if status==Some(false){let record=for_attempt(self.connection().map_err(|_|denied())?,attempt)?.ok_or_else(denied)?;
+            self.revoke_plugin_grant(record.generation,grant)?;
+            return self.strategy_checker_request_closed(grant,attempt,digest,expires,unsandboxed);
+        }Ok(status)
+    }
     /// Reconcile only an original, durably enqueued direct plugin start. This
     /// reads the original input and consent even after revocation or reopening;
     /// it never restores a permit, application lease or runtime admission.

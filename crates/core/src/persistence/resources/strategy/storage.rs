@@ -371,6 +371,75 @@ fn verify_config_in(c: &Connection, config: &AiConfig, locale: &str) -> Result<(
 }
 
 impl ProjectStore {
+    /// Some(true) is an exact receipt; Some(false) is a permanent rejection of
+    /// this immutable request. Absence alone remains unresolved.
+    pub fn strategy_request_settlement_observation(&self,request:&StrategyActionRequest)->Result<Option<bool>,ExecutionError>{
+        review::read_snapshot(connection(self)?,|c|{
+            let replayed=match request {
+                StrategyActionRequest::Candidate(r)=>replay(c,r.basis.project_id,r.action_id,"candidate",r)?,
+                StrategyActionRequest::Suite(r)=>replay(c,r.project_id,r.action_id,"suite",r)?,
+                StrategyActionRequest::Prepare(r)=>replay(c,r.project_id,r.action_id,"evaluation",r)?,
+                StrategyActionRequest::Judgment(r)=>replay(c,r.project_id,r.action_id,"judgment",r)?,
+                StrategyActionRequest::Promote(r)=>replay(c,r.project_id,r.action_id,"promote",r)?,
+                StrategyActionRequest::Withdraw(r)=>replay(c,r.project_id,r.action_id,"withdraw",r)?,
+                StrategyActionRequest::Check(r)=>replay(c,r.project_id,r.action_id,"check",r)?,
+            };
+            if let Some(receipt)=replayed {
+                let (project,id)=match &receipt {
+                    StrategyActionReceipt::Candidate{request,..}=>(request.basis.project_id,request.action_id),
+                    StrategyActionReceipt::Suite{request,..}=>(request.project_id,request.action_id),
+                    StrategyActionReceipt::Evaluation{request,..}=>(request.project_id,request.action_id),
+                    StrategyActionReceipt::Judgment{judgment}=>(judgment.request.project_id,judgment.request.action_id),
+                    StrategyActionReceipt::Promoted{request,..}=>(request.project_id,request.action_id),
+                    StrategyActionReceipt::Withdrawn{request,..}=>(request.project_id,request.action_id),
+                    StrategyActionReceipt::Check{receipt}=>(receipt.request.project_id,receipt.request.action_id),
+                };
+                if action_in(c,project,id,true)?.as_ref()!=Some(&receipt){return Err(corrupt());}
+                return Ok(Some(true));
+            }
+            let static_valid=match request {
+                StrategyActionRequest::Candidate(r)=>(||{r.source_context.validate()?;
+                    if !r.source_context.is_enabled(){return Err(fail(ErrorCode::InvalidInput,"strategy-selection"));}
+                    super::super::validate_text(&r.reason,false)?;super::super::validate_text(&r.exceptions,false)})(),
+                StrategyActionRequest::Suite(r)=>r.config.validate(),
+                StrategyActionRequest::Judgment(r)=>(||{super::super::validate_text(&r.notes,false)?;
+                    if r.elapsed_seconds.is_some_and(|n|n>31_536_000)||r.modified_characters.is_some_and(|n|n>10_000_000){return Err(fail(ErrorCode::LimitExceeded,"strategy-human-report"));}Ok(())})(),
+                _=>Ok(()),
+            };
+            if let Err(error)=static_valid {return if matches!(error.code,ErrorCode::InvalidInput|ErrorCode::LimitExceeded){Ok(Some(false))}else{Err(error)};}
+            let current=(||{match request {
+                StrategyActionRequest::Candidate(r)=>{project(c,r.basis.project_id,Some(&r.basis.locale))?;
+                    if !evidence(c,&r.basis)?.current{return Err(fail(ErrorCode::DependencyConflict,"strategy-correction-stale"));}}
+                StrategyActionRequest::Suite(r)=>{let candidate:ContextStrategyCandidate=get(c,"candidate",r.candidate_id,r.project_id)?;
+                    let units=r.calibration_unit_ids.iter().chain(&r.holdout_unit_ids).collect::<Vec<_>>();
+                    if units.len()<2||units.len()>20||r.calibration_unit_ids.is_empty()||r.holdout_unit_ids.is_empty()
+                        ||units.iter().collect::<BTreeSet<_>>().len()!=units.len()||r.holdout_unit_ids.contains(&candidate.evidence.basis.unit_id)
+                        ||r.config.context_strategy.is_some()||r.config.share_terms||r.config.share_context||r.config.source_context!=SourceContextSelection::default(){return Ok(false);}
+                    candidate_current(c,&candidate)?;}
+                StrategyActionRequest::Prepare(r)=>{let candidate:ContextStrategyCandidate=get(c,"candidate",r.candidate_id,r.project_id)?;
+                    let suite:StrategySuite=get(c,"suite",r.suite_id,r.project_id)?;
+                    if suite.candidate_id!=candidate.candidate_id{return Ok(false);}candidate_current(c,&candidate)?;suite_current(c,&suite)?;}
+                StrategyActionRequest::Judgment(r)=>{let evaluation:StrategyEvaluation=get(c,"evaluation",r.evaluation_id,r.project_id)?;
+                    let suite:StrategySuite=get(c,"suite",evaluation.suite_id,r.project_id)?;suite_current(c,&suite)?;
+                    if !suite.units.iter().any(|u|u.unit_id==r.unit_id&&u.holdout){return Ok(false);}
+                    if latest_judgments(c,r.project_id,r.evaluation_id)?.into_iter().find(|j|j.request.unit_id==r.unit_id).as_ref().map(|j|j.judgment_id)!=r.expected_judgment_id{return Err(fail(ErrorCode::DependencyConflict,"strategy-judgment-current"));}}
+                StrategyActionRequest::Promote(r)=>{let evaluation:StrategyEvaluation=get(c,"evaluation",r.evaluation_id,r.project_id)?;
+                    let suite:StrategySuite=get(c,"suite",evaluation.suite_id,r.project_id)?;
+                    let candidate:ContextStrategyCandidate=get(c,"candidate",evaluation.candidate_id,r.project_id)?;
+                    candidate_current(c,&candidate)?;suite_current(c,&suite)?;
+                    if current_default(c,r.project_id,&suite.locale)?.as_ref().map(|v|v.revision_id)!=r.expected_revision_id{return Err(fail(ErrorCode::DependencyConflict,"strategy-default-current"));}}
+                StrategyActionRequest::Withdraw(r)=>{let current=current_default(c,r.project_id,&r.locale)?;
+                    if current.as_ref().map(|v|v.revision_id)!=r.expected_revision_id{return Err(fail(ErrorCode::DependencyConflict,"strategy-default-current"));}
+                    if current.as_ref().and_then(|v|v.reference.as_ref()).is_none(){return Ok(false);}}
+                StrategyActionRequest::Check(r)=>{prepare_check_in(c,r)?;}
+            }Ok(true)})();
+            match current {
+                Ok(false)=>Ok(Some(false)),Ok(true)=>Ok(None),
+                Err(error) if error.code==ErrorCode::DependencyConflict&&["strategy-correction-stale","strategy-suite-stale","strategy-judgment-current","strategy-default-current"].contains(&error.stage.as_str())=>Ok(Some(false)),
+                Err(error)=>Err(error),
+            }
+        })
+    }
     pub fn read_strategy_action(
         &self,
         project_id: ExecutionId,
@@ -385,15 +454,32 @@ impl ProjectStore {
         project_id: ExecutionId,
         action: ExecutionId,
     ) -> Result<Option<StrategyActionReceipt>, ExecutionError> {
+        let found=self.strategy_action_observation(project_id,action)?;
+        if self.is_reconciling(){self.reconcile_execution()?;}
+        Ok(found)
+    }
+    pub fn strategy_action_observation(
+        &self,
+        project_id: ExecutionId,
+        action: ExecutionId,
+    ) -> Result<Option<StrategyActionReceipt>, ExecutionError> {
         let found = review::read_snapshot(connection(self)?, |c| {
             action_in(c, project_id, action, true)
         })?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
     }
     pub fn strategy_evaluation_start_action_read(
+        &self,
+        owner: ExecutionId,
+        evaluation: ExecutionId,
+        attempt: ExecutionId,
+        digest: &str,
+    ) -> Result<Option<StrategyEvaluationStartRead>, ExecutionError> {
+        let found=self.strategy_evaluation_start_action_observation(owner,evaluation,attempt,digest)?;
+        if self.is_reconciling(){self.reconcile_execution()?;}
+        Ok(found)
+    }
+    pub fn strategy_evaluation_start_action_observation(
         &self,
         owner: ExecutionId,
         evaluation: ExecutionId,
@@ -432,12 +518,17 @@ impl ProjectStore {
                 digest: saved.digest().into(),
             }))
         })?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
     }
     pub fn strategy_candidate_save_action_read(
+        &self,
+        request: &StrategyCandidateSaveRequest,
+    ) -> Result<Option<StrategyCandidateSaveRead>, ExecutionError> {
+        let found=self.strategy_candidate_save_action_observation(request)?;
+        if self.is_reconciling(){self.reconcile_execution()?;}
+        Ok(found)
+    }
+    pub fn strategy_candidate_save_action_observation(
         &self,
         request: &StrategyCandidateSaveRequest,
     ) -> Result<Option<StrategyCandidateSaveRead>, ExecutionError> {
@@ -488,10 +579,17 @@ impl ProjectStore {
                 adoption,
             }))
         })?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
+    }
+    pub fn strategy_candidate_save_settlement_observation(&self,request:&StrategyCandidateSaveRequest)
+        ->Result<Option<bool>,ExecutionError>{
+        let found=self.strategy_candidate_save_action_observation(request)?;
+        if found.as_ref().is_some_and(|v|v.adoption.receipt.is_some()){return Ok(Some(true));}
+        match self.check_strategy_evaluation_current(request.project_id,request.evaluation_id){
+            Ok(())=>Ok(None),
+            Err(e) if e.code==ErrorCode::DependencyConflict&&["strategy-correction-stale","strategy-suite-stale"].contains(&e.stage.as_str())=>Ok(Some(false)),
+            Err(e)=>Err(e),
+        }
     }
     pub fn capture_context_strategy(
         &mut self,
@@ -1746,7 +1844,11 @@ mod action_read_tests {
             reason: "Use surrounding context".into(),
             exceptions: "Only this project".into(),
         };
+        assert_eq!(store.strategy_request_settlement_observation(&StrategyActionRequest::Candidate(request.clone())).unwrap(),None);
+        let mut rejected=request.clone();rejected.reason.clear();
+        assert_eq!(store.strategy_request_settlement_observation(&StrategyActionRequest::Candidate(rejected)).unwrap(),Some(false));
         let candidate = store.capture_context_strategy(&request).unwrap();
+        assert_eq!(store.strategy_request_settlement_observation(&StrategyActionRequest::Candidate(request.clone())).unwrap(),Some(true));
         let expected = vec![(
             request.action_id,
             StrategyActionReceipt::Candidate {
@@ -1765,6 +1867,9 @@ mod action_read_tests {
         store
             .execution_unknown
             .store(true, std::sync::atomic::Ordering::Release);
+        assert!(store.strategy_action_observation(owner,request.action_id).unwrap().is_some());
+        assert_eq!(store.strategy_request_settlement_observation(&StrategyActionRequest::Candidate(request.clone())).unwrap(),Some(true));
+        assert!(store.is_reconciling());
         assert_eq!(
             store
                 .strategy_action_read(owner, ExecutionId::new())

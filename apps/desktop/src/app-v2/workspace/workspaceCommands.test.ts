@@ -12,6 +12,16 @@ beforeEach(() => { localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 
 describe("workspace commands in the existing registry", () => {
+  it("opens context experiments through the existing workspace command", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] }), gate = new InteractionGate(), commands = new WorkbenchCommands(), openStrategy = vi.fn();
+    registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => scope,
+      navigation: navigation(), actions: { openStrategy }, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: null, scope, commands }), modifier: "meta" });
+    expect(dispatcher.list({ source: "palette" }).find(command => command.id === "workspace.strategy")).toMatchObject({ nameKey: "workbenchV2.strategyOpen", binding: null });
+    expect(dispatcher.dispatch("workspace.strategy", { viewId: null, source: "palette" })).toBe(true);
+    expect(openStrategy).toHaveBeenCalledOnce();
+  });
+
   it("opens delivery through one command and rejects an outdated session, composing input and a modal", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] });
     const gate = new InteractionGate(), commands = new WorkbenchCommands(), openDelivery = vi.fn();

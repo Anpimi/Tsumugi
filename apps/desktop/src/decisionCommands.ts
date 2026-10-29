@@ -92,6 +92,9 @@ function relatedItem(item: DecisionItem, projectId: string): boolean {
         && (pending.key.kind === "translation"
           ? pending.slot === "primary" && ["save", "selection", "merge"].includes(reference.requestKind)
             && item.locale === pending.key.locale && item.targets.some(target => target.kind === "entry" && pending.key.kind === "translation" && target.unitId === pending.key.unitId)
+          : pending.key.kind === "strategy"
+            ? pending.slot === "strategy" && reference.requestKind.startsWith("strategy-")
+              && item.locale === null && item.targets.every(target => target.kind === "project")
           : pending.key.kind === "resource"
             ? reference.requestKind.startsWith("resource-")
               && (pending.slot === "resource-fact" ? reference.requestKind === "resource-fact"

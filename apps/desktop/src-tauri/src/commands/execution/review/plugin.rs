@@ -54,6 +54,10 @@ struct Preflight {
     slots: Vec<Slot>,
     view: ReviewPluginCheckView,
 }
+struct PreparationLifetime(Cancellation);
+impl Drop for PreparationLifetime {
+    fn drop(&mut self){self.0.request();}
+}
 type Reply = Box<dyn FnOnce(Result<CapturedReviewCheckExecution, CommandError>) + Send>;
 struct Job {
     request: CheckRequest,
@@ -108,8 +112,51 @@ impl Job {
 pub(in crate::commands::execution) struct ReviewSession {
     preflight: Option<Preflight>,
     jobs: BTreeMap<ExecutionId, Job>,
+    strategy_preparations:BTreeMap<ExecutionId,(StrategyCheckRequest,Cancellation)>,
 }
 impl ReviewSession {
+    pub(in crate::commands::execution) fn strategy_draft_observation(&mut self,store:&mut ProjectStore,runtime:&mut ExecutionRuntime,
+        request:&StrategyCheckRequest,executions:Option<&Vec<crate::commands::drafts::StrategyCheckerOriginal>>,close:bool)
+        ->Result<Option<crate::commands::drafts::StrategyDraftDisposition>,CommandError>{
+        use crate::commands::drafts::StrategyDraftDisposition as D;
+        let matches=|r:&CheckRequest|r.project_id==request.project_id&&r.target==CheckTarget::Strategy(request.clone());
+        if let Some((original,cancel))=self.strategy_preparations.get(&request.action_id){
+            if original!=request{return Err(stale());}
+            if close{cancel.request();}
+            if !cancel.is_requested(){return Ok(None);}
+        }
+        if let Some(job)=self.jobs.get_mut(&request.action_id){
+            if !matches(&job.request){return Err(stale());}
+            if let Some(executions)=executions {
+                if executions.len()!=job.executions.len()||executions.iter().zip(&job.executions).any(|(a,b)|
+                    a.project_id!=b.project_id||a.attempt_id!=b.attempt_id||a.input_digest!=b.input_digest
+                    ||a.grant_id!=b.grant_id||a.expires_at_ms!=b.expires_at_ms||a.unsandboxed_execution!=b.unsandboxed_execution){return Err(stale());}
+            }
+            if close{job.cancellation.request();job.cancel_channels(store,runtime)?;}
+            if close {
+                if let Some(executions)=executions {for e in executions {
+                    store.close_strategy_checker_request(e.grant_id,e.attempt_id,&e.input_digest,e.expires_at_ms.get(),e.unsandboxed_execution).map_err(map_read)?;
+                }}
+            }
+            if job.attached||job.slots.iter().any(|s|runtime.has_owned_attempt_work(s.input.envelope().attempt_id)){return Ok(None);}
+            if !job.cancellation.is_requested()&&!job.rejected_before_dispatch{return Ok(None);}
+        }
+        let prepared=self.preflight.as_ref().is_some_and(|p|matches(&p.request));
+        if prepared&&close{self.preflight=None;}
+        if executions.is_none(){return Ok(Some(if prepared&&!close{D::Prepared}else{D::ConfirmedNotApplied}));}
+        if prepared&&!close{return Ok(None);}
+        for e in executions.expect("checker requests") {
+            let status=if close{store.close_strategy_checker_request(e.grant_id,e.attempt_id,&e.input_digest,e.expires_at_ms.get(),e.unsandboxed_execution)}
+                else{store.strategy_checker_request_closed(e.grant_id,e.attempt_id,&e.input_digest,e.expires_at_ms.get(),e.unsandboxed_execution)}.map_err(map_read)?;
+            if status==Some(false)||runtime.has_owned_attempt_work(e.attempt_id){return Ok(None);}
+            if let Some(input)=store.execution_input_if_present(e.attempt_id).map_err(map_read)? {
+                if input.digest()!=e.input_digest{return Err(stale());}
+                let status=store.execution_attempt(e.attempt_id,false).map_err(map_read)?;
+                if status.items.iter().any(|i|matches!(i.execution,ExecutionState::Queued|ExecutionState::Dispatched)){return Ok(None);}
+            }
+        }
+        Ok(Some(D::ConfirmedNotApplied))
+    }
     pub(in crate::commands::execution) fn stop_package(
         &mut self,
         package: &crate::commands::plugins::PluginPackageRequest,
@@ -156,6 +203,7 @@ impl ReviewSession {
     }
     pub(in crate::commands::execution) fn stop(&mut self) {
         self.preflight = None;
+        for (_,cancel) in self.strategy_preparations.values(){cancel.request();}
         for job in self.jobs.values() {
             job.cancellation.request();
         }
@@ -539,6 +587,9 @@ async fn prepare_checks(
 ) -> Result<CheckPreparation, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let initial = request.clone();
+    let preparation_cancel=Cancellation::default();
+    let _preparation_lifetime=PreparationLifetime(preparation_cancel.clone());
+    let preparing=preparation_cancel.clone();
     let prior = lease
         .run(
             "prepare_review_checks.recorded",
@@ -594,6 +645,13 @@ async fn prepare_checks(
                         return Ok(Some(CheckPreparation::Plugin(preflight.view.clone())));
                     }
                 }
+                if let CheckTarget::Strategy(check)=&initial.target {
+                    if host.review.strategy_preparations.len()>=2&&!host.review.strategy_preparations.contains_key(&check.action_id){
+                        host.review.strategy_preparations.retain(|_,(_,c)|!c.is_requested());
+                        if host.review.strategy_preparations.len()>=2{return Err(CommandError::simple(CommandErrorCode::Busy,CommandStage::ExecutionRead));}
+                    }
+                    if let Some((_,previous))=host.review.strategy_preparations.insert(check.action_id,(check.clone(),preparing)){previous.request();}
+                }
                 Ok(None)
             },
         )
@@ -604,6 +662,7 @@ async fn prepare_checks(
     let plugins = state.plugins.clone();
     let selected = request.advisory_checks.clone();
     let initial = request.clone();
+    let preparing=preparation_cancel.clone();
     let selected_work = lease
         .run(
             "prepare_review_checks.advisory_capture",
@@ -616,6 +675,7 @@ async fn prepare_checks(
                     CommandStage::ExecutionRead,
                 )?;
                 let (host, _) = active.execution_parts()?;
+                if preparing.is_requested(){return Err(cancelled());}
                 host.allow_mutation()?;
                 host.begin_package_work(
                     initial
@@ -636,6 +696,7 @@ async fn prepare_checks(
         })
         .await?;
     let initial = request.clone();
+    let preparing=preparation_cancel.clone();
     let captured = lease
         .run(
             "prepare_review_checks.capture",
@@ -652,6 +713,7 @@ async fn prepare_checks(
                     return Ok(Err(outcome));
                 }
                 host.allow_mutation()?;
+                if preparing.is_requested(){return Err(cancelled());}
                 selected_work.check()?;
                 let prepared = capture(store, &initial, &choices)?;
                 let work = host.begin_package_work(
@@ -701,6 +763,7 @@ async fn prepare_checks(
                 .collect::<Result<Vec<_>, CommandError>>()
         })
         .await?;
+    let preparing=preparation_cancel;
     lease
         .run(
             "prepare_review_checks.finish",
@@ -717,6 +780,7 @@ async fn prepare_checks(
                     return Ok(CheckPreparation::Recorded(outcome));
                 }
                 host.allow_mutation()?;
+                if preparing.is_requested(){return Err(cancelled());}
                 work.check()?;
                 let current = capture(
                     store,
@@ -740,6 +804,7 @@ async fn prepare_checks(
                 host.review.jobs.retain(|action, job| {
                     *action == request.action_id || job.attached || !job.rejected_before_dispatch
                 });
+                if matches!(request.target,CheckTarget::Strategy(_)){host.review.strategy_preparations.remove(&request.action_id);}
                 host.review.preflight = Some(Preflight {
                     prepared,
                     request,

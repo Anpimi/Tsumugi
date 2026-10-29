@@ -20,6 +20,13 @@ export declare function validateRequestSourcePreparation(value: unknown): value 
 export declare function validateRequestSourceRead(value: unknown): value is Requests["sourceRead"];
 export declare function validateRequestSourceResolve(value: unknown): value is Requests["sourceResolve"];
 export declare function validateRequestSourceWrite(value: unknown): value is Requests["sourceWrite"];
+export declare function validateRequestStrategyAction(value: unknown): value is Requests["strategyAction"];
+export declare function validateRequestStrategyClear(value: unknown): value is Requests["strategyClear"];
+export declare function validateRequestStrategyClose(value: unknown): value is Requests["strategyClose"];
+export declare function validateRequestStrategyList(value: unknown): value is Requests["strategyList"];
+export declare function validateRequestStrategyRead(value: unknown): value is Requests["strategyRead"];
+export declare function validateRequestStrategyResolve(value: unknown): value is Requests["strategyResolve"];
+export declare function validateRequestStrategyWrite(value: unknown): value is Requests["strategyWrite"];
 export declare function validateRequestWrite(value: unknown): value is Requests["write"];
 export declare function validateResponseCleared(value: unknown): value is Responses["cleared"];
 export declare function validateResponseConversationCleared(value: unknown): value is Responses["conversationCleared"];
@@ -43,4 +50,11 @@ export declare function validateResponseSourceRead(value: unknown): value is Res
 export declare function validateResponseSourceResolved(value: unknown): value is Responses["sourceResolved"];
 export declare function validateResponseSourceValue(value: unknown): value is Responses["sourceValue"];
 export declare function validateResponseSourceWritten(value: unknown): value is Responses["sourceWritten"];
+export declare function validateResponseStrategyAction(value: unknown): value is Responses["strategyAction"];
+export declare function validateResponseStrategyCleared(value: unknown): value is Responses["strategyCleared"];
+export declare function validateResponseStrategyClosed(value: unknown): value is Responses["strategyClosed"];
+export declare function validateResponseStrategyPage(value: unknown): value is Responses["strategyPage"];
+export declare function validateResponseStrategyRead(value: unknown): value is Responses["strategyRead"];
+export declare function validateResponseStrategyResolved(value: unknown): value is Responses["strategyResolved"];
+export declare function validateResponseStrategyWritten(value: unknown): value is Responses["strategyWritten"];
 export declare function validateResponseWritten(value: unknown): value is Responses["written"];

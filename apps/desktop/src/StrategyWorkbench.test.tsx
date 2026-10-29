@@ -23,6 +23,7 @@ import { enUS } from "./i18n/en-US";
 import reviewWire from "../test/fixtures/reviewCommands.contract.json";
 import resourceWire from "../test/fixtures/resourceCommands.contract.json";
 import errorWire from "../test/fixtures/commandErrors.contract.json";
+import { installStrategyDraftFixture } from "./testSupport/strategyDraftFixture";
 import { isCommandError, type ProjectView } from "./projectCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -30,8 +31,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "strategy-ui", locator: "isolated", reconciliationState: "settled", metadata: {
   projectId: resourceWire.responses.correctionBasis.basis.projectId, displayName: "Synthetic context project", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let saved: ContextStrategyCandidate[];
+let journal: ReturnType<typeof installStrategyDraftFixture>;
 beforeEach(async () => {
-  await i18n.changeLanguage("en-US"); vi.restoreAllMocks(); saved = [];
+  await i18n.changeLanguage("en-US"); vi.restoreAllMocks(); journal = installStrategyDraftFixture(); saved = [];
   const evidence: unknown = structuredClone(resourceWire.responses.correctionBasis), editor: unknown = structuredClone(reviewWire.responses.editor);
   if (!validateResponseCorrectionBasis(evidence) || !validateResponseEditor(editor) || !editor.translations.current) throw new Error("Complete canonical saved correction required");
   editor.target.unitId = evidence.basis.unitId; editor.target.sourceRevisionId = evidence.basis.sourceRevisionId;
@@ -100,6 +102,7 @@ const rejectedGateCases = [
 it.each(rejectedGateCases)("explains a confirmed strategy gate $reason in $language", async ({ language, reason, message }) => {
   const user = await fill(); await act(async () => { await i18n.changeLanguage(language); });
   const failure = { ...errorWire.errors[0], conflict: null, reason }; expect(isCommandError(failure)).toBe(true);
+  journal.proveNext("confirmed-not-applied");
   vi.mocked(strategyCommands.capture).mockRejectedValueOnce(failure);
   const original = vi.spyOn(strategyCommands, "action").mockResolvedValue(null);
   await user.click(screen.getByRole("button", { name: i18n.t("strategy.create") }));
@@ -164,7 +167,7 @@ it.each(["failed", "cancelled", "unavailable"] as const)("allows a fresh indepen
   function Results() {
     const owner = useStrategyDraftSession(), reads = useSessionReads();
     const query = useSessionQuery({ key: strategyKeys.evaluation(evaluationId), scopes: ["arena"], enabled: true, read: async () => view });
-    useEffect(() => { owner.selectEvaluation(evaluationId); }, [reads]);
+    useEffect(() => { if (!owner.hydrating) owner.selectEvaluation(evaluationId); }, [reads, owner.hydrating]);
     return <StrategyEvaluationResults view={query.data ?? view} arena={arena} disabled={false} />;
   }
   const user = userEvent.setup(); render(<StrategyDraftSession project={project}><Results /></StrategyDraftSession>, project);

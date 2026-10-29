@@ -131,6 +131,19 @@
               "kind"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "strategy",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -139,7 +152,8 @@
           "primary",
           "revocation",
           "resource-fact",
-          "source-hook-stop"
+          "source-hook-stop",
+          "strategy"
         ],
         "type": "string"
       },
@@ -1611,6 +1625,19 @@
               "kind"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "strategy",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1619,7 +1646,8 @@
           "primary",
           "revocation",
           "resource-fact",
-          "source-hook-stop"
+          "source-hook-stop",
+          "strategy"
         ],
         "type": "string"
       },
@@ -1705,6 +1733,16 @@
       },
       "DecisionLocalRequestKind": {
         "enum": [
+          "strategy-candidate",
+          "strategy-suite",
+          "strategy-prepare",
+          "strategy-start",
+          "strategy-judgment",
+          "strategy-promote",
+          "strategy-withdraw",
+          "strategy-save-candidate",
+          "strategy-prepare-check",
+          "strategy-check",
           "source-lineage-correction",
           "save",
           "selection",

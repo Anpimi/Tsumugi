@@ -12,6 +12,7 @@ pub enum PendingJournalKey {
     Conversation(ConversationDraftKey),
     Resource(ResourceDraftKey),
     Source(SourceDraftKey),
+    Strategy(StrategyDraftKey),
 }
 
 /// Original frozen requests only. No unrelated current message or editor text.
@@ -24,6 +25,7 @@ pub enum PendingJournalSlot {
     ResourceFact(ResourceFactPending),
     Source(SourceDraftPending),
     SourceHookStop(SourceDraftHookStop),
+    Strategy(StrategyDraftPending),
 }
 
 impl PendingJournalSlot {
@@ -50,6 +52,7 @@ impl PendingJournalSlot {
             Self::ResourceFact(slot) => slot.request.action_id,
             Self::Source(slot) => slot.action_id(),
             Self::SourceHookStop(slot) => slot.request.stop.action_id,
+            Self::Strategy(slot)=>slot.action_id(),
         }
     }
 
@@ -75,6 +78,7 @@ impl PendingJournalSlot {
             Self::ResourceFact(slot) => slot.submitted_seq,
             Self::Source(slot) => slot.submitted_seq(),
             Self::SourceHookStop(slot) => slot.submitted_seq,
+            Self::Strategy(slot)=>slot.submitted_seq(),
         }
     }
 }
@@ -137,7 +141,9 @@ impl DraftStore {
         snapshot.format = Some(format);
         digest.update(format.to_le_bytes());
         let translation = "SELECT 0 AS journal_kind,locale,unit_id AS entry_id,revision,edit_seq,source_revision_id,has_pending,length(payload) AS bytes,payload FROM draft_heads WHERE project_id=?1 AND (?2 IS NULL OR locale=?2)";
-        let query = if format >= SOURCE_FORMAT {
+        let query = if format>=STRATEGY_FORMAT {
+            format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 UNION ALL SELECT 2 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM resource_draft_heads WHERE project_id=?1 UNION ALL SELECT 3 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM source_draft_heads WHERE project_id=?1 UNION ALL SELECT 4 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM strategy_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
+        } else if format >= SOURCE_FORMAT {
             format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 UNION ALL SELECT 2 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM resource_draft_heads WHERE project_id=?1 UNION ALL SELECT 3 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM source_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
         } else if format >= RESOURCE_FORMAT {
             format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 UNION ALL SELECT 2 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM resource_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
@@ -209,6 +215,13 @@ impl DraftStore {
                     slots.extend(value.hook_stop.into_iter().map(PendingJournalSlot::SourceHookStop));
                 }
                 (PendingJournalKey::Source(key), head.revision, head.writer_id, seq, slots)
+            } else if kind==4 {
+                let key=StrategyDraftKey{project_id:project};
+                if entry!=project.to_string(){return Err(fail(ErrorCode::CorruptLedger,"strategy-drafts-project"));}
+                let head=strategies::decode(&key,(stored_revision,edit_seq,has_pending,Some(payload)))?;
+                let seq=head.value.as_ref().map(|v|v.journal_seq);
+                let slots=head.value.and_then(|v|v.pending).map(PendingJournalSlot::Strategy).into_iter().collect();
+                (PendingJournalKey::Strategy(key),head.revision,head.writer_id,seq,slots)
             } else {
                 return Err(fail(ErrorCode::CorruptLedger, "drafts-journal-kind"));
             };

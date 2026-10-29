@@ -232,9 +232,22 @@ export type DecisionJournalKey =
     }
   | {
       kind: "source";
+    }
+  | {
+      kind: "strategy";
     };
-export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact" | "source-hook-stop";
+export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact" | "source-hook-stop" | "strategy";
 export type DecisionLocalRequestKind =
+  | "strategy-candidate"
+  | "strategy-suite"
+  | "strategy-prepare"
+  | "strategy-start"
+  | "strategy-judgment"
+  | "strategy-promote"
+  | "strategy-withdraw"
+  | "strategy-save-candidate"
+  | "strategy-prepare-check"
+  | "strategy-check"
   | "source-lineage-correction"
   | "save"
   | "selection"

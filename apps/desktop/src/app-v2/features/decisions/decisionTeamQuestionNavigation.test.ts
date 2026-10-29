@@ -9,7 +9,7 @@ import { readDecisionTarget, type DecisionTargetReadPorts } from "./decisionTarg
 function ports(overrides: Partial<DecisionNavigationPorts> = {}): DecisionNavigationPorts {
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected mutation or unrelated read"); };
   return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected,
-    resourceDraft: unexpected, sourceDraft: unexpected, sourceTarget: unexpected, proposal: unexpected, knowledgeDecision: unexpected,
+    resourceDraft: unexpected, sourceDraft: unexpected, strategyDraft: unexpected, sourceTarget: unexpected, proposal: unexpected, knowledgeDecision: unexpected,
     teamQuestion: unexpected, proposalWorkPlan: unexpected, ...overrides };
 }
 

@@ -1,3 +1,4 @@
+import { strategyViewZh } from "./strategyView";
 import { conversationTeamQuestionsZh } from "./conversationTeamQuestions";
 import { conversationTeamRecoveryZh } from "./conversationTeamRecovery";
 import { conversationRunHistoryZh } from "./conversationRunHistory";
@@ -18,6 +19,7 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+  strategyView: strategyViewZh,
   conversationTeamQuestions: conversationTeamQuestionsZh,
 conversationRunHistory: conversationRunHistoryZh,
 conversationTeamRecovery: conversationTeamRecoveryZh,

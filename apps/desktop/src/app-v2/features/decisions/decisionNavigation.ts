@@ -1,3 +1,4 @@
+import { strategyDraftCommands, strategyPendingActionId } from "../../../strategyDraftCommands";
 import { conversationDraftCommands, conversationPendingTarget, conversationPendingActionId } from "../../../conversationDraftCommands";
 import { conversationCommands, type ConversationProposalRef } from "../../../conversationCommands";
 import { draftCommands, sameDraftKey, type DraftKey } from "../../../draftCommands";
@@ -20,6 +21,7 @@ export type DecisionNavigation =
   | { kind: "translation-request"; key: DraftKey }
   | { kind: "conversation-request"; conversationId: string; slot: "primary" | "revocation"; actionId: string }
   | { kind: "resource-request"; slot: "primary" | "resource-fact"; actionId: string }
+  | { kind: "strategy-request"; actionId: string; submittedSeq: string }
   | { kind: "source-request"; slot: "primary" | "source-hook-stop"; actionId: string }
   | { kind: "source-review"; target: SourceReviewTarget }
   | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
@@ -35,6 +37,7 @@ export interface DecisionNavigationPorts {
   conversationDraft: typeof conversationDraftCommands.read;
   resourceDraft: typeof resourceDraftCommands.read;
   sourceDraft: typeof sourceDraftCommands.read;
+  strategyDraft: typeof strategyDraftCommands.read;
   sourceTarget: typeof readDecisionTarget;
   proposal: typeof conversationCommands.readProposal;
   knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
@@ -49,6 +52,7 @@ const ports: DecisionNavigationPorts = {
   conversationDraft: request => conversationDraftCommands.read(request),
   resourceDraft: request => resourceDraftCommands.read(request),
   sourceDraft: request => sourceDraftCommands.read(request),
+  strategyDraft: request => strategyDraftCommands.read(request),
   sourceTarget: (...args) => readDecisionTarget(...args),
   proposal: request => conversationCommands.readProposal(request),
   knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
@@ -188,6 +192,14 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
     case "inspect-local-request": {
       const reference = action.reference, original = reference.action;
       match(fixed.item.sourceActionId === original.actionId);
+      if (original.key.kind === "strategy") {
+        match(original.slot === "strategy" && fixed.item.targets.some(target => target.kind === "project"));
+        const head = await commands.strategyDraft({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } }); present();
+        const pending = head.value?.pending;
+        match(head.key.projectId === ctx.projectId && !!pending && pending.submittedSeq === original.submittedSeq
+          && strategyPendingActionId(pending) === original.actionId && reference.requestKind === `strategy-${pending.kind}`);
+        return { kind: "strategy-request", actionId: original.actionId, submittedSeq: original.submittedSeq };
+      }
       if (original.key.kind === "source") {
         match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "project"));
         const head = await commands.sourceDraft({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } }); present();

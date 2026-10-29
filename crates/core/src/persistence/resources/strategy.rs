@@ -317,3 +317,10 @@ macro_rules! page {
 page!(ContextStrategyCandidatePage, ContextStrategyCandidate);
 page!(ContextStrategyDefaultPage, ContextStrategyDefaultRevision);
 page!(StrategyEvaluationPage, StrategyEvaluation);
+
+/// Exact original strategy requests used by pure recovery observations.
+#[derive(Clone,Debug,Eq,PartialEq)]
+pub enum StrategyActionRequest {
+    Candidate(CaptureContextStrategy),Suite(CaptureStrategySuite),Prepare(CaptureStrategyEvaluation),
+    Judgment(StrategyJudgmentRequest),Promote(PromoteContextStrategy),Withdraw(WithdrawContextStrategy),Check(StrategyCheckRequest),
+}

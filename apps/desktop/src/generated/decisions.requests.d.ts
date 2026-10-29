@@ -16,8 +16,11 @@ export type DecisionJournalKey =
     }
   | {
       kind: "source";
+    }
+  | {
+      kind: "strategy";
     };
-export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact" | "source-hook-stop";
+export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact" | "source-hook-stop" | "strategy";
 export type Revision = string;
 export type DecisionSource =
   | "translation-candidate"
