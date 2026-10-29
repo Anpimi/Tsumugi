@@ -24,6 +24,7 @@ import { CommandPalette } from "../design-system/CommandPalette";
 import { ProjectLifecycle, type ProjectSession } from "./platform/projectLifecycle";
 import { useNativeProjectClose, useProjectLifecycle } from "./platform/useProjectLifecycle";
 import type { OpenConversationRunCandidate } from "./features/assistant/conversationRunResultReads";
+import type { OpenConversationTeamCandidate } from "./features/assistant/conversationTeamReads";
 import type { EntryReviewEditorRequest } from "./features/review/navigationTypes";
 import { createWorkspaceStore, type WorkspaceView, type DeliveryNavigationTarget } from "./workspace/workspaceStore";
 import { createWorkspaceRouter } from "./workspace/workspaceRouter";
@@ -915,6 +916,20 @@ function WorkspaceShell() {
     if (narrow && drawer) closeDrawer();
     return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1));
   }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer]);
+  const openTeamCandidate = useCallback<OpenConversationTeamCandidate>(async (target, current) => {
+    const allowed = () => current() && !disabled && !session.reads.retired
+      && target.projectId === session.project.metadata.projectId
+      && gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined });
+    if (!allowed()) return false;
+    const [{ resolveConversationTeamCandidate }, { translationHistoryAfter }] = await Promise.all([
+      import("./features/assistant/conversationTeamReads"), import("../translationCommands"),
+    ]);
+    if (!allowed()) return false;
+    const revision = await resolveConversationTeamCandidate(executionContext(session.project), target);
+    if (!allowed()) return false;
+    if (narrow && drawer) closeDrawer();
+    return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1));
+  }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer]);
   async function inspectReview(unitId: string, locale: string) {
     const target = { entryMode: "table" as const, locale, focus: unitId, dock: "details" as const, detailTab: "detail" as const, editing: false, focusMode: false };
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
@@ -1048,7 +1063,7 @@ function WorkspaceShell() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+        {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>

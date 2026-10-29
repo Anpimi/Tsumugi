@@ -1,3 +1,4 @@
+import { conversationTeamEn } from "./conversationTeam";
 import { deliveryWorkbenchEn } from "./deliveryWorkbench";
 import { pluginToolWorkbenchEn } from "./pluginToolWorkbench";
 import { settingsWorkbenchEn } from "./settingsWorkbench";
@@ -11,6 +12,7 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+conversationTeam: conversationTeamEn,
 deliveryWorkbench: deliveryWorkbenchEn,
 pluginToolWorkbench: pluginToolWorkbenchEn,
 settingsWorkbench: settingsWorkbenchEn,

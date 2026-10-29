@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Team plans in the opt-in workspace can show recorded members, work results, messages and original discussion posts. Saved translation candidates open their exact versions in the existing entry workflow. Reading team history does not restart work or restore expired permissions; incomplete pages and uncertain results remain explicit.
+
 - Delivery in the opt-in workspace presents readiness, build, artifact checks, export and history as one checklist. Build settings stay with the project when a view is closed. Saved releases remain available for export without a model connection; failed or uncertain exports keep their original release and request for checking. Delivery issues use the same decision records as the shared inbox and open the relevant entry or original record.
 
 - Installed reference tools are available from workspace settings, entry details and commands. Query drafts and original pending requests stay available when the panel is hidden or a view is removed. Switching providers keeps unfinished work in its original query. Plugin query and build forms use host controls, with explicit previews and separate execution consent.

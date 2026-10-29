@@ -1,3 +1,4 @@
+import { conversationTeamZh } from "./conversationTeam";
 import { deliveryWorkbenchZh } from "./deliveryWorkbench";
 import { pluginToolWorkbenchZh } from "./pluginToolWorkbench";
 import { settingsWorkbenchZh } from "./settingsWorkbench";
@@ -13,6 +14,7 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+conversationTeam: conversationTeamZh,
 deliveryWorkbench: deliveryWorkbenchZh,
 pluginToolWorkbench: pluginToolWorkbenchZh,
 settingsWorkbench: settingsWorkbenchZh,

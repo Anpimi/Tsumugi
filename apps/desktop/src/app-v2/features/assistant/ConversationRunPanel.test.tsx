@@ -510,7 +510,7 @@ it("shows the team's accumulated root budget without presenting one root attempt
   h.state.status = checkedStatus({ ...team, expiresAt: h.state.status.expiresAt }); h.recordEarlierStart();
   h.state.run = checkedRun({ ...h.state.run, budget });
   await h.open(); await expand();
-  expect(await screen.findByText(i18n.t("conversation.runTeamProgressHelp"))).toBeVisible();
+  expect(await screen.findByRole("button", { name: i18n.t("conversationTeam.show") })).toHaveAttribute("aria-expanded", "false");
   const usage = within(screen.getByRole("region", { name: i18n.t("conversation.runBudgetTitle") }));
   expect(usage.getByText(i18n.t("ai.budgetSummary", { limit: String(budget.limit), dispatched: String(budget.dispatched), unresolved: String(budget.unresolved), usageUnknown: String(budget.usageUnknown) }))).toBeVisible();
   expect(usage.getByText(i18n.t("ai.usageDetails.billingUnknown"))).toBeVisible();
