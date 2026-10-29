@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AiView } from "../../../aiCommands";
@@ -30,11 +31,11 @@ function ReturnedText({ row }: { row: AiRow }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const [expanded, setExpanded] = useState(false);
   if (row.output === null) return null;
-  return <details onToggle={event => setExpanded(event.currentTarget.open)}>
-    <summary>{t("runResultsFullText")}</summary>
+  return <Disclosure onToggle={event => setExpanded(event.currentTarget.open)} title={<>{t("runResultsFullText")}</>}>
+
     {expanded ? row.output.text === "" ? <p>{t("runResultsEmptyTranslation")}</p>
       : <p className={styles.text}><TokenizedText text={row.output.text} tone="ai"/></p> : null}
-  </details>;
+  </Disclosure>;
 }
 
 /** Expansion owns a read-only snapshot, never execution or candidate permission. */
@@ -172,10 +173,10 @@ function RunResultsRead({ context, link, plan, start, visible, canRead, onOpenCa
               : <p>{t("runResultsNoText")}</p>}
             {effect ? <div className={styles.processing}><p>{global(`ai.effects.phases.${effect.phase}`)}</p>
               {effect.receipt?.blocked ? <p>{global(`ai.effects.blocks.${effect.receipt.blocked}`)}</p> : null}
-              {effect.error ? <details><summary>{t("runResultsProcessingDetails")}</summary><CommandFailureDetails failure={effect.error}/></details> : null}
+              {effect.error ? <Disclosure title={<>{t("runResultsProcessingDetails")}</>}><CommandFailureDetails failure={effect.error}/></Disclosure> : null}
             </div> : null}
             {decision ? <div className={styles.decision}><p>{t(decision.request.disposition === "rejected" ? "runResultsCandidateRejected" : "runResultsCandidateRestored")}</p>
-              {decision.request.reason ? <details><summary>{t("runResultsDecisionReason")}</summary><p className={styles.text}><TokenizedText text={decision.request.reason}/></p></details> : null}
+              {decision.request.reason ? <Disclosure title={<>{t("runResultsDecisionReason")}</>}><p className={styles.text}><TokenizedText text={decision.request.reason}/></p></Disclosure> : null}
             </div> : null}
             {target ? <div className={styles.actions}><Button size="sm" pending={busyItem === row.itemId} disabled={!fresh || !!busyItem}
               onClick={event => void openCandidate(row, event.currentTarget)}>{t("runResultsOpenCandidate")}</Button></div> : null}

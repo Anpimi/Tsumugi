@@ -1,3 +1,4 @@
+import { rememberProjectActivity } from "../../../recentProjects";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckSquare, ChevronDown, Layers, RefreshCw, Search, X } from "lucide-react";
@@ -124,6 +125,13 @@ export default function EntriesView({ project, view, disabled, patch, navigate, 
       if (!capture || !current) throw new Error("No source comparison scope");
       return readEntrySourceComparison(reads, view.locale, capture, current.rows);
     } });
+  const recentEntry = current?.rows.find(row => row.content.unitId === view.focus)?.content;
+  useEffect(() => {
+    if (!recentEntry || reads.retired) return;
+    const position = { unitId: recentEntry.unitId, locale: view.locale, nativeKey: recentEntry.nativeKey };
+    rememberProjectActivity(project.locator, position);
+    return () => rememberProjectActivity(project.locator, position);
+  }, [project.locator, reads, recentEntry?.unitId, recentEntry?.nativeKey, view.locale]);
   const currentComparison = view.compareSource && !comparison.error && comparison.data && capture
     && comparison.data.scopeId === capture.scopeId && comparison.data.currentSnapshotId === capture.snapshotId ? comparison.data : null;
   const key: DraftKey | null = view.focus ? { projectId: reads.context.projectId, unitId: view.focus, locale: view.locale } : null;

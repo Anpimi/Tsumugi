@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useLayoutEffect, useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -133,6 +134,7 @@ beforeEach(async () => {
     return result;
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it.each(["zh-CN", "ja-JP"])("opens the exact %s current selection rather than the Checked AI candidate, and returns with AI B and position retained", async locale => {

@@ -1,3 +1,4 @@
+import ProjectMetadataSheet from "./features/settings/ProjectMetadataSheet";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { useStore } from "zustand";
@@ -12,7 +13,7 @@ import { SessionReadProvider, useSessionReadStatus } from "../SessionReadProvide
 import { CommandFailureDetails } from "../CommandFailure";
 import { executionContext } from "../executionCommands";
 import { ExecutionTaskHandleProvider, type useExecutionTaskSession } from "../ExecutionTaskSession";
-import { readRecentProjects, readLastOpenProject, rememberProject, type RecentProject } from "../recentProjects";
+import { readRecentProjects, readRecentProject, readLastOpenProject, rememberProject, type RecentProject } from "../recentProjects";
 import { Button, IconButton } from "../design-system/Button";
 import { Field, TextInput } from "../design-system/Field";
 import { Banner, EmptyState, ErrorState, LoadingState } from "../design-system/Feedback";
@@ -86,6 +87,9 @@ const createDeliveryOwnerHost = () => lazy(() => import("./features/delivery/Del
 const DeliveryView = lazy(() => import("./features/delivery/DeliveryView"));
 const createStrategyOwnerHost = () => lazy(() => import("./features/strategy/StrategyOwnerHost"));
 const StrategyView = lazy(() => import("./features/strategy/StrategyView"));
+
+const ProjectBrief = lazy(() => import("./features/assistant/ProjectBrief"));
+const RunsView = lazy(() => import("./features/assistant/RunsView"));
 const CandidateOwnerHost = lazy(() => import("./features/candidates/CandidateOwnerHost"));
 const CandidateRecovery = lazy(() => import("./features/candidates/CandidateRecovery"));
 const CandidateBatchPanel = lazy(() => import("./features/candidates/CandidateBatchPanel"));
@@ -109,9 +113,10 @@ type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; re
   openSource: () => void;
   openDelivery: () => Promise<boolean>;
   openStrategy: () => Promise<boolean>;
+  openRuns: () => Promise<boolean>;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
-type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
+type SessionContext = { previousProject: RecentProject | null; session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
   sourceOwner: SourceOwner | null; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
   sourceTarget: SourceReviewTarget | null; setSourceTarget: (target: SourceReviewTarget | null) => void;
   sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
@@ -162,6 +167,7 @@ function DeliveryLoadFailure({ onFailure }: { onFailure: () => void }) {
 }
 
 function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
+  const [previousProject] = useState(() => readRecentProject(session.project.locator));
   const settings = useApplicationSettings(), mcp = useRef<ProjectReferenceHandle>(null), mcpParticipant = useRef<LifecycleParticipant | null>(null);
   const publishMcpParticipant = useCallback((value: LifecycleParticipant | null) => { mcpParticipant.current = value; }, []);
   const [ExecutionOwnerHost, setExecutionOwnerHost] = useState(createExecutionOwnerHost), [KnowledgeOwnerHost, setKnowledgeOwnerHost] = useState(createKnowledgeOwnerHost);
@@ -429,7 +435,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   }, [settings.registerMcp, runtime, drafts]);
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
-  return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed,
+  return <WorkspaceContext.Provider value={{ previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed,
     sourceOwner: executionTasks ? sourceOwner : null, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop,
     clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
@@ -487,7 +493,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
 function WorkspaceShell() {
   const settings = useApplicationSettings();
   const readStatus = useSessionReadStatus();
-  const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
+  const { previousProject, session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     strategyOwner, requestStrategy, strategyReveal, strategyLoadFailed, retryStrategy,
@@ -501,13 +507,16 @@ function WorkspaceShell() {
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
   const lifecycleState = useProjectLifecycle(lifecycle);
+  const [projectMetadataOpen, setProjectMetadataOpen] = useState(false);
+  const revealProjectMetadata = useCallback(() => setProjectMetadataOpen(true), []);
+  useLayoutEffect(() => projectMetadataOpen ? gate.pushDialog("project-metadata") : undefined, [projectMetadataOpen, gate]);
   const [strategyIntent, setStrategyIntent] = useState<StrategyIntent | undefined>(undefined);
   const strategyIntentSequence = useRef(0);
   const [strategyRequestTarget, setStrategyRequestTarget] = useState<{actionId: string; submittedSeq: string} | undefined>(undefined);
   const [knowledgeReview, setKnowledgeReview] = useState<KnowledgeReviewTarget | null>(null);
   const observedKnowledgeOpenIntent = useRef<KnowledgeOpenIntent | null>(null);
   useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
-  useLayoutEffect(() => { if (view?.kind === "runs") requestStrategy(); }, [view?.kind, requestStrategy]);
+  useLayoutEffect(() => { if (view?.kind === "runs" && view.runsMode === "strategy") requestStrategy(); }, [view?.kind, view?.runsMode, requestStrategy]);
   useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
@@ -695,11 +704,11 @@ function WorkspaceShell() {
     if (commandsReady && commands) commands.dispatch("review.batch-preview", scope, payload);
   }
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
-    openSource, openDelivery: async () => false, openStrategy: async () => false,
+    openSource, openDelivery: async () => false, openStrategy: async () => false, openRuns: async () => false,
     openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
   actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
-    openSource, openDelivery: () => openDelivery(), openStrategy: () => openStrategy(),
+    openSource, openDelivery: () => openDelivery(), openStrategy: () => openStrategy(), openRuns: () => openRuns(),
     openImport: async () => {
       requestImport();
       if (!importOwners) {
@@ -739,6 +748,8 @@ function WorkspaceShell() {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
       openStrategy: () => actions.current.openStrategy(),
+      openProjectMetadata: revealProjectMetadata,
+    openRuns: () => actions.current.openRuns(),
       openDecisions: () => openDecisions(), openDelivery: () => actions.current.openDelivery(), openSettings: () => settings.open("general", paletteHandoff.current ?? undefined), openExtensions: () => settings.openExtensions(paletteHandoff.current ?? undefined),
       openReferences: settings.openReferences ? () => settings.openReferences?.(paletteHandoff.current ?? undefined) : undefined,
       openMcpQuery: settings.openMcpQuery ? () => settings.openMcpQuery?.(paletteHandoff.current ?? undefined) : undefined,
@@ -797,7 +808,7 @@ function WorkspaceShell() {
     requestStrategy();
     const workspace = store.getState(), existing = [...workspace.viewOrder].reverse().find(id => workspace.views[id].kind === "runs");
     try {
-      const accepted = await (existing ? runtime.navigation.activate(existing) : runtime.navigation.open({ kind: "runs", locale }));
+      const accepted = await (existing ? runtime.navigation.update(existing, { runsMode: "strategy", locale }) : runtime.navigation.open({ kind: "runs", locale, runsMode: "strategy" }));
       if (accepted) {
         setStrategyRequestTarget(requestTarget);
         setStrategyIntent(unitId ? { unitId, locale, sequence: ++strategyIntentSequence.current } : undefined);
@@ -805,6 +816,12 @@ function WorkspaceShell() {
       }
       return accepted;
     } catch { setCommandFailed(true); return false; }
+  }
+  async function openRuns(newView = false) {
+    if (disabled || !gate.canDispatch({ viewId: currentId, source: "button" })) return false;
+    const state = store.getState(), existing = [...state.viewOrder].reverse().find(id => state.views[id].kind === "runs");
+    return await (!newView && existing ? runtime.navigation.activate(existing)
+      : runtime.navigation.open({ kind: "runs", locale: activeLocale, runsMode: "plans" }));
   }
   async function openDelivery(newView = false, target?: DeliveryNavigationTarget, locale = activeLocale) {
     const now = lifecycle.getSnapshot(), origin = document.activeElement;
@@ -930,7 +947,27 @@ function WorkspaceShell() {
       disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onOpen={openDecisionsFromTray}/>;
   }
   function conversationFallback(content: ReactNode) {
-    return <div className={styles.agent}><div className={styles.messages}>{sourceBrief()}{content}</div>{decisionTray()}</div>;
+    return <div className={styles.agent}><div className={styles.messages}>{projectBrief(true)}{sourceBrief()}{content}</div>{decisionTray()}</div>;
+  }
+  function projectBrief(emptyThread: boolean) {
+    const before = previousProject?.lastActivityAt ?? previousProject?.lastOpenedAt;
+    const eligible = emptyThread || before !== undefined && Date.now() - before > 8 * 60 * 60 * 1000;
+    const dialogId = narrow && drawer ? "workspace-dock" : undefined;
+    const allowed = () => !disabled && gate.canDispatch({ viewId: currentId, source: "button", dialogId });
+    async function openBriefEntries(locale: string, preset: string, focus?: string) {
+      if (!allowed()) return;
+      const next = { locale, preset, focus: focus ?? null, entryMode: "table" as const, editing: false, query: "", searchInput: "", cursor: null, afterOrdinal: 0,
+        queueActive: !!focus, queueAnchor: focus ?? null, queueScopeId: null, reviewNavigation: null, decisionFinding: null, runReturn: null };
+      if (narrow && drawer) closeDrawer();
+      return view?.kind === "entries" ? await runtime.navigation.update(view.id, next) : await runtime.navigation.open({ kind: "entries", ...next });
+    }
+    return <Suspense fallback={null}><ProjectBrief project={session.project} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)}
+      briefEligible={eligible} previousPosition={previousProject?.position} disabled={!allowed()}
+      decisions={{ page: decisionFeed.first.data, loading: decisionFeed.first.isFetching, error: decisionFeed.first.error }}
+      onContinue={position => void openBriefEntries(position.locale, "all", position.unitId).catch(() => setCommandFailed(true))}
+      onEntries={(locale, preset) => void openBriefEntries(locale, preset).catch(() => setCommandFailed(true))}
+      onImport={() => { if (allowed()) openSource(dialogId); }}
+      onDecisions={openDecisionsFromTray}/></Suspense>;
   }
   function sourceBrief() {
     const dialogId = narrow && drawer ? "workspace-dock" : undefined;
@@ -972,9 +1009,9 @@ function WorkspaceShell() {
       return accepted;
     } catch { setCommandFailed(true); return false; }
   }
-  const inspectCandidate = useCallback(async (unitId: string, locale: string, revisionId: string | null, afterOrdinal = "0") => {
+  const inspectCandidate = useCallback(async (unitId: string, locale: string, revisionId: string | null, afterOrdinal = "0", runReturn: WorkspaceView["runReturn"] = null) => {
     const target = { entryMode: "table" as const, locale, focus: unitId, dock: "details" as const, detailTab: "candidates" as const,
-      candidateAfterOrdinal: afterOrdinal, candidateInitialRevisionId: revisionId };
+      candidateAfterOrdinal: afterOrdinal, candidateInitialRevisionId: revisionId, runReturn };
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
       : await runtime.navigation.open({ kind: "entries", ...target, editing: false, queueActive: false });
     if (accepted && narrow) showDock();
@@ -992,8 +1029,10 @@ function WorkspaceShell() {
     const revision = await resolveConversationRunCandidate(executionContext(session.project), target);
     if (!allowed()) return false;
     if (narrow && drawer) closeDrawer();
-    return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1));
-  }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer]);
+    const origin = { viewId: currentId ?? "", conversationId: target.conversationId, planId: target.planId };
+    if (view?.kind === "runs") store.getState().patch(view.id, { runExpanded: [...new Set([...view.runExpanded, target.planId])] });
+    return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1), origin);
+  }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer, view, store]);
   const openTeamCandidate = useCallback<OpenConversationTeamCandidate>(async (target, current) => {
     const allowed = () => current() && !disabled && !session.reads.retired
       && target.projectId === session.project.metadata.projectId
@@ -1006,8 +1045,19 @@ function WorkspaceShell() {
     const revision = await resolveConversationTeamCandidate(executionContext(session.project), target);
     if (!allowed()) return false;
     if (narrow && drawer) closeDrawer();
-    return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1));
-  }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer]);
+    const origin = { viewId: currentId ?? "", conversationId: target.conversationId, planId: target.planId };
+    if (view?.kind === "runs") store.getState().patch(view.id, { runExpanded: [...new Set([...view.runExpanded, target.planId])] });
+    return await inspectCandidate(revision.unitId, revision.locale, revision.revisionId, translationHistoryAfter(revision.ordinal, 1), origin);
+  }, [disabled, session, gate, currentId, narrow, drawer, inspectCandidate, closeDrawer, view, store]);
+  async function returnToRun() {
+    const target = view?.runReturn;
+    if (!target || disabled || !conversations || !gate.canDispatch({ viewId: currentId, source: "button" })) return;
+    const previous = store.getState().views[target.viewId];
+    const expanded = [...new Set([...(previous?.runExpanded ?? []), target.planId])];
+    const accepted = previous?.kind === "runs" ? await runtime.navigation.update(previous.id, { runsMode: "plans", runExpanded: expanded })
+      : await runtime.navigation.open({ kind: "runs", locale: view.locale, runsMode: "plans", runExpanded: expanded });
+    if (accepted && !session.reads.retired) await conversations.open(target.conversationId);
+  }
   async function inspectReview(unitId: string, locale: string) {
     const target = { entryMode: "table" as const, locale, focus: unitId, dock: "details" as const, detailTab: "detail" as const, editing: false, focusMode: false };
     const accepted = view?.kind === "entries" ? await runtime.navigation.update(view.id, target)
@@ -1142,8 +1192,8 @@ function WorkspaceShell() {
     return <TabsRoot value={view?.dock ?? "agent"} onValueChange={value => { if (view && (value === "agent" || value === "details")) store.getState().patch(view.id, { dock: value }); }} className={styles.dockTabs}>
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
-        {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
-          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
+        {conversations ? <ConversationPanel showWorkPlans={view?.kind !== "runs" || view.runsMode === "strategy" || !!conversationTeamQuestion} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
+          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} projectBrief={projectBrief} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><div className={styles.actions}><Button disabled={disabled || !settings.openReferences} onClick={event => {
@@ -1166,6 +1216,7 @@ function WorkspaceShell() {
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
         { id: "create", label: t("startup.manual"), onSelect: () => { if (gate.canDispatch({ viewId: currentId, source: "button" })) requestCreate(); }, disabled: disabled || !commandsReady },
         { id: "open", label: message("openProject"), onSelect: () => dispatch("workspace.open-project"), disabled: disabled || !commandsReady }, { id: "close", label: message("closeProject"), onSelect: () => dispatch("workspace.close-project"), disabled: disabled || !commandsReady },
+        { id: "project-settings", label: t("projectMetadata.title"), onSelect: () => dispatch("workspace.project-settings"), disabled: disabled || !commandsReady },
         { id: "source", label: t("sourceMaintenance.title"), onSelect: () => dispatch("source.import-upstream"), disabled: disabled || !commandsReady },
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
@@ -1173,6 +1224,14 @@ function WorkspaceShell() {
       <Button ref={commandTrigger} className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton ref={dockTrigger} className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
     </header>
+    <ProjectMetadataSheet project={session.project} visible={projectMetadataOpen} disabled={disabled}
+      lifecycle={lifecycle} onReveal={revealProjectMetadata} current={() => !disabled && !session.reads.retired && gate.canDispatch({ viewId: currentId, source: "button", dialogId: "project-metadata" })}
+      onClose={() => setProjectMetadataOpen(false)} onChanged={async () => {
+        const locator = session.project.locator;
+        const refreshed = await lifecycle.refresh(), latest = lifecycle.getSnapshot().session;
+        if (!refreshed || !latest || latest.project.sessionToken !== session.project.sessionToken || latest.reads.retired) return false;
+        rememberProject(latest.project, locator); latest.reads.invalidate(["project"]); return true;
+      }}/>
     {sourceOpen && !sourceOwner ? <Banner role="status">{t("sourceMaintenance.recoveryLoading")}</Banner> : null}
     {readStatus ? <Banner tone={readStatus.message === "execution.updatesUnavailable" ? "warning" : "info"} role={readStatus.message === "execution.updatesUnavailable" ? "alert" : "status"}
       action={<Button disabled={disabled || !commandsReady || !gate.canDispatch({ viewId: currentId, source: "button" })} onClick={() => dispatch("workspace.refresh")}>{t("execution.refresh")}</Button>}>{t(readStatus.message)}<CommandFailureDetails failure={readStatus.failure}/></Banner> : null}
@@ -1219,7 +1278,8 @@ function WorkspaceShell() {
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
         {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined} aria-busy={id === "knowledge" && knowledgeOpenIntent !== null || undefined}><IconButton ref={id === "decisions" ? decisionTrigger : undefined} label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} aria-describedby={id === "decisions" ? decisionBadgeId : undefined}
-          disabled={id === "runs" || disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} title={id === "runs" ? message("comingLater") : undefined} onClick={event => {
+          disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onClick={event => {
+          if (id === "runs") { if (event.metaKey || event.ctrlKey) void openRuns(true).catch(() => setCommandFailed(true)); else dispatch("workspace.runs"); return; }
           if (id === "decisions") { if (event.metaKey || event.ctrlKey) void openDecisions(true); else dispatch("workspace.decisions"); return; }
           if (id === "delivery") { if (event.metaKey || event.ctrlKey) void openDelivery(true).catch(() => setCommandFailed(true)); else dispatch("workspace.delivery"); return; }
           if (id === "knowledge") { void openKnowledge(event.metaKey || event.ctrlKey).catch(() => setCommandFailed(true)); return; }
@@ -1247,6 +1307,7 @@ function WorkspaceShell() {
           })}<IconButton size="xs" label={message("newView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}><Plus /></IconButton>
             {view ? <IconButton size="xs" label={message(view.pinned ? "unpinView" : "pinView")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.pin-view")}><Pin /></IconButton> : null}
           </div>
+          {view?.kind === "entries" && view.runReturn ? <div className={appStyles.runReturn}><Button size="sm" disabled={disabled} onClick={() => void returnToRun().catch(() => setCommandFailed(true))}>{t("runsView.return")}</Button></div> : null}
           {importVisible ? importPanel() : view ? view.kind === "entries" ? <FeatureBoundary key={view.id} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingEntries")} />}><EntriesView ref={entries} commands={commandsReady ? commands : null} project={session.project} view={view} drafts={commandsReady ? drafts : null} gate={gate} dispatch={dispatchEditor} onRevealDraft={revealDraft} onImport={() => dispatch("translation.import")} onCandidateBatch={candidateOwners && commandsReady ? previewCandidateBatch : undefined} candidateBatchTriggerRef={candidateBatchTrigger} candidateBatchBlocked={candidateBatchBlocked} onReviewBatch={commandsReady ? previewReviewBatch : undefined} reviewBatchTriggerRef={reviewBatchTrigger} renderCandidate={renderCandidate} disabled={readOnly || !!lifecycleState.pending} patch={patch => store.getState().patch(view.id, patch)} navigate={async patch => {
             const accepted = await runtime.navigation.update(view.id, patch);
             if (accepted && patch.dock === "details" && narrow) showDock();
@@ -1259,10 +1320,20 @@ function WorkspaceShell() {
               patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }} reviewTarget={knowledgeReview?.proposal.projectId === session.project.metadata.projectId ? knowledgeReview : null} onReviewOpened={() => setKnowledgeReview(null)}/>
               : <LoadingState label={t("knowledge.readingTerms")}/>}
           </Suspense></FeatureBoundary> : view.kind === "runs" ? <FeatureBoundary key="strategy-presentation" fallback={<ErrorState title={message("strategyLoadFailed")}/>}><Suspense fallback={<LoadingState label={message("strategyLoading")}/>}>
-            {strategyLoadFailed ? <ErrorState title={message("strategyLoadFailed")} action={<Button onClick={retryStrategy}>{message("strategyRetry")}</Button>}/>
-              : strategyOwner ? <StrategyView project={session.project} owner={strategyOwner} commands={commandsReady ? commands : null} tasks={executionTasks} visible disabled={disabled} gate={gate} viewId={view.id} intent={strategyIntent} requestTarget={strategyRequestTarget}
-                onOpenConnections={() => settings.open("connections")} onOpenEntry={async (unitId, locale) => { try { return await inspectCandidate(unitId, locale, null); } catch { setCommandFailed(true); return false; } }}/>
-              : <LoadingState label={message("strategyLoading")}/>}
+            <TabsRoot className={appStyles.runsWorkspace} value={view.runsMode} onValueChange={mode => {
+              if ((mode === "plans" || mode === "strategy") && !disabled && gate.canDispatch({ viewId: view.id, source: "button" })) store.getState().patch(view.id, { runsMode: mode });
+            }}>
+              <TabsList aria-label={message("runs")}><TabsTrigger value="plans">{t("runsView.title")}</TabsTrigger><TabsTrigger value="strategy">{message("strategyOpen")}</TabsTrigger></TabsList>
+              <TabsContent className={appStyles.runsPanel} value="plans">{conversations ? <RunsView owner={conversations} disabled={disabled} gate={gate} viewId={view.id}
+                expandedPlans={view.runExpanded} onExpandedPlan={(planId, open) => store.getState().patch(view.id, { runExpanded: open ? [...new Set([...view.runExpanded, planId])] : view.runExpanded.filter(id => id !== planId) })}
+                scrollTop={view.scroll.top} onScroll={top => store.getState().patch(view.id, { scroll: { top, left: 0 } })}
+                showDetails={!conversationTeamQuestion} onAssistant={() => dispatch("workspace.agent")} onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate}/>
+                : <LoadingState label={t("conversation.loading")}/>}</TabsContent>
+              <TabsContent className={appStyles.runsPanel} value="strategy">{strategyLoadFailed ? <ErrorState title={message("strategyLoadFailed")} action={<Button onClick={retryStrategy}>{message("strategyRetry")}</Button>}/>
+                : strategyOwner ? <StrategyView project={session.project} owner={strategyOwner} commands={commandsReady ? commands : null} tasks={executionTasks} visible={view.runsMode === "strategy"} disabled={disabled} gate={gate} viewId={view.id} intent={strategyIntent} requestTarget={strategyRequestTarget}
+                  onOpenConnections={() => settings.open("connections")} onOpenEntry={async (unitId, locale) => { try { return await inspectCandidate(unitId, locale, null); } catch { setCommandFailed(true); return false; } }}/>
+                : <LoadingState label={message("strategyLoading")}/>}</TabsContent>
+            </TabsRoot>
           </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
             {deliveryLoadFailed ? <ErrorState title={t("deliveryWorkbench.ownerFailed")} action={canRetryDelivery ? <Button onClick={retryDelivery}>{t("deliveryWorkbench.retryOwner")}</Button> : undefined}/>
               : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}

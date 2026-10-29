@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -34,6 +35,7 @@ beforeEach(() => {
     return { request: request.stop, view: structuredClone(canonical) }; });
   vi.spyOn(commands, "capture").mockImplementation(async request => retrievalCapture(request.actionId, view().query!));
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 it("mounts and edits only the original resource query draft without any discovery, identity or model call", () => {
   render(<Probe/>, project); draft(); expect(tool().current().rows[0].text).toContain("Barrel"); expect(owner().current().operation).toBeNull();

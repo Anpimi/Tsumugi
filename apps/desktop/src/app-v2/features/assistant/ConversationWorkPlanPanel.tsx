@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AiBudgetInputs, AiConnectionEditor } from "../../../AiConnectionFields";
@@ -33,6 +34,7 @@ interface Props {
   owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
   gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate;
   questionTarget?: ConversationTeamQuestionTarget | null;
+  expandedPlans?: readonly string[]; onExpandedPlan?: (planId: string, open: boolean) => void;
 }
 type PlanPage = Awaited<ReturnType<typeof conversationCommands.proposalWorkPlans>>;
 type PlanLink = PlanPage["rows"][number];
@@ -51,20 +53,20 @@ function WorkPlanHistoryRecord({ owner, link, visible, canRead, ...runProps }: P
         if (canRead()) void proposal.refetch();
       }}>{t("retryRead")}</Button>}><p>{t("planHistoryProposalFailed")}</p><CommandFailureDetails failure={commandFailure(proposal.error)}/></Banner>
       : <><p>{t("planHistoryVersion", { number: proposal.data.revision })}</p><p className={styles.text}>{proposal.data.content.summary}</p></>}
-    <details><summary>{t("planHistoryIdentity")}</summary><dl className={styles.identifiers}>
+    <Disclosure title={<>{t("planHistoryIdentity")}</>}><dl className={styles.identifiers}>
       <dt>{t("planHistoryPlanId")}</dt><dd><code>{link.planId}</code></dd>
       <dt>{t("planHistoryProposalId")}</dt><dd><code>{link.proposalId}</code></dd>
       <dt>{t("planHistoryRevisionId")}</dt><dd><code>{link.revisionId}</code></dd>
       <dt>{t("planHistoryActionId")}</dt><dd><code>{link.actionId}</code></dd>
       {proposal.data ? <><dt>{t("planHistoryOrigin")}</dt><dd><code>{proposal.data.origin.attemptId}</code></dd>
         <dt>{t("planHistoryResult")}</dt><dd><code>{proposal.data.origin.resultId}</code></dd></> : null}
-    </dl></details>
+    </dl></Disclosure>
     <ConversationRunPanel owner={owner} link={link} visible={visible} {...runProps}/>
   </article>;
 }
 
 /** A saved proposal fixes scope and policy; all new sharing and execution consent is explicit. */
-export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenTeamCandidate, questionTarget }: Props) {
+export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenTeamCandidate, questionTarget, expandedPlans, onExpandedPlan }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const reads = useSessionReads(), facts = useConnectionFacts(), workPlan = input.workPlan;
   const conversationId = input.key.conversationId, revision = workPlan.revision;
@@ -83,7 +85,8 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
   const blocked = disabled || !open || (!!input.busy || input.journalBusy) || pending || !!workPlan.busy;
   const unsavedProposal = !!revision && !!input.value.proposalEdits?.some(edit => edit.proposalId === revision.proposalId);
   const unresolved = proposal?.questions.length ?? 0;
-  const connectionCurrent = connectionConfigCurrent(facts.current(), workPlan.config);
+  const connectionCurrent = connectionConfigCurrent(facts.current(), workPlan.config)
+    && (proposal?.options.teamExecution?.members.every(member => connectionConfigCurrent(facts.current(), member.config)) ?? true);
   const valid = validAiLimits(workPlan.config) && !!workPlan.config.endpoint.trim() && !!workPlan.config.model.trim()
     && !!proposal && proposal.unitIds.length <= workPlan.config.maxItems;
   const canRead = () => live.current.mounted && live.current.visible && !live.current.disabled && !owner.getSnapshot().retired
@@ -302,7 +305,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
       {questionPlan && exactPlan.error ? <Banner tone="error"><p>{t("questionPlanTargetFailed")}</p><CommandFailureDetails failure={commandFailure(exactPlan.error)}/>
         <Button size="sm" disabled={!canRead() || exactPlan.isFetching} onClick={() => { if (canRead()) void exactPlan.refetch(); }}>{t("retryRead")}</Button></Banner> : null}
       {history.isSuccess && records.length === 0 && !questionPlan ? <p>{t("planHistoryEmpty")}</p> : null}
-      {records.map(link => <WorkPlanHistoryRecord onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
+      {records.map(link => <WorkPlanHistoryRecord onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} expandedPlans={expandedPlans} onExpandedPlan={onExpandedPlan} key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
         gate={gate} viewId={viewId} parentDialogId={parentDialogId} canRead={canRead}
         questionTarget={exactLink && questionPlan?.planId === link.planId ? questionPlan : null}/>)}
       {history.hasNextPage ? <div className={styles.actions}><Button size="sm" pending={history.isFetchingNextPage} disabled={!visible || disabled || history.isFetching}

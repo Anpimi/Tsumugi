@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails } from "../../../CommandFailure";
@@ -85,7 +86,7 @@ function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate,
     </Banner> : null}
     {page ? <>
       <p>{t("scope", { count: page.scope.length, locale: page.locale })}</p>
-      <details><summary>{t("scopeDetails")}</summary><ul>{page.scope.map(unit => <li key={unit.unitId}><TokenizedText text={unit.nativeKey}/></li>)}</ul></details>
+      <Disclosure title={<>{t("scopeDetails")}</>}><ul>{page.scope.map(unit => <li key={unit.unitId}><TokenizedText text={unit.nativeKey}/></li>)}</ul></Disclosure>
       <p>{t("pageCount", { count: page.rows.length })}</p>
       {!fresh ? <p role="status">{t("checking")}</p> : null}
       {page.rows.length === 0 ? <p>{t("empty")}</p> : <ol className={styles.rows}>{page.rows.map(row => {
@@ -96,8 +97,8 @@ function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate,
           <h6>{t("entry", { generation: row.lease.generation, action: label })}</h6>
           <p>{t(states[row.state])}</p>
           {input ? <p>{t(row.start ? "started" : "startUnconfirmed")}</p> : null}
-          {action.kind !== "control" ? <details><summary>{global("conversation.runEffects")}</summary><ul>{action.effects.map(effect =>
-            <li key={effect}>{global(`conversation.${effects[effect]}`)}</li>)}</ul></details> : null}
+          {action.kind !== "control" ? <Disclosure title={<>{global("conversation.runEffects")}</>}><ul>{action.effects.map(effect =>
+            <li key={effect}>{global(`conversation.${effects[effect]}`)}</li>)}</ul></Disclosure> : null}
           {action.kind === "team-recovery" ? <>
             <p>{t("recoveryBase", { generation: action.baseLease.generation, entry: target?.nativeKey ?? "", locale: action.work.target.locale })}</p>
             <p className={styles.text}><TokenizedText text={action.work.instructions}/></p>
@@ -106,11 +107,11 @@ function HistoryRead({ context, link, status, visible, canRead, onOpenCandidate,
               <p>{t("memberScope", { count: member.unitIds.length })}</p>
             </li>)}</ul>
           </> : null}
-          <details><summary>{t("identity")}</summary><dl className={styles.identities}>
+          <Disclosure title={<>{t("identity")}</>}><dl className={styles.identities}>
             <dt>{t("actionId")}</dt><dd>{row.actionId}</dd>
             {input ? <><dt>{t("taskId")}</dt><dd>{input.taskId}</dd><dt>{t("attemptId")}</dt><dd>{input.attemptId}</dd>
               {input.parentTask ? <><dt>{t("parentTask")}</dt><dd>{input.parentTask}</dd></> : null}</> : null}
-          </dl></details>
+          </dl></Disclosure>
           {row.start ? <Button size="sm" aria-expanded={selectedRow} aria-controls={`${id}-${row.actionId}`} disabled={!fresh} onClick={event => {
             if (!fresh) return; focusForAction(event.currentTarget); setSelected(selectedRow ? null : row.actionId);
           }}>{t(selectedRow ? "hideAttempt" : "showAttempt")}</Button> : null}

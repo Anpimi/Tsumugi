@@ -1,6 +1,7 @@
 import { isConversationMessageText, type ConversationPlanningRun } from "../../../conversationCommands";
 import type { ConversationProposalDraft } from "../../../conversationDraftCommands";
 import { queryField } from "../../../pluginToolChoices";
+import { proposalTeamProblem } from "./proposalRecipe";
 
 export type ProposalContent = Extract<ConversationProposalDraft["content"], { kind: "proposal" | "knowledge-proposal" }>;
 export type KnowledgeProposalContent = Extract<ProposalContent, { kind: "knowledge-proposal" }>;
@@ -15,7 +16,7 @@ export function validProposalContent(content: ConversationProposalDraft["content
   if (!editableProposal(content) || !isConversationMessageText(content.summary) || content.questions.length > 8 || !content.questions.every(validProposalQuestion)) return false;
   const validUnits = (unitIds: readonly string[]) => unitIds.length > 0 && unitIds.length <= 100 && new Set(unitIds).size === unitIds.length
     && (!run || run.preview.scope.kind === "units" && unitIds.every(id => run.preview.units.some(unit => unit.unitId === id)));
-  return content.kind === "proposal" ? validUnits(content.unitIds) && (!run || run.preview.purpose == null)
+  return content.kind === "proposal" ? validUnits(content.unitIds) && !proposalTeamProblem(content.options, content.unitIds) && (!run || run.preview.purpose == null)
     : content.entries.length > 0 && content.entries.length <= 16 && bytes.encode(JSON.stringify(content)).length <= 65536
       && content.entries.every(entry => validKnowledgeName(entry.name) && validKnowledgeText(entry.text) && validUnits(entry.unitIds))
       && (!run || run.preview.purpose === "knowledge");

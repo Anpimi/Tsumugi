@@ -3,6 +3,15 @@ import type { ProjectView } from "./projectCommands";
 export interface RecentProject {
   locator: string;
   lastOpenedAt: number;
+  lastActivityAt?: number;
+  position?: RecentWorkspacePosition;
+}
+
+/** A navigation hint only. The live project must still resolve the entry. */
+export interface RecentWorkspacePosition {
+  unitId: string;
+  locale: string;
+  nativeKey: string;
 }
 
 export const RECENT_PROJECTS_STORAGE_KEY = "tsumugi.recentProjects";
@@ -45,6 +54,21 @@ function isRecentProject(value: unknown): value is RecentProject {
   );
 }
 
+function workspacePosition(value: unknown): RecentWorkspacePosition | undefined {
+  if (typeof value !== "object" || value === null) return;
+  const position = value as Partial<RecentWorkspacePosition>;
+  return typeof position.unitId === "string" && position.unitId.length > 0
+    && typeof position.locale === "string" && position.locale.length > 0 && typeof position.nativeKey === "string"
+    ? { unitId: position.unitId, locale: position.locale, nativeKey: position.nativeKey } : undefined;
+}
+
+function recentProject(value: RecentProject): RecentProject {
+  const position = workspacePosition(value.position);
+  return { locator: value.locator, lastOpenedAt: value.lastOpenedAt,
+    ...(Number.isFinite(value.lastActivityAt) && value.lastActivityAt! >= 0 ? { lastActivityAt: value.lastActivityAt } : {}),
+    ...(position ? { position } : {}) };
+}
+
 function readJson<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);
@@ -65,12 +89,29 @@ function writeJson(key: string, value: unknown): void {
 export function readRecentProjects(): RecentProject[] {
   const value = readJson<unknown>(RECENT_PROJECTS_STORAGE_KEY);
   if (!Array.isArray(value)) return [];
-  return value.filter(isRecentProject).slice(0, MAX_RECENT_PROJECTS);
+  return value.filter(isRecentProject).slice(0, MAX_RECENT_PROJECTS).map(recentProject);
 }
 
 export function readLastOpenProject(): RecentProject | null {
   const value = readJson<unknown>(LAST_OPEN_PROJECT_STORAGE_KEY);
-  return isRecentProject(value) ? value : null;
+  return isRecentProject(value) ? recentProject(value) : null;
+}
+
+export function readRecentProject(locator: string): RecentProject | null {
+  const identity = normalizeLocator(locator);
+  return readRecentProjects().find(item => normalizeLocator(item.locator) === identity) ?? null;
+}
+
+export function rememberProjectActivity(locator: string, position: RecentWorkspacePosition, at = Date.now()): void {
+  const saved = workspacePosition(position);
+  if (!saved || !Number.isFinite(at) || at < 0) return;
+  const identity = normalizeLocator(locator), recent = readRecentProjects();
+  const previous = recent.find(item => normalizeLocator(item.locator) === identity);
+  if (!previous || previous.lastActivityAt !== undefined && previous.lastActivityAt > at) return;
+  const entry = { ...previous, lastActivityAt: at, position: saved };
+  writeJson(RECENT_PROJECTS_STORAGE_KEY, recent.map(item => item === previous ? entry : item));
+  const last = readLastOpenProject();
+  if (last && normalizeLocator(last.locator) === identity) writeJson(LAST_OPEN_PROJECT_STORAGE_KEY, entry);
 }
 
 export function recentProjectName(locator: string): string {
@@ -80,7 +121,9 @@ export function recentProjectName(locator: string): string {
 }
 
 export function rememberProject(view: ProjectView, replacedLocator?: string): RecentProject[] {
+  const previous = readRecentProject(view.locator) ?? (replacedLocator ? readRecentProject(replacedLocator) : null);
   const entry: RecentProject = {
+    ...previous,
     locator: view.locator,
     lastOpenedAt: Date.now(),
   };

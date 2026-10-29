@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, MessageSquare, Plus, RefreshCw, Sparkles } from "lucide-react";
@@ -26,7 +27,7 @@ import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
 export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
-interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
+interface Props { projectBrief?: (emptyThread: boolean) => ReactNode; showWorkPlans?: boolean; owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
 const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending ? conversationPendingActionId(pending) : undefined;
 
@@ -59,7 +60,7 @@ function PlanningResult({ owner, input, attemptId, visible, disabled, gate, view
   </section>;
 }
 
-function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, proposalTarget, questionTarget, proposalFocusTargets }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>> }) {
+function ThreadHistory({ showWorkPlans = true, owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, proposalTarget, questionTarget, proposalFocusTargets }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>> }) {
   const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
@@ -95,12 +96,12 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
     {attempts.hasNextPage ? <Button pending={attempts.isFetchingNextPage} onClick={() => void attempts.fetchNextPage()}>{t("moreReplies")}</Button> : null}
     {proposals.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void proposals.refetch()}>{t("retryRead")}</Button>}>{t("proposalReadFailed")}</Banner> : null}
     <ConversationProposals owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} revisions={revisions} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} onOpenKnowledgeProposal={onOpenKnowledgeProposal}/>
-    <ConversationWorkPlanPanel onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} questionTarget={questionTarget}/>
+    {showWorkPlans ? <ConversationWorkPlanPanel onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} questionTarget={questionTarget}/> : null}
     {proposals.hasNextPage ? <Button pending={proposals.isFetchingNextPage} onClick={() => void proposals.fetchNextPage()}>{t("moreProposalVersions")}</Button> : null}
   </>;
 }
 
-export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
+export default function ConversationPanel({ projectBrief, showWorkPlans = true, owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
@@ -111,6 +112,9 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
   const threads = useSessionInfiniteQuery({ key: ["conversations"], scopes: ["project"], enabled: visible,
     initialPageParam: null as string | null, nextPage: noNext,
     read: after => conversationCommands.list({ ...owner.context, after, limit: 50 }) });
+  const briefMessages = useSessionInfiniteQuery({ key: ["conversation", activeId, "messages"], scopes: ["project"], enabled: visible && !!activeId && !!projectBrief,
+    initialPageParam: null as string | null, nextPage: noNext,
+    read: after => { if (!activeId) throw new Error("A project brief requires a conversation"); return conversationCommands.messages({ ...owner.context, conversationId: activeId, after, limit: 50 }); } });
   const saved = threads.data?.pages.flatMap(page => page.rows) ?? [];
   const known = new Map(saved.map(thread => [thread.conversationId, thread.title ?? t("threadNumber", { number: thread.ordinal })]));
   state.summaries.forEach((summary, index) => { if (!known.has(summary.key.conversationId)) known.set(summary.key.conversationId, t("retainedInput", { number: index + 1 })); });
@@ -182,6 +186,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {state.next ? <Button size="sm" pending={state.hydration === "loading"} onClick={() => void owner.initialize(true)}>{t("moreDrafts")}</Button> : null}
     </div>
     <div className={styles.messages}>
+      {projectBrief?.(!activeId ? threads.isSuccess && saved.length === 0 : briefMessages.isSuccess && briefMessages.data.pages.every(page => page.rows.length === 0))}
       {maintenanceBrief}
       {proposalTarget && proposalTarget.conversationId !== activeId ? <Banner tone="warning" role="status">{t("proposalTargetConversationChanged")}</Banner> : null}
       {threads.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void threads.refetch()}>{t("retryRead")}</Button>}>{t("threadsReadFailed")}</Banner> : null}
@@ -189,7 +194,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={blocked || state.hydration !== "ready"} onClick={() => void owner.create()}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} onOpenKnowledgeProposal={onOpenKnowledgeProposal} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} questionTarget={questionTarget?.conversationId === activeId ? questionTarget : null}/> : <p role="status">{t("creatingThread")}</p>}
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory showWorkPlans={showWorkPlans} onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} onOpenKnowledgeProposal={onOpenKnowledgeProposal} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} questionTarget={questionTarget?.conversationId === activeId ? questionTarget : null}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
     {decisionTray}
     {input ? <div className={styles.composer}>
@@ -214,20 +219,20 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
         className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
         aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
         {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
-      {pending.kind === "team-question-response" ? <><p>{t("teamQuestionPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
+      {pending.kind === "team-question-response" ? <><p>{t("teamQuestionPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
         <p>{pending.question.publication.body}</p><Field label={t("teamQuestionOriginalResponse")}><TextArea readOnly value={pending.request.response.response.kind === "text" ? pending.request.response.response.body
           : pending.request.response.response.kind === "dismiss" ? pending.request.response.response.reason : pending.question.publication.question?.kind === "open"
             ? pending.question.publication.question.options.find(option => pending.request.response.response.kind === "choice" && option.optionId === pending.request.response.response.optionId)?.label ?? "" : ""}/></Field>
-      </details></> : null}
-      {pending.kind === "team-recovery" ? <><p>{t("teamRecoveryPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
+      </Disclosure></> : null}
+      {pending.kind === "team-recovery" ? <><p>{t("teamRecoveryPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
         <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.request.recovery.work.instructions}/></Field>
         {pending.request.recovery.members.map(member => <div key={member.memberId}><p>{t("teamOriginalRecipient", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><p>{member.role}</p></div>)}
-      </details></> : null}
-      {isConversationTeamPending(pending) ? <><p>{t("teamPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
+      </Disclosure></> : null}
+      {isConversationTeamPending(pending) ? <><p>{t("teamPendingHelp")}</p><Disclosure title={<>{t("teamOriginal")}</>}>
         <p>{t("teamOriginalTarget", { entry: pending.targetName, locale: pending.kind === "team-message" ? pending.request.message.target.locale : pending.request.publication.target.locale })}</p>
         {pending.kind === "team-message" ? <><p>{t("teamOriginalRecipient", { ...pending.destination })}</p><p>{pending.destination.role}</p></> : null}
         <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.kind === "team-message" ? pending.request.message.body : pending.request.publication.body}/></Field>
-      </details></> : null}
+      </Disclosure></> : null}
       {!input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
         <p>{t(input.outcome === "blocked" ? runPending ? "runBlocked" : "absentBlocked" : input.outcome === "absent" ? replayable ? runPending ? "runAbsent" : "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : runPending ? "runPending" : "pending")}</p>
         <CommandFailureDetails failure={input.failure?.cause ?? null}/>

@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { StrictMode } from "react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import { SessionReadProvider } from "../../../SessionReadProvider";
@@ -10,6 +11,7 @@ import type { ConversationProposalRevision } from "../../../conversationCommands
 import { validateResponseConversationWritten } from "../../../generated/draft.validators";
 import { conversationProposalFixture, knowledgeProposalFixture } from "../../../testSupport/conversationProposalFixture";
 import { fixtureIdentity as id } from "../../../testSupport/executionFixture";
+import { connectionFixture } from "../../../testSupport/connectionFixture";
 import { InteractionGate } from "../../workspace/interactionGate";
 import ConversationPanel from "./ConversationPanel";
 import { ConversationSession } from "./ConversationSession";
@@ -34,7 +36,7 @@ function expectNoExecution() {
     "list_project_conversations", "read_project_conversation_messages", "read_conversation_planning_attempts", "read_conversation_planning",
     "read_conversation_proposal_revisions", "read_conversation_proposal", "validate_conversation_proposal",
     "list_local_conversation_drafts", "read_local_conversation_draft", "write_local_conversation_draft", "resolve_local_conversation_draft",
-    "capture_conversation_proposal", "revise_conversation_proposal", "read_conversation_proposal_work_plans",
+    "capture_conversation_proposal", "revise_conversation_proposal", "read_conversation_proposal_work_plans", "read_model_connections",
   ].includes(command))).toEqual([]);
 }
 function harness(saved = true, knowledge = false) {
@@ -48,6 +50,7 @@ function harness(saved = true, knowledge = false) {
     readWaits: new Map<string, ReturnType<typeof deferred>>(), readFailures: new Set<string>(),
   };
   invoke.mockImplementation(async (command: string, { request }) => {
+    if (command === "read_model_connections") return connectionFixture([]);
     if (command === "list_project_conversations") return { projectId: context.projectId,
       rows: [{ ...key, title: "夜行对话", ordinal: "1" }], nextAfter: null };
     if (command === "read_project_conversation_messages") return { projectId: context.projectId, conversationId: request.conversationId,
@@ -130,6 +133,61 @@ function harness(saved = true, knowledge = false) {
   return { ...fixture, content, state, open, edit };
 }
 
+it("saves a run template as a new proposal version without changing scope or starting execution", async () => {
+  const h = harness(), session = await h.open(), editor = await h.edit(), user = userEvent.setup();
+  await user.click(editor.getByRole("button", { name: "选择运行模板" }));
+  await user.click(screen.getByRole("menuitem", { name: "生成候选并运行检查" }));
+  await session.flush();
+  const content = h.state.head.value?.proposalEdits?.[0]?.content;
+  expect(content).toMatchObject({ kind: "proposal", unitIds: h.content.unitIds, options: { selectionPolicy: "candidates-only",
+    adoptResources: false, deliver: false, stages: expect.arrayContaining([{ stage: "generation", mode: "assisted" }, { stage: "checks", mode: "assisted" }]) } });
+  await user.click(editor.getByRole("button", { name: "另存新版本" }));
+  await waitFor(() => expect(h.state.revisions).toHaveLength(2));
+  expect(h.state.revisions[0].content).toEqual(h.content);
+  expect(h.state.revisions[1].content).toEqual(content);
+  expectNoExecution();
+});
+
+it("keeps unfinished member setup in the existing proposal journal and restores stable identities", async () => {
+  const h = harness(), session = await h.open(), editor = await h.edit(), user = userEvent.setup();
+  await user.click(editor.getByRole("button", { name: "添加团队成员" }));
+  const name = editor.getByRole("textbox", { name: "成员名称" });
+  expect(name).toHaveFocus();
+  fireEvent.change(name, { target: { value: "译者 {{name}}" } });
+  fireEvent.change(editor.getByRole("textbox", { name: "角色与职责" }), { target: { value: "保留占位符和人物语气。" } });
+  expect(editor.getByRole("button", { name: "另存新版本" })).toBeDisabled();
+  await session.flush();
+  const saved = structuredClone(h.state.head.value?.proposalEdits?.[0]);
+  expect(saved?.content).toMatchObject({ kind: "proposal", options: { teamDiscussions: { profile: "current-plan-1" }, teamExecution: {
+    members: [{ displayName: "译者 {{name}}", role: "保留占位符和人物语气。", unitIds: h.content.unitIds, toolHandles: [], config: { shareTerms: false, shareContext: false } }],
+  } } });
+  session.view.unmount(); session.retire();
+  const reopened = await h.open();
+  const restored = reopened.owner.getSnapshot().inputs.get(conversationId)?.value.proposalEdits?.[0];
+  expect(restored).toEqual(saved);
+  expectNoExecution();
+});
+
+it("saves configured members through the original revision request and preserves later input", async () => {
+  const h = harness(), session = await h.open(), editor = await h.edit(), user = userEvent.setup();
+  await user.click(editor.getByRole("button", { name: "添加团队成员" }));
+  act(() => session.owner.editProposal(conversationId, h.revision.proposalId, content => content.kind === "proposal" ? { ...content,
+    options: { ...content.options, teamExecution: content.options.teamExecution ? { ...content.options.teamExecution, members: content.options.teamExecution.members.map(member => ({ ...member,
+      displayName: "Reviewer", role: "Review literal {name}", config: { ...member.config, endpoint: h.run.preview.config.endpoint, model: "fixture" } })) } : null } } : content));
+  await session.flush();
+  const original = structuredClone(h.state.head.value?.proposalEdits?.[0]?.content);
+  h.state.revisionWait = deferred();
+  await user.click(editor.getByRole("button", { name: "另存新版本" }));
+  await waitFor(() => expect(calls("revise_conversation_proposal")).toHaveLength(1));
+  fireEvent.change(editor.getByRole("textbox", { name: "目标与做法" }), { target: { value: "Newer unsent B" } });
+  await act(async () => h.state.revisionWait?.resolve());
+  await waitFor(() => expect(h.state.revisions).toHaveLength(2));
+  await session.flush();
+  expect(h.state.revisions[1].content).toEqual(original);
+  expect(h.state.head.value?.proposalEdits?.[0]?.content.summary).toBe("Newer unsent B");
+  expectNoExecution();
+});
+
 it("reads an existing planning result and captures it once only after an explicit save, without model or execution commands", async () => {
   const h = harness(false), session = await h.open();
   const reply = within(await screen.findByRole("region", { name: "助理回复" }));
@@ -201,7 +259,8 @@ it("reopens incomplete proposal fields without a business save and discards only
   expect(editor.getByRole("textbox", { name: "目标与做法" })).toHaveValue(h.revision.content.summary);
   expect(editor.getByRole("checkbox", { name: "dialogue.1" })).toBeChecked();
   expect(editor.getByRole("checkbox", { name: "dialogue.2" })).not.toBeChecked();
-  expect(editor.getAllByRole("checkbox")).toHaveLength(2);
+  expect(editor.getAllByRole("checkbox")).toHaveLength(3);
+  expect(editor.getByRole("checkbox", { name: i18n.t("ai.discussions.enable") })).not.toBeChecked();
   fireEvent.change(editor.getByRole("textbox", { name: "目标与做法" }), { target: { value: "" } });
   fireEvent.click(editor.getByRole("button", { name: "添加问题" }));
   fireEvent.click(editor.getByRole("checkbox", { name: "dialogue.1" }));

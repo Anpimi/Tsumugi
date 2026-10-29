@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { teamGuidanceActive } from "../../../TeamGuidanceSession";
@@ -76,7 +77,7 @@ export function ConversationTeamActions({ owner, input, link, status, view, curr
           if (editable()) owner.editTeamGuidance(link, { memberId: value.memberId, unitId: value.unitIds.includes(guidance?.unitId ?? "") ? guidance?.unitId ?? null : null });
         } }))}/>
         {entryChoice("guidance")}
-        {member ? <div className={styles.preview}><p>{t("destination", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><details><summary>{t("viewRole")}</summary><p className={styles.text}>{member.role}</p></details></div> : null}
+        {member ? <div className={styles.preview}><p>{t("destination", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><Disclosure title={<>{t("viewRole")}</>}><p className={styles.text}>{member.role}</p></Disclosure></div> : null}
         {guidanceUnit ? <p>{t("target", { entry: guidanceUnit.nativeKey, locale: status.plan.locale })}</p> : null}
         <Field label={t("guidanceBody")} error={guidanceProblem}><TextArea readOnly={!editable() || !hasSpace} value={guidance?.body ?? ""}
           onChange={event => { if (editable()) owner.editTeamGuidance(link, { body: event.target.value }); }}/></Field>

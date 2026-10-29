@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Dialog, Sheet } from "../../../design-system/Dialog";
 import { Button } from "../../../design-system/Button";
-import { Field } from "../../../design-system/Field";
+import { Field, Select } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
 import { PluginPermissions } from "../../../PluginPermissions";
@@ -104,14 +104,14 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
       {dropFailure ? <Banner tone="error">{t("dropFailed")}<CommandFailureDetails failure={dropFailure}/></Banner> : null}
       {state.failure ? <Banner tone="error">{t("operationFailed")}<CommandFailureDetails failure={state.failure}/></Banner> : null}
       {inventory.isFetching ? <LoadingState label={t("readingImporters")}/> : inventory.error ? <Banner tone="error" action={<Button onClick={() => setInventoryRevision(value => value + 1)}>{t("retryRead")}</Button>}>{t("importersFailed")}</Banner> : null}
-      <Field label={old("source.integration")}><select disabled={configurationLocked || !fresh(inventoryOptions.key)} value={choiceKey} onChange={event => chooseSource(event.target.value, "")}>
+      <Field label={old("source.integration")}><Select disabled={configurationLocked || !fresh(inventoryOptions.key)} value={choiceKey} onChange={event => chooseSource(event.target.value, "")}>
         <option value="">{old("sourcePlugin.choosePackage")}</option>{choices.map(choice => <option key={choice.key} value={choice.key}>{choice.label}</option>)}
-      </select></Field>
-      <Field label={old("sourcePlugin.runtime")}><select disabled={configurationLocked || !choice || !fresh(inventoryOptions.key)} value={state.source?.environmentDigest ?? ""}
+      </Select></Field>
+      <Field label={old("sourcePlugin.runtime")}><Select disabled={configurationLocked || !choice || !fresh(inventoryOptions.key)} value={state.source?.environmentDigest ?? ""}
         onChange={event => chooseSource(choiceKey, event.target.value)}><option value="">{old("sourcePlugin.chooseRuntime")}</option>
         {runtimes.map(runtime => <option key={runtime.environmentDigest} value={runtime.environmentDigest}>{old(runtime.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption",
           { version: pluginEnvironmentVersion(runtime.environment), system: runtime.environment.platform.operatingSystem, architecture: runtime.environment.platform.architecture })}</option>)}
-      </select></Field>
+      </Select></Field>
       {source.error ? <Banner tone="error" action={<Button onClick={() => void source.refetch()}>{t("retryRead")}</Button>}>{t("importerUnavailable")}</Banner> : null}
       {environment ? <><p>{environment.declaration.displayName}</p><ul>{environment.declaration.materials.map(file => <li key={file.logicalPath}>{old("sourcePlugin.material", { path: file.logicalPath, bytes: String(file.maxBytes) })}</li>)}</ul></> : null}
       <Button disabled={!canPrepare || configurationLocked} onClick={() => { if (!current()) return; const ticket = drop?.dropTicket; onDropConsumed();

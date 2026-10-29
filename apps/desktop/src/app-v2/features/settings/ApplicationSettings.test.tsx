@@ -1,3 +1,4 @@
+import { Button } from "../../../design-system/Button";
 import { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -18,7 +19,7 @@ const label = (key: "title" | "connections" | "shortcuts" | "close" | "apply" | 
 function Launcher({ mcp }: { mcp?: ProjectReferenceHandle }) {
   const settings = useApplicationSettings();
   useLayoutEffect(() => mcp ? settings.registerMcp(mcp) : undefined, [settings.registerMcp, mcp]);
-  return <button onClick={() => settings.open()}>{label("title")}</button>;
+  return <Button onClick={() => settings.open()}>{label("title")}</Button>;
 }
 function harness(lifecycle = new ProjectLifecycle(), mcp?: ProjectReferenceHandle) {
   const gate = new InteractionGate();

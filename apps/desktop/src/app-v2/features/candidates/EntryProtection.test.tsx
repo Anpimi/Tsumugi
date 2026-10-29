@@ -1,3 +1,4 @@
+import { Button } from "../../../design-system/Button";
 import { useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -158,7 +159,7 @@ it("does not send a late release after newer input or a view switch during ident
   await user.click(within(dialog).getByRole("button", { name: w("entryProtectionConfirmRelease") }));
   await waitFor(() => expect(h.drafts.getSnapshot().mutationReserved).toBe(true));
   act(() => { h.drafts.edit(h.key, "New input B"); h.gate.setVisibleOwner("other-view"); });
-  const destination = render(<button>Other view</button>).getByRole("button", { name: "Other view" }); destination.focus();
+  const destination = render(<Button>Other view</Button>).getByRole("button", { name: "Other view" }); destination.focus();
   h.show({ visible: false }); await act(async () => allocated.resolve(fixtureIdentity(999)));
   await waitFor(() => expect(h.drafts.getSnapshot().mutationReserved).toBe(false));
   expect(destination).toHaveFocus(); expect(calls("set_work_protection")).toHaveLength(0); expect(h.drafts.getEntry(h.key)?.value?.text).toBe("New input B");

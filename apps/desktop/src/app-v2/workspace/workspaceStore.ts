@@ -32,6 +32,10 @@ export interface WorkspaceView {
   decisionPrevious: readonly (DecisionCursor | null)[];
   decisionFinding: { runId: string; issueId: string; offset: number } | null;
   deliveryTarget: DeliveryNavigationTarget | null;
+  runsMode: "plans" | "strategy";
+  knowledgeExchange: "tmx" | "tbx" | null;
+  runExpanded: readonly string[];
+  runReturn: { viewId: string; conversationId: string; planId: string } | null;
   candidateAfterOrdinal: string;
   candidateInitialRevisionId: string | null;
   candidateCompareOpen: boolean;
@@ -102,6 +106,10 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     decisionPrevious: (input.decisionPrevious ?? []).map(cursor => cursor ? { ...cursor } : null),
     decisionFinding: input.decisionFinding ? { ...input.decisionFinding } : null,
     deliveryTarget: input.deliveryTarget ? { ...input.deliveryTarget } : null,
+    runsMode: input.runsMode ?? "plans",
+    knowledgeExchange: input.knowledgeExchange ?? null,
+    runExpanded: Object.freeze([...(input.runExpanded ?? [])]),
+    runReturn: input.runReturn ? { ...input.runReturn } : null,
     candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
     candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
     candidateCompareOpen: input.candidateCompareOpen ?? false,
@@ -188,6 +196,8 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
       const next = { ...view, ...patch,
+        ...(patch.runExpanded ? { runExpanded: Object.freeze([...patch.runExpanded]) } : {}),
+        ...(patch.runReturn !== undefined ? { runReturn: patch.runReturn ? { ...patch.runReturn } : null } : {}),
         ...(patch.deliveryTarget !== undefined ? { deliveryTarget: patch.deliveryTarget ? { ...patch.deliveryTarget } : null } : {}),
         ...(patch.translationMemory ? { translationMemory: { ...patch.translationMemory, filter: { ...patch.translationMemory.filter }, donor: patch.translationMemory.donor ? { ...patch.translationMemory.donor } : null } } : {}),
         ...(patch.decisionCursor !== undefined ? { decisionCursor: patch.decisionCursor ? { ...patch.decisionCursor } : null } : {}),

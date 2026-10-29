@@ -153,8 +153,14 @@ it("keeps distinct drafts and newer B metadata when A returns on another categor
   await user.click(screen.getByRole("button", { name: i18n.t("knowledge.kinds.characters") }));
   const drafts = screen.getByRole("navigation", { name: k("contextDrafts") }); await user.click(within(drafts).getByRole("button", { name: /Mara/ }));
   expect(screen.getByRole("textbox", { name: k("contextText") })).toHaveValue("Newer B"); expect(screen.getByRole("textbox", { name: k("contextActor") })).toHaveValue("New actor B");
-  await user.click(screen.getByRole("button", { name: "Another tab" })); await act(async () => { expect(await lifecycle.close()).toBe(false); });
-  expect(await screen.findByRole("textbox", { name: k("contextText") })).toHaveValue("Newer B");
+  await user.click(screen.getByRole("button", { name: "Another tab" })); await act(async () => { expect(await lifecycle.close()).toBe(true); });
+  const stored = invoke.mock.calls.filter(([command]) => command === "write_local_resource_draft").at(-1)?.[1].request.write.value;
+  expect(stored?.pending).toBeNull();
+  expect(stored?.typedDrafts).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "character", text: "Newer B", actor: "New actor B" }),
+    expect.objectContaining({ kind: "style", text: "Style B" }),
+  ]));
+  expect([...resources.values()]).toHaveLength(1); expect([...resources.values()][0].text).toBe("Friendly but direct.");
 });
 
 it("requires an explicit new source basis and keeps old input until reviewed", async () => {

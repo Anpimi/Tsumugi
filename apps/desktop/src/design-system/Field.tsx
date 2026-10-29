@@ -44,3 +44,8 @@ export type TextAreaProps = ComponentProps<"textarea"> & { editor?: boolean };
 export function TextArea({ className, editor = false, ...props }: TextAreaProps) {
   return <textarea {...props} data-editor={editor || undefined} className={cx(styles.input, styles.textarea, className)} />;
 }
+
+/** A native option picker with the same field sizing and focus contract. */
+export function Select({ className, ...props }: ComponentProps<"select">) {
+  return <select {...props} className={cx(styles.input, className)} />;
+}

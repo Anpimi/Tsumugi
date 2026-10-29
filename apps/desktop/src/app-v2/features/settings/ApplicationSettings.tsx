@@ -8,7 +8,7 @@ import { CommandBindings, type BindingResult } from "../../../commandBindings";
 import { localeOptions, isLocale } from "../../../i18n";
 import { Button } from "../../../design-system/Button";
 import { Sheet } from "../../../design-system/Dialog";
-import { Field, TextInput } from "../../../design-system/Field";
+import { Field, TextInput, Select } from "../../../design-system/Field";
 import { Banner } from "../../../design-system/Feedback";
 import fieldStyles from "../../../design-system/Field.module.css";
 import type { SessionExitPermit } from "../../../sessionNavigation";
@@ -158,7 +158,7 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
         <nav className={styles.navigation} aria-label={t("settingsWorkbench.sections")}>{sections.map(name => <Button key={name} aria-current={section === name ? "page" : undefined} disabled={exitReview || composing} onClick={() => setSection(name)}>{t(`settingsWorkbench.${name}`)}</Button>)}</nav>
         <div className={styles.content}>
           {section === "general" ? <section className={styles.section}><h2>{t("settingsWorkbench.general")}</h2>
-            <Field label={t("settingsWorkbench.language")} description={t("settingsWorkbench.languageHelp")}><select className={fieldStyles.input} value={i18n.resolvedLanguage} onChange={event => { if (isLocale(event.target.value)) void i18n.changeLanguage(event.target.value); }}>{localeOptions.map(locale => <option key={locale.value} value={locale.value}>{t(locale.labelKey)}</option>)}</select></Field>
+            <Field label={t("settingsWorkbench.language")} description={t("settingsWorkbench.languageHelp")}><Select className={fieldStyles.input} value={i18n.resolvedLanguage} onChange={event => { if (isLocale(event.target.value)) void i18n.changeLanguage(event.target.value); }}>{localeOptions.map(locale => <option key={locale.value} value={locale.value}>{t(locale.labelKey)}</option>)}</Select></Field>
             <h2>{t("settingsWorkbench.extensions")}</h2><p>{t("settingsWorkbench.extensionsHelp")}</p><div className={styles.actions}><Button variant="secondary" onClick={() => handOff("extensions")}>{t("settingsWorkbench.extensions")}</Button></div>
             <h2>{t("toolQuery.title")}</h2><p>{t("toolQuery.help")}</p><div className={styles.actions}><Button disabled={!mcp || !lifecycleState.session} onClick={() => handOff("reference")}>{t("toolQuery.title")}</Button></div>
             <h2>{t("settingsWorkbench.mcp")}</h2><p>{t("settingsWorkbench.mcpHelp")}</p><p>{!lifecycleState.session ? t("settingsWorkbench.needsProject") : !mcp ? t("settingsWorkbench.projectLoading") : null}</p>

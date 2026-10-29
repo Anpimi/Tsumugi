@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -299,12 +300,12 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
   });
   function details(requirement: ReviewFindingDecision["requirement"], runId: string, sourceRevisionId: string) {
     const implementation = requirement.key.implementation;
-    return <details className={styles.evidence}><summary>{legacy("review.advisoryFindings.basis")}</summary><dl>
+    return <Disclosure className={styles.evidence} title={<>{legacy("review.advisoryFindings.basis")}</>}><dl>
       <dt>{legacy("review.advisoryFindings.rule")}</dt><dd>{requirement.key.rule.id}</dd>
       <dt>{legacy("review.advisoryFindings.provider")}</dt><dd>{implementation.kind === "plugin" ? `${implementation.provider.plugin.publisher}/${implementation.provider.plugin.id} ${implementation.provider.plugin.version}` : implementation.validator.id}</dd>
       <dt>{legacy("review.advisoryFindings.run")}</dt><dd>{runId}</dd><dt>{legacy("review.advisoryFindings.input")}</dt><dd>{requirement.inputDigest}</dd>
       <dt>{legacy("review.advisoryFindings.scope")}</dt><dd>{requirement.scopeDigest}</dd><dt>{legacy("review.advisoryFindings.source")}</dt><dd>{sourceRevisionId}</dd>
-    </dl></details>;
+    </dl></Disclosure>;
   }
   function origin(item: Pick<AdvisoryFinding, "aiOrigin">) {
     return item.aiOrigin ? <p className={styles.text}><TokenizedText text={legacy("semanticReview.advisoryOrigin", { model: item.aiOrigin.model, endpoint: item.aiOrigin.endpoint, recipe: item.aiOrigin.recipe })}/></p> : null;
@@ -320,8 +321,8 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
       return <div key={JSON.stringify([intent.runId, diagnostic])}>
         {diagnostic.detail && diagnostic.detail !== detail ? <p className={styles.text}><TokenizedText text={diagnostic.detail}/></p> : null}
         {diagnostic.suggestion ? <p className={styles.text}>{legacy("review.advisorySuggestion", { suggestion: diagnostic.suggestion })}</p> : null}
-        {diagnostic.location ? <details className={styles.evidence}><summary>{legacy("execution.diagnostic")}</summary><p>{legacy("review.diagnosticRange", { field: legacy(diagnostic.location.field === "source" ? "review.source" : "review.translation"),
-          encoding: diagnostic.location.range.encoding, rangeStart: String(diagnostic.location.range.start), rangeEnd: String(diagnostic.location.range.end) })}</p></details> : null}
+        {diagnostic.location ? <Disclosure className={styles.evidence} title={<>{legacy("execution.diagnostic")}</>}><p>{legacy("review.diagnosticRange", { field: legacy(diagnostic.location.field === "source" ? "review.source" : "review.translation"),
+          encoding: diagnostic.location.range.encoding, rangeStart: String(diagnostic.location.range.start), rangeEnd: String(diagnostic.location.range.end) })}</p></Disclosure> : null}
         {onReviewEdit && current && diagnostic.location ? <Button size="sm" disabled={!locateAvailability(payload).enabled}
           onClick={() => commands.dispatch("review.entry-locate-issue", commandScope, payload)}>{legacy(diagnostic.location.field === "source" ? "review.diagnosticNavigation.locateSource" : "review.diagnosticNavigation.locateTranslation")}</Button>
           : onReviewEdit ? <p className={styles.help}>{t("entryIssuesNoExactLocation")}</p> : null}
@@ -391,12 +392,12 @@ export default function EntryIssuesPanel({ project, target, owner, drafts, comma
         ref={repair === requestedRepair ? findingCard : undefined} data-decision-finding={repair === requestedRepair ? "true" : undefined}><div className={styles.text}><TokenizedText text={repair.decision.finding.detail}/></div>
         <p>{legacy(repair.status === "awaiting-current-recheck" ? "review.advisoryFindings.awaiting" : repair.status === "current-rule-clear" ? "review.advisoryFindings.recheckClear" : repair.status === "superseded" ? "review.advisoryFindings.superseded" : "review.advisoryFindings.recheckFindings")}</p>
         <p className={styles.text}><TokenizedText text={`${repair.decision.request.actor}: ${repair.decision.request.reason}`}/></p>{auditDetails(repair.decision)}</article>)}
-      <details><summary>{t("entryIssuesHistory")}</summary><div className={styles.history}>
+      <Disclosure title={<>{t("entryIssuesHistory")}</>}><div className={styles.history}>
         {page?.history.length === 0 ? <p className={styles.help}>{legacy("review.advisoryFindings.historyEmpty")}</p> : null}
         {page?.history.map(decision => <article className={styles.card} key={decision.decisionId}><p>{decision.createdAt} · {decisionText(decision.request.disposition)}</p>
           <p className={styles.text}><TokenizedText text={`${decision.request.actor}: ${decision.request.reason}`}/></p><div className={styles.text}><TokenizedText text={decision.finding.detail}/></div>{auditDetails(decision)}</article>)}
         <div className={styles.actions}>{button("first", t("entryIssuesFirstPage"), "review.entry-issues-page")}{button("next", t("entryIssuesMoreHistory"), "review.entry-issues-page")}</div>
-      </div></details>
+      </div></Disclosure>
     </section>
     <div ref={result} tabIndex={-1} role="group" aria-label={t("entryIssuesResult")} className={styles.feedback}>
       {navigation?.identity === targetIdentity ? <Banner tone={navigation.kind === "loading" ? "info" : navigation.kind === "failed" ? "error" : "warning"}

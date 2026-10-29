@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -114,6 +115,7 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 async function prepare() {
   act(() => { owner.setConfig(prepared.preview.config); owner.setSelected(items.map(item => item.unitId)); });

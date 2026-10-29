@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
@@ -112,6 +113,7 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 
 it("registers scoped Review commands for the committed view and removes them on unmount", async () => {
@@ -629,7 +631,7 @@ it("stops a batch before the next write if its target language is removed", asyn
   view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
   const request = invoke.mock.calls.find(([command]) => command === "write_review_decision")![1].request.decision;
   await act(async () => finishFirst(reviewDecisionFixture(request, targets.first)));
-  await waitFor(() => expect(screen.getByText(/1 recorded, 0 changed, 0 not confirmed/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Approved 1, changed 0, failed 0, awaiting a result check 0.")).toBeInTheDocument());
   expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(1);
   expect(screen.getByText(/1 remaining entry was not started/)).toBeVisible();
   expect(screen.getByText(/zh-CN is no longer a project target/)).toBeVisible();
@@ -833,7 +835,7 @@ it("retains an in-flight batch and its stop request across a consumer remount", 
   await user.click(screen.getByRole("button", { name: "Stop after the current entry" }));
   const request = invoke.mock.calls.find(([command]) => command === "write_review_decision")![1].request.decision;
   await act(async () => finish(reviewDecisionFixture(request, targets.first)));
-  expect(await screen.findByText(/1 recorded, 0 changed, 0 not confirmed/)).toBeVisible();
+  expect(await screen.findByText("Approved 1, changed 0, failed 0, awaiting a result check 0.")).toBeVisible();
   expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(1);
   await user.click(screen.getByRole("button", { name: "Next page" }));
   expect(await screen.findByRole("checkbox", { name: "Approve selected entries: second" })).toBeChecked();
@@ -1195,7 +1197,7 @@ it("uses fixed item bases for batch approval and reports a changed item separate
   await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
   await user.click(screen.getByRole("button", { name: "Approve selected entries (2)" }));
   await user.click(screen.getByRole("button", { name: "Confirm approvals" }));
-  await waitFor(() => expect(screen.getByText(/1 recorded, 1 changed, 0 not confirmed/)).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("Approved 1, changed 1, failed 0, awaiting a result check 0.")).toBeInTheDocument());
   const writes = invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request.decision);
   expect(writes.map((value: { unitId: string; expectedBasis: string }) => [value.unitId, value.expectedBasis]))
     .toEqual([[targets.first.unitId, "basis-first"], [targets.second.unitId, "basis-second"]]);
@@ -1227,7 +1229,7 @@ it("stops a batch after the in-flight approval and keeps later entries selected"
   await user.click(screen.getByRole("button", { name: "Stop after the current entry" }));
   const request = invoke.mock.calls.find(([command]) => command === "write_review_decision")![1].request.decision;
   await act(async () => finish(reviewDecisionFixture(request, targets.first)));
-  expect(await screen.findByText(/1 recorded, 0 changed, 0 not confirmed/)).toBeInTheDocument();
+  expect(await screen.findByText("Approved 1, changed 0, failed 0, awaiting a result check 0.")).toBeInTheDocument();
   expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request.decision.unitId))
     .toEqual([targets.first.unitId]);
   expect(screen.getByRole("checkbox", { name: "Approve selected entries: second" })).toBeChecked();

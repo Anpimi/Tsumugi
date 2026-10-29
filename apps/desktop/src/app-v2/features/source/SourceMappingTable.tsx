@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "../../../design-system/Button";
-import { Field, TextArea } from "../../../design-system/Field";
+import { Field, TextArea, Select } from "../../../design-system/Field";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import type { LineageChoice, SourceChangePage, SourceOccurrence } from "../../../sourceCommands";
 import styles from "./SourceMaintenance.module.css";
@@ -31,7 +31,7 @@ export default function SourceMappingTable({ page, choices, disabled, onChoice, 
         <th scope="row">{t(`counts.${row.kind === "rename-candidate" ? "renameCandidate" : row.kind}`)}</th>
         <td>{content(row.old?.occurrence ?? null, true)}</td><td>{content(row.new, false)}</td>
         <td><div className={styles.decision}>{ordinal !== undefined ? <>
-          <Field label={t("mappingField", { entry })}><select disabled={disabled} value={value} onChange={event => {
+          <Field label={t("mappingField", { entry })}><Select disabled={disabled} value={value} onChange={event => {
             const value = event.target.value;
             if (value === fallback) { onChoice(ordinal, null); return; }
             for (const candidate of row.candidates) {
@@ -45,7 +45,7 @@ export default function SourceMappingTable({ page, choices, disabled, onChoice, 
             {row.candidates.flatMap(candidate => candidate.occurrenceId ? (["continue", "reject"] as const).map(decision =>
               <option key={`${decision}:${candidate.occurrenceId}`} value={`${decision}:${candidate.occurrenceId}`}>{t(decision, { entry: label(candidate.occurrence) })}</option>) : [])}
             {selected && !row.candidates.some(candidate => candidate.occurrenceId === selected.oldOccurrenceId) ? <option value={value}>{t("savedHistorical")}</option> : null}
-          </select></Field>
+          </Select></Field>
           {selected ? <Field label={t("reason", { entry })} required error={new TextEncoder().encode(selected.reason).byteLength > 4096 ? t("reasonTooLong") : undefined}>
             <TextArea rows={3} readOnly={disabled} value={selected.reason} onChange={event => onChoice(ordinal, { ...selected, reason: event.target.value })}/>
           </Field> : null}

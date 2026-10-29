@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useLayoutEffect, type ReactNode } from "react";
 import { act, cleanup, render as renderHeadless, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -64,6 +65,7 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 
 function applicationDetail(): AttemptDetail {
   const value: AttemptDetail = structuredClone(fixture.detail) as AttemptDetail;

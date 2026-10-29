@@ -1,3 +1,4 @@
+import { Button } from "../../../design-system/Button";
 import { useCallback, useLayoutEffect, useState } from "react";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -84,7 +85,7 @@ async function harness(publishParticipant = false) {
     const onOwner = useCallback((value: DeliveryOwnerHandle | null) => { observed = value; publications(value); setOwner(value); }, []);
     if (!session) throw new Error("Expected a synthetic project session");
     return <SessionReadProvider context={session.reads.context} reads={session.reads} bridge={false}>
-      <button type="button">{marker || "Synthetic return target"}</button>
+      <Button type="button">{marker || "Synthetic return target"}</Button>
       <DeliveryOwnerHost project={project} lifecycle={lifecycle} gate={gate} onOwner={onOwner}
         onParticipant={publishParticipant ? publishedParticipant : undefined} onReveal={reveal}/>
       {consumer && owner ? <ReleaseDraftHandleProvider value={owner}><Consumer/></ReleaseDraftHandleProvider> : null}

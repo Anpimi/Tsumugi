@@ -1,8 +1,7 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AiBudgetInputs, AiConnectionEditor } from "../../../AiConnectionFields";
 import { AiProviderBudget } from "../../../AiUsage";
-import { connectionAiConfig, editedAiConfig, type AiConfig } from "../../../aiCommands";
 import { connectionConfigCurrent, connectionReadKey, pluginInventoryReadKey, useConnectionFacts } from "../../../ApplicationReadProvider";
 import { commandFailure, CommandFailureDetails } from "../../../CommandFailure";
 import { Button } from "../../../design-system/Button";
@@ -11,10 +10,8 @@ import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { Menu } from "../../../design-system/Menu";
 import { TeamWorkKindValues } from "../../../generated/ai.enums";
 import type { TeamWorkReference } from "../../../generated/ai.responses";
-import { ModelConnectionPicker } from "../../../ModelConnectionPicker";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
-import { SourceContextChoice } from "../../../SourceContextPreparation";
 import { TeamRecoveryDisclosure } from "../../../TeamRecoveryDisclosure";
 import { teamRecoveryAvailable, teamRecoveryHasCapacity } from "../../../TeamRecoverySession";
 import { useWorkPlanExecutionReview, WorkPlanExecutionReview } from "../../../WorkPlanExecutionReview";
@@ -25,6 +22,7 @@ import type { ConversationPlanLink } from "./conversationRun";
 import { readConversationTeamExecution, readConversationTeamHistory } from "./conversationTeamReads";
 import { conversationRecoveryProblem, recoveryBasisMatches, type ConversationRecoveryMember } from "./conversationRecovery";
 import { emptyExecutionConsent } from "./proposalWorkPlan";
+import { TeamMemberFields } from "./TeamMemberFields";
 import styles from "./ConversationTeamRecovery.module.css";
 
 export interface ConversationTeamRecoveryProps {
@@ -167,7 +165,7 @@ export function ConversationTeamRecovery({ owner, input, link, status, visible, 
   function referenceChoice(reference: TeamWorkReference, label: string) {
     return <div key={jsonIdentity(reference)} className={styles.reference}><label className={styles.check}><TextInput type="checkbox" className={styles.checkbox}
       disabled={!editable()} checked={draft?.priorWork.some(value => same(value, reference)) ?? false} onChange={event => toggleReference(reference, event.target.checked)}/><span>{label}</span></label>
-      <details><summary>{global("ai.team.identityDetails")}</summary><pre>{JSON.stringify(reference, null, 2)}</pre></details></div>;
+      <Disclosure title={<>{global("ai.team.identityDetails")}</>}><pre>{JSON.stringify(reference, null, 2)}</pre></Disclosure></div>;
   }
   return <section className={styles.panel} aria-label={t("title")} hidden={!visible}
     onFocusCapture={() => gate.setInputOwner(viewId, inputOwner)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputOwner); }}
@@ -209,7 +207,7 @@ export function ConversationTeamRecovery({ owner, input, link, status, visible, 
           <Field label={t("instructions")} error={problem === "work" ? global("ai.recovery.problems.work") : undefined}><TextArea value={draft.instructions} readOnly={!editable()}
             onChange={event => { if (editable()) owner.editTeamRecovery(link, { instructions: event.target.value }); }}/></Field>
         </fieldset>
-        <details className={styles.fields}><summary>{t("attachments")}</summary><p>{t("attachmentHelp")}</p>
+        <Disclosure className={styles.fields} title={<>{t("attachments")}</>}><p>{t("attachmentHelp")}</p>
           {unresolved.length ? <fieldset className={styles.fields}><legend>{t("unresolved")}</legend><p>{t("unresolvedHelp")}</p>
             {unresolved.map((reference, index) => referenceChoice(reference, t("priorWork", { number: index + 1 })))}</fieldset> : null}
           {view?.works.filter(work => !unresolved.some(reference => reference.attemptId === work.receipt.attemptId)).map(work => referenceChoice(
@@ -229,7 +227,7 @@ export function ConversationTeamRecovery({ owner, input, link, status, visible, 
           <div className={styles.actions}><Button size="sm" disabled={!editable() || posts.isFetching || afterPost === null} onClick={() => { if (editable()) setPostCursor({ frame, value: null }); }}>{t("firstPage")}</Button>
             <Button size="sm" disabled={!editable() || posts.isFetching || !posts.data?.nextAfter} onClick={() => { if (editable()) setPostCursor({ frame, value: posts.data?.nextAfter ?? null }); }}>{t("nextPosts")}</Button></div>
           <p>{t("selected", { posts: draft.postIds.length, works: draft.priorWork.length })}</p>
-        </details>
+        </Disclosure>
         {problem && problem !== "work" ? <p role="status">{global(`ai.recovery.problems.${problem}`)}</p> : null}
         {!connectionsCurrent ? <Banner tone="warning">{t("connectionChanged")}</Banner> : null}
         {ownPending && !prepared && !state?.receipt ? <p role="status">{t("newPreview")}</p> : null}
@@ -259,37 +257,9 @@ function RecoveryMemberFields({ member, number, owner, link, plan, editSeq, acti
   member: ConversationRecoveryMember; number: number; owner: ConversationSession; link: ConversationPlanLink;
   plan: WorkPlanStatusView["plan"]; editSeq: string; active: boolean; editable: () => boolean;
 }) {
-  const { t } = useTranslation(), id = useId(), facts = useConnectionFacts();
-  const [connectionOpen, setConnectionOpen] = useState(false), [presetName, setPresetName] = useState("custom");
-  const change = (patch: Partial<ConversationRecoveryMember>) => { if (editable()) owner.editTeamRecoveryMember(link, member.key, patch); };
-  const config = (value: AiConfig | ((before: AiConfig) => AiConfig)) => change({ config: editedAiConfig(member.config, typeof value === "function" ? value(member.config) : value) });
-  const tools = [...new Set([...(plan.tools?.entries.map(tool => tool.handle) ?? []), ...member.toolHandles])];
-  return <fieldset className={styles.member}><legend>{t("ai.team.memberNumber", { number: String(number) })}</legend>
-    <Field label={t("ai.team.name")}><TextInput value={member.displayName} readOnly={!editable()} onChange={event => change({ displayName: event.target.value })}/></Field>
-    <Field label={t("ai.team.role")}><TextArea value={member.role} readOnly={!editable()} onChange={event => change({ role: event.target.value })}/></Field>
-    <ModelConnectionPicker config={member.config} label={t("ai.team.connection")} active={active} disabled={!editable()} editSeq={Number(editSeq)} onSelect={(view, profileId) => {
-      const latest = owner.getSnapshot().inputs.get(link.conversationId)?.value.teamDrafts?.find(value => value.planId === link.planId)?.recovery;
-      if (!editable() || latest?.editSeq !== editSeq) return false;
-      const profile = view?.snapshot.profiles.find(value => value.id === profileId && !value.archived), reference = view?.references.find(value => value.profileId === profileId);
-      if (profileId && (!profile || !reference || view !== facts.current())) return false;
-      change({ config: profile && reference ? connectionAiConfig(member.config, profile.connection, reference) : { ...member.config, connectionProfile: null } }); return true;
-    }}/>
-    <fieldset className={styles.fields} disabled={!editable()}><AiConnectionEditor config={member.config} setConfig={config} presetName={presetName} setPresetName={setPresetName}
-      connectionOpen={connectionOpen} setConnectionOpen={setConnectionOpen} failure={null} idPrefix={id}/>
-      <label className={styles.check}><TextInput type="checkbox" className={styles.checkbox} checked={member.config.shareTerms} onChange={event => config(before => ({ ...before, shareTerms: event.target.checked }))}/><span>{t("ai.shareTerms")}</span></label>
-      <label className={styles.check}><TextInput type="checkbox" className={styles.checkbox} checked={member.config.shareContext} onChange={event => config(before => ({ ...before, shareContext: event.target.checked }))}/><span>{t("ai.shareContext")}</span></label>
-      <SourceContextChoice value={member.config.sourceContext} onChange={sourceContext => config(before => ({ ...before, sourceContext }))}/>
-      <details><summary>{t("ai.team.memberLimits")}</summary><p>{t("ai.team.memberLimitsHelp")}</p><AiBudgetInputs config={member.config} setConfig={config}
-        fields={["maxItems", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds"]} idPrefix={id}/></details>
-      <fieldset className={styles.fields}><legend>{t("ai.team.units")}</legend>{[...new Set([...plan.scope.map(unit => unit.unitId), ...member.unitIds])].map(unitId => <label className={styles.check} key={unitId}>
-        <TextInput type="checkbox" className={styles.checkbox} checked={member.unitIds.includes(unitId)} onChange={event => change({ unitIds: event.target.checked ? [...member.unitIds, unitId] : member.unitIds.filter(value => value !== unitId) })}/>
-        <span>{plan.scope.find(unit => unit.unitId === unitId)?.nativeKey ?? t("ai.team.removedEntry", { number: String(member.unitIds.indexOf(unitId) + 1) })}</span></label>)}</fieldset>
-      <fieldset className={styles.fields}><legend>{t("ai.team.tools")}</legend>{tools.length ? tools.map((handle, index) => <label key={handle} className={styles.check}>
-        <TextInput type="checkbox" className={styles.checkbox} checked={member.toolHandles.includes(handle)} onChange={event => change({ toolHandles: event.target.checked ? [...member.toolHandles, handle] : member.toolHandles.filter(value => value !== handle) })}/>
-        <span>{plan.tools?.entries.find(tool => tool.handle === handle)?.binding.declaration.title ?? t("ai.team.removedTool", { number: String(index + 1) })}</span></label>) : <p>{t("ai.team.noTools")}</p>}</fieldset>
-      <fieldset className={styles.fields}><legend>{t("ai.team.kinds")}</legend>{TeamWorkKindValues.map(kind => <label key={kind} className={styles.check}>
-        <TextInput type="checkbox" className={styles.checkbox} checked={member.kinds.includes(kind)} onChange={event => change({ kinds: event.target.checked ? [...member.kinds, kind] : member.kinds.filter(value => value !== kind) })}/><span>{t(`ai.team.workKinds.${kind}`)}</span></label>)}</fieldset>
-    </fieldset>
-    <Button size="sm" disabled={!editable()} onClick={() => { if (editable()) owner.removeTeamRecoveryMember(link, member.key); }}>{t("ai.team.remove")}</Button>
-  </fieldset>;
+  return <TeamMemberFields member={member} number={number} scope={plan.scope}
+    tools={plan.tools?.entries.map(tool => ({ handle: tool.handle, title: tool.binding.declaration.title })) ?? []}
+    editSeq={editSeq} active={active} editable={editable}
+    current={() => owner.getSnapshot().inputs.get(link.conversationId)?.value.teamDrafts?.find(value => value.planId === link.planId)?.recovery?.editSeq === editSeq}
+    onChange={patch => owner.editTeamRecoveryMember(link, member.key, patch)} onRemove={() => owner.removeTeamRecoveryMember(link, member.key)}/>;
 }

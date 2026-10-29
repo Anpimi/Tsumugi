@@ -1,4 +1,9 @@
+import { projectMetadataZh } from "./projectMetadata";
+import { knowledgeExchangeZh } from "./knowledgeExchange";
+import { projectBriefZh } from "./projectBrief";
+import { runsViewZh } from "./runsView";
 import { strategyViewZh } from "./strategyView";
+import { proposalRunSetupZh } from "./proposalRunSetup";
 import { conversationTeamQuestionsZh } from "./conversationTeamQuestions";
 import { conversationTeamRecoveryZh } from "./conversationTeamRecovery";
 import { conversationRunHistoryZh } from "./conversationRunHistory";
@@ -19,6 +24,11 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+  projectMetadata: projectMetadataZh,
+  knowledgeExchange: knowledgeExchangeZh,
+  projectBrief: projectBriefZh,
+  runsView: runsViewZh,
+  proposalRunSetup: proposalRunSetupZh,
   strategyView: strategyViewZh,
   conversationTeamQuestions: conversationTeamQuestionsZh,
 conversationRunHistory: conversationRunHistoryZh,

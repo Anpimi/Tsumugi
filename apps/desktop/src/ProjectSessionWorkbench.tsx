@@ -253,20 +253,22 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
           rel.workflow?.pending, rel.workflow?.stopPending, rel.workflow?.uncertain, rel.workflow?.stopUncertain, rel.workflow?.safety, rel.workflowControlBusy]),
       row("tasks", tasks.unresolved(), false, null),
       row("source", source.blocked(), source.journal.dirty, [src, source.journal, source.hook.revision()]),
-      row("translation", translation.mutationReserved || sharing.blocked() || translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
-        || imported.busy || imports.hasPending() || imports.hasActive(),
-        translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
-        [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.mutationReserved, translation.protection.current().pending,
-          translation.candidates.current().editSeq,translation.candidates.current().pending, sharing.revision()]),
       row("resources", resources.blocked(), resources.journal.dirty || resources.tool.hasDraft(),
         [res, resources.journal, resources.tool.draftSequence.current, resources.tool.current().capture?.review.inputDigest, resources.tool.current().pending, resources.tool.mcp.revision()]),
       row("review", review.inFlight() || rev.batchRunning || !!rev.pending,
         Object.values(rev.drafts).some(value => value.length > 0) || Object.keys(rev.chosen).length > 0 || !!rev.checkReview || rev.checkConsent.length > 0 || rev.advisoryChecks.length > 0,
         [rev.locale, rev.actor, rev.editSeq, rev.checkReview?.request, rev.checkConsent, rev.advisoryChecks, Object.values(rev.chosen).map(value => [value.unitId, value.locale, value.basis]),
           Object.values(rev.draftTargets).map(value => [value.unitId, value.locale, value.basis])]),
-      row("ai", ai.reserved() || ai.discussions.blocked() || ai.guidance.blocked() || strategy.reserved(), prepared.dirty || ai.discussions.hasDraft() || ai.recovery.hasDraft() || ai.guidance.hasDraft() || strategy.dirty(), [prepared.editSeq, prepared.consent, prepared.capture, strategy.current(), ai.discussions.revision(), ai.guidance.revision(), ai.recovery.current(), ai.planControl.current().pending, ai.agent.current().pending, ai.component.current().operation,
+      row("ai", ai.reserved() || ai.discussions.blocked() || ai.guidance.blocked() || strategy.blocked() || !!strategy.current().pending, prepared.dirty || ai.discussions.hasDraft() || ai.recovery.hasDraft() || ai.guidance.hasDraft() || strategy.dirty(), [prepared.editSeq, prepared.consent, prepared.capture, strategy.current(), ai.discussions.revision(), ai.guidance.revision(), ai.recovery.current(), ai.planControl.current().pending, ai.agent.current().pending, ai.component.current().operation,
         ai.agent.current().child.editSeq,ai.agent.current().child.pending?.proposal,ai.agent.current().child.children.map(child=>[child.consumer.scope.scopeId,child.accepted,child.toolHandle,child.runs.map(action=>[action.prepared.attemptId,action.phase,action.retryAllowed])])]),
       row("arena", arena.reserved(), comparison.dirty || !!comparison.draft, [comparison.editSeq, comparison.draft?.editSeq, comparison.consent]),
+      // A shared mutation reservation belongs to its originating domain.
+      // Reveal that owner before the general translation reservation fallback.
+      row("translation", translation.mutationReserved || sharing.blocked() || translation.candidates.blocked() || translation.protection.blocked() || !!manual?.saving || !!manual?.selecting || !!manual?.pending || !!manual?.pendingSelection
+        || imported.busy || imports.hasPending() || imports.hasActive(),
+        translation.candidates.hasDraft() || !!manual && (manual.text !== (manual.baseText ?? "") || manual.newerDraftSaved),
+        [manual?.unitId, manual?.locale, manual?.editSeq, manual?.text, translation.mutationReserved, translation.protection.current().pending,
+          translation.candidates.current().editSeq,translation.candidates.current().pending, sharing.revision()]),
     ];
   }
   function consumer(area: WorkspaceArea): Promise<SessionConsumer | null> {

@@ -80,6 +80,7 @@ function harness({ state: initialState = "active", connection = false, unknownSt
   const journal = { active: 0, maximum: 0, acknowledge: vi.fn(async () => {}) };
   const acknowledgements = new Map<string, ConversationDraftHead>();
   invoke.mockImplementation(async (command: string, { request }) => {
+    if (command === "read_context_strategy_default") return null;
     if (command === "list_local_conversation_drafts") return { items: state.head.value ? [{ key, revision: state.head.revision,
       editSeq: state.head.value.editSeq, hasPending: !!state.head.value.pending || !!state.head.value.revocations?.length }] : [], next: null };
     if (command === "read_local_conversation_draft") return structuredClone(state.head);
@@ -198,6 +199,7 @@ function harness({ state: initialState = "active", connection = false, unknownSt
       authorize: async () => {
         await act(async () => {
           owner.beginWorkPlan(fixture.revision); owner.setWorkPlanConfig(conversationId, config);
+          await owner.loadWorkPlanStrategyDefault(conversationId, reads);
           await owner.prepareWorkPlan(conversationId);
           expect(owner.getSnapshot().inputs.get(conversationId)?.workPlan.prepared).not.toBeNull();
           owner.setWorkPlanConsent(conversationId, true);

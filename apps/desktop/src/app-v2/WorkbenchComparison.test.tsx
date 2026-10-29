@@ -149,6 +149,7 @@ async function openComparison(blind: boolean) {
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }),
     status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
@@ -240,6 +241,7 @@ it("previews a fixed selection before staging and releases the batch Dialog befo
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }),
     status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const member = await screen.findByRole("checkbox", { name: i18n.t("workbenchV2.entrySelect", { key: target.nativeKey }) }, { timeout: 5000 });

@@ -1,0 +1,26 @@
+export const projectMetadataEn = {
+  title: "Project settings", help: "Change the project name or target languages. Each change is saved separately.", close: "Close project settings",
+  name: "Project name", renameFolder: "Also rename the project folder", folderHelp: "The folder is moved only when this option is selected. Stop active project work before moving it.", saveName: "Save project name",
+  languages: "Target languages", languagesHelp: "Enter language tags separated by commas or new lines, for example zh-Hans, ja-JP. Existing translations and history are kept when a language is removed.", saveLanguages: "Save target languages",
+  currentLanguages: "Current target languages: {{languages}}",
+  removed: "Languages to remove: {{languages}}. Existing translations, history and recoverable drafts are kept; new work for these languages will be unavailable.",
+  nameRequired: "Enter a project name.", nameInvalid: "Check the project name and try again.", folderInvalid: "Use a valid folder name without path separators or reserved characters.", languagesRequired: "Enter at least one target language.", languagesInvalid: "Check the language tags and try again. Use valid BCP 47 tags such as zh-Hans or ja-JP.",
+  saving: "Saving project settings… Your newer input is kept.", refreshing: "Refreshing current project settings… Your input is kept.", saved: "Project settings saved. Any newer input is kept separately.", failed: "The change was not saved. Your input is kept; review the error and try again.",
+  unknown: "The change may have been saved. Check the original result before submitting another change. Your current input is kept.", check: "Check original result", checking: "Checking the original project change…", readFailed: "The original result could not be confirmed. Your input and original request are kept. Check again.",
+  previous: "The original change was not applied. Your input is kept; review it before saving again.", stale: "Project settings changed elsewhere. The current settings were refreshed; your input is kept. Review it before saving again.",
+  refreshFailed: "The result is known, but the workspace could not refresh its current settings. Refresh before continuing; your input is kept.", refresh: "Refresh project settings",
+  leaveTitle: "Keep your project settings edits?", leaveHelp: "These edits have not been submitted. Stay to keep editing, or discard only these project settings edits.", stay: "Stay and keep edits", discard: "Discard settings edits", leaveChanged: "Your input changed after closing was requested. Stay and review it before closing again.",
+};
+export const projectMetadataZh: typeof projectMetadataEn = {
+  title: "项目设置", help: "修改项目名称或目标语言，两项更改分别保存。", close: "关闭项目设置",
+  name: "项目名称", renameFolder: "同时重命名项目文件夹", folderHelp: "只有勾选此项才会移动文件夹。移动前请停止项目中正在进行的工作。", saveName: "保存项目名称",
+  languages: "目标语言", languagesHelp: "使用逗号或换行分隔语言标签，例如 zh-Hans、ja-JP。移除语言后，已有译文和历史仍会保留。", saveLanguages: "保存目标语言",
+  currentLanguages: "当前目标语言：{{languages}}",
+  removed: "将移除的语言：{{languages}}。已有译文、历史和可恢复草稿仍会保留；这些语言将无法开始新的工作。",
+  nameRequired: "请输入项目名称。", nameInvalid: "请检查项目名称后重试。", folderInvalid: "请使用有效的文件夹名称，不能包含路径分隔符或保留字符。", languagesRequired: "请至少输入一种目标语言。", languagesInvalid: "请检查语言标签后重试，使用有效的 BCP 47 标签，例如 zh-Hans 或 ja-JP。",
+  saving: "正在保存项目设置…较新的输入会保留。", refreshing: "正在刷新当前项目设置…输入会保留。", saved: "项目设置已保存，较新的输入已单独保留。", failed: "更改未保存。输入已保留，请核对错误后重试。",
+  unknown: "更改可能已经保存。再次提交前，请先核对原操作的结果。当前输入仍会保留。", check: "核对原操作结果", checking: "正在核对原项目更改…", readFailed: "无法确认原操作的结果。当前输入和原请求已保留，请再次核对。",
+  previous: "原更改未应用。输入已保留，请检查后重新保存。", stale: "项目设置已被其他操作更改。已刷新当前设置，输入仍会保留，请检查后重新保存。",
+  refreshFailed: "已确认操作结果，但工作区未能刷新当前设置。输入已保留，请刷新后继续。", refresh: "刷新项目设置",
+  leaveTitle: "保留项目设置中的编辑？", leaveHelp: "这些编辑尚未提交。可以留下继续编辑，或仅放弃这些项目设置编辑。", stay: "留下并保留编辑", discard: "放弃设置编辑", leaveChanged: "请求关闭后输入又有变化，请留下核对，再次发起关闭。",
+};

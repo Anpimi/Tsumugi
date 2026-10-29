@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -137,8 +138,8 @@ export default function EntryFallbackPanel({ project, target, owner, drafts, com
   function recordAudit(record: FallbackDecision) {
     return <><p className={styles.meta}>{record.actor} · <time dateTime={record.createdAt}>{record.createdAt}</time></p>
       <div className={styles.text}><TokenizedText text={record.reason}/></div>
-      <details><summary>{legacy("execution.diagnostic")}</summary><p>{t("entryHistoryPolicy", { policy: record.policyVersion })}</p>
-        <p>{t("entryFallbackSourceRevision")} <code>{record.sourceRevisionId}</code></p><code>{record.fallbackId}</code></details></>;
+      <Disclosure title={<>{legacy("execution.diagnostic")}</>}><p>{t("entryHistoryPolicy", { policy: record.policyVersion })}</p>
+        <p>{t("entryFallbackSourceRevision")} <code>{record.sourceRevisionId}</code></p><code>{record.fallbackId}</code></Disclosure></>;
   }
   if (!visible) return null;
   return <section ref={root} className={styles.section} aria-label={t("entryFallbackTitle")}>
@@ -151,7 +152,7 @@ export default function EntryFallbackPanel({ project, target, owner, drafts, com
         {fallback ? recordAudit(fallback) : null}</div>}
     <p className={styles.meta}>{t("entryFallbackHistoryHelp")}</p>
     {changed ? <Banner tone="warning" role="status">{t("entryFallbackBasisChanged")}</Banner> : null}
-    {earlier ? <details><summary>{t("entryFallbackEarlier")}</summary><p className={styles.meta}>{t("entryFallbackOutdated")}</p>{recordAudit(earlier)}</details> : null}
+    {earlier ? <Disclosure title={<>{t("entryFallbackEarlier")}</>}><p className={styles.meta}>{t("entryFallbackOutdated")}</p>{recordAudit(earlier)}</Disclosure> : null}
     <p className={styles.meta}>{t("entryFallbackAuditHelp")}</p>
     <div ref={result} tabIndex={-1} role="group" aria-label={t("entryFallbackResult")} className={styles.result}>
       {pending ? <Banner tone="warning" role="status"><p>{t(state.pendingUncertain ? "entryFallbackUnknown" : "entryFallbackWorking")}</p>

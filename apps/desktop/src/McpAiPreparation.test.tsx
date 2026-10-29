@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useState } from "react";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -84,6 +85,7 @@ beforeEach(async () => {
     }
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 async function preparedQuery() {
   render(<Harness />); const user = userEvent.setup();

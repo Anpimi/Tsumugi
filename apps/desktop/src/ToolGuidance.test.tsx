@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -61,6 +62,7 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 async function openDirectory() {
   const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Show guidance directory" }));

@@ -6,8 +6,10 @@ import {
   clearLastOpenProject,
   normalizeLocator,
   readLastOpenProject,
+  readRecentProject,
   readRecentProjects,
   rememberProject,
+  rememberProjectActivity,
   removeRecentProject,
 } from "./recentProjects";
 import type { ProjectView } from "./projectCommands";
@@ -88,5 +90,30 @@ describe("recent project convenience state", () => {
     rememberProject(project("C:\\Projects\\new"), "c:/projects/OLD");
     expect(readRecentProjects().map((item) => item.locator)).toEqual(["C:\\Projects\\new", "C:\\Projects\\unrelated"]);
     expect(readLastOpenProject()?.locator).toBe("C:\\Projects\\new");
+  });
+
+  it("keeps the prior activity and entry hint when a new session opens without restoring authority", () => {
+    const view = project("C:\\Projects\\demo"), position = { unitId: "entry-1", locale: "zh-Hans", nativeKey: "greeting.{{name}}" };
+    vi.spyOn(Date, "now").mockReturnValue(1000); rememberProject(view);
+    rememberProjectActivity(view.locator, position, 2000);
+    const previous = readRecentProject("c:/Projects/DEMO");
+    vi.mocked(Date.now).mockReturnValue(40_000_000); rememberProject(view);
+    expect(previous).toEqual({ locator: view.locator, lastOpenedAt: 1000, lastActivityAt: 2000, position });
+    expect(readRecentProject(view.locator)).toEqual({ ...previous, lastOpenedAt: 40_000_000 });
+    expect(readLastOpenProject()).toEqual(readRecentProject(view.locator));
+    rememberProjectActivity(view.locator, { ...position, unitId: "stale" }, 1500);
+    expect(readRecentProject(view.locator)?.position).toEqual(position);
+    expect(localStorage.getItem(RECENT_PROJECTS_STORAGE_KEY)).not.toContain("session-1");
+    expect(localStorage.getItem(RECENT_PROJECTS_STORAGE_KEY)).not.toContain("projectId");
+  });
+
+  it("accepts old records and discards malformed optional workspace hints", () => {
+    localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify([
+      { locator: "old", lastOpenedAt: 1 },
+      { locator: "malformed", lastOpenedAt: 2, lastActivityAt: "now", position: { unitId: 4, locale: "zh-Hans", nativeKey: "bad" } },
+    ]));
+    expect(readRecentProjects()).toEqual([{ locator: "old", lastOpenedAt: 1 }, { locator: "malformed", lastOpenedAt: 2 }]);
+    rememberProjectActivity("missing", { unitId: "entry", locale: "en", nativeKey: "greeting" });
+    expect(readRecentProjects()).toHaveLength(2);
   });
 });

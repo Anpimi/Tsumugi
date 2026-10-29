@@ -1,4 +1,5 @@
 import userEvent from "@testing-library/user-event";
+import { installWorkbenchInputJournalFixtures } from "../testSupport/inputJournalFixture";
 import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -54,6 +55,7 @@ function page(): SegmentPage {
       applicability: { selectedSourceRevisionId: target.sourceRevisionId, sourceBasisCurrent: true, capturedBasisCurrent: true, resourceImpact: null, resourceReviewRequired: false },
       qualification: { blockerCount: 0, exceptionCount: 0, blockers: [], exceptions: [], truncated: false } }] };
 }
+beforeEach(installWorkbenchInputJournalFixtures);
 beforeEach(async () => {
   localStorage.clear(); history.replaceState(null, "", "/"); await i18n.changeLanguage("en-US");
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
@@ -88,6 +90,7 @@ it("retains an original human review and newer input after all views close, chec
   controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const lifecycle = controller;
   render(<StrictMode><WorkbenchApp controller={lifecycle} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
@@ -133,6 +136,7 @@ it("keeps prepared checker permissions through the retained host and recovers th
   vi.spyOn(reviewCommands, "cancelCheck").mockResolvedValue(true);
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
@@ -181,14 +185,17 @@ it("keeps the original semantic start reachable after all entry views close with
   const close = vi.fn(async () => ({ closed: true }));
   controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
   await waitFor(() => expect(details).toBeEnabled()); await user.click(details);
   await user.click(await screen.findByRole("tab", { name: w("issues") }));
   const panel = await screen.findByRole("region", { name: i18n.t("workbenchV2.entrySemanticTitle") });
-  const setup = panel.querySelector("summary");
-  if (setup && !setup.parentElement?.hasAttribute("open")) await user.click(setup);
+  const setup = within(panel).getByRole("button", { name: i18n.t("semanticReview.prepareTitle") });
+  expect(setup).toHaveAttribute("aria-expanded", "false");
+  await user.click(setup);
+  expect(setup).toHaveAttribute("aria-expanded", "true");
   await user.click(within(panel).getByText(i18n.t("ai.connection")));
   fireEvent.change(within(panel).getByLabelText(i18n.t("ai.endpoint")), { target: { value: "https://model.example/v1/chat/completions" } });
   fireEvent.change(within(panel).getByLabelText(i18n.t("ai.model")), { target: { value: "synthetic-entry-review" } });
@@ -242,6 +249,7 @@ it("opens batch approval from the entry selection and reconciles a closed batch 
     });
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const ready = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });

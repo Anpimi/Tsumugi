@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -35,6 +36,7 @@ interface Props {
   owner: ConversationSession; input: ConversationInput; link: ConversationPlanLink;
   visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate;
   questionTarget?: ConversationTeamQuestionTarget | null;
+  expandedPlans?: readonly string[]; onExpandedPlan?: (planId: string, open: boolean) => void;
 }
 
 const stateKeys = { active: "runStateActive", paused: "runStatePaused", stopped: "runStateStopped", "taken-over": "runStateTakenOver" } as const;
@@ -74,7 +76,7 @@ export function ConversationRunPanel(props: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const [opened, setExpanded] = useState(false), [closedTarget, setClosedTarget] = useState<ConversationTeamQuestionTarget | null>(null), id = useId();
   const questionTarget = props.questionTarget?.planId === props.link.planId && props.questionTarget.conversationId === props.link.conversationId ? props.questionTarget : null;
-  const expanded = opened || questionTarget !== null && questionTarget !== closedTarget;
+  const expanded = (props.expandedPlans ? props.expandedPlans.includes(props.link.planId) : opened) || questionTarget !== null && questionTarget !== closedTarget;
   const body = useRef<HTMLDivElement>(null), toggle = useRef<HTMLButtonElement>(null);
   const canToggle = () => props.visible && !props.owner.getSnapshot().retired
     && props.gate.canDispatch({ viewId: props.viewId, source: "button", dialogId: props.parentDialogId });
@@ -82,7 +84,7 @@ export function ConversationRunPanel(props: Props) {
     <div><Button ref={toggle} size="sm" aria-expanded={expanded} aria-controls={id} disabled={!expanded && props.disabled} onClick={() => {
       if (!canToggle()) return;
       if (expanded && body.current?.contains(document.activeElement)) toggle.current?.focus();
-      setExpanded(!expanded); if (expanded) setClosedTarget(questionTarget);
+      if (props.onExpandedPlan) props.onExpandedPlan(props.link.planId, !expanded); else setExpanded(!expanded); if (expanded) setClosedTarget(questionTarget);
     }}>{t(expanded ? "runHide" : "runShow")}</Button></div>
     <div id={id} ref={body} hidden={!expanded}>
       {expanded && props.visible ? <RunObservation {...props}/> : null}
@@ -181,7 +183,7 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
       <p>{expiry && Number.isFinite(expiry.getTime()) ? t("runExpiry", { date: new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(expiry) }) : t("runExpiryUnknown")}</p>
       {expired && status.state !== "stopped" ? <p role="status">{t("runExpired")}</p> : null}
       {status.toolInvocations ? <p>{t("runToolUsage", { reserved: status.toolInvocations.reserved, limit: status.toolInvocations.limit })}</p> : null}
-      <details><summary>{t("runFixedDetails")}</summary><RunPlanDetails status={status}/></details>
+      <Disclosure title={<>{t("runFixedDetails")}</>}><RunPlanDetails status={status}/></Disclosure>
       {input.value.pending || input.failure ? <Banner tone="warning">{t("runPending")}</Banner> : null}
       {input.runFailure?.planId === link.planId ? <Banner tone="error"><p>{t("runActionFailed")}</p><CommandFailureDetails failure={input.runFailure.cause}/></Banner> : null}
       {runBusy ? <p role="status">{t(runBusy.kind === "check" ? "runChecking" : "runSending")}</p> : null}

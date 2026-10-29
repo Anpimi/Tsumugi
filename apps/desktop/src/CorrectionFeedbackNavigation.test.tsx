@@ -1,3 +1,6 @@
+import { installResourceDraftFixture } from "./testSupport/resourceDraftFixture";
+import { installSourceDraftPortsFixture } from "./testSupport/sourceDraftFixture";
+import { installStrategyDraftFixture } from "./testSupport/strategyDraftFixture";
 import { createRef, useState } from "react";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -38,6 +41,7 @@ const responses: Record<string, (value: unknown) => boolean> = {
   read_work_protection: validateResponseWorkProtection, set_work_protection: validateResponseWorkProtection, read_context_revision: resource.validateResponseContext,
   read_terms: resource.validateResponseTerms, list_resource_captures: resource.validateResponseCaptures,
   read_correction_term_basis: resource.validateResponseCorrectionBasis, read_correction_term_action: resource.validateResponseCorrectionAction,
+  observe_correction_term_action: resource.validateResponseObservedCorrectionAction, observe_resource_decision_action: resource.validateResponseObservedDecisionAction,
   capture_correction_term: resource.validateResponseCorrectionCapture, read_resource_decision_action: resource.validateResponseDecisionAction,
   read_resource_preview: resource.validateResponsePreview, decide_resource_entry: resource.validateResponseDecision,
 };
@@ -91,6 +95,7 @@ beforeEach(async () => {
     } catch (error) { wireFailures.push(`${command}: ${error instanceof Error ? error.message : String(error)}`); throw error; }
   });
 });
+beforeEach(() => { installResourceDraftFixture(); installSourceDraftPortsFixture(); installStrategyDraftFixture(); });
 async function reply(command: string, request: Record<string, unknown>): Promise<unknown> {
   const b = evidence.basis;
   switch (command) {
@@ -146,9 +151,16 @@ async function reply(command: string, request: Record<string, unknown>): Promise
       if (loseCapture) { loseCapture = false; return { unconfirmed: true }; }
       return structuredClone(receipt);
     }
+    case "observe_correction_term_action": {
+      if (!resource.validateRequestCorrectionCapture(request)) throw new Error("Invalid original correction observation request");
+      const receipt = captureActions.get(request.capture.actionId) ?? null;
+      if (receipt) expect(receipt.request).toEqual(request.capture);
+      return structuredClone(receipt);
+    }
     case "read_correction_term_action":
       if (!resource.validateRequestResourceAction(request)) throw new Error("Invalid resource action request");
       return structuredClone(captureActions.get(request.actionId) ?? null);
+    case "observe_resource_decision_action":
     case "read_resource_decision_action": {
       if (!resource.validateRequestDecision(request)) throw new Error("Invalid resource decision action request");
       const receipt = decisionActions.get(request.decision.actionId);
@@ -211,19 +223,19 @@ async function captureCandidate(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.capture") }));
   await screen.findByRole("table");
 }
-function failFirstActionRead(command: "read_correction_term_action" | "read_resource_decision_action") {
+function failFirstActionObservation(command: "observe_correction_term_action" | "observe_resource_decision_action") {
   const original = invoke.getMockImplementation()!; let reads = 0;
   invoke.mockImplementation((name: string, args) => name === command && reads++ === 0
     ? Promise.reject(new Error("Original resource action read temporarily unavailable")) : original(name, args));
 }
 
-it.each(["en-US", "zh-CN"])("automatically checks one lost correction capture while preserving candidate B and the retained translation (%s)", async language => {
+it.each(["en-US", "zh-CN"])("observes one lost correction capture and confirms it explicitly while preserving candidate B and the retained translation (%s)", async language => {
   await i18n.changeLanguage(language); const user = await openEditor(); await openCandidate(user);
   loseCapture = true; commitLostCapture = true;
   let finishWrite!: () => void, finishRead!: (value: CorrectionTermReceipt | null) => void;
   holdCapture = new Promise<void>(resolve => { finishWrite = resolve; });
   const lookup = new Promise<CorrectionTermReceipt | null>(resolve => { finishRead = resolve; }), native = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args) => command === "read_correction_term_action" ? lookup : native(command, args));
+  invoke.mockImplementation((command: string, args) => command === "observe_correction_term_action" ? lookup : native(command, args));
   const identities = invoke.mock.calls.filter(([command]) => command === "create_execution_identity").length;
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.capture") }));
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "capture_correction_term")).toHaveLength(1));
@@ -235,9 +247,15 @@ it.each(["en-US", "zh-CN"])("automatically checks one lost correction capture wh
   await user.type(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") }), " retained B");
   const request = invoke.mock.calls.find(([command]) => command === "capture_correction_term")![1].request.capture;
   await act(async () => { finishRead(captureActions.get(request.actionId)!); });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") })).toBeEnabled());
+  expect(screen.getByText(i18n.t("correctionFeedback.unknown"))).toBeVisible();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   await screen.findByRole("table");
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction retained B");
   expect(screen.queryByText(i18n.t("resource.checkingAction"))).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_correction_term_action").map(([, args]) => args.request))
+    .toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, capture: request }]);
   expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action").map(([, args]) => args.request))
     .toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, actionId: request.actionId }]);
   expect(invoke.mock.calls.filter(([command]) => command === "capture_correction_term")).toHaveLength(1);
@@ -252,7 +270,7 @@ it("keeps the original correction request when a typed action read changes its r
   const native = invoke.getMockImplementation()!; let reads = 0;
   invoke.mockImplementation(async (command: string, args) => {
     const value = await native(command, args);
-    if (command !== "read_correction_term_action" || reads++ > 0) return value;
+    if (command !== "observe_correction_term_action" || reads++ > 0) return value;
     if (!resource.validateResponseCorrectionAction(value) || !value) throw new Error("Missing captured correction receipt");
     const wrong = { ...value, request: { ...value.request, reason: "Different original reason" } };
     expect(resource.validateResponseCorrectionAction(wrong)).toBe(true); return wrong;
@@ -265,7 +283,8 @@ it("keeps the original correction request when a typed action read changes its r
   await screen.findByRole("table");
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction B");
   expect(invoke.mock.calls.filter(([command]) => command === "capture_correction_term")).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_correction_term_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(1);
   expect(term).toBeNull();
 });
 
@@ -312,16 +331,18 @@ it("keeps stale evidence readable and permits Keep or Ignore while refusing firs
 
 it("retains the complete unknown request after an empty receipt and retries it without losing newer candidate B", async () => {
   const user = await openEditor(); await openCandidate(user); loseCapture = true;
-  failFirstActionRead("read_correction_term_action");
+  failFirstActionObservation("observe_correction_term_action");
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.capture") }));
   await screen.findByText(i18n.t("correctionFeedback.unknown"));
   const first = invoke.mock.calls.find(([command]) => command === "capture_correction_term")?.[1].request;
   await user.type(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") }), " newer B");
   let exiting: ReturnType<ProjectSessionHandle["prepareExit"]> | undefined;
   await act(async () => { exiting = handle.current?.prepareExit(); });
-  const leave = await screen.findByRole("dialog", { name: i18n.t("translation.leaveTitle") });
-  await user.click(within(leave).getByRole("button", { name: i18n.t("translation.stay") }));
   expect(await exiting).toBeNull();
+  expect(screen.getByText(i18n.t("workbench.exitBlocked"))).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: i18n.t("translation.leaveTitle") })).not.toBeInTheDocument();
+  const retained = invoke.mock.calls.filter(([command]) => command === "write_local_resource_draft").at(-1)?.[1].request.write.value.pending;
+  expect(retained).toMatchObject({ kind: "correction", request: first.capture });
   await user.click(screen.getByRole("button", { name: "Open retained resources" }));
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   await screen.findByText(i18n.t("correctionFeedback.missing"));
@@ -330,9 +351,13 @@ it("retains the complete unknown request after an empty receipt and retries it w
   await user.click(screen.getByRole("button", { name: i18n.t("resource.retry") }));
   await waitFor(() => expect(captureActions.size).toBe(1));
   const calls = invoke.mock.calls.filter(([command]) => command === "capture_correction_term"); expect(calls).toHaveLength(2); expect(calls[1][1].request).toEqual(first);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_correction_term_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(1);
   expect(await screen.findByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction newer B");
   expect(term).toBeNull();
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.return") })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.return") }));
+  expect(await screen.findByRole("textbox", { name: i18n.t("translation.draft") })).toHaveValue(evidence.afterText + " manual B");
 });
 
 it("a late successful capture keeps B and reconciles a lost decision acknowledgement by its original action", async () => {
@@ -345,7 +370,7 @@ it("a late successful capture keeps B and reconciles a lost decision acknowledge
   await screen.findByRole("table");
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction late B");
   loseDecision = true;
-  failFirstActionRead("read_resource_decision_action");
+  failFirstActionObservation("observe_resource_decision_action");
   await user.click(within(screen.getByRole("row", { name: /Barrel/ })).getByRole("button", { name: i18n.t("resource.ignore") }));
   await screen.findByText(i18n.t("correctionFeedback.unknown"));
   const original = invoke.mock.calls.find(([command]) => command === "decide_resource_entry")?.[1].request.decision;
@@ -354,7 +379,8 @@ it("a late successful capture keeps B and reconciles a lost decision acknowledge
   await waitFor(() => expect(screen.queryByText(i18n.t("correctionFeedback.unknown"))).toBeNull());
   expect([...decisionActions.values()][0].request).toEqual(original);
   expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry")).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_resource_decision_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(1);
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction late B");
 });
 
@@ -405,14 +431,15 @@ it("requires literal user terms without turning invalid text into a candidate", 
 
 it("restores a committed candidate from the exact original action after its capture acknowledgement is lost", async () => {
   const user = await openEditor(); await openCandidate(user); loseCapture = true; commitLostCapture = true;
-  failFirstActionRead("read_correction_term_action");
+  failFirstActionObservation("observe_correction_term_action");
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.capture") }));
   await screen.findByText(i18n.t("correctionFeedback.unknown"));
   await user.type(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") }), " retained B");
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.check") }));
   await screen.findByRole("table");
   expect(invoke.mock.calls.filter(([command]) => command === "capture_correction_term")).toHaveLength(1);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_correction_term_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(1);
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction retained B");
   expect(term).toBeNull();
 });
@@ -436,7 +463,7 @@ it("retains correction history and Keep or Ignore after its target locale is rem
 
 it("settles an unknown uncommitted capture only after the original retry receives the exact Core stale rejection", async () => {
   const user = await openEditor(); await openCandidate(user); loseCapture = true;
-  failFirstActionRead("read_correction_term_action");
+  failFirstActionObservation("observe_correction_term_action");
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.capture") }));
   await screen.findByText(i18n.t("correctionFeedback.unknown"));
   const original = invoke.mock.calls.find(([command]) => command === "capture_correction_term")?.[1].request;
@@ -449,7 +476,8 @@ it("settles an unknown uncommitted capture only after the original retry receive
   await waitFor(() => expect(screen.queryByText(i18n.t("correctionFeedback.unknown"))).toBeNull());
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("resource.discardDraft") })).toBeEnabled());
   expect(invoke.mock.calls.filter(([command]) => command === "capture_correction_term").map(([, payload]) => payload.request)).toEqual([original, original]);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_correction_term_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(1);
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction retained B");
   expect(captureActions.size).toBe(0);
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.return") }));
@@ -471,7 +499,7 @@ it("settles an unknown uncommitted decision at the exact Core CAS rejection whil
   await user.type(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") }), " decision B");
   await act(async () => finish()); holdCapture = null; await screen.findByRole("table");
   loseDecision = true; commitLostDecision = false;
-  failFirstActionRead("read_resource_decision_action");
+  failFirstActionObservation("observe_resource_decision_action");
   await waitFor(() => expect(within(screen.getByRole("row", { name: /Barrel/ })).getByRole("button", { name: i18n.t("resource.ignore") })).toBeEnabled());
   await user.click(within(screen.getByRole("row", { name: /Barrel/ })).getByRole("button", { name: i18n.t("resource.ignore") }));
   await screen.findByText(i18n.t("correctionFeedback.unknown"));
@@ -483,7 +511,8 @@ it("settles an unknown uncommitted decision at the exact Core CAS rejection whil
   await waitFor(() => expect(screen.queryByText(i18n.t("correctionFeedback.unknown"))).toBeNull());
   expect(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") })).toHaveValue("Reviewed local correction decision B");
   expect(invoke.mock.calls.filter(([command]) => command === "decide_resource_entry").map(([, payload]) => payload.request)).toEqual([original, original]);
-  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_resource_decision_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_resource_decision_action")).toHaveLength(1);
   expect(captures).toHaveLength(1); expect(decisionActions.size).toBe(0); expect(term).toBeNull();
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.return") })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.return") }));
@@ -492,7 +521,7 @@ it("settles an unknown uncommitted decision at the exact Core CAS rejection whil
 
 it("keeps the original unknown request after a Host quiesce rejection even when its receipt read was empty", async () => {
   const user = await openEditor(); await openCandidate(user); loseCapture = true;
-  failFirstActionRead("read_correction_term_action");
+  failFirstActionObservation("observe_correction_term_action");
   await user.click(screen.getByRole("button", { name: i18n.t("correctionFeedback.capture") }));
   await screen.findByText(i18n.t("correctionFeedback.unknown"));
   await user.type(screen.getByRole("textbox", { name: i18n.t("correctionFeedback.reason") }), " pending B");
@@ -505,11 +534,16 @@ it("keeps the original unknown request after a Host quiesce rejection even when 
   expect(screen.getByRole("button", { name: i18n.t("resource.discardDraft") })).toBeDisabled();
   expect(screen.getByRole("button", { name: i18n.t("correctionFeedback.return") })).toBeDisabled();
   expect(screen.queryByRole("button", { name: i18n.t("resource.retry") })).toBeNull();
-  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([command]) => command === "observe_correction_term_action")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_correction_term_action")).toHaveLength(1);
   let exiting: ReturnType<ProjectSessionHandle["prepareExit"]> | undefined;
   await act(async () => { exiting = handle.current?.prepareExit(); });
-  await user.click(within(await screen.findByRole("dialog", { name: i18n.t("translation.leaveTitle") })).getByRole("button", { name: i18n.t("translation.discard") }));
   expect(await exiting).toBeNull();
+  expect(screen.getByText(i18n.t("workbench.exitBlocked"))).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: i18n.t("translation.leaveTitle") })).not.toBeInTheDocument();
+  const original = invoke.mock.calls.find(([command]) => command === "capture_correction_term")?.[1].request.capture;
+  const retained = invoke.mock.calls.filter(([command]) => command === "write_local_resource_draft").at(-1)?.[1].request.write.value.pending;
+  expect(retained).toMatchObject({ kind: "correction", request: original });
   expect(await screen.findByText(i18n.t("correctionFeedback.unknown"))).toBeVisible();
   expect(captureActions.size).toBe(0);
 });

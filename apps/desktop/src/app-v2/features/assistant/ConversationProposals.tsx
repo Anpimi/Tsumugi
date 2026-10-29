@@ -14,6 +14,7 @@ import type { ConversationInput, ConversationSession } from "./ConversationSessi
 import { editableProposal, planningUnitLabels, validProposalContent, validProposalQuestion } from "./proposalDraft";
 import type { ConversationProposalTarget, OpenKnowledgeProposal } from "./conversationNavigation";
 import { ConversationKnowledgeEntries, ConversationKnowledgeFields } from "./ConversationKnowledgeEntries";
+import { ProposalRunSetup } from "./ProposalRunSetup";
 import styles from "./ConversationPanel.module.css";
 
 interface ContextProps {
@@ -98,10 +99,9 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
         {labels.has(unitId) ? <p className={styles.text}>{labels.get(unitId)?.text}</p> : null}</div>)}
       {!content.unitIds.length ? <p role="status">{t("proposalChooseEntries")}</p> : null}
     </fieldset> : null}
-    {content.kind === "proposal" ? <div className={styles.planSummary}><h4>{t("proposalSteps")}</h4>
-      {content.options.stages.map(choice => <p key={choice.stage}>{t("proposalStage", { stage: global(`ai.plan.stages.${choice.stage}`), mode: global(`ai.plan.modes.${choice.mode}`) })}</p>)}
-      <p>{global(`ai.plan.policies.${content.options.selectionPolicy}`)}</p><p>{t("proposalKeepOptions")}</p>
-    </div> : <><ConversationKnowledgeFields entries={content.entries} unitIds={scope?.kind === "units" ? scope.unitIds : []} labels={labels} disabled={blocked} allowed={allowed}
+    {content.kind === "proposal" ? <ProposalRunSetup owner={owner} conversationId={conversationId} draft={draft} content={content} labels={labels} active={visible}
+      editable={() => allowed() && !pending && !input.busy}/>
+      : <><ConversationKnowledgeFields entries={content.entries} unitIds={scope?.kind === "units" ? scope.unitIds : []} labels={labels} disabled={blocked} allowed={allowed}
       change={edit => owner.editProposal(conversationId, proposalId, value => value.kind === "knowledge-proposal" ? { ...value, entries: edit(value.entries) } : value)}/>
       {!validProposalContent(content, run) ? <p role="status">{t("knowledgeProposalInvalid")}</p> : null}</>}
     {content.kind === "proposal" && content.options.teamExecution && content.options.teamDiscussions ? <label className={styles.check}>

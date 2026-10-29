@@ -26,9 +26,9 @@ export default function Welcome({ recent, restoreCandidate, native, blocked, gat
     ? new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "short" }).format(value) : t("openedTimeUnknown");
   return <main className={styles.welcome} onDragOver={event => event.preventDefault()} onDrop={event => event.preventDefault()}>
     <span className={styles.brand}>紡 Tsumugi</span>
-    <button type="button" className={styles.dropZone} aria-label={t("chooseAndPrepare")} disabled={!native || blocked} onClick={onChoose}>
+    <Button type="button" className={styles.dropZone} aria-label={t("chooseAndPrepare")} disabled={!native || blocked} onClick={onChoose}>
       <FolderOpen aria-hidden="true"/><span>{t("dropFolder")}</span><small>{t("chooseAndPrepare")}</small>
-    </button>
+    </Button>
     {latest ? <p className={styles.resume}>{t("continueRecent", { name: recentProjectName(latest.locator) })} <kbd>⏎</kbd></p> : null}
     {recent.length ? <section className={styles.recent}><h2>{t("recentTitle")}</h2>{recent.map(item => <Button key={item.locator} disabled={!native || blocked} onClick={() => onOpen(item.locator)}>
       <span>{recentProjectName(item.locator)}</span><small title={item.locator}>{item.locator}</small><time dateTime={Number.isFinite(item.lastOpenedAt) && Number.isFinite(new Date(item.lastOpenedAt).getTime()) ? new Date(item.lastOpenedAt).toISOString() : undefined}>{t("lastOpened", { time: date(item.lastOpenedAt) })}</time>

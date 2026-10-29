@@ -4,6 +4,17 @@ import { workspaceViewHref } from "./workspaceRouter";
 const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
+  it("retains run expansion, return identity and scroll as presentation without sharing caller objects", () => {
+    const expanded = ["plan-a"], origin = { viewId: "runs", conversationId: "conversation-a", planId: "plan-a" };
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "runs", kind: "runs", locale: "zh-CN", runExpanded: expanded }] });
+    store.getState().open({ id: "entry", kind: "entries", locale: "zh-CN", runReturn: origin });
+    expanded.push("other"); origin.planId = "changed";
+    store.getState().patch("runs", { scroll: { top: 360, left: 0 } }); store.getState().activate("runs");
+    expect(store.getState().views.runs).toMatchObject({ runExpanded: ["plan-a"], scroll: { top: 360, left: 0 } });
+    expect(store.getState().views.entry.runReturn?.planId).toBe("plan-a");
+    expect(workspaceViewHref(store.getState().views.entry)).not.toMatch(/plan-a|conversation-a/);
+  });
+
   it("keeps an exact delivery target separate from entry state and copies caller references", () => {
     const target = { releaseId: "release-a", deliveryId: "delivery-a", actionId: "action-a" };
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "delivery", kind: "delivery", locale: "zh-CN", deliveryTarget: target }] });

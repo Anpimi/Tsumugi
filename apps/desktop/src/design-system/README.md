@@ -7,7 +7,8 @@ Set `data-theme="light"` or `data-theme="dark"` on `document.documentElement`. R
 | File | Exports and use |
 | --- | --- |
 | `Button` | `Button`, `IconButton`. Variants: `primary`, `secondary`, `ghost`, `danger`, `link`. Sizes: `xs`, `sm`, `md`, `lg`. `pending` prevents repeated clicks. `icon` or children accept Lucide icons. `kbd` shows the shortcut. An icon button requires a complete `label` for its tooltip and accessible name. |
-| `Field` | `Field`, `TextInput`, `TextArea`. A field takes `label`, optional `description`, `error`, `required`, and one input element. It connects the label and messages to that input. A render function is also supported when the input needs a wrapper. Inputs accept native props and refs; `TextArea editor` uses the editor text size. |
+| `Field` | `Field`, `TextInput`, `TextArea`, `Select`. A field takes `label`, optional `description`, `error`, `required`, and one input element. It connects the label and messages to that input. A render function is also supported when the input needs a wrapper. Inputs accept native props and refs; `TextArea editor` uses the editor text size. |
+| `Disclosure` | Native details/summary behavior with a React `title` and children. Native props, open state and toggle events remain available. |
 | `Tabs` | `TabsRoot`, `TabsList`, `TabsTrigger`, `TabsContent` wrap Radix. `Tabs` also accepts `items`, a list `label`, and the Radix value props. |
 | `Tooltip` | `Tooltip` takes one element and `content`. Keep essential instructions visible elsewhere. |
 | `Menu` | `Menu` takes `trigger` and `items`. `ContextMenu` takes a child element and the same items. Items have `id`, `label`, optional `kbd`, `icon`, `disabled`, `danger`, and `onSelect`. Separators use `{ id, type: "separator" }`. |

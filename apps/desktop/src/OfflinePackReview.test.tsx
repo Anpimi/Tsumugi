@@ -250,7 +250,7 @@ it("locks conflicting operations and panel dismissal until the accepted installa
   await user.click(memberCheckbox("local-helper"));
   await user.click(screen.getByRole("button", { name: "Approve and install selected packages" }));
   await waitFor(() => expect(installCalls()).toHaveLength(1));
-  expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByRole("dialog").querySelector("[aria-busy]")).toHaveAttribute("aria-busy", "true");
   for (const name of ["Close", "Select plugin folder", "Select offline Pack folder", "Refresh state", "Cancel selection", "Approve and install selected packages", "Enable", "View package details"]) {
     expect(screen.getByRole("button", { name })).toBeDisabled();
   }

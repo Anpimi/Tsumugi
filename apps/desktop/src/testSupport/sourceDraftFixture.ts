@@ -3,7 +3,8 @@ import { vi } from "vitest";
 import { validateRequestSourceRead, validateRequestSourceWrite, validateRequestSourceResolve, validateRequestSourceClear, validateResponseSourceRead } from "../generated/draft.validators";
 import { canonicalSourceDraft, sourceDraftCommands, type SourceDraftHead } from "../sourceDraftCommands";
 import { jsonIdentity } from "../pluginToolChoices";
-import { inheritResourceDraftFixture, installResourceDraftFixture } from "./resourceDraftFixture";
+import { inheritResourceDraftFixture, installResourceDraftFixture, installResourceDraftPortsFixture } from "./resourceDraftFixture";
+import { resourceDraftCommands } from "../resourceDraftCommands";
 
 /** Only the local journal protocol; source actions and observations stay in the calling fixture. */
 export function sourceDraftFixture(next: (command: string, payload: Parameters<typeof invoke>[1]) => unknown) {
@@ -49,6 +50,13 @@ export function sourceDraftFixture(next: (command: string, payload: Parameters<t
 }
 const installed = new WeakSet<object>();
 export function installSourceDraftFixture() {
+  // Some owner tests replace every business port and intentionally have no raw
+  // invoke transport. Give their local journals the same isolated CAS fixture.
+  if (!vi.mocked(invoke).getMockImplementation()) {
+    if (!vi.isMockFunction(resourceDraftCommands.read)) installResourceDraftPortsFixture();
+    if (!vi.isMockFunction(sourceDraftCommands.read)) installSourceDraftPortsFixture();
+    return;
+  }
   installResourceDraftFixture();
   const mock = vi.mocked(invoke), next = mock.getMockImplementation();
   if (!next) throw new Error("Source journal fixtures require a synthetic IPC harness");

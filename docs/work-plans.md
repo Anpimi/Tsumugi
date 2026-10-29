@@ -76,6 +76,16 @@ If a start or control result is uncertain, check the original request in the pan
 
 A pending control request is never replayed automatically. When offered, **Check and retry original request** explicitly retries that same request after checking it; it does not substitute another action or expiry. A missing start receipt can be retried explicitly with the same request only while its original session ticket remains available and current status permits it. Reopening restores neither that ticket nor Host consent. A missing continuation receipt cannot replay Host consent. Checking or resolving a request preserves other pending requests and newer input.
 
+## Run setup and navigation in the opt-in workspace
+
+Proposal drafts offer templates for generating candidates, with or without assisted checks. A template keeps the existing entry scope, destinations and sharing choices. It starts with candidates-only selection, leaves resource adoption and delivery disabled, and grants no permission. Save the draft as a new proposal revision before preparing its work plan.
+
+Initial team setup uses the proposal’s existing entry scope. Add members, choose the first member and entry, and configure each member’s name, role, connection, source material, allowed work and request limits. A team shares discussion material only under the plan’s explicit sharing setting. Incomplete members cannot be saved as a valid runnable revision. Preparing and authorizing the plan still checks its actual root budget, materials, connections and Host permissions.
+
+The **Runs** activity shows recorded plans from a selected project conversation alongside context experiments. Opening a plan or its saved candidate does not start work. **Return to the original run** restores the original conversation, expands its plan and reuses its retained Runs tab when available. Input, pending requests and execution permission continue to belong to their original owners.
+
+The assistant’s project brief appears for an empty thread or after an absence of more than eight hours. It reads selected translation counts, delivery-blocking entries and shared decisions without a model request. Selection is independent of review approval and delivery readiness. Partial reads and counts from different source observations stay unknown. A saved entry position is only a local navigation preference; reopening it still resolves the current project entry and grants no authority.
+
 ## Preparing and verifying a work plan
 
 ### Plan preparation (`ProjectStore::prepare_work_plan`)

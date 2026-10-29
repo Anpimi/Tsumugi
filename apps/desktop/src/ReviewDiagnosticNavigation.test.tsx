@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useLayoutEffect, useMemo, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -155,6 +156,7 @@ beforeEach(async () => {
     unexpected.push(command); throw new Error(`Unexpected synthetic IPC command: ${command}`);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 async function openQueue() {
   const ui = render(<Harness />), user = userEvent.setup();

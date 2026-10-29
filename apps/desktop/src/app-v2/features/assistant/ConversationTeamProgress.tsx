@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AiOutputUsage } from "../../../AiUsage";
@@ -42,8 +43,8 @@ function PostCard({ post, roles, status, allowed, openPost, onReply }: {
       {post.publication.replyTo ? <Button size="sm" disabled={!allowed} onClick={event => { if (allowed && post.publication.replyTo) openPost(post.publication.replyTo, event.currentTarget); }}>{t("readReply")}</Button> : null}
       {post.publication.supersedes ? <Button size="sm" disabled={!allowed} onClick={event => { if (allowed && post.publication.supersedes) openPost(post.publication.supersedes, event.currentTarget); }}>{t("readSuperseded")}</Button> : null}
     </div>
-    {role ? <details><summary>{t("memberRole")}</summary><p className={styles.text}>{role.request.role}</p><p>{t("model")}: {role.config.model}</p><p>{t("roleVersion")}: <code>{role.request.roleVersionId}</code></p></details> : null}
-    {post.publication.references.length ? <details><summary>{t("postReferences")}</summary><ul>{post.publication.references.map((reference, index) => <li key={index}><code>{reference.kind === "translation-revision" ? reference.revisionId : reference.resultId}</code></li>)}</ul></details> : null}
+    {role ? <Disclosure title={<>{t("memberRole")}</>}><p className={styles.text}>{role.request.role}</p><p>{t("model")}: {role.config.model}</p><p>{t("roleVersion")}: <code>{role.request.roleVersionId}</code></p></Disclosure> : null}
+    {post.publication.references.length ? <Disclosure title={<>{t("postReferences")}</>}><ul>{post.publication.references.map((reference, index) => <li key={index}><code>{reference.kind === "translation-revision" ? reference.revisionId : reference.resultId}</code></li>)}</ul></Disclosure> : null}
   </article>;
 }
 
@@ -74,7 +75,7 @@ function ToolReferences({ context, status, work, frame, visible, current }: {
       {read.error ? <ReadFailure label={t("toolsFailed")} error={read.error}/> : null}
       {page?.attempts.map(row => <article key={row.reference.attemptId}>
         <h6>{row.name}</h6><p>{t("toolsCounts", { succeeded: row.progress.succeeded, unknown: row.progress.unknown, saved: row.storedResultItems })}</p>
-        <details><summary>{t("diagnostics")}</summary><code>{row.reference.taskId}</code><p><code>{row.reference.attemptId}</code></p></details>
+        <Disclosure title={<>{t("diagnostics")}</>}><code>{row.reference.taskId}</code><p><code>{row.reference.attemptId}</code></p></Disclosure>
       </article>)}
       {fresh() && page?.attempts.length === 0 ? <p>{t("noTools")}</p> : null}
       <div className={styles.actions}>
@@ -185,8 +186,8 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
     <div className={styles.actions}><Button size="sm" pending={read.isFetching} disabled={!present() || !!busyWork} onClick={() => { if (present() && !navigation.current) { setFeedback(null); void read.refetch(); } }}>{t("refresh")}</Button></div>
     {page ? <>
       {actions?.(page, () => currentPage(page))}
-      <section aria-label={t("members")}><h5>{t("members")}</h5><ul className={styles.members}>{page.roster.map(member => <li key={`${member.memberId}:${member.roleVersionId}`}><strong>{member.displayName}</strong><details><summary>{t("memberRole")}</summary><p className={styles.text}>{member.role}</p><p>{t("model")}: {member.config.model}</p><p>{t("roleVersion")}: <code>{member.roleVersionId}</code></p></details></li>)}</ul>
-        {page.retiredMemberIds.length ? <details><summary>{t("retired")}</summary><ul>{page.retiredMemberIds.map(memberId => <li key={memberId}>{page.roleVersions.find(role => role.request.memberId === memberId)?.request.displayName ?? t("memberUnknown")}</li>)}</ul></details> : null}
+      <section aria-label={t("members")}><h5>{t("members")}</h5><ul className={styles.members}>{page.roster.map(member => <li key={`${member.memberId}:${member.roleVersionId}`}><strong>{member.displayName}</strong><Disclosure title={<>{t("memberRole")}</>}><p className={styles.text}>{member.role}</p><p>{t("model")}: {member.config.model}</p><p>{t("roleVersion")}: <code>{member.roleVersionId}</code></p></Disclosure></li>)}</ul>
+        {page.retiredMemberIds.length ? <Disclosure title={<>{t("retired")}</>}><ul>{page.retiredMemberIds.map(memberId => <li key={memberId}>{page.roleVersions.find(role => role.request.memberId === memberId)?.request.displayName ?? t("memberUnknown")}</li>)}</ul></Disclosure> : null}
       </section>
       {page.stopReason ? <Banner tone="warning">{global(`ai.team.stops.${page.stopReason}`)}</Banner> : null}
       <section aria-label={t("works")}><h5>{t("works")}</h5>
@@ -198,16 +199,16 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
             <p>{t(`execution.${work.execution}`)} · {t(`validation.${work.validation}`)}</p>
             {human || work.origin.kind === "start" ? <p className={styles.meta}>{t(human ? "human" : "initial")}</p> : null}
             {work.author ? <p className={styles.meta}>{t("requestedBy", { member: memberName(work.author.memberId, work.author.roleVersionId) })}</p> : null}
-            <details><summary>{t("instructions")}</summary><p className={styles.text}>{human?.instructions ?? work.request?.instructions ?? t("initial")}</p>{role ? <><h6>{t("role")}</h6><p className={styles.text}>{role.request.role}</p><code>{role.request.roleVersionId}</code></> : null}
+            <Disclosure title={<>{t("instructions")}</>}><p className={styles.text}>{human?.instructions ?? work.request?.instructions ?? t("initial")}</p>{role ? <><h6>{t("role")}</h6><p className={styles.text}>{role.request.role}</p><code>{role.request.roleVersionId}</code></> : null}
               {human?.priorWork.length ? <><h6>{t("priorWork")}</h6><ul>{human.priorWork.map(reference => <li key={reference.attemptId}><code>{reference.taskId}</code> · <code>{reference.attemptId}</code></li>)}</ul></> : null}
-            </details>
-            {outcome?.kind === "translation" ? <><p>{t(work.candidateRevisionId ? "candidate" : "suggestion")}</p><details><summary>{t("fullText")}</summary>{outcome.text === "" ? <p>{t("emptyTranslation")}</p> : <p className={styles.text}><TokenizedText text={outcome.text} tone="ai"/></p>}</details></> : null}
+            </Disclosure>
+            {outcome?.kind === "translation" ? <><p>{t(work.candidateRevisionId ? "candidate" : "suggestion")}</p><Disclosure title={<>{t("fullText")}</>}>{outcome.text === "" ? <p>{t("emptyTranslation")}</p> : <p className={styles.text}><TokenizedText text={outcome.text} tone="ai"/></p>}</Disclosure></> : null}
             {outcome?.kind === "review" ? <p>{t(`verdict.${outcome.verdict}`)}</p> : outcome?.kind === "waiting" ? <p>{t("waiting")}</p> : outcome?.kind === "awaiting-human" ? <p>{t("awaitingHuman")}</p> : outcome?.kind === "evidence" ? <p>{t("evidence")}</p> : null}
             <div className={styles.actions}>{postButtons([...(work.request?.postIds ?? human?.postIds ?? []), ...(outcome?.kind === "review" || outcome?.kind === "evidence" ? outcome.postIds : [])])}
               {candidate && onOpenCandidate ? <Button size="sm" disabled={!fresh || busyWork !== null} onClick={() => void openCandidate(work)}>{t(busyWork === work.receipt.intentId ? "openingCandidate" : "openCandidate")}</Button> : null}
             </div>
             {feedback?.intentId === work.receipt.intentId ? <Banner tone="warning" role="status"><p>{t("candidateChanged")}</p>{feedback.cause ? <CommandFailureDetails failure={feedback.cause}/> : null}</Banner> : null}
-            {work.output ? <details><summary>{global("ai.usageDetails.title")}</summary><AiOutputUsage usage={work.output.usage} incomplete={work.output.usageIncomplete}/></details> : null}
+            {work.output ? <Disclosure title={<>{global("ai.usageDetails.title")}</>}><AiOutputUsage usage={work.output.usage} incomplete={work.output.usageIncomplete}/></Disclosure> : null}
             <ToolReferences context={context} status={status} frame={frame} work={{ taskId: work.receipt.taskId, attemptId: work.receipt.attemptId, inputDigest: work.receipt.inputDigest }} visible={visible} current={() => currentPage(page)}/>
           </article>;
         })}

@@ -135,6 +135,28 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); resources.splice(0).forEach(({ reads, drafts }) => { drafts.retire(); reads.retire(); }); });
 
+it("confirms an imported alternative in Chinese while preserving the literal translation text", async () => {
+  await i18n.changeLanguage("zh-CN");
+  const row = translationRowFixture(0);
+  row.entry.text = "你好，{name}！\n原样保留 {{count}} 与 emoji 🌱";
+  preview = translationPreviewFixture([row]);
+  const { drafts } = await harness();
+  const tableRow = screen.getByRole("rowheader", { name: "key-0" }).closest("tr");
+  if (!tableRow) throw new Error("The imported row is required");
+  fireEvent.click(within(tableRow).getByRole("button", { name: "保留为备选" }));
+  const confirmation = screen.getByRole("region", { name: "核对这一条" });
+  expect(confirmation).toHaveFocus();
+  const incoming = within(confirmation).getByRole("heading", { name: w("importIncoming") }).parentElement;
+  expect(incoming).toHaveTextContent(row.entry.text, { normalizeWhitespace: false });
+  expect(calls("adopt_execution")).toHaveLength(0);
+  fireEvent.click(within(confirmation).getByRole("button", { name: "保留为备选" }));
+  await waitFor(() => expect(owner.current().completionVersion).toBe(1));
+  expect(calls("prepare_translation_adoption")[0][1].request.confirmation).toMatchObject({ decision: "candidate-only", targetUnitId: row.unitId });
+  expect(screen.getByText("已查到原操作的记录。")).toBeVisible();
+  expect(screen.getByRole("region", { name: "导入译文" })).toHaveFocus();
+  expect(drafts.getSnapshot().mutationReserved).toBe(false);
+});
+
 it.each(["candidate-only", "replace"] as const)("requires inline confirmation before the real %s prepare and adoption IPC", async decision => {
   const row = decision === "replace" ? selectedRow(0) : translationRowFixture(0);
   preview = translationPreviewFixture([row]);

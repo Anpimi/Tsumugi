@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -41,6 +42,7 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 async function open() {
   const view = render(<Harness/>, project), user = userEvent.setup();

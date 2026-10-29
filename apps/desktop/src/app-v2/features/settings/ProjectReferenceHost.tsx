@@ -15,7 +15,7 @@ import { useSessionQuery, useSessionReads } from "../../../SessionReadProvider";
 import { sourceReads } from "../../../sourceQueries";
 import { Button } from "../../../design-system/Button";
 import { Dialog } from "../../../design-system/Dialog";
-import { Field, TextInput } from "../../../design-system/Field";
+import { Field, TextInput, Select } from "../../../design-system/Field";
 import { Banner, EmptyState, LoadingState } from "../../../design-system/Feedback";
 import type { LifecycleParticipant, ProjectLifecycle } from "../../platform/projectLifecycle";
 import type { InteractionGate } from "../../workspace/interactionGate";
@@ -213,16 +213,16 @@ function ProjectMcpSurface({ project, lifecycle, gate, drafts, knowledgeOwner, o
           {!sharing.state.target ? <>
             <p>{t("chooseSavedEntry")}</p>
             <Field label={t("searchEntries")} description={t("searchPageHelp")}><TextInput value={search} disabled={disabled} onChange={event => setSearch(event.target.value)}/></Field>
-            <Field label={t("savedEntry")}><select value={unitId} disabled={disabled || !sourceCurrent()} onChange={event => setUnitId(event.target.value)}>
+            <Field label={t("savedEntry")}><Select value={unitId} disabled={disabled || !sourceCurrent()} onChange={event => setUnitId(event.target.value)}>
               <option value="">{t("chooseEntry")}</option>{selected && !matches.includes(selected) ? <option value={unitId}>{selected.occurrence.key}</option> : null}
               {matches.map(row => <option key={row.unitId} value={row.unitId ?? ""}>{row.occurrence.key}</option>)}
-            </select></Field>
+            </Select></Field>
             {sourcePage && !matches.length ? <p role="status">{t("noMatches")}</p> : null}
             <div className={styles.actions}><Button disabled={disabled || after === 0 || !dispatchable()} onClick={() => pageAt(0)}>{t("firstPage")}</Button>
               <Button disabled={disabled || sourcePage?.nextOrdinal == null || !dispatchable()} onClick={() => { if (sourcePage?.nextOrdinal != null) pageAt(sourcePage.nextOrdinal); }}>{t("nextPage")}</Button></div>
-            <Field label={t("targetLocale")}><select value={locale} disabled={disabled} onChange={event => setLocale(event.target.value)}>
+            <Field label={t("targetLocale")}><Select value={locale} disabled={disabled} onChange={event => setLocale(event.target.value)}>
               <option value="">{t("chooseLocale")}</option>{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}
-            </select></Field>
+            </Select></Field>
             {editor.isFetching ? <LoadingState label={t("loadingSnapshot")}/> : null}
             {editor.error ? <Banner tone="error" role="alert" action={<Button disabled={!dispatchable()} onClick={() => void editor.refetch()}>{t("retryRead")}</Button>}>{t("snapshotFailed")}<CommandFailureDetails failure={commandFailure(editor.error)}/></Banner> : null}
             <Button variant="primary" disabled={!canBegin} onClick={beginSharing}>{t("beginShare")}</Button>

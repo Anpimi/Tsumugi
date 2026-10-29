@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -122,7 +123,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       <p><strong>{global(`release.deliveryState.${record.state}`)}</strong> · <time>{record.createdAt}</time></p>
       <p>{record.directory}</p><ul>{record.files.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code> · {global(`release.deliveryState.${file.state}`)}</li>)}</ul>
       {(record.state === "pending" || record.state === "unknown") && selection ? <Button variant="secondary" disabled={!delivery.deliveryAvailability(delivery.deliveryPayload(record)).enabled} onClick={() => { const payload = delivery.deliveryPayload(record); if (payload) commands.dispatch("release.reconcile-delivery", commandScope, payload); }}>{t("checkAttempt")}</Button> : null}
-      <details><summary>{t("diagnostics")}</summary><dl><dt>{global("release.overwrite")}</dt><dd>{global(record.overwriteConflicts ? "release.overwriteAllowed" : "release.overwriteNotAllowed")}</dd></dl><ul>{record.files.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><p><code>{file.expectedSha256}</code></p>{file.actualSha256 ? <code>{file.actualSha256}</code> : null}</li>)}</ul></details>
+      <Disclosure title={<>{t("diagnostics")}</>}><dl><dt>{global("release.overwrite")}</dt><dd>{global(record.overwriteConflicts ? "release.overwriteAllowed" : "release.overwriteNotAllowed")}</dd></dl><ul>{record.files.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><p><code>{file.expectedSha256}</code></p>{file.actualSha256 ? <code>{file.actualSha256}</code> : null}</li>)}</ul></Disclosure>
     </article>;
   }
   function formatDate(value: string) {
@@ -136,7 +137,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       <Button variant="ghost" aria-pressed={chosen?.releaseId === record.releaseId} disabled={!delivery.recordAvailability(delivery.recordPayload(record)).enabled || owner.deliveryDirty && chosen?.releaseId !== record.releaseId}
         onClick={() => { if (canInteract()) { if (commands.dispatch("release.choose-release", commandScope, delivery.recordPayload(record))) { setPrimaryMode("export"); reveal("export"); } } }}>{t("chooseRecord", { date: formatDate(record.createdAt) })}</Button>
       <p>{record.artifacts.map(file => `${file.locale} → ${file.fileName}`).join(" · ")}</p>
-      <details><summary>{t("diagnostics")}</summary><p>{t("snapshot")}: <code>{record.sourceSnapshotId}</code></p><p>{t("version")}: {record.builderVersion} · {record.validatorVersion}</p><code>{record.manifestSha256}</code><p>{t("exceptions")}</p>{record.exceptions.length ? <ul>{record.exceptions.map((item, index) => <li key={index}>{item.locale} · {item.nativeKey} · {global(`release.exceptionKind.${item.kind}`)}</li>)}</ul> : <p>{t("noExceptions")}</p>}</details>
+      <Disclosure title={<>{t("diagnostics")}</>}><p>{t("snapshot")}: <code>{record.sourceSnapshotId}</code></p><p>{t("version")}: {record.builderVersion} · {record.validatorVersion}</p><code>{record.manifestSha256}</code><p>{t("exceptions")}</p>{record.exceptions.length ? <ul>{record.exceptions.map((item, index) => <li key={index}>{item.locale} · {item.nativeKey} · {global(`release.exceptionKind.${item.kind}`)}</li>)}</ul> : <p>{t("noExceptions")}</p>}</Disclosure>
     </li>)}</ul>
   </>;
   const exportContent = <>
@@ -161,7 +162,7 @@ export function DeliveryView(props: DeliveryViewProps) {
       </div>
       {owner.deliveryDirty && !pendingExport ? <p>{t("clearDestinationHelp")}</p> : null}
       {selection ? <p>{t("folder")}: {selection.folderName}</p> : null}
-      {preview ? <section aria-label={global("release.previewTitle")}><ul className={styles.fileList}>{preview.files.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><span>{global(`release.fileState.${file.state}`)}</span><details><summary>{t("diagnostics")}</summary><code>{file.expectedSha256}</code></details></li>)}</ul>
+      {preview ? <section aria-label={global("release.previewTitle")}><ul className={styles.fileList}>{preview.files.map(file => <li key={`${file.locale}:${file.fileName}`}><code>{file.fileName}</code><span>{global(`release.fileState.${file.state}`)}</span><Disclosure title={<>{t("diagnostics")}</>}><code>{file.expectedSha256}</code></Disclosure></li>)}</ul>
         {hasConflict ? <Field label={t("overwrite")} className={styles.consent}><input type="checkbox" checked={overwrite} disabled={!delivery.previewAvailability(delivery.previewPayload()).enabled} onChange={event => { const payload = delivery.previewPayload(event.target.checked); if (payload) commands.dispatch("release.confirm-overwrite", commandScope, payload); }}/></Field> : null}
       </section> : null}
       {result ? <Banner tone={result.state === "succeeded" ? "success" : result.state === "failed" ? "error" : "warning"} role="status">{global(`release.deliveryState.${result.state}`)}</Banner> : null}

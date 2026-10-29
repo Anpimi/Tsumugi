@@ -103,6 +103,7 @@ async function openIssues() {
   const user = userEvent.setup();
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   await user.click(screen.getByRole("button", { name: w("openProject") }));
   const ready = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: fixture.target.nativeKey }) }, { timeout: 5000 });

@@ -6,6 +6,8 @@ import wire from "../../../../test/fixtures/resourceCommands.contract.json";
 import segmentWire from "../../../../test/fixtures/segmentCommands.contract.json";
 import { i18n } from "../../../i18n";
 import { installResourceDraftFixture } from "../../../testSupport/resourceDraftFixture";
+import { installSourceDraftPortsFixture } from "../../../testSupport/sourceDraftFixture";
+import { installStrategyDraftFixture } from "../../../testSupport/strategyDraftFixture";
 import { resourceDraftCommands } from "../../../resourceDraftCommands";
 import type { knowledgeEn } from "../../../i18n/knowledge";
 import type { workbenchEn } from "../../../i18n/workbench";
@@ -65,6 +67,7 @@ beforeEach(async () => {
     throw new Error(`Unexpected synthetic workspace command: ${command}`);
   });
   installResourceDraftFixture();
+  installSourceDraftPortsFixture(); installStrategyDraftFixture();
 });
 afterEach(() => { cleanup(); controller?.dispose(); controller = undefined; if (originalWidth) Object.defineProperty(window, "innerWidth", originalWidth); });
 
@@ -74,6 +77,7 @@ it("hydrates knowledge at project startup and retains the original draft across 
   const register = vi.spyOn(controller, "register"), lifecycle = controller;
   render(<StrictMode><WorkbenchApp controller={lifecycle} native/></StrictMode>);
   const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   await user.type(screen.getByRole("textbox", { name: w("projectFolder") }), project.locator);
   await user.click(screen.getByRole("button", { name: w("openProject") }));
   const activity = await screen.findByRole("navigation", { name: w("activity") }, { timeout: 5000 });
@@ -89,6 +93,12 @@ it("hydrates knowledge at project startup and retains the original draft across 
   await user.click(await screen.findByRole("button", { name: "Barrel" }));
   const editor = await screen.findByRole("textbox", { name: k("targetTerm") });
   fireEvent.change(editor, { target: { value: "Keep my edit" } });
+  await user.click(screen.getByRole("button", { name: i18n.t("knowledgeExchange.menu") }));
+  await user.click(screen.getByRole("menuitem", { name: i18n.t("knowledgeExchange.tmx") }));
+  const exchange = within(await screen.findByRole("region", { name: i18n.t("knowledgeExchange.title") }));
+  expect(exchange.getByText(i18n.t("knowledgeExchange.readOnly"))).toBeVisible();
+  await user.click(exchange.getByRole("button", { name: i18n.t("knowledgeExchange.close") }));
+  expect(screen.getByRole("textbox", { name: k("targetTerm") })).toHaveValue("Keep my edit");
   await user.click(within(activity).getByRole("button", { name: w("entries") }));
   expect(await screen.findByRole("button", { name: k("backToDraft") })).toBeVisible();
   await user.click(screen.getByRole("button", { name: k("backToDraft") }));
@@ -108,6 +118,7 @@ it("opens real saved translations from Knowledge and reads their exact details w
   const read = vi.spyOn(resourceCommands, "translationMemoryEntry").mockResolvedValue(donor);
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<WorkbenchApp controller={controller} native/>); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   await user.type(screen.getByRole("textbox", { name: w("projectFolder") }), project.locator);
   await user.click(screen.getByRole("button", { name: w("openProject") }));
   const activity = await screen.findByRole("navigation", { name: w("activity") });
@@ -128,6 +139,7 @@ it("does not steal focus or switch tabs when the user moves while the original k
   let resolve!: () => void; ownerLoad.wait = new Promise<void>(done => { resolve = done; });
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const register = vi.spyOn(controller, "register"); render(<WorkbenchApp controller={controller} native/>); const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   await user.type(screen.getByRole("textbox", { name: w("projectFolder") }), project.locator);
   await user.click(screen.getByRole("button", { name: w("openProject") }));
   const activity = await screen.findByRole("navigation", { name: w("activity") });
@@ -153,6 +165,7 @@ it("recovers an initial knowledge host failure through an explicit retry of the 
   try {
     controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
     render(<WorkbenchApp controller={controller} native/>); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
     await user.type(screen.getByRole("textbox", { name: w("projectFolder") }), project.locator);
     await user.click(screen.getByRole("button", { name: w("openProject") }));
     const activity = await screen.findByRole("navigation", { name: w("activity") });

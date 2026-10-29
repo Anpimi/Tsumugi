@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -64,6 +65,7 @@ function install(kind: Kind, write: (request: ReviewCheckRequest) => unknown, re
   });
 }
 beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("en-US"); });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 
 it.each(kinds.flatMap(kind => (["lost", "invalid"] as const).map(ack => ({kind,ack}))))("confirms $kind after one $ack ACK pure read without another preparation, run, grant or identity", async ({kind,ack}) => {

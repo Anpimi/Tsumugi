@@ -12,6 +12,12 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Project settings in the opt-in workspace can rename an existing project and change its target languages, with separate saves, version checks and recovery of uncertain results. Removing a language keeps its saved translations and history. Renaming its folder requires an explicit choice. Knowledge exchange also restores the bounded, read-only TMX and TBX native file previews; full exchange import, adoption and export remain unavailable.
+
+- The opt-in workspace provides run templates and initial team setup in a proposal draft. Configure each member’s role, connection, scope and limits before saving a new revision. The Runs activity opens recorded work plans and context experiments; saved candidates can return to their original conversation and expanded plan without restarting work.
+
+- A project brief in the opt-in assistant reads language progress, delivery-blocking entries and the shared decision count without calling a model. Missing or inconsistent counts stay unknown. Empty projects offer source import; a retained entry position can be opened explicitly. Local recent-project preferences keep that navigation hint across sessions.
+
 - Context experiments in the opt-in workspace can start from a saved manual edit and compare two context settings using fixed calibration and holdout entries. Review the connection, material and budget, start explicitly, check each result and record a human preference before adopting a future default. Settings, unfinished judgments and original requests stay in the shared local journal. Reopening does not resume work or restore consent. The original evaluation can be stopped through the existing task controls.
 
 - Team plans in the opt-in workspace can allow members to ask questions. Answer with text or a listed choice, or close a question without answering. Unfinished answers and original requests stay in the local journal; a delayed result keeps newer input. Questions appear in the shared inbox and open the original conversation when one is linked. Answering also works after a plan stops and does not start work or increase its budget. The local journal upgrades to format 16 on its first successful write; older clients cannot read the upgraded journal.
@@ -125,6 +131,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 - **Non-blocking project operations and shared session state**: Desktop project commands, full-text search, QA checks, and exports run on a dedicated project thread without blocking window events. Task, AI, Arena, and import progress share a coalesced session cache that reconciles missed notifications and pauses background polling in hidden views.
 
 ### Fixed
+
+- Closing the original workspace with an uncertain review result returns to its originating review controls before the shared translation reservation. A failed initial context-experiment journal read, without new input, no longer traps project exit.
 
 - Source update summaries count moves, possible renames and uncertain matches once. Rejected or unresolved identity matches remain visible after a manual translation is saved.
 

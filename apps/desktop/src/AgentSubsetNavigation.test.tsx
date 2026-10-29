@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useLayoutEffect, useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -71,6 +72,7 @@ beforeEach(async () => {
     throw new Error(`Unexpected child history command: ${command}`);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it("opens only the explicitly requested child Task through production navigation, retains unknown and B, and returns to the same consumer", async () => {
@@ -125,7 +127,7 @@ it("keeps original Stop and Take over controls reachable for an expired Active p
 
 it("protects note drafts at real project exit and returns an unresolved publication to its original plan", async () => {
   status = teamStatusFixture(); const originalPlan = structuredClone(status), user = userEvent.setup();
-  render(<Harness />);
+  await act(async () => { render(<Harness />); });
   act(() => {
     ai.recordPlan(originalPlan.plan.planId);
     ai.discussions.edit(originalPlan.plan.planId, { body: "Unpublished note B" });

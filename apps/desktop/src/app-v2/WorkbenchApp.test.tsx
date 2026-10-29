@@ -1,3 +1,4 @@
+import { RECENT_PROJECTS_STORAGE_KEY, readRecentProject } from "../recentProjects";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useCallback, useLayoutEffect, type ComponentProps } from "react";
@@ -14,6 +15,8 @@ import { startupCommands } from "../startupCommands";
 import type { SourceOwner } from "./features/source/sourceTypes";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { draftCommands } from "../draftCommands";
+import { conversationCommands } from "../conversationCommands";
+import { conversationDraftCommands } from "../conversationDraftCommands";
 import { translationCommands } from "../translationCommands";
 import { validateSaveReceipt } from "../translationCommands";
 import { executionCommands } from "../executionCommands";
@@ -119,6 +122,58 @@ beforeEach(async () => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); controller?.dispose(); });
+
+it("shows the offline project brief and continues the previous entry without submitting work", async () => {
+  const position = { unitId: page.rows[0].content.unitId, locale: project.metadata.targetLocales[0], nativeKey: "chapter.{{name}}" };
+  localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify([{ locator: project.locator, lastOpenedAt: Date.now() - 9 * 60 * 60 * 1000, position }]));
+  vi.spyOn(sourceCommands, "scope").mockResolvedValue({ currentSnapshot: page.sourceSnapshotId, revision: "1" });
+  vi.spyOn(conversationCommands, "list").mockResolvedValue({ projectId: project.metadata.projectId, rows: [], nextAfter: null });
+  vi.spyOn(conversationDraftCommands, "list").mockResolvedValue({ items: [], next: null });
+  vi.spyOn(segmentCommands, "queueWindow").mockImplementation(async request => ({ projectId: project.metadata.projectId, locale: request.locale,
+    sourceSnapshotId: page.sourceSnapshotId, scopeId: request.scopeId, query: page.query, queryFingerprint: page.queryFingerprint,
+    epoch: page.epoch, sequence: page.sequence, total: 120, firstPosition: 99, rows: page.rows, previousUnitId: "previous-entry", nextUnitId: "next-entry" }));
+  const plan = vi.spyOn(conversationCommands, "preparePlanning");
+  await openImportWorkspace();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openAgent") }));
+  const brief = within(await screen.findByRole("region", { name: "项目简报" }, { timeout: 5000 }));
+  expect(brief.getByText("仅使用项目记录生成，不调用模型。")).toBeVisible();
+  const continueEntry = brief.getByRole("button", { name: `继续 ${position.nativeKey} · ${position.locale}` });
+  await waitFor(() => expect(continueEntry).toBeEnabled()); fireEvent.click(continueEntry);
+  await screen.findByText("Actual source from the read port");
+  await waitFor(() => expect(readRecentProject(project.locator)?.position?.unitId).toBe(position.unitId));
+  await waitFor(() => expect(segmentCommands.queueWindow).toHaveBeenCalledWith(expect.objectContaining({ anchorUnitId: position.unitId, locale: position.locale })));
+  expect(plan).not.toHaveBeenCalled();
+}, 15000);
+
+it("opens project metadata through the shared command and protects name input while cancelling close", async () => {
+  await openImportWorkspace();
+  await userEvent.setup().click(screen.getByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }));
+  const settings = await screen.findByRole("option", { name: i18n.t("projectMetadata.title") });
+  await waitFor(() => expect(settings).not.toHaveAttribute("aria-disabled", "true")); fireEvent.click(settings);
+  const sheet = within(await screen.findByRole("dialog", { name: i18n.t("projectMetadata.title") }));
+  const name = sheet.getByRole("textbox", { name: i18n.t("projectMetadata.name") });
+  fireEvent.change(name, { target: { value: "Project name B {{name}}" } });
+  fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.close") }));
+  fireEvent.click(sheet.getByRole("button", { name: i18n.t("projectMetadata.stay") }));
+  expect(name).toHaveValue("Project name B {{name}}");
+}, 15000);
+
+it("opens work plans from the enabled activity item and retains the runs view across entry navigation", async () => {
+  vi.spyOn(conversationCommands, "list").mockResolvedValue({ projectId: project.metadata.projectId, rows: [], nextAfter: null });
+  vi.spyOn(conversationDraftCommands, "list").mockResolvedValue({ items: [], next: null });
+  await openImportWorkspace();
+  const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
+  const runs = activity.getByRole("button", { name: i18n.t("workbenchV2.runs") });
+  await waitFor(() => expect(runs).toBeEnabled()); fireEvent.click(runs);
+  expect(await screen.findByRole("heading", { name: "工作计划" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "工作计划" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.click(activity.getByRole("button", { name: i18n.t("workbenchV2.entries") }));
+  await screen.findByText("Actual source from the read port");
+  const currentRuns = () => within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") })).getByRole("button", { name: i18n.t("workbenchV2.runs") });
+  await waitFor(() => expect(currentRuns()).toBeEnabled()); fireEvent.click(currentRuns());
+  expect(await screen.findByRole("heading", { name: "工作计划" })).toBeVisible();
+  expect(screen.getAllByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.runs") }) })).toHaveLength(1);
+}, 15000);
 
 it("retains the original delivery owner after navigating away and closing its view", async () => {
   controller = new ProjectLifecycle({ open: vi.fn(async () => project) });

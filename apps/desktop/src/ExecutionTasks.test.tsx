@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -50,6 +51,7 @@ function continuationResult(request: ContinuationRequest): ContinuationReceipt {
   return { ...fixture.continuationReceipt, sequence: "2", action: { ...request.action, itemIds: [...request.action.itemIds].sort() }, attemptId: fixtureIdentity(3), taskId: task.taskId, operation: task.operation };
 }
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 it("retains the original cancellation after a complete Tasks remount and blocks project leave", async () => {
   const ref = createRef<TasksHandle>(), user = userEvent.setup();

@@ -24,7 +24,7 @@ Withdraw a saved version to stop using it at that scope. Withdrawal keeps its hi
 
 Entry references and AI material previews show the applicable saved versions and explain omissions. These notes are sent only when saved-context sharing is enabled. The provider receives the kind, name and text; local identities, file paths, author and change reason stay local. Changing a saved resource can require a fresh AI preparation, including preparations outside its scope while the current project-wide resource baseline is in use. Affected work is a possible scope match, not proof that a translation used the material.
 
-These three categories currently support manual maintenance. AI proposals for them, a separate translation-memory workspace, precise reference counts and complete TMX/TBX import and export still need further work. Existing source observations, per-entry context notes, context strategies and translation-memory suggestions keep the behavior described below.
+The project assistant can propose character, style and background material for review through the original knowledge decision workflow. The saved translation-memory workspace can open an exact saved version and place its text into the usual manual draft. **Knowledge exchange** offers the existing limited TMX and TBX file previews from the native file chooser; closing a preview keeps unfinished knowledge input. Complete TMX/TBX import, adoption and export remain unavailable. Existing source observations, per-entry context notes, context strategies and translation-memory suggestions keep the behavior described below.
 
 ## Managing terms and per-entry context
 

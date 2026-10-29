@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useLayoutEffect, useState, type Ref, type RefObject } from "react";
 import { act, cleanup, screen, waitFor, within, render as renderUi } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -101,6 +102,7 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 async function open() {
   const handle = createRef<AiHandle>(), rendered = render(<Harness project={project} handle={handle} />), user = userEvent.setup();

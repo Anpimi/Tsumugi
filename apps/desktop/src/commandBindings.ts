@@ -13,6 +13,8 @@ export const workspaceCommandCatalog = [
   { id: "workspace.details", nameKey: "workbenchV2.detail", binding: "Mod+I" },
   { id: "workspace.decisions", nameKey: "workbenchV2.decisions", binding: null },
   { id: "workspace.delivery", nameKey: "workbenchV2.delivery", binding: null },
+  { id: "workspace.project-settings", nameKey: "projectMetadata.title", binding: null },
+  { id: "workspace.runs", nameKey: "workbenchV2.runs", binding: null },
   { id: "workspace.strategy", nameKey: "workbenchV2.strategyOpen", binding: null },
   { id: "workspace.focus-search", nameKey: "workbenchV2.searchEntries", binding: "Mod+F" },
   { id: "workspace.search", nameKey: "workbenchV2.search", binding: null },

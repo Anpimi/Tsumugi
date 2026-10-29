@@ -184,7 +184,7 @@ it("blocks focus reads synchronously during a write even with another active obs
   const before = calls("read_plugin_inventory").length;
   act(() => {
     fireEvent.click(screen.getByRole("button", { name: "Enable" }));
-    expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByRole("dialog").querySelector("[aria-busy]")).toHaveAttribute("aria-busy", "false");
     window.dispatchEvent(new Event("focus"));
   });
   await waitFor(() => expect(calls("set_plugin_enabled")).toHaveLength(1));

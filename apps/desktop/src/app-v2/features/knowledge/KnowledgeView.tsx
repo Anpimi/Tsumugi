@@ -1,3 +1,5 @@
+import KnowledgeExchangePreview from "./KnowledgeExchangePreview";
+import { Menu } from "../../../design-system/Menu";
 import { Fragment, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
@@ -35,7 +37,7 @@ export interface KnowledgeViewProps {
   onRevealTranslationDraft?: (unitId: string, locale: string) => void;
 }
 export default function KnowledgeView({ project, owner, view, disabled, gate, current, patch, onDetails, reviewTarget = null, onReviewOpened, drafts = null, onEditTranslation, onRevealTranslationDraft }: KnowledgeViewProps) {
-  const { t } = useTranslation(undefined, { keyPrefix: "knowledge" });
+  const { t } = useTranslation(undefined, { keyPrefix: "knowledge" }), { t: exchange } = useTranslation(undefined, { keyPrefix: "knowledgeExchange" });
   const { selectedTerm, termDraft, aliasInput, locale, pending, busyMutation, notice, failure } = owner.state;
   const editingDisabled = disabled || owner.journal.hydration !== "ready" || owner.journal.retired;
   const sourceInput = useRef<HTMLInputElement>(null), focusTicket = useRef<{ termId: string | null; origin: HTMLElement | null } | null>(null);
@@ -128,7 +130,9 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
     </>;
   }
   return <div className={styles.workspace}>
-    <nav className={styles.categories} aria-label={t("categories")}>{knowledgeKinds.map(item => <Button key={item} aria-current={kind === item ? "page" : undefined} onClick={() => { if (current()) patch({ preset: item }); }}>{t(`kinds.${item}`)}</Button>)}</nav>
+    <nav className={styles.categories} aria-label={t("categories")}>{knowledgeKinds.map(item => <Button key={item} aria-current={!view.knowledgeExchange && kind === item ? "page" : undefined} onClick={() => { if (current()) patch({ preset: item, knowledgeExchange: null }); }}>{t(`kinds.${item}`)}</Button>)}
+      <Menu label={exchange("menu")} trigger={<Button disabled={disabled}>{exchange("menu")}</Button>} items={(["tmx", "tbx"] as const).map(format => ({ id: format, label: exchange(format), onSelect: () => { if (current()) patch({ knowledgeExchange: format }); } }))}/>
+    </nav>
     <section className={styles.body} aria-label={t(`kinds.${kind}`)} onFocusCapture={() => gate.setInputOwner(view.id, inputOwner)}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) gate.setInputOwner(view.id, null); }}
       onCompositionStartCapture={() => gate.setComposing(inputOwner, true)} onCompositionEndCapture={() => gate.setComposing(inputOwner, false)}>
@@ -136,7 +140,9 @@ export default function KnowledgeView({ project, owner, view, disabled, gate, cu
       {Object.values(owner.state.knowledgeDrafts).length ? <nav className={styles.toolbar} aria-label={t("reviewDrafts")}>{Object.values(owner.state.knowledgeDrafts).map(draft => <Button key={draft.key} aria-current={showReview && reviewDraft?.key === draft.key ? "page" : undefined}
         onClick={() => { if (current()) { owner.knowledgeProposals.activate(draft.key); patch({ locale: draft.locale, preset: draft.entry.kind === "character" ? "characters" : draft.entry.kind }); } }}>{draft.name || draft.entry.name}</Button>)}</nav> : null}
       {showReview ? <KnowledgeProposalPanel project={project} owner={owner} view={view} disabled={editingDisabled} gate={gate} current={current} patch={patch} onDetails={onDetails} target={reviewTarget} onOpened={onReviewOpened}/> : null}
-      {contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={editingDisabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <TranslationMemoryView project={project} view={view} drafts={drafts} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} onEdit={onEditTranslation} onRevealDraft={onRevealTranslationDraft}/> : <>
+      {view.knowledgeExchange ? <KnowledgeExchangePreview key={`${view.knowledgeExchange}:${view.locale}`} project={project} locale={view.locale} format={view.knowledgeExchange}
+        visible disabled={disabled} current={() => current() && !disabled} onClose={() => { if (current()) patch({ knowledgeExchange: null }); }}/>
+        : contextKindForKnowledge(kind) ? <ContextResourcesView project={project} owner={owner} view={view} disabled={editingDisabled} gate={gate} current={current} patch={patch} onDetails={onDetails} kind={contextKindForKnowledge(kind)!}/> : kind === "memory" ? <TranslationMemoryView project={project} view={view} drafts={drafts} disabled={disabled} gate={gate} current={current} patch={patch} onDetails={onDetails} onEdit={onEditTranslation} onRevealDraft={onRevealTranslationDraft}/> : <>
         <div className={styles.toolbar}><h1>{t("kinds.terms")}</h1><Button disabled={disabled || blocked || dirty || !localeMatches || !source.data?.currentSnapshot} onClick={newTerm}><Plus/>{t("newTerm")}</Button><Button disabled={terms.isFetching} onClick={() => void terms.refetch()}>{t("refresh")}</Button></div>
         {!localeMatches ? <Banner tone="warning" action={<Button onClick={() => { if (current()) patch({ locale }); }}>{t("returnToLanguage", { locale })}</Button>}>{t("retainedLanguage", { locale })}</Banner> : null}
         {!localeAvailable ? <Banner tone="warning">{t("localeUnavailable", { locale })}</Banner> : null}

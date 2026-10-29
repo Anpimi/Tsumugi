@@ -1,4 +1,6 @@
 import { StrictMode } from "react";
+import userEvent from "@testing-library/user-event";
+import { installWorkbenchInputJournalFixtures } from "../testSupport/inputJournalFixture";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import translationFixture from "../../test/fixtures/translation-commands.json";
@@ -60,6 +62,7 @@ function receipt(request: CandidateDecisionRequest): CandidateDecision {
     expectedDecisionId: request.decision.expectedDecisionId ?? null }, sourceSnapshotId: target.sourceSnapshotId };
 }
 
+beforeEach(installWorkbenchInputJournalFixtures);
 beforeEach(async () => {
   nativeInvoke.mockReset();
   localStorage.clear(); history.replaceState(null, "", "/"); await i18n.changeLanguage("en-US");
@@ -100,6 +103,7 @@ async function openCandidates() {
   controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const lifecycle = controller;
   render(<StrictMode><WorkbenchApp controller={lifecycle} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
@@ -161,6 +165,7 @@ async function openAssistantCandidate(width: number, ordinal: string) {
   const close = vi.fn(async () => ({ closed: true }));
   controller = new ProjectLifecycle({ open: async () => project, close, status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   const lifecycle = controller; render(<StrictMode><WorkbenchApp controller={lifecycle} native /></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } }); fireEvent.click(screen.getByRole("button", { name: w("openProject") }));
   const details = await screen.findByRole("button", { name: i18n.t("workbenchV2.showEntryDetails", { key: target.nativeKey }) }, { timeout: 5000 });
   await waitFor(() => expect(details).toBeEnabled());
@@ -176,7 +181,7 @@ async function openAssistantCandidate(width: number, ordinal: string) {
   fireEvent.click(await screen.findByRole("button", { name: i18n.t("conversation.runResultsShow") }));
   const open = await screen.findByRole("button", { name: i18n.t("conversation.runResultsOpenCandidate") }); await waitFor(() => expect(open).toBeEnabled());
   expect(screen.getByRole("button", { name: i18n.t("conversation.runPause") })).toBeEnabled(); expect(screen.getByRole("button", { name: i18n.t("conversation.runStop") })).toBeEnabled();
-  return { lifecycle, close, revision, revisionRead, composer, open, journal: () => copy(journal) };
+  return { lifecycle, close, conversationId, planId: plan.planId, revision, revisionRead, composer, open, journal: () => copy(journal) };
 }
 
 it.each([[1440, "9007199254740993"], [360, "75"]] as const)("assistant run candidate navigates the real %spx workspace to its exact saved candidate page", async (width, ordinal) => {
@@ -189,6 +194,50 @@ it.each([[1440, "9007199254740993"], [360, "75"]] as const)("assistant run candi
     unitId: target.unitId, locale: target.locale, revisionId: h.revision.revisionId } });
   expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(translationCommands.decideCandidate).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
 }, 15000);
+
+it.each(["en-US", "zh-CN"] as const)("returns an exact assistant candidate to its original expanded run, reuses that run view, and keeps message B in %s", async language => {
+  const authorize = vi.spyOn(workPlanCommands, "authorize"), start = vi.spyOn(workPlanCommands, "start");
+  const planning = vi.spyOn(conversationCommands, "startPlanning"), authorizeProposal = vi.spyOn(conversationCommands, "authorizeProposalWorkPlan");
+  const h = await openAssistantCandidate(1440, "9007199254740993"), user = userEvent.setup();
+  await act(async () => { await i18n.changeLanguage(language); });
+  const message = "Message B {name}\nKeep the original conversation";
+  fireEvent.change(h.composer, { target: { value: message } });
+  expect(screen.queryByRole("region", { name: i18n.t("runsView.title") })).not.toBeInTheDocument();
+  h.open.focus(); fireEvent.click(h.open);
+  const candidatePanel = await screen.findByRole("region", { name: w("candidateTitle") }, { timeout: 5000 });
+  expect(await within(candidatePanel).findByRole("region", { name: i18n.t("workbenchV2.candidateAudit") })).toBeVisible();
+  expect(translationCommands.history).toHaveBeenCalledWith({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    unitId: target.unitId, locale: target.locale, afterOrdinal: "9007199254740992", limit: 50 });
+  const returnButton = await screen.findByRole("button", { name: i18n.t("runsView.return") });
+  expect(returnButton).toHaveTextContent(language === "zh-CN" ? "返回原运行" : "Return to the original run");
+  await user.click(returnButton);
+  const runs = await screen.findByRole("region", { name: i18n.t("runsView.title") });
+  expect(within(runs).getByRole("button", { name: "Recorded assistant" })).toBeVisible();
+  expect(await within(runs).findByRole("button", { name: i18n.t("conversation.runHide") })).toHaveAttribute("aria-expanded", "true");
+  expect(await within(runs).findByRole("heading", { name: i18n.t("conversation.runStateActive") })).toBeVisible();
+  expect(conversationCommands.proposalWorkPlans).toHaveBeenCalledWith({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    conversationId: h.conversationId, after: null, limit: 50 });
+  expect(workPlanCommands.status).toHaveBeenCalledWith({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, planId: h.planId });
+  const closeRunName = i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.runs") });
+  expect(screen.getAllByRole("button", { name: closeRunName })).toHaveLength(1);
+  const originalRunLocation = window.location.hash;
+  expect(originalRunLocation).toContain("kind=runs");
+  expect(await screen.findByRole("textbox", { name: i18n.t("conversation.message") })).toHaveValue(message);
+  await user.click(within(runs).getByRole("button", { name: i18n.t("conversation.runResultsShow") }));
+  const openAgain = await within(runs).findByRole("button", { name: i18n.t("conversation.runResultsOpenCandidate") });
+  await waitFor(() => expect(openAgain).toBeEnabled()); openAgain.focus(); await user.click(openAgain);
+  await screen.findByRole("region", { name: w("candidateTitle") });
+  await user.click(await screen.findByRole("button", { name: i18n.t("runsView.return") }));
+  const returned = await screen.findByRole("region", { name: i18n.t("runsView.title") });
+  expect(await within(returned).findByRole("button", { name: i18n.t("conversation.runHide") })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getAllByRole("button", { name: closeRunName })).toHaveLength(1);
+  expect(window.location.hash).toBe(originalRunLocation);
+  expect(screen.getByRole("textbox", { name: i18n.t("conversation.message") })).toHaveValue(message);
+  expect(h.journal().value?.text).toBe(message);
+  expect(authorize).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled(); expect(planning).not.toHaveBeenCalled(); expect(authorizeProposal).not.toHaveBeenCalled();
+  expect(nativeInvoke.mock.calls.filter(([command]) => /^(authorize_|start_|control_|prepare_|run_)/.test(String(command)))).toEqual([]);
+  expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled(); expect(translationCommands.decideCandidate).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
+}, 30000);
 
 it("assistant run candidate keeps the original view and message draft after a failed exact revision read, then recovers", async () => {
   const h = await openAssistantCandidate(1440, "9007199254740993"); h.revisionRead.mockRejectedValueOnce(new Error("Exact candidate temporarily unavailable"));
@@ -232,7 +281,7 @@ it("opens Inspector from the focused inline candidate, keeps the other snapshot 
   expect(screen.getByRole("button", { name: w("editorConfirm") })).toBeEnabled();
   expect(translationCommands.save).not.toHaveBeenCalled(); expect(translationCommands.select).not.toHaveBeenCalled();
   expect(executionCommands.identity).not.toHaveBeenCalled();
-});
+}, 15000);
 
 it("retains the original unknown candidate decision after the last view closes and checks it without allocating or dispatching another action", async () => {
   const h = await openCandidates();

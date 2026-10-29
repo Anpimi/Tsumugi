@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Button } from "../../../design-system/Button";
-import { Field } from "../../../design-system/Field";
+import { Field, Select } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
 import { matchingPluginEnvironments, pluginEnvironmentVersion } from "../../../pluginEnvironments";
@@ -42,17 +42,17 @@ export default function StartupSourcePreparation({ plan, inventory, loading, inv
       {inventoryFailed ? <Banner tone="error">{t("sourceOptionsFailed")}</Banner> : null}
       <Button disabled={busy || loading || selecting || checking} onClick={onRefresh}>{t("refreshSourceOptions")}</Button>
       {!loading && !inventoryFailed && inventory?.choices.length === 0 ? <Banner tone="warning">{t("noSourceFormats")}</Banner> : null}
-      <Field label={t("sourceFormat")}><select value={plan.choice} disabled={busy || selecting || checking || loading || inventoryFailed}
+      <Field label={t("sourceFormat")}><Select value={plan.choice} disabled={busy || selecting || checking || loading || inventoryFailed}
         onChange={event => onChange(event.target.value, "")}>
         <option value="">{t("chooseSourceFormat")}</option>
         {inventory?.choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
-      </select></Field>
-      <Field label={t("sourceRuntime")}><select value={plan.runtime} disabled={busy || selecting || checking || loading || inventoryFailed || !choice}
+      </Select></Field>
+      <Field label={t("sourceRuntime")}><Select value={plan.runtime} disabled={busy || selecting || checking || loading || inventoryFailed || !choice}
         onChange={event => onChange(plan.choice, event.target.value)}>
         <option value="">{t("chooseSourceRuntime")}</option>
         {runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t(value.environment.profile === "node-system-libraries-v1" ? "runtimeOption" : "nativeRuntimeOption",
           { version: pluginEnvironmentVersion(value.environment), system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}
-      </select></Field>
+      </Select></Field>
       {choice && !loading && runtimes.length === 0 ? <Banner tone="warning">{t("noSourceRuntime")}</Banner> : null}
       {failure ? <Banner tone="error">{t(plan.directory ? "sourceCheckFailed" : "sourceSelectionFailed")}<CommandFailureDetails failure={failure}/></Banner> : null}
       <Button disabled={!native || busy || selecting || checking || loading || inventoryFailed || !plan.directory || !choice || !runtimes.some(value => value.environmentDigest === plan.runtime)}

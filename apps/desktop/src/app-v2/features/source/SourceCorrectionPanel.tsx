@@ -1,7 +1,8 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../../design-system/Button";
-import { Field, TextArea, TextInput } from "../../../design-system/Field";
+import { Field, TextArea, TextInput, Select } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import { useSessionQuery } from "../../../SessionReadProvider";
@@ -18,10 +19,10 @@ function SubmittedCorrection({ request }: { request: SourceLineageCorrectionRece
   const candidate = request.basis.candidates.find(evidence => evidence.old.occurrenceId === request.oldOccurrenceId)?.old.occurrence;
   const entry = candidate ? candidate.nativeIdentity?.display.value || candidate.key || t("entry", { number: candidate.ordinal + 1 }) : t("savedHistorical");
   const decision = t(request.decision === "continue" ? "recoveryContinue" : request.decision === "reject" ? "recoveryReject" : "unresolved");
-  return <details><summary>{t("correctionSubmitted")}</summary>
+  return <Disclosure title={<>{t("correctionSubmitted")}</>}>
     <p>{t("correctionSubmittedCandidate", { entry })}</p><p>{t("correctionSubmittedDecision", { decision })}</p>
     <p>{t("correctionSubmittedActor", { actor: request.actor })}</p><p>{t("correctionSubmittedReason", { reason: request.reason })}</p>
-  </details>;
+  </Disclosure>;
 }
 
 function SavedCorrectionWork({ project, snapshotId, work, label, visible, current }: {
@@ -34,8 +35,8 @@ function SavedCorrectionWork({ project, snapshotId, work, label, visible, curren
   const history = useSessionQuery({ key: ["source-correction-translations", snapshotId, work.unitId, work.locale, after], scopes: ["source", "translation"], enabled: visible && expanded,
     read: () => translationCommands.history({ ...context, unitId: work.unitId, locale: work.locale, afterOrdinal: after, limit: 20 }) });
   const page = history.data?.unitId === work.unitId && history.data.locale === work.locale && !history.error ? history.data : null;
-  return <details onToggle={event => setExpanded(event.currentTarget.open)}>
-    <summary>{label}</summary>
+  return <Disclosure onToggle={event => setExpanded(event.currentTarget.open)} title={<>{label}</>}>
+
     <div className={styles.body}>
       <p>{t(work.selectionId ? "correctionOriginalSelection" : "correctionNoOriginalSelection")}</p>
       {history.isFetching ? <LoadingState label={t("readingTranslations")}/> : null}
@@ -53,7 +54,7 @@ function SavedCorrectionWork({ project, snapshotId, work, label, visible, curren
         </section>
       </> : null}
     </div>
-  </details>;
+  </Disclosure>;
 }
 
 /** Source owns the draft and original request; this panel owns only presentation. */
@@ -147,16 +148,16 @@ export default function SourceCorrectionPanel({ project, owner, snapshotId, row,
               {evidence.reason ? <p>{t("correctionRecordedReason", { reason: evidence.reason })}</p> : null}
             </li>)}</ul> : <p>{t("correctionEmpty")}</p>}
           </section>
-          <Field label={t("correctionCandidate")} required><select disabled={readOnly} value={draft.oldOccurrenceId ?? ""} onChange={event => edit({ oldOccurrenceId: event.target.value || null })}>
+          <Field label={t("correctionCandidate")} required><Select disabled={readOnly} value={draft.oldOccurrenceId ?? ""} onChange={event => edit({ oldOccurrenceId: event.target.value || null })}>
             <option value="">{t("correctionChooseCandidate")}</option>
             {candidates.map(candidate => <option key={candidate.occurrenceId} value={candidate.occurrenceId ?? ""}>{label(candidate.occurrence)}</option>)}
             {draft.oldOccurrenceId && !availableCandidate ? <option value={draft.oldOccurrenceId}>{t("savedHistorical")}</option> : null}
-          </select></Field>
+          </Select></Field>
           {draft.oldOccurrenceId && !availableCandidate ? <Banner tone="warning">{t("correctionUnavailableCandidate")}</Banner> : null}
-          <Field label={t("correctionDecision")}><select disabled={readOnly} value={draft.decision} onChange={event => {
+          <Field label={t("correctionDecision")}><Select disabled={readOnly} value={draft.decision} onChange={event => {
             const decision = event.target.value;
             if (decision === "continue" || decision === "reject" || decision === "unresolved") edit({ decision });
-          }}><option value="continue">{t("recoveryContinue")}</option><option value="reject">{t("recoveryReject")}</option><option value="unresolved">{t("unresolved")}</option></select></Field>
+          }}><option value="continue">{t("recoveryContinue")}</option><option value="reject">{t("recoveryReject")}</option><option value="unresolved">{t("unresolved")}</option></Select></Field>
           <Field label={t("actor")} required error={actorError}><TextInput readOnly={readOnly} value={draft.actor} onChange={event => edit({ actor: event.target.value })}/></Field>
           <Field label={t("correctionReason")} required error={reasonError}><TextArea rows={3} readOnly={readOnly} value={draft.reason} onChange={event => edit({ reason: event.target.value })}/></Field>
           <section className={styles.body} aria-label={t("correctionSavedWork")}><h3>{t("correctionSavedWork")}</h3><p>{t("correctionWorkHelp")}</p>

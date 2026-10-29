@@ -1,4 +1,9 @@
+import { projectMetadataEn } from "./projectMetadata";
+import { knowledgeExchangeEn } from "./knowledgeExchange";
+import { projectBriefEn } from "./projectBrief";
+import { runsViewEn } from "./runsView";
 import { strategyViewEn } from "./strategyView";
+import { proposalRunSetupEn } from "./proposalRunSetup";
 import { conversationTeamQuestionsEn } from "./conversationTeamQuestions";
 import { conversationTeamRecoveryEn } from "./conversationTeamRecovery";
 import { conversationRunHistoryEn } from "./conversationRunHistory";
@@ -17,6 +22,11 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+  projectMetadata: projectMetadataEn,
+  knowledgeExchange: knowledgeExchangeEn,
+  projectBrief: projectBriefEn,
+  runsView: runsViewEn,
+  proposalRunSetup: proposalRunSetupEn,
   strategyView: strategyViewEn,
   conversationTeamQuestions: conversationTeamQuestionsEn,
 conversationRunHistory: conversationRunHistoryEn,

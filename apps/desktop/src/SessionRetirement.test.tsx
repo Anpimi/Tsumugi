@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { createRef, useLayoutEffect, useState } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -37,6 +38,7 @@ beforeEach(() => { invoke.mockReset(); invoke.mockImplementation(async (command:
   if (command === "read_context_strategy_default") return null;
   throw new Error(command);
 }); });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("revokes an issued exit permit synchronously for pending editor input and exposes its original owner", async () => {
@@ -59,7 +61,7 @@ it("revokes an issued exit permit synchronously for pending editor input and exp
         <ProjectSessionWorkbench ref={handle} project={project} disabled={false} onActivate={activate} onCoordinatingChange={() => {}} />
       </WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
   }
-  render(<Harness />);
+  await act(async () => { render(<Harness />); });
   act(() => { drafts.begin({ unitId: fixture.receipt.revision.unitId, locale: "zh-CN", sourceRevisionId: fixture.receipt.revision.sourceRevisionId,
     key: "key", sourceText: "Original" }, null, null); });
   const before = drafts.current(); let permit!: SessionExitPermit | null;

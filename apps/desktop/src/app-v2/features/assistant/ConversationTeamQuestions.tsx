@@ -1,3 +1,4 @@
+import { Disclosure } from "../../../design-system/Disclosure";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { teamQuestionCommands, type TeamQuestionView } from "../../../teamQuestionCommands";
@@ -82,7 +83,7 @@ function Question({ owner, input, link, status, question, memberName, memberRole
   return <article ref={region} tabIndex={-1} className={styles.question} aria-label={t("questionTitle", { member: memberName ?? t("memberUnknown") })}>
     <h4>{memberName ?? t("memberUnknown")}</h4><p className={styles.text}>{post.publication.body}</p>
     <p>{t("target", { entry: unit?.nativeKey ?? t("entryUnknown"), locale: post.publication.target.locale })}</p>
-    {memberRole ? <details><summary>{t("role")}</summary><p className={styles.text}>{memberRole}</p></details> : null}
+    {memberRole ? <Disclosure title={<>{t("role")}</>}><p className={styles.text}>{memberRole}</p></Disclosure> : null}
     <p role="status">{t(question.state === "open" ? "waiting" : question.state === "resolved" ? "answered" : "dismissed")}</p>
     {question.response ? <p className={styles.text}>{question.response.publication.body || t("noReason")}</p> : null}
     {question.state === "open" ? <Button size="sm" aria-expanded={open} aria-controls={id} disabled={!editable()} onClick={() => {
@@ -100,10 +101,10 @@ function Question({ owner, input, link, status, question, memberName, memberRole
         readOnly={!editable() || question.state !== "open"} onChange={event => { if (editable()) owner.editTeamQuestion(link, postId, { mode: "text", body: event.target.value }); }}/></Field>
       <p>{t("shareHelp")}</p>
       <Button variant="primary" size="sm" disabled={blocked || !valid} onClick={() => { if (!blocked && draft) void owner.respondTeamQuestion(link, question, draft.editSeq, false, allowed); }}>{t("save")}</Button>
-      <details><summary>{t("close")}</summary><p>{t("closeHelp")}</p><Field label={t("reason")}><TextArea value={draft?.dismissReason ?? ""}
+      <Disclosure title={<>{t("close")}</>}><p>{t("closeHelp")}</p><Field label={t("reason")}><TextArea value={draft?.dismissReason ?? ""}
         readOnly={!editable() || question.state !== "open"} onChange={event => { if (editable()) owner.editTeamQuestion(link, postId, { dismissReason: event.target.value }); }}/></Field>
         <Button size="sm" disabled={blocked || !canDismiss} onClick={() => { if (!blocked && draft) void owner.respondTeamQuestion(link, question, draft.editSeq, true, allowed); }}>{t("closeConfirm")}</Button>
-      </details>
+      </Disclosure>
       <Button size="sm" disabled={!editable() || !!ownPending || !!input.busy} onClick={() => { if (editable()) { owner.discardTeamQuestion(link, postId); setEditing(false); } }}>{t("discard")}</Button>
       {ownPending ? <p role="status">{t("pending")}</p> : input.journalBusy || input.dirty ? <p role="status">{t("saving")}</p> : <p role="status">{t("kept")}</p>}
     </div> : null}</div>

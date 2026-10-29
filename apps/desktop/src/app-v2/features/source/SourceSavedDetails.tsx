@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../../design-system/Button";
-import { Field } from "../../../design-system/Field";
+import { Field, Select } from "../../../design-system/Field";
 import { Banner, LoadingState } from "../../../design-system/Feedback";
 import { TokenizedText } from "../../../design-system/TokenizedText";
 import { useSessionQuery } from "../../../SessionReadProvider";
@@ -56,7 +56,7 @@ export default function SourceSavedDetails({ project, owner, snapshotId, target,
         <strong>{evidence.old.occurrence.nativeIdentity?.display.value || evidence.old.occurrence.key}</strong><p><TokenizedText text={evidence.old.occurrence.text}/></p>
         <p>{evidence.decision === "unresolved" ? t("unresolved") : old(evidence.decision === "continue" ? "source.evidenceDecision.continue" : evidence.decision === "reject" ? "source.evidenceDecision.reject" : "source.evidenceDecision.candidate")}</p>
         {evidence.actor ? <p>{evidence.actor}</p> : null}{evidence.reason ? <p>{evidence.reason}</p> : null}</li>)}</ul>}
-      <Field label={t("historyLocale")}><select value={locale} onChange={event => setLocale(event.target.value)}>{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></Field>
+      <Field label={t("historyLocale")}><Select value={locale} onChange={event => setLocale(event.target.value)}>{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</Select></Field>
       {history.isFetching ? <LoadingState label={t("readingTranslations")}/> : history.error ? <Banner tone="warning" action={<Button onClick={() => void history.refetch()}>{t("retryRead")}</Button>}>{t("translationsFailed")}</Banner>
         : history.data ? <section aria-label={t("savedTranslations")}><h3>{t("savedTranslations")}</h3><p>{t("savedTranslationsHelp")}</p>
           {history.data.rows.length ? <ul>{history.data.rows.map(revision => <li key={revision.revisionId}><p><TokenizedText text={revision.text}/></p></li>)}</ul> : <p>{t("noSavedTranslations")}</p>}

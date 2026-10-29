@@ -12,6 +12,16 @@ beforeEach(() => { localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 
 describe("workspace commands in the existing registry", () => {
+  it("opens work plans from the same button, palette and native command without bypassing an active dialog", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] }), gate = new InteractionGate(), commands = new WorkbenchCommands(), openRuns = vi.fn();
+    registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => scope,
+      navigation: navigation(), actions: { openRuns }, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: null, scope, commands }), modifier: "meta" });
+    for (const source of ["button", "palette", "native-menu"] as const) expect(dispatcher.dispatch("workspace.runs", { viewId: null, source })).toBe(true);
+    const release = gate.pushDialog("synthetic-dialog");
+    expect(dispatcher.dispatch("workspace.runs", { viewId: null, source: "palette" })).toBe(false);
+    release(); expect(openRuns).toHaveBeenCalledTimes(3);
+  });
   it("opens context experiments through the existing workspace command", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] }), gate = new InteractionGate(), commands = new WorkbenchCommands(), openStrategy = vi.fn();
     registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => scope,

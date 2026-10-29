@@ -1,0 +1,5 @@
+.view { display: grid; align-content: start; gap: var(--space-5); padding: var(--space-6); overflow: auto; min-inline-size: 0; min-block-size: 0; block-size: 100%; }
+.view header, .view header h2, .view p { margin: 0; }
+.view header { display: grid; gap: var(--space-3); }
+.view p { overflow-wrap: anywhere; }
+.actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }

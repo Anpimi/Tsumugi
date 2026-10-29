@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -54,6 +55,7 @@ beforeEach(async () => {
   }));
   vi.spyOn(aiSemanticReviewCommands, "read").mockImplementation(async request => ({ attemptId: request.attemptId, view: semanticViewFixture() }));
 });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("keeps the discoverable review entry collapsed without preparing or starting a model", async () => {
@@ -168,12 +170,12 @@ it("records exactly one authoritative recovery unit through the original Task ow
     changes: [{ kind: "ai-semantic-review", id: target.unitId, revision: "1" }] } satisfies Receipt })).mockRejectedValueOnce(new Error("Automatic full action read unavailable"));
   await setup(); await act(async () => { await review.semantic.prepare(); }); act(() => review.semantic.setConsent(true));
   await act(async () => { await review.semantic.start(); }); const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Review and record findings" }));
-  await user.click(await screen.findByRole("button", { name: "Record findings" }));
+  await user.click(await screen.findByRole("button", { name: "Review and save findings" }));
+  await user.click(await screen.findByRole("button", { name: "Save findings" }));
   await waitFor(() => expect(tasks.currentActivity()?.phase).toBe("unknown"));
   expect(captured).toMatchObject({ attemptId: view.detail.attemptId, unitId: view.detail.recovery.units[0].unitId, resultIds: [view.detail.items[0].resultId] });
   act(() => review.editReason(target, "Newer reason B"));
-  await user.click(screen.getByRole("button", { name: "Check recording status" }));
+  await user.click(screen.getByRole("button", { name: "Check saved result" }));
   await waitFor(() => expect(tasks.currentActivity()?.phase).toBe("recorded"));
   expect(prepare).toHaveBeenCalledOnce(); expect(adopt).toHaveBeenCalledOnce(); expect(receipt).toHaveBeenCalledTimes(2); expect(receipt).toHaveBeenLastCalledWith(captured);
   expect(review.current().drafts[`${target.locale}:${target.unitId}`]).toBe("Newer reason B");

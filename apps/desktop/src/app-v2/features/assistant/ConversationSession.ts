@@ -13,6 +13,7 @@ import { copyWorkspaceSelection, workspaceSelectionIds, type WorkspaceSelection 
 import { checkPlanningSelection, planningSelectionMatchesPreview, planningSelectionScope } from "./planningSelection";
 import { reviewCommands } from "../../../reviewCommands";
 import { editableProposal, validProposalContent, type ProposalContent } from "./proposalDraft";
+import { newProposalMember } from "./proposalRecipe";
 import { isCommandError } from "../../../projectCommands";
 import { emptyExecutionConsent, workPlanInput, workPlanMinutesValid, type ConversationWorkPlanInput, type ProposalWorkPlanTools, type ProposalWorkPlanConfirmation } from "./proposalWorkPlan";
 import type { WorkPlanExecutionConsent } from "../../../WorkPlanExecutionReview";
@@ -247,6 +248,28 @@ export class ConversationSession {
     this.changed++;
     this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, proposalEdits: edits.length ? edits : undefined }, dirty: true, proposalEditorId, proposalFailure: null, notice: null });
     if (!record.action && !record.input.failure) void this.persist(record);
+  }
+  addProposalMember(conversationId: string, proposalId: string) {
+    const record = this.records.get(conversationId), draft = record?.input.value.proposalEdits?.find(edit => edit.proposalId === proposalId);
+    if (!record || !this.kernel.live || draft?.content.kind !== "proposal" || draft.content.options.mcpTermQuery
+      || !draft.content.unitIds.length || (draft.content.options.teamExecution?.members.length ?? 0) >= 8) return;
+    const initialUnitId = draft.content.unitIds[0];
+    if (!initialUnitId) return;
+    const member = newProposalMember(draft.content.unitIds, this.ports.identity, draft.content.options.teamExecution?.members[0]);
+    this.editProposal(conversationId, proposalId, content => {
+      if (content.kind !== "proposal") return content;
+      const previous = content.options.teamExecution;
+      return { ...content, options: { ...content.options,
+        stages: content.options.stages.some(choice => choice.stage === "generation")
+          ? content.options.stages.map(choice => choice.stage === "generation" ? { ...choice, mode: "assisted" } : choice)
+          : [...content.options.stages, { stage: "generation", mode: "assisted" }],
+        teamDiscussions: content.options.teamDiscussions ?? { profile: "current-plan-1" },
+        teamExecution: previous ? { ...previous, members: [...previous.members, member] }
+          : { profile: "bounded-team-1", initialMemberId: member.memberId, initialUnitId, members: [member],
+            limits: { maxActivations: 12, maxConcurrency: 1, maxNoProgress: 3 } },
+      } };
+    });
+    return member.memberId;
   }
   discardProposalEdit(conversationId: string, proposalId: string, expectedSeq: string): boolean {
     const record = this.records.get(conversationId), edits = record?.input.value.proposalEdits ?? [], original = edits.find(edit => edit.proposalId === proposalId);

@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -44,6 +45,7 @@ function install(write: (request: unknown) => unknown, read: (request: unknown) 
   });
 }
 beforeEach(async () => { invoke.mockReset(); await i18n.changeLanguage("en-US"); });
+beforeEach(installWorkbenchInputJournalFixtures);
 afterEach(cleanup);
 
 it.each(["lost", "invalid"])("confirms an original %s ACK once without a new identity, preparation, wide read or model submission", async ack => {

@@ -1,3 +1,4 @@
+import { installWorkbenchInputJournalFixtures } from "./testSupport/inputJournalFixture";
 import { useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -36,7 +37,8 @@ beforeEach(async()=>{
     if(command==="read_maintenance_assessment")return{...structuredClone(assessment),after:request.after};
     throw new Error(command);
   });
-});afterEach(cleanup);
+});
+beforeEach(installWorkbenchInputJournalFixtures);afterEach(cleanup);
 async function open(){const result=render(<Harness/>,project),user=userEvent.setup();
   act(()=>{owner.setConfig({...owner.config,model:"Newer config B"});manual.begin({unitId:fixtureIdentity(999),locale:"zh-CN",sourceRevisionId:fixtureIdentity(998),key:"Manual",sourceText:"Separate"},null,null,"Manual B");});
   await user.click(screen.getByRole("button",{name:i18n.t("ai.maintenance.title")}));

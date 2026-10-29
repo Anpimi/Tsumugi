@@ -6,6 +6,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { installResourceDraftPortsFixture } from "./testSupport/resourceDraftFixture";
+import { installSourceDraftPortsFixture } from "./testSupport/sourceDraftFixture";
+import { installStrategyDraftFixture } from "./testSupport/strategyDraftFixture";
+import { resourceDraftCommands } from "./resourceDraftCommands";
 import { i18n, UI_LOCALE_STORAGE_KEY } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture, sourceImpactFixture } from "./testSupport/sourceFixture";
@@ -2139,7 +2143,7 @@ describe("project lifecycle workbench", () => {
       .toMatchObject({ actionId: fixtureIdentity(1102), actor: "Reviewer A", reason: "Reason A" });
   });
 
-  it("keeps resource edits during ordinary navigation and confirms real project close", async () => {
+  it("keeps resource edits during navigation, waits for local acknowledgement before close, and restores them on reopen", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const original = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation(async (command: string, payload: unknown) => {
@@ -2160,17 +2164,35 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Glossary and context" }));
     expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("Keep this draft");
     expect(screen.getByRole("textbox", { name: "Source aliases, separated by commas" })).toHaveValue("Cask,  Drum");
+    const write = vi.mocked(resourceDraftCommands.write), persist = write.getMockImplementation()!;
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>(resolve => { acknowledge = resolve; });
+    write.mockImplementation(async request => { await acknowledgement; return persist(request); });
+    await user.type(screen.getByRole("textbox", { name: "Reason or source note" }), " plus B");
+    await screen.findByText(i18n.t("knowledge.recoveryKeeping"));
     await user.click(screen.getByRole("button", { name: "Back to overview" }));
     await user.click(screen.getByRole("button", { name: "Close project" }));
-    const dialog = await screen.findByRole("dialog", { name: "Leave with unsaved resource edits?" });
     expect(mocks.invoke.mock.calls.some(([name]) => name === "close_project")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: "Stay and keep edits" }));
     expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("Keep this draft");
+    await act(async () => { acknowledge(); });
+    await waitFor(() => expect(screen.queryByText(i18n.t("knowledge.recoveryKeeping"))).toBeNull());
+    const saved = await resourceDraftCommands.read({ sessionToken: "session-1", key: { projectId: metadata().projectId } });
+    expect(saved.value).toMatchObject({ aliasInput: "Cask,  Drum", termDraft: { source: "Barrel", target: "Keep this draft", reason: "Reviewed plus B" } });
     await user.click(screen.getByRole("button", { name: "Back to overview" }));
     await user.click(screen.getByRole("button", { name: "Close project" }));
-    await user.click(within(await screen.findByRole("dialog", { name: "Leave with unsaved resource edits?" })).getByRole("button", { name: "Discard edits and leave" }));
     await screen.findByRole("heading", { name: "No project open" });
     expect(mocks.invoke.mock.calls.filter(([name]) => name === "close_project")).toHaveLength(1);
+    const current = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, payload: unknown) => command === "open_project"
+      ? Promise.resolve({ ...projectView(), sessionToken: "session-2" }) : current(command, payload));
+    await user.click(screen.getByRole("button", { name: i18n.t("empty.open") }));
+    await user.type(screen.getByRole("textbox", { name: new RegExp(i18n.t("open.destination")) }), "C:\\Projects\\demo");
+    await user.click(screen.getByRole("button", { name: i18n.t("open.submit") }));
+    await screen.findByRole("heading", { name: "Demo" });
+    await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("Keep this draft"));
+    expect(screen.getByRole("textbox", { name: "Source aliases, separated by commas" })).toHaveValue("Cask,  Drum");
+    expect(screen.getByRole("textbox", { name: "Reason or source note" })).toHaveValue("Reviewed plus B");
     expect(mocks.invoke.mock.calls.some(([name]) => name === "save_term")).toBe(false);
   });
 
@@ -2862,6 +2884,7 @@ describe("project lifecycle workbench", () => {
     mocks.drafts.clear();
     mocks.contextCallbacks.clear();
     mocks.memories.clear();
+    installResourceDraftPortsFixture(); installSourceDraftPortsFixture(); installStrategyDraftFixture();
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");
     mocks.sep.mockReturnValue("\\");

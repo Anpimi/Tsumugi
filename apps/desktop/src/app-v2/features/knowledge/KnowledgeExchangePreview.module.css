@@ -1,0 +1,12 @@
+.preview, .preview > section { display: grid; gap: var(--space-4); min-inline-size: 0; }
+.preview { padding: var(--space-4); }
+.preview header, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.preview header { justify-content: space-between; }
+.preview h2, .preview h4, .preview h5, .preview h6 { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); }
+.preview p { margin: 0; overflow-wrap: anywhere; }
+.preview article { display: grid; gap: var(--space-3); padding-block: var(--space-3); border-block-end: var(--border-width) solid var(--color-border-subtle); }
+.preview ol, .preview ul { min-inline-size: 0; padding-inline-start: var(--space-5); }
+.preview dl { display: grid; gap: var(--space-2); margin: 0; }
+.preview dt { color: var(--color-text-secondary); font-size: var(--text-sm); }
+.preview dd { margin: 0; overflow-wrap: anywhere; }
+.original { white-space: pre-wrap; overflow-wrap: anywhere; }
