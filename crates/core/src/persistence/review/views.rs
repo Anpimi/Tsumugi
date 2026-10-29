@@ -362,7 +362,7 @@ impl ProjectStore {
             // Fix identity/order across pages without reading every unit's text.
             let mut statement = connection
                 .prepare(
-                    "SELECT o.unit_id,MIN(o.ordinal) FROM source_occurrences o
+                    "SELECT o.unit_id,MIN(o.ordinal) FROM source_effective_occurrences o
                  JOIN source_units u ON u.unit_id=o.unit_id
                  WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal),o.unit_id LIMIT 10001",
                 )
@@ -382,7 +382,7 @@ impl ProjectStore {
             let mut statement = connection
                 .prepare(
                     "SELECT o.unit_id,MIN(o.ordinal) OVER(PARTITION BY o.unit_id),o.native_key,r.text,tr.text
-             FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+             FROM source_effective_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
              JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?3
              LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
                AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t

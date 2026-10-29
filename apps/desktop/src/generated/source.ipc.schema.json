@@ -112,6 +112,70 @@
         ],
         "type": "object"
       },
+      "ContentRow": {
+        "additionalProperties": false,
+        "properties": {
+          "occurrence": {
+            "$ref": "#/definitions/SourceOccurrence"
+          },
+          "occurrenceId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "occurrence"
+        ],
+        "type": "object"
+      },
+      "ContentScope": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "type": "object"
+      },
       "ContentTarget": {
         "oneOf": [
           {
@@ -185,6 +249,42 @@
           "id",
           "schemaVersion",
           "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "CorrectSourceLineage": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/SourceLineageCorrectionBasis"
+          },
+          "decision": {
+            "$ref": "#/definitions/SourceLineageCorrectionDecision"
+          },
+          "oldOccurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "basis",
+          "oldOccurrenceId",
+          "decision",
+          "actor",
+          "reason"
         ],
         "type": "object"
       },
@@ -350,6 +450,56 @@
         ],
         "type": "string"
       },
+      "LineageEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "appliedRelation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": "string"
+          },
+          "old": {
+            "$ref": "#/definitions/ContentRow"
+          },
+          "oldSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relationship": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "old",
+          "oldSnapshotId",
+          "relationship",
+          "decision",
+          "actionId",
+          "policy"
+        ],
+        "type": "object"
+      },
       "LineageRequest": {
         "additionalProperties": false,
         "properties": {
@@ -374,6 +524,55 @@
           "projectId",
           "snapshotId",
           "ordinal"
+        ],
+        "type": "object"
+      },
+      "NativeIdentityDisplay": {
+        "additionalProperties": false,
+        "description": "Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.",
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ],
+        "type": "object"
+      },
+      "NativeIdentityEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "display": {
+            "$ref": "#/definitions/NativeIdentityDisplay"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "value": {
+            "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "value",
+          "policy",
+          "display"
         ],
         "type": "object"
       },
@@ -732,6 +931,17 @@
             ],
             "default": null
           },
+          "expectedMappingRevision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent historical requests describe the original, uncorrected mapping."
+          },
           "identityPolicy": {
             "type": "string"
           },
@@ -951,6 +1161,264 @@
         ],
         "type": "object"
       },
+      "SourceLineageBinding": {
+        "additionalProperties": false,
+        "description": "A saved binding remains addressable after another identity becomes current.",
+        "properties": {
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "predecessorId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relation": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "unitId",
+          "sourceRevisionId",
+          "relation"
+        ],
+        "type": "object"
+      },
+      "SourceLineageCorrectionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageBinding"
+            },
+            "type": "array"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/definitions/LineageEvidence"
+            },
+            "type": "array"
+          },
+          "mappingRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "originChain": {
+            "description": "Current occurrence through the actual unresolved origin, inclusive.",
+            "items": {
+              "$ref": "#/definitions/SourceLineageOrigin"
+            },
+            "type": "array"
+          },
+          "previousSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "savedWork": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageSavedWork"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "previousSnapshotId",
+          "snapshotId",
+          "resultId",
+          "resultDigest",
+          "scope",
+          "mappingRevision",
+          "originChain",
+          "ordinal",
+          "bindings",
+          "candidates",
+          "savedWork"
+        ],
+        "type": "object"
+      },
+      "SourceLineageCorrectionBasisRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "snapshotId",
+          "ordinal"
+        ],
+        "type": "object"
+      },
+      "SourceLineageCorrectionDecision": {
+        "enum": [
+          "continue",
+          "reject",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "SourceLineageCorrectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "correction": {
+            "$ref": "#/definitions/CorrectSourceLineage"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "correction"
+        ],
+        "type": "object"
+      },
+      "SourceLineageOrigin": {
+        "additionalProperties": false,
+        "properties": {
+          "mappingRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "occurrenceId",
+          "mappingRevision"
+        ],
+        "type": "object"
+      },
+      "SourceLineageSavedWork": {
+        "additionalProperties": false,
+        "description": "References and an exact observation of saved work; no translation is moved.",
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "checkActionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "protectionRevision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewActionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationRevisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "translationRevisionIds",
+          "reviewActionIds",
+          "checkActionIds",
+          "protected",
+          "basis"
+        ],
+        "type": "object"
+      },
       "SourceMaintenanceHookActivation": {
         "additionalProperties": false,
         "properties": {
@@ -1031,6 +1499,96 @@
         ],
         "type": "object"
       },
+      "SourceOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "identityBasis": {
+            "description": "Opaque digest of the exact captured revision policy, text, protected\nfragments and only the policy-selected domain blocks.",
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "keyByteRange": {
+            "description": "Half-open UTF-8 byte offsets into the captured artifact, using its format profile.",
+            "items": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "nativeIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/NativeIdentityEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operationOccurrenceId": {
+            "type": "string"
+          },
+          "operationSourceRevisionId": {
+            "type": "string"
+          },
+          "operationUnitId": {
+            "type": "string"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/definitions/SourceReference"
+          },
+          "text": {
+            "type": "string"
+          },
+          "valueByteRange": {
+            "description": "Derived UTF-8 coordinates for existing readers; original coordinates are\nretained in `source`, including their explicit encoding.",
+            "items": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ordinal",
+          "artifactId",
+          "namespace",
+          "key",
+          "text",
+          "valueByteRange",
+          "identityBasis",
+          "operationUnitId",
+          "operationOccurrenceId",
+          "operationSourceRevisionId",
+          "source"
+        ],
+        "type": "object"
+      },
       "SourcePluginStartMetadata": {
         "additionalProperties": false,
         "description": "Frozen before direct Source dispatch. This is attribution for cancellation,\nnever a live grant or permission restored from a local draft.",
@@ -1045,6 +1603,22 @@
         "required": [
           "taskId",
           "generation"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
         ],
         "type": "object"
       },
@@ -1100,6 +1674,39 @@
         ],
         "type": "object"
       },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
@@ -1138,6 +1745,12 @@
       },
       "lineage": {
         "$ref": "#/definitions/LineageRequest"
+      },
+      "lineageCorrection": {
+        "$ref": "#/definitions/SourceLineageCorrectionRequest"
+      },
+      "lineageCorrectionBasis": {
+        "$ref": "#/definitions/SourceLineageCorrectionBasisRequest"
       },
       "maintenanceHook": {
         "$ref": "#/definitions/SourceMaintenanceHookReadRequest"
@@ -1195,6 +1808,8 @@
       "history",
       "historyContent",
       "lineage",
+      "lineageCorrectionBasis",
+      "lineageCorrection",
       "impact",
       "adopt",
       "adoptionAction",
@@ -2161,6 +2776,42 @@
           "id",
           "schemaVersion",
           "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "CorrectSourceLineage": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/SourceLineageCorrectionBasis"
+          },
+          "decision": {
+            "$ref": "#/definitions/SourceLineageCorrectionDecision"
+          },
+          "oldOccurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "basis",
+          "oldOccurrenceId",
+          "decision",
+          "actor",
+          "reason"
         ],
         "type": "object"
       },
@@ -3562,6 +4213,17 @@
             ],
             "default": null
           },
+          "expectedMappingRevision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Absent historical requests describe the original, uncorrected mapping."
+          },
           "identityPolicy": {
             "type": "string"
           },
@@ -4519,6 +5181,305 @@
         ],
         "type": "object"
       },
+      "SourceLineageBinding": {
+        "additionalProperties": false,
+        "description": "A saved binding remains addressable after another identity becomes current.",
+        "properties": {
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "predecessorId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relation": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "unitId",
+          "sourceRevisionId",
+          "predecessorId",
+          "relation"
+        ],
+        "type": "object"
+      },
+      "SourceLineageCorrectionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageBinding"
+            },
+            "type": "array"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/definitions/LineageEvidence"
+            },
+            "type": "array"
+          },
+          "mappingRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "originChain": {
+            "description": "Current occurrence through the actual unresolved origin, inclusive.",
+            "items": {
+              "$ref": "#/definitions/SourceLineageOrigin"
+            },
+            "type": "array"
+          },
+          "previousSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "savedWork": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageSavedWork"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "previousSnapshotId",
+          "snapshotId",
+          "resultId",
+          "resultDigest",
+          "scope",
+          "mappingRevision",
+          "originChain",
+          "ordinal",
+          "bindings",
+          "candidates",
+          "savedWork"
+        ],
+        "type": "object"
+      },
+      "SourceLineageCorrectionDecision": {
+        "enum": [
+          "continue",
+          "reject",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "SourceLineageCorrectionObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "receipt": {
+                "$ref": "#/definitions/SourceLineageCorrectionReceipt"
+              },
+              "status": {
+                "const": "recorded",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "confirmed-not-applied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "receipt-absent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceLineageCorrectionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "currentBindings": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageBinding"
+            },
+            "type": "array"
+          },
+          "mappingRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "preservedWork": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageSavedWork"
+            },
+            "type": "array"
+          },
+          "previousBindings": {
+            "items": {
+              "$ref": "#/definitions/SourceLineageBinding"
+            },
+            "type": "array"
+          },
+          "request": {
+            "$ref": "#/definitions/CorrectSourceLineage"
+          }
+        },
+        "required": [
+          "request",
+          "mappingRevision",
+          "previousBindings",
+          "currentBindings",
+          "preservedWork"
+        ],
+        "type": "object"
+      },
+      "SourceLineageOrigin": {
+        "additionalProperties": false,
+        "properties": {
+          "mappingRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "occurrenceId",
+          "mappingRevision"
+        ],
+        "type": "object"
+      },
+      "SourceLineageSavedWork": {
+        "additionalProperties": false,
+        "description": "References and an exact observation of saved work; no translation is moved.",
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "checkActionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "protectionRevision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewActionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translationRevisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "selectionId",
+          "translationRevisionId",
+          "translationRevisionIds",
+          "reviewActionIds",
+          "checkActionIds",
+          "protectionRevision",
+          "protected",
+          "basis"
+        ],
+        "type": "object"
+      },
       "SourceMaintenanceHookActivation": {
         "additionalProperties": false,
         "properties": {
@@ -5216,6 +6177,15 @@
         },
         "type": "array"
       },
+      "lineageCorrection": {
+        "$ref": "#/definitions/SourceLineageCorrectionReceipt"
+      },
+      "lineageCorrectionBasis": {
+        "$ref": "#/definitions/SourceLineageCorrectionBasis"
+      },
+      "lineageCorrectionObservation": {
+        "$ref": "#/definitions/SourceLineageCorrectionObservation"
+      },
       "maintenanceHook": {
         "$ref": "#/definitions/SourceMaintenanceHookObservation"
       },
@@ -5294,6 +6264,9 @@
       "comparison",
       "history",
       "lineage",
+      "lineageCorrectionBasis",
+      "lineageCorrection",
+      "lineageCorrectionObservation",
       "estimates",
       "impact",
       "action",

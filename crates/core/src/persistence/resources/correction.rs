@@ -123,7 +123,7 @@ fn historic_source(
     revision: ExecutionId,
 ) -> Result<String, ExecutionError> {
     c.query_row(
-        "SELECT r.text FROM source_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
+        "SELECT r.text FROM source_binding_history o JOIN source_units u ON u.unit_id=o.unit_id
          JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id
          WHERE u.project_id=?1 AND o.unit_id=?2 AND o.snapshot_id=?3 AND o.revision_id=?4
          ORDER BY o.ordinal LIMIT 1",
@@ -235,9 +235,9 @@ pub(super) fn evidence_in(
         before_source_revision_id,
     )?;
     let source_current:bool=c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN content_scope s ON s.current_snapshot=o.snapshot_id
+        "SELECT EXISTS(SELECT 1 FROM source_binding_history o JOIN content_scope s ON s.current_snapshot=o.snapshot_id
           WHERE o.unit_id=?1 AND o.snapshot_id=?2 AND o.revision_id=?3
-            AND o.ordinal=(SELECT MIN(anchor.ordinal) FROM source_occurrences anchor WHERE anchor.unit_id=o.unit_id AND anchor.snapshot_id=o.snapshot_id))",
+            AND o.ordinal=(SELECT MIN(anchor.ordinal) FROM source_binding_history anchor WHERE anchor.unit_id=o.unit_id AND anchor.snapshot_id=o.snapshot_id))",
         params![unit.to_string(),basis.source_snapshot_id.to_string(),basis.source_revision_id.to_string()],|r|r.get(0)).map_err(sql)?;
     let metadata = super::super::read_metadata_from(c)
         .map_err(|_| failure(ErrorCode::CorruptLedger, "correction-project"))?;

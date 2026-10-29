@@ -3,6 +3,8 @@ import type { SourceDraftInputs } from "../sourceDraftJournal";
 /** Empty original-owner state for isolated local journal scenarios. */
 export function sourceDraftStateFixture(): SourceDraftInputs {
   return { source: { domain: "", source: null, selection: null, selectionLabel: null, captureRequest: null, checkPrepareRequest: null,
+    correctionDraft: null, correctionBasis: null, correctionReceipt: null, pendingCorrection: null,
+    correctionLoading: false, correctionFailure: null, correctionRetryAllowed: false,
     comparisonRef: null, receiptRef: null, pickerUncertain: false, preparationExpired: false, submission: null,
     pendingUncertain: false, recoveredPending: false, pendingObserved: null, sourceLanguage: "en", declared: false,
     preflight: null, attempt: null, preview: null, comparison: null, updating: false, lineage: {}, actor: "", filter: "", appliedFilter: "",

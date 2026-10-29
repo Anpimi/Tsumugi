@@ -12,6 +12,8 @@ export declare function validateRequestHistory(value: unknown): value is Request
 export declare function validateRequestHistoryContent(value: unknown): value is Requests["historyContent"];
 export declare function validateRequestImpact(value: unknown): value is Requests["impact"];
 export declare function validateRequestLineage(value: unknown): value is Requests["lineage"];
+export declare function validateRequestLineageCorrection(value: unknown): value is Requests["lineageCorrection"];
+export declare function validateRequestLineageCorrectionBasis(value: unknown): value is Requests["lineageCorrectionBasis"];
 export declare function validateRequestMaintenanceHook(value: unknown): value is Requests["maintenanceHook"];
 export declare function validateRequestMaintenanceHookSession(value: unknown): value is Requests["maintenanceHookSession"];
 export declare function validateRequestMaintenanceHookStop(value: unknown): value is Requests["maintenanceHookStop"];
@@ -37,6 +39,9 @@ export declare function validateResponseHistory(value: unknown): value is Respon
 export declare function validateResponseImpact(value: unknown): value is Responses["impact"];
 export declare function validateResponseIntegration(value: unknown): value is Responses["integration"];
 export declare function validateResponseLineage(value: unknown): value is Responses["lineage"];
+export declare function validateResponseLineageCorrection(value: unknown): value is Responses["lineageCorrection"];
+export declare function validateResponseLineageCorrectionBasis(value: unknown): value is Responses["lineageCorrectionBasis"];
+export declare function validateResponseLineageCorrectionObservation(value: unknown): value is Responses["lineageCorrectionObservation"];
 export declare function validateResponseMaintenanceHook(value: unknown): value is Responses["maintenanceHook"];
 export declare function validateResponseMaintenanceHookSession(value: unknown): value is Responses["maintenanceHookSession"];
 export declare function validateResponseMaintenanceHookStopped(value: unknown): value is Responses["maintenanceHookStopped"];

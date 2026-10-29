@@ -441,7 +441,7 @@ fn prepare_ai(
         if project != action.project_id.to_string() || !targets.contains(&item.target_locale) {
             return Err(error(ErrorCode::DependencyConflict, "ai-locale"));
         }
-        let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 AND o.revision_id=?2)",params![item.unit_id.to_string(),item.source_revision_id.to_string()],|r|r.get(0))?;
+        let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 AND o.revision_id=?2)",params![item.unit_id.to_string(),item.source_revision_id.to_string()],|r|r.get(0))?;
         if !valid {
             return Err(error(ErrorCode::DependencyConflict, "ai-source"));
         }

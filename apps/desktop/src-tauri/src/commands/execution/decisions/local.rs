@@ -141,6 +141,7 @@ fn reference(
             SourceDraftPending::StartCheck { .. }=>DecisionLocalRequestKind::SourceStartCheck,
             SourceDraftPending::FinishCheck { .. }=>DecisionLocalRequestKind::SourceFinishCheck,
             SourceDraftPending::Adopt { .. }=>DecisionLocalRequestKind::SourceAdopt,
+            SourceDraftPending::CorrectLineage { .. }=>DecisionLocalRequestKind::SourceLineageCorrection,
         },
         PendingJournalSlot::SourceHookStop(_)=>DecisionLocalRequestKind::SourceHookStop,
     };

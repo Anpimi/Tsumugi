@@ -80,6 +80,73 @@ fn rehash_source_evidence(store: &ProjectStore, input: &FixedInput, result: bool
 }
 
 #[test]
+fn corrected_release_and_source_context_keep_the_exact_frozen_mapping_after_later_correction() {
+    use crate::content::{CorrectSourceLineage,SourceLineageCorrectionDecision};
+    let (directory,mut store,project,old_units)=fixture();
+    let initial=store.content_scope().unwrap().current_snapshot.unwrap();
+    let old=store.source_content(initial,0,10).unwrap().rows[0].clone();
+    let qualified=ready(&mut store,project,&old_units,"zh-CN");
+    let build=environment(&store);
+    let mut legacy=store.capture_plugin_release_plan(project,&choices(),&qualified,&build).unwrap();
+    legacy.source_mapping_revision=None;
+    let legacy_input=legacy.fixed_input(ExecutionId::new()).unwrap();
+    let legacy_bytes=legacy_input.bytes().to_vec();
+    assert!(legacy_input.envelope().settings.get("sourceMappingRevision").is_none());
+    let restored=ReleasePlan::from_input(&FixedInput::restore(&legacy_bytes,legacy_input.digest()).unwrap()).unwrap();
+    assert_eq!(serde_json::to_value(&restored).unwrap(),legacy_input.envelope().settings);
+    restored.validate_source_reference(store.connection().unwrap()).unwrap();
+    adopt_source(&mut store,br#"{"hello":"Changed {{name}}","plain":"Plain"}"#);
+    let snapshot=store.content_scope().unwrap().current_snapshot.unwrap();
+    let raw_b=store.source_content(snapshot,0,10).unwrap().rows[0].clone();
+    translate(&mut store,project,raw_b.unit_id.unwrap(),"zh-CN","B {{name}}");
+    let request=CorrectSourceLineage{project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,snapshot,0).unwrap(),old_occurrence_id:old.occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Continue,actor:"Maintainer".into(),reason:"Use the original identity".into()};
+    store.correct_source_lineage(&request).unwrap();
+    let units=store.review_page(project,"zh-CN",0,10).unwrap().rows.into_iter().map(|r|r.unit_id).collect::<Vec<_>>();
+    let basis=ready(&mut store,project,&units,"zh-CN");
+    let build=environment(&store);
+    let input=store.prepare_plugin_build(project,ExecutionId::new(),&choices(),&basis,&build).unwrap();
+    let plan=ReleasePlan::from_input(&input).unwrap();
+    assert_eq!(plan.source_mapping_revision,Some(Revision::new(1).unwrap()));
+    let scope=crate::SourceContextRequest{project_id:project,source_snapshot_id:snapshot,unit_id:plan.locales[0].targets[0].review.unit_id,source_revision_id:plan.locales[0].targets[0].review.source_revision_id,locale:"zh-CN".into()};
+    let context=store.source_context(&scope).unwrap();
+    assert_eq!(context.local_unit_id,plan.locales[0].targets[0].local_unit_id);
+    let generation=ExecutionId::new();store.begin_plugin_epoch(generation).unwrap();authorize(&mut store,generation,&input);
+    let result=builder_result(&mut store,&input,input.envelope().items[0].item_id);
+    prove(&mut store,generation,&input,&result);
+    let action=action(&mut store,&input,&[result]);
+    let receipt=store.adopt_execution(&action,&ReleaseAdoptionHandler).unwrap();
+    let release=release_id(&receipt);
+    let view=store.release_view(release).unwrap();
+    let artifact=store.release_artifact_by_path(release,"zh-CN",&choices()[0].output_paths[0]).unwrap();
+    let saved=store.read_saved_plugin_build(project,input.envelope().attempt_id,false).unwrap();
+    let reject=CorrectSourceLineage{project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,snapshot,0).unwrap(),old_occurrence_id:old.occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Reject,actor:"Maintainer".into(),reason:"Later independent identity decision".into()};
+    store.correct_source_lineage(&reject).unwrap();
+    assert_eq!(store.source_content(snapshot,0,10).unwrap().rows[0].unit_id,raw_b.unit_id);
+    assert!(store.source_context(&scope).is_err());
+    let historical=crate::persistence::resources::SourceContextReader::historical_in(store.connection().unwrap(),&scope).unwrap();
+    assert_eq!(historical.project(&scope).unwrap(),context);
+    let row=historical.source_for_result_reference(context.source_attempt_id,context.source_result_id,scope.unit_id,scope.source_revision_id).unwrap();
+    assert_eq!(row.occurrence.operation_unit_id,context.local_unit_id);
+    let mut wrong=scope.clone();wrong.source_snapshot_id=initial;
+    assert!(crate::persistence::resources::SourceContextReader::historical_in(store.connection().unwrap(),&wrong).is_err());
+    wrong=scope.clone();wrong.unit_id=raw_b.unit_id.unwrap();
+    assert!(crate::persistence::resources::SourceContextReader::historical_in(store.connection().unwrap(),&wrong).is_err());
+    plan.validate_source_reference(store.connection().unwrap()).unwrap();
+    let mut wrong=plan.clone();wrong.source_mapping_revision=Some(Revision::new(2).unwrap());
+    assert_eq!(wrong.validate_source_reference(store.connection().unwrap()).unwrap_err().stage,"release-source-reference");
+    restored.validate_source_reference(store.connection().unwrap()).unwrap();
+    assert_eq!(legacy_input.bytes(),legacy_bytes);
+    assert_eq!(store.read_saved_plugin_build(project,input.envelope().attempt_id,false).unwrap(),saved);
+    assert_eq!(store.release_view(release).unwrap(),view);
+    assert_eq!(store.release_artifact_by_path(release,"zh-CN",&choices()[0].output_paths[0]).unwrap(),artifact);
+    drop(store);
+    let reopened=ProjectStore::open(directory.path().join("project")).unwrap();
+    assert_eq!(reopened.read_saved_plugin_build(project,input.envelope().attempt_id,false).unwrap(),saved);
+    assert_eq!(reopened.release_view(release).unwrap(),view);
+    assert_eq!(reopened.release_artifact_by_path(release,"zh-CN",&choices()[0].output_paths[0]).unwrap(),artifact);
+}
+
+#[test]
 fn all_artifacts_survive_frozen_edits_delivery_outcomes_and_current_format_move() {
     let (directory, mut store, generation, input) = fixture_build(&["zh-CN", "fr-FR"]);
     let results: Vec<_> = input

@@ -7,9 +7,19 @@ import { validateResponseDroppedSelection, validateResponseNativeDropEvent } fro
 import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
 import type { SourceAdoptRequest, SourceAdoptionActionRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, SourceContextBlockReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
 import type { Responses, SourceContextPage, SourceContextBlockBasis, SourceContextBlockDescriptor } from "./generated/source.responses";
+import type { SourceLineageCorrectionBasisRequest, SourceLineageCorrectionRequest as WireSourceLineageCorrectionRequest } from "./generated/source.requests";
+import type { SourceLineageCorrectionReceipt } from "./generated/source.responses";
+import { validateResponseLineageCorrectionBasis, validateResponseLineageCorrection, validateResponseLineageCorrectionObservation } from "./generated/source.validators";
+import { jsonIdentity } from "./pluginToolChoices";
 import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseSourceContextBlock, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
 export type { SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
+export type { SourceLineageCorrectionBasisRequest } from "./generated/source.requests";
+/** A human action uses the complete comparison returned by the reader. */
+export type SourceLineageCorrectionRequest = Omit<WireSourceLineageCorrectionRequest, "correction"> & {
+  correction: SourceLineageCorrectionReceipt["request"];
+};
+export type { SourceLineageCorrectionBasis, SourceLineageCorrectionReceipt, SourceLineageCorrectionDecision, SourceLineageSavedWork } from "./generated/source.responses";
 export type { PluginSourceDropRequest } from "./generated/source.requests";
 export type { NativeSourceDropEvent } from "./generated/source.responses";
 export { validateResponseNativeDropEvent };
@@ -74,11 +84,33 @@ export const sourceCommands = {
   history: (request: HistoryRequest) => checkedInvoke("read_source_history", request, validateResponseHistory),
   historyContent: (request: HistoryContentRequest) => checkedInvoke("read_source_history_content", request, validateResponsePage),
   lineage: (request: LineageRequest) => checkedInvoke("read_source_lineage", request, validateResponseLineage),
+  correctionBasis: (input: SourceLineageCorrectionBasisRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("read_source_lineage_correction_basis", request, (value): value is Responses["lineageCorrectionBasis"] => validateResponseLineageCorrectionBasis(value)
+      && value.projectId === request.projectId && value.snapshotId === request.snapshotId && value.ordinal === request.ordinal);
+  },
+  correctLineage: (input: SourceLineageCorrectionRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("correct_source_lineage", request, (value): value is SourceLineageCorrectionReceipt =>
+      validateResponseLineageCorrection(value) && sameSourceCorrectionReceipt(request, value));
+  },
+  validateCorrection: (request: SourceLineageCorrectionRequest) => checkedInvoke("validate_source_lineage_correction", request, validateResponseCancelled),
+  correctionAction: (input: SourceLineageCorrectionRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("read_source_lineage_correction_action", request, (value): value is Responses["lineageCorrectionObservation"] => validateResponseLineageCorrectionObservation(value)
+      && (value.status !== "recorded" || sameSourceCorrectionReceipt(request, value.receipt)));
+  },
   estimate: (request: SourceAdoptRequest) => checkedInvoke("estimate_source_update", request, validateResponseEstimates),
   impact: (request: ImpactRequest) => checkedInvoke("read_source_impact", request, validateResponseImpact),
   prepare: (request: SourceAdoptRequest) => checkedInvoke("prepare_source_adoption", request, validateResponseAction),
   adoptionAction: (request: SourceAdoptionActionRequest): Promise<Responses["adoptionAction"]> => checkedInvoke("read_source_adoption_action", request, validateResponseAdoptionAction),
 };
+
+export function sameSourceCorrectionReceipt(request: SourceLineageCorrectionRequest, receipt: SourceLineageCorrectionReceipt) {
+  return request.projectId === request.correction.projectId && receipt.request.projectId === request.projectId
+    && jsonIdentity(receipt.request) === jsonIdentity(request.correction)
+    && BigInt(receipt.mappingRevision) > BigInt(request.correction.basis.mappingRevision);
+}
 
 /** Metadata pages and explicit record reads use the same captured source identity. */
 export function sourceContextBlockBasis(page: SourceContextPage): SourceContextBlockBasis {
@@ -120,6 +152,7 @@ function normalizedConfirmation(value: unknown): unknown {
   const lineage = fields.lineage === undefined ? [] : fields.lineage;
   if (!Array.isArray(lineage)) return null;
   return { resultDigest: fields.resultDigest, identityPolicy: fields.identityPolicy, expectedContentRevision: fields.expectedContentRevision,
+    expectedMappingRevision: fields.expectedMappingRevision ?? "0",
     sourceLanguage: fields.sourceLanguage, expectedCurrentSnapshot: fields.expectedCurrentSnapshot ?? null,
     lineageBaseSnapshot: fields.lineageBaseSnapshot ?? null, actor: fields.actor ?? null,
     maintenanceHook: hook === null ? null : { policyVersion: hook.policyVersion, sessionEpoch: hook.sessionEpoch, locale: hook.locale,

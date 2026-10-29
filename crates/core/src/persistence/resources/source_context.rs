@@ -144,8 +144,9 @@ impl SourceContextReader {
         let snapshot_id = scope
             .current_snapshot
             .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-context-snapshot"))?;
-        let (_, (input, result, output, rows)) =
+        let (_, (input, result, output, mut rows)) =
             super::super::content::snapshot_rows(connection, snapshot_id, true)?;
+        super::super::content::lineage_corrections::effective_rows(connection,&mut rows)?;
         if input.envelope().project_id != project_id || output.source_language != source_locale {
             return Err(corrupt());
         }
@@ -172,8 +173,13 @@ impl SourceContextReader {
         if metadata.project_id().to_string() != scope.project_id.to_string() {
             return Err(corrupt());
         }
-        let (_, (input, result, output, rows)) =
+        let (_, (input, result, output, mut rows)) =
             super::super::content::snapshot_rows(connection, scope.source_snapshot_id, true)?;
+        let version:i64=connection.query_row("SELECT MIN(mapping_revision) FROM source_binding_history WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3",rusqlite::params![scope.source_snapshot_id.to_string(),scope.unit_id.to_string(),scope.source_revision_id.to_string()],|r|r.get(0)).map_err(super::sql)?;
+        for row in &mut rows {
+            let (unit,revision)=super::super::content::lineage_corrections::binding_at(connection,row.occurrence_id.ok_or_else(corrupt)?,Revision::new(version as u64)?)?;
+            row.unit_id=Some(unit);row.source_revision_id=Some(revision);
+        }
         if input.envelope().project_id != scope.project_id
             || output.source_language != metadata.source_locale().as_str()
         {

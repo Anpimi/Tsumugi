@@ -8,7 +8,7 @@ pub(super) fn project(store: &ProjectStore, c: &Connection, project: ExecutionId
     let mut items = Vec::new();
     for group in groups {
         let basis = codec::digest(&codec::encode(&(project, group.task_id, group.attempt_id, group.item_id,
-            group.result_id, &group.scope, group.previous_snapshot_id, &group.result_digest,
+            group.result_id, &group.scope, group.mapping_revision, group.previous_snapshot_id, &group.result_digest,
             group.changed_count, group.ambiguous_count, group.rename_candidate_count, group.cancellation_revision,
             group.cancellation_requested, group.authorization_current), crate::execution::MAX_INPUT_BYTES)?);
         items.push(DecisionItem {

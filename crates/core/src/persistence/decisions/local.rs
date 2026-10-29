@@ -41,6 +41,7 @@ pub struct DecisionClientActivity {
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DecisionLocalRequestKind {
+    SourceLineageCorrection,
     Save, Selection, Merge, Create, Append, Planning, ProposalCapture,
     ProposalRevision, ProposalWorkPlan, WorkPlanStart, WorkPlanControl,
     ResourceTypedContextSave, ResourceTypedContextWithdraw, ResourceKnowledgeDecision,

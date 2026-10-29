@@ -5,11 +5,11 @@ use tsumugi_core::{content::{LineageChoice, SourceConfirmation, StopSourceMainte
 use crate::commands::plugins::PluginSourceRequest;
 
 macro_rules! input {
-    ($name:ident { $($field:ident: $ty:ty),* $(,)? }) => {
+    ($name:ident { $($(#[$field_meta:meta])* $field:ident: $ty:ty),* $(,)? }) => {
         #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
         #[serde(rename_all = "camelCase", deny_unknown_fields)]
         #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-        pub struct $name { $(pub $field: $ty,)* }
+        pub struct $name { $($(#[$field_meta])* pub $field: $ty,)* }
     };
 }
 input!(SourceDraftKey { project_id: ExecutionId });
@@ -25,6 +25,11 @@ input!(SourceDraftAdoptRequest { project_id: ExecutionId, attempt_id: ExecutionI
     result_id: ExecutionId, action_id: ExecutionId, confirmation: SourceConfirmation });
 input!(SourceDraftHookStopRequest { project_id: ExecutionId, stop: StopSourceMaintenanceHook });
 input!(SourceDraftHookStop { request: SourceDraftHookStopRequest, submitted_seq: Revision });
+input!(SourceDraftCorrectionRequest { project_id: ExecutionId, correction: tsumugi_core::content::CorrectSourceLineage });
+input!(SourceDraftCorrection {
+    snapshot_id: ExecutionId, ordinal: u32, old_occurrence_id: Option<ExecutionId>,
+    decision: tsumugi_core::content::SourceLineageCorrectionDecision, actor: String, reason: String
+});
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -43,6 +48,7 @@ pub enum SourceDraftPending {
     StartCheck { request: SourceDraftStartRequest, submitted_seq: Revision, submitted_mapping_seq: Revision },
     FinishCheck { request: SourceDraftCheckFinishRequest, submitted_seq: Revision, submitted_mapping_seq: Revision },
     Adopt { request: SourceDraftAdoptRequest, unit_id: ExecutionId, submitted_seq: Revision, submitted_mapping_seq: Revision },
+    CorrectLineage { request: SourceDraftCorrectionRequest, submitted_seq: Revision, submitted_mapping_seq: Revision },
 }
 impl SourceDraftPending {
     pub fn project_id(&self) -> ExecutionId { match self {
@@ -51,6 +57,7 @@ impl SourceDraftPending {
         Self::PrepareCheck { request, .. } => request.project_id,
         Self::FinishCheck { request, .. } => request.project_id,
         Self::Adopt { request, .. } => request.project_id,
+        Self::CorrectLineage { request, .. } => request.project_id,
     } }
     pub fn action_id(&self) -> ExecutionId { match self {
         Self::Capture { request, .. } => request.attempt_id,
@@ -58,16 +65,19 @@ impl SourceDraftPending {
         Self::PrepareCheck { request, .. } => request.attempt_id,
         Self::FinishCheck { request, .. } => request.result_id,
         Self::Adopt { request, .. } => request.action_id,
+        Self::CorrectLineage { request, .. } => request.correction.action_id,
     } }
     pub fn submitted_seq(&self) -> Revision { match self {
         Self::Capture { submitted_seq, .. } | Self::Start { submitted_seq, .. }
         | Self::PrepareCheck { submitted_seq, .. } | Self::StartCheck { submitted_seq, .. }
-        | Self::FinishCheck { submitted_seq, .. } | Self::Adopt { submitted_seq, .. } => *submitted_seq,
+        | Self::FinishCheck { submitted_seq, .. } | Self::Adopt { submitted_seq, .. }
+        | Self::CorrectLineage { submitted_seq, .. } => *submitted_seq,
     } }
     pub fn submitted_mapping_seq(&self) -> Revision { match self {
         Self::Capture { submitted_mapping_seq, .. } | Self::Start { submitted_mapping_seq, .. }
         | Self::PrepareCheck { submitted_mapping_seq, .. } | Self::StartCheck { submitted_mapping_seq, .. }
-        | Self::FinishCheck { submitted_mapping_seq, .. } | Self::Adopt { submitted_mapping_seq, .. } => *submitted_mapping_seq,
+        | Self::FinishCheck { submitted_mapping_seq, .. } | Self::Adopt { submitted_mapping_seq, .. }
+        | Self::CorrectLineage { submitted_mapping_seq, .. } => *submitted_mapping_seq,
     } }
 }
 input!(SourceDraftComparisonRef { attempt_id: ExecutionId, result_id: ExecutionId,
@@ -86,7 +96,9 @@ input!(SourceDraftValue {
     filter: String, applied_filter: String, manual_ordinal: Option<u32>, historical_query: String,
     preview_after: u32, comparison_after: u32, historical_search: Option<SourceDraftHistoricalSearch>,
     receipt_ref: Option<SourceDraftReceiptRef>, picker_uncertain: bool, hook: SourceDraftHook,
-    pending: Option<SourceDraftPending>, hook_stop: Option<SourceDraftHookStop>
+    pending: Option<SourceDraftPending>, hook_stop: Option<SourceDraftHookStop>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    correction: Option<SourceDraftCorrection>
 });
 input!(SourceDraftHead { key: SourceDraftKey, revision: Revision, writer_id: Option<ExecutionId>, value: Option<SourceDraftValue> });
 input!(SourceDraftWrite { key: SourceDraftKey, expected_revision: Revision, writer_id: ExecutionId, value: SourceDraftValue });

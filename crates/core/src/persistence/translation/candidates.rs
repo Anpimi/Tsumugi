@@ -253,7 +253,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             .ok_or_else(|| error(ErrorCode::CorruptLedger, "candidate-decision"))?;
         let request = &value.request;
         let prior = previous.get(&request.revision_id);
-        let source_valid: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",
+        let source_valid: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",
             params![value.source_snapshot_id.to_string(),request.unit_id.to_string(),request.source_revision_id.to_string()], |r|r.get(0)).map_err(super::super::ledger::sql_error)?;
         if request.project_id.to_string() != project
             || !belongs(c, request)?

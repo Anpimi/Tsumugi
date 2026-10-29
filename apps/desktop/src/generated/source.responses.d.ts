@@ -65,6 +65,18 @@ export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
+export type SourceLineageCorrectionDecision = "continue" | "reject" | "unresolved";
+export type SourceLineageCorrectionObservation =
+  | {
+      receipt: SourceLineageCorrectionReceipt;
+      status: "recorded";
+    }
+  | {
+      status: "confirmed-not-applied";
+    }
+  | {
+      status: "receipt-absent";
+    };
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -339,6 +351,9 @@ export interface Responses {
   impact: SourceImpactPage;
   integration: IntegrationDescriptor;
   lineage: LineageEvidence[];
+  lineageCorrection: SourceLineageCorrectionReceipt;
+  lineageCorrectionBasis: SourceLineageCorrectionBasis;
+  lineageCorrectionObservation: SourceLineageCorrectionObservation;
   maintenanceHook: SourceMaintenanceHookObservation;
   maintenanceHookSession: SourceMaintenanceHookSession;
   maintenanceHookStopped: SourceMaintenanceHookStopped;
@@ -580,6 +595,10 @@ export interface SourceConfirmation {
   actor: string | null;
   expectedContentRevision: Revision;
   expectedCurrentSnapshot: ExecutionId | null;
+  /**
+   * Absent historical requests describe the original, uncorrected mapping.
+   */
+  expectedMappingRevision?: Revision | null;
   identityPolicy: string;
   lineage: LineageChoice[];
   lineageBaseSnapshot: ExecutionId | null;
@@ -780,6 +799,69 @@ export interface IntegrationDescriptor {
   reason: string | null;
   requiredFiles: string[];
   version: string;
+}
+export interface SourceLineageCorrectionReceipt {
+  currentBindings: SourceLineageBinding[];
+  mappingRevision: Revision;
+  preservedWork: SourceLineageSavedWork[];
+  previousBindings: SourceLineageBinding[];
+  request: CorrectSourceLineage;
+}
+/**
+ * A saved binding remains addressable after another identity becomes current.
+ */
+export interface SourceLineageBinding {
+  occurrenceId: ExecutionId;
+  predecessorId: ExecutionId | null;
+  relation: string;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+/**
+ * References and an exact observation of saved work; no translation is moved.
+ */
+export interface SourceLineageSavedWork {
+  basis: string;
+  checkActionIds: ExecutionId[];
+  locale: string;
+  protected: boolean;
+  protectionRevision: Revision | null;
+  reviewActionIds: ExecutionId[];
+  selectionId: ExecutionId | null;
+  translationRevisionId: ExecutionId | null;
+  translationRevisionIds: ExecutionId[];
+  unitId: ExecutionId;
+}
+export interface CorrectSourceLineage {
+  actionId: ExecutionId;
+  actor: string;
+  basis: SourceLineageCorrectionBasis;
+  decision: SourceLineageCorrectionDecision;
+  oldOccurrenceId: ExecutionId;
+  projectId: ExecutionId;
+  reason: string;
+}
+export interface SourceLineageCorrectionBasis {
+  bindings: SourceLineageBinding[];
+  candidates: LineageEvidence[];
+  mappingRevision: Revision;
+  ordinal: number;
+  /**
+   * Current occurrence through the actual unresolved origin, inclusive.
+   */
+  originChain: SourceLineageOrigin[];
+  previousSnapshotId: ExecutionId;
+  projectId: ExecutionId;
+  resultDigest: string;
+  resultId: ExecutionId;
+  savedWork: SourceLineageSavedWork[];
+  scope: ContentScope;
+  snapshotId: ExecutionId;
+}
+export interface SourceLineageOrigin {
+  mappingRevision: Revision;
+  occurrenceId: ExecutionId;
+  snapshotId: ExecutionId;
 }
 export interface SourceMaintenanceHookObservation {
   callbacksDrained: boolean;

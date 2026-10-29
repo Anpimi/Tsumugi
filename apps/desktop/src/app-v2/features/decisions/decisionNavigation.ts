@@ -180,8 +180,9 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
           match(reference.requestKind === "source-hook-stop" && !!pending && pending.request.stop.actionId === original.actionId && pending.submittedSeq === original.submittedSeq);
         } else {
           const pending = head.value?.pending;
-          match(original.slot === "primary" && !!pending && reference.requestKind === `source-${pending.kind}` && pending.submittedSeq === original.submittedSeq);
-          const actionId = pending.kind === "adopt" ? pending.request.actionId : pending.kind === "finish-check" ? pending.request.resultId : pending.request.attemptId;
+          match(original.slot === "primary" && !!pending && reference.requestKind === (pending.kind === "correct-lineage" ? "source-lineage-correction" : `source-${pending.kind}`) && pending.submittedSeq === original.submittedSeq);
+          const actionId = pending.kind === "adopt" ? pending.request.actionId : pending.kind === "correct-lineage" ? pending.request.correction.actionId
+            : pending.kind === "finish-check" ? pending.request.resultId : pending.request.attemptId;
           match(actionId === original.actionId);
         }
         return { kind: "source-request", slot: original.slot, actionId: original.actionId };

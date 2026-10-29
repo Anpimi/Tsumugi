@@ -11,6 +11,7 @@ pub(in crate::persistence) mod maintenance;
 pub(in crate::persistence) mod maintenance_hook;
 pub(in crate::persistence) mod decision_mappings;
 pub(in crate::persistence) mod validation_history;
+pub(in crate::persistence) mod lineage_corrections;
 mod publication;
 #[cfg(test)]
 mod observation_tests;
@@ -87,6 +88,7 @@ const LINEAGE_EVIDENCE_TABLE: &str = "CREATE TABLE source_lineage_evidence (
 pub(super) fn maintenance_table_names() -> Vec<String> {
     let mut names = vec!["source_lineage".into(), "source_lineage_evidence".into()];
     names.push(validation_history::TABLE.into());
+    names.extend(lineage_corrections::TABLES.iter().map(|(name,_)|name.to_string()));
     names.extend(
         maintenance_hook::TABLES
             .iter()
@@ -105,6 +107,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(LINEAGE_TABLE)?;
     connection.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
     validation_history::initialize(connection)?;
+    lineage_corrections::initialize(connection)?;
     for (_, sql) in maintenance_hook::TABLES {
         connection.execute_batch(sql)?;
     }
@@ -267,6 +270,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     maintenance_hook::validate(connection)?;
     let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(sql_error)?;
     if version >= 69 { validation_history::validate(connection)?; }
+    if version >= 70 { lineage_corrections::validate(connection)?; }
     for (name, sql) in TABLES {
         let actual: String = connection
             .query_row(
@@ -369,7 +373,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     }
     if has_lineage {
         let mut statement = connection.prepare(
-            "SELECT n.snapshot_id,o.snapshot_id,n.namespace,o.namespace,n.unit_id,o.unit_id,n.revision_id,o.revision_id,nr.text,orv.text,l.relation,ni.basis,oi.basis
+            "SELECT n.snapshot_id,o.snapshot_id,n.namespace,o.namespace,n.unit_id,o.unit_id,n.revision_id,o.revision_id,nr.text,orv.text,l.relation,ni.basis,oi.basis,o.occurrence_id
              FROM source_lineage l JOIN source_occurrences n ON n.occurrence_id=l.occurrence_id
              JOIN source_occurrences o ON o.occurrence_id=l.predecessor_id
              JOIN source_revisions nr ON nr.revision_id=n.revision_id
@@ -391,6 +395,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                     r.get::<_, String>(10)?,
                     r.get::<_, String>(11)?,
                     r.get::<_, String>(12)?,
+                    r.get::<_, String>(13)?,
                 ))
             })
             .map_err(sql_error)?
@@ -401,15 +406,18 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                 namespace,
                 old_namespace,
                 unit,
-                old_unit,
+                _stored_old_unit,
                 revision,
-                old_revision,
+                _stored_old_revision,
                 text,
                 old_text,
                 relation,
                 basis,
                 old_basis,
+                old_occurrence,
             ) = row.map_err(sql_error)?;
+            let frozen=lineage_corrections::frozen_predecessor(connection,id(next.clone())?,id(old_occurrence)?)?;
+            let old_unit=frozen.0.to_string();let old_revision=frozen.1.to_string();
             if !matches!((snapshot_revisions.get(&id(old)?),snapshot_revisions.get(&id(next)?)), (Some(old),Some(next)) if old < next)
                 || namespace != old_namespace
                 || (relation == "unchanged"
@@ -427,7 +435,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
             }
         }
         let mut statement = connection.prepare(
-            "SELECT n.snapshot_id,o.snapshot_id,n.namespace,o.namespace,n.unit_id,o.unit_id,e.decision,e.policy,s.identity_policy
+            "SELECT n.snapshot_id,o.snapshot_id,n.namespace,o.namespace,n.unit_id,o.unit_id,e.decision,e.policy,s.identity_policy,o.occurrence_id
              FROM source_lineage_evidence e
              JOIN source_occurrences n ON n.occurrence_id=e.new_occurrence_id
              JOIN source_occurrences o ON o.occurrence_id=e.old_occurrence_id
@@ -445,6 +453,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                     r.get::<_, String>(6)?,
                     r.get::<_, String>(7)?,
                     r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
                 ))
             })
             .map_err(sql_error)?
@@ -455,13 +464,15 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                 next_namespace,
                 old_namespace,
                 next_unit,
-                old_unit,
+                _stored_old_unit,
                 decision,
                 policy,
                 captured_policy,
+                old_occurrence,
             ) = edge.map_err(sql_error)?;
             let next = id(next)?;
             let old = id(old)?;
+            let old_unit=lineage_corrections::frozen_predecessor(connection,next,id(old_occurrence)?)?.0.to_string();
             if !matches!((snapshot_revisions.get(&old), snapshot_revisions.get(&next)), (Some(old), Some(next)) if old < next)
                 || next_namespace != old_namespace
                 || policy != captured_policy
@@ -473,7 +484,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         }
     }
     // Reject orphaned units/revisions/identity evidence, not only dangling FKs.
-    let orphan:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM source_units u WHERE NOT EXISTS(SELECT 1 FROM source_occurrences o WHERE o.unit_id=u.unit_id)) OR EXISTS(SELECT 1 FROM source_revisions r WHERE NOT EXISTS(SELECT 1 FROM source_occurrences o WHERE o.revision_id=r.revision_id))",[],|r|r.get(0)).map_err(sql_error)?;
+    let orphan:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM source_units u WHERE NOT EXISTS(SELECT 1 FROM source_binding_history o WHERE o.unit_id=u.unit_id)) OR EXISTS(SELECT 1 FROM source_revisions r WHERE NOT EXISTS(SELECT 1 FROM source_binding_history o WHERE o.revision_id=r.revision_id))",[],|r|r.get(0)).map_err(sql_error)?;
     if orphan {
         return Err(corrupt());
     }
@@ -490,10 +501,11 @@ pub(super) fn check_result_reference(
     unit: ExecutionId,
     revision: ExecutionId,
 ) -> Result<(), ExecutionError> {
-    let (_, (input, result, _, rows)) = snapshot_rows(connection, snapshot, true)?;
+    let (_, (input, result, _, _)) = snapshot_rows(connection, snapshot, true)?;
+    let present:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",params![snapshot.to_string(),unit.to_string(),revision.to_string()],|r|r.get(0)).map_err(sql_error)?;
     if input.envelope().project_id != project || input.envelope().attempt_id != attempt
         || result.envelope().result_id != result_id
-        || !rows.iter().any(|row|row.unit_id==Some(unit) && row.source_revision_id==Some(revision))
+        || !present
     { return Err(failure(ErrorCode::Unauthorized, "source-result-reference")); }
     Ok(())
 }
@@ -863,6 +875,7 @@ fn page(
     output: SourceOutput,
     scope: ContentScope,
     rows: Vec<ContentRow>,
+    mapping_revision: Option<Revision>,
     after: u32,
     limit: u32,
 ) -> Result<ContentPage, ExecutionError> {
@@ -874,6 +887,7 @@ fn page(
         attempt_id: input.envelope().attempt_id,
         result_id: result.envelope().result_id,
         confirmation: SourceConfirmation {
+            expected_mapping_revision: mapping_revision,
             maintenance_hook: None,
             result_digest: result.digest().into(),
             identity_policy: output.identity_policy.clone(),
@@ -1102,6 +1116,7 @@ impl ProjectStore {
             output,
             scope(connection)?,
             rows,
+            scope(connection)?.current_snapshot.map(|snapshot|lineage_corrections::mapping_revision(connection,snapshot)).transpose()?,
             after,
             limit,
         )
@@ -1115,7 +1130,10 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let (_, (input, result, output, rows)) = snapshot_rows(connection, snapshot, true)?;
+        let (_, (input, result, output, mut rows)) = snapshot_rows(connection, snapshot, true)?;
+        if scope(connection)?.current_snapshot == Some(snapshot) {
+            lineage_corrections::effective_rows(connection,&mut rows)?;
+        }
         page(
             Some(snapshot),
             &input,
@@ -1123,6 +1141,7 @@ impl ProjectStore {
             output,
             scope(connection)?,
             rows,
+            scope(connection)?.current_snapshot.map(|snapshot|lineage_corrections::mapping_revision(connection,snapshot)).transpose()?,
             after,
             limit,
         )
@@ -1156,7 +1175,8 @@ impl ProjectStore {
             .current_snapshot
             .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-missing"))?;
         let previous = base.unwrap_or(current);
-        let (_, (old_input, _, old_output, old_rows)) = snapshot_rows(connection, previous, true)?;
+        let (_, (old_input, _, old_output, mut old_rows)) = snapshot_rows(connection, previous, true)?;
+        lineage_corrections::effective_rows(connection,&mut old_rows)?;
         let input = self.execution_input(attempt)?;
         let result = self.execution_result(attempt, result)?;
         let output = validate_output(&input, &result)?;
@@ -1178,6 +1198,7 @@ impl ProjectStore {
             result_id: result.envelope().result_id,
             previous_snapshot_id: previous,
             confirmation: SourceConfirmation {
+                expected_mapping_revision: Some(lineage_corrections::mapping_revision(connection,current)?),
                 maintenance_hook: None,
                 result_digest: result.digest().into(),
                 identity_policy: output.identity_policy.clone(),
@@ -1273,6 +1294,10 @@ pub(in crate::persistence) fn check_adoption_scope(
             ConflictEvidence::SourceSnapshot { expected: confirmation.expected_current_snapshot, current: actual },
         ));
     }
+    let mapping = actual.map(|snapshot|lineage_corrections::mapping_revision(c,snapshot)).transpose()?.map_or(0,Revision::get);
+    if confirmation.expected_mapping_revision.map_or(0,Revision::get) != mapping {
+        return Err(failure(ErrorCode::DependencyConflict,"source-mapping-stale"));
+    }
     let (saved_project, language): (String, String) = c.query_row(
         "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1", [],
         |r| Ok((r.get(0)?, r.get(1)?)),
@@ -1286,7 +1311,7 @@ fn predecessor_rows(
     tx: &AdoptionTransaction<'_>,
     snapshot: ExecutionId,
 ) -> Result<Vec<SourcePredecessor>, ExecutionError> {
-    tx.query_rows("SELECT o.occurrence_id,o.unit_id,o.revision_id,CASE WHEN length(o.projection)<=1048576 THEN o.projection END FROM source_occurrences o WHERE snapshot_id=?1 ORDER BY ordinal",
+    tx.query_rows("SELECT o.occurrence_id,o.unit_id,o.revision_id,CASE WHEN length(o.projection)<=1048576 THEN o.projection END FROM source_effective_occurrences o WHERE snapshot_id=?1 ORDER BY ordinal",
         [snapshot.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,Vec<u8>>(3)?)))?
         .into_iter().map(|(occurrence_id,unit_id,revision_id,projection)|Ok(SourcePredecessor {
             occurrence_id,unit_id,revision_id,comparison_key: {
@@ -1494,6 +1519,10 @@ fn apply_update(
         ],
     )?;
     let mut used_units = std::collections::BTreeMap::<String, String>::new();
+    for predecessor in std::collections::BTreeSet::from([previous,base]) {
+        let mapping=lineage_corrections::mapping_revision(tx.connection(),predecessor)?;
+        tx.execute("INSERT INTO source_snapshot_mapping_bases VALUES(?1,?2,?3)",params![snapshot.to_string(),predecessor.to_string(),mapping.get() as i64])?;
+    }
     for sdk_unit in &output.exchange.units {
         let group: Vec<_> = output
             .occurrences

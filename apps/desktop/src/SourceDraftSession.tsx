@@ -10,6 +10,7 @@ import { useSourceMaintenanceHook } from "./SourceMaintenanceHook";
 import { SourceDraftJournal, restoreSourceDraft, sourcePendingValue, sourceHookStopValue, sourceDraftValue, type SourceDraftInputs, type SourceJournalState } from "./sourceDraftJournal";
 import { sourceDraftCommands, type SourceDraftValue, type SourceDraftResolveTarget, type SourceDraftDisposition, type SourceDraftObservation } from "./sourceDraftCommands";
 import { sourceCommands, confirmSourceAction, confirmSourceReceipt, sameSourceConfirmation, type ContentPage, type ContentScope, type LineageChoice,
+  sameSourceCorrectionReceipt, type SourceLineageCorrectionBasis, type SourceLineageCorrectionReceipt, type SourceLineageCorrectionRequest,
   sameSourceEnvironment, sourceRequest, type PluginCaptureRequest, type PluginStartRequest, type SourceCheckPrepareRequest, type SourceCheckFinishRequest, type SourceCheckReview,
   type Preflight, type SourceAdoptRequest, type SourceChangePage, type SourceImpactSummary, type SourceSelection, type PluginStartRequest as StartRequest } from "./sourceCommands";
 
@@ -20,6 +21,13 @@ export type SourcePluginPending =
   | { pendingKind: "finish-check"; request: SourceCheckFinishRequest };
 
 export interface SourceDraftState {
+  correctionDraft: NonNullable<SourceDraftValue["correction"]> | null;
+  correctionBasis: SourceLineageCorrectionBasis | null;
+  correctionReceipt: SourceLineageCorrectionReceipt | null;
+  pendingCorrection: SourceLineageCorrectionRequest | null;
+  correctionLoading: boolean;
+  correctionFailure: CommandFailure | null;
+  correctionRetryAllowed: boolean;
   selectionLabel: string | null;
   captureRequest: SourceDraftValue["captureRequest"];
   checkPrepareRequest: SourceDraftValue["checkPrepareRequest"];
@@ -75,6 +83,16 @@ export interface SourceDraftState {
 type ReadyIdentity = { attemptId: string; resultId: string; unitId: string; qualified: boolean };
 type DraftFields = Pick<SourceDraftState, "lineage" | "actor" | "filter" | "appliedFilter" | "manualOrdinal" | "historicalQuery">;
 export interface SourceSession {
+  openCorrection: (snapshotId: string, ordinal: number) => Promise<void>;
+  refreshCorrection: () => Promise<void>;
+  editCorrection: (patch: Partial<Pick<NonNullable<SourceDraftValue["correction"]>, "oldOccurrenceId" | "decision" | "actor" | "reason">>) => void;
+  applyCorrection: () => Promise<void>;
+  checkCorrection: () => Promise<void>;
+  retryCorrection: () => Promise<void>;
+  cancelCorrection: () => Promise<void>;
+  canRetryCorrection: () => boolean;
+  closeCorrection: () => Promise<boolean>;
+  discardCorrection: (expected: NonNullable<SourceDraftValue["correction"]>) => Promise<boolean>;
   journal: SourceJournalState;
   flush: () => Promise<boolean>;
   retryJournal: () => Promise<boolean>;
@@ -151,6 +169,8 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const [session] = useState(() => executionContext(project));
   const [state, setState] = useState<SourceDraftState>(() => ({ domain: "", source: null, selection: null,
+    correctionDraft: null, correctionBasis: null, correctionReceipt: null, pendingCorrection: null,
+    correctionLoading: false, correctionFailure: null, correctionRetryAllowed: false,
     selectionLabel: null, captureRequest: null, checkPrepareRequest: null, comparisonRef: null, receiptRef: null,
     pickerUncertain: false, preparationExpired: false, submission: null, pendingUncertain: false, recoveredPending: false, pendingObserved: null,
     sourceLanguage: project.metadata.sourceLocale, declared: false, preflight: null, attempt: null, preview: null,
@@ -161,6 +181,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(0);
   const readCleanup = useRef<(() => void) | null>(null);
   const captureFlight = useRef(0), pendingReceipt = useRef<{ request: SourceAdoptRequest; receipt: Receipt } | null>(null);
+  const correctionRead = useRef(0), correctionReceipt = useRef<{ request: SourceLineageCorrectionRequest; receipt: SourceLineageCorrectionReceipt } | null>(null);
   const nativeSelectionAttempted = useRef(false);
   const basisVersion = useRef(0), identity = useRef<ReadyIdentity | null>(null), submittedVersion = useRef(0);
   const metadata = metadataKey(project), committedMetadata = useRef(metadata);
@@ -176,7 +197,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   const hook = useSourceMaintenanceHook(project, { live, changed: () => {
     basisVersion.current++;
     update(before => ({ ...before, editSeq: before.editSeq + 1, confirmed: false, estimate: null }));
-  }, canSelect: () => !flight.current && !current().pendingStart && !current().pendingApply && !current().pendingPlugin,
+  }, canSelect: () => !flight.current && !current().pendingStart && !current().pendingApply && !current().pendingPlugin && !current().pendingCorrection,
     observed: () => journalRef.current?.observe(), sequence: () => {
       if (!journalRef.current) throw new Error("Source draft journal has not loaded");
       return journalRef.current.sequence();
@@ -202,6 +223,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   function frozenSubmission() { return { submittedSeq: journal.sequence(), submittedMappingSeq: current().editSeq }; }
   function blocked() { const value = journal.getSnapshot(); return !live() || !!value.failure || !!value.conflict || value.busy || reserved(); }
   function hasDraft() { const value = current(); return !!value.selection || !!value.selectionLabel || !!value.captureRequest || !!value.checkPrepareRequest
+    || !!value.correctionDraft
     || !value.source && value.domain !== "" || Object.keys(value.lineage).length > 0 || value.actor !== "" || value.filter !== "" || value.historicalQuery !== "" || hook.hasDraft(); }
   function revoke() {
     basisVersion.current++;
@@ -227,7 +249,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       }).catch(() => { /* A read failure cannot change an original action or its confirmation. */ });
     }
   }), [reads]);
-  function hasPending() { return !!current().pendingStart || !!current().pendingApply || !!current().pendingPlugin || hook.blocked(); }
+  function hasPending() { return !!current().pendingStart || !!current().pendingApply || !!current().pendingPlugin || !!current().pendingCorrection || hook.blocked(); }
   function reserved() { return flight.current !== 0 || hasPending(); }
   function reserve(pending = false) {
     if (!live() || journal.getSnapshot().failure || journal.getSnapshot().conflict || flight.current || (!pending && reserved())) return 0;
@@ -327,7 +349,8 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     return journal.resolve({ kind: "primary", pending }, disposition, before => ({ ...before, source: change(before.source) }));
   }
   function clearPrimary(before: SourceDraftState): SourceDraftState {
-    return { ...before, pendingStart: null, pendingPlugin: null, pendingApply: null, pendingApplyUnitId: null, submission: null,
+    return { ...before, pendingStart: null, pendingPlugin: null, pendingApply: null, pendingApplyUnitId: null, pendingCorrection: null,
+      correctionRetryAllowed: false, submission: null,
       pendingUncertain: false, pendingObserved: null, recoveredPending: false, preparedAction: null, receiptChecked: false, startRetryAllowed: false };
   }
   function clearClosedStart(before: SourceDraftState, checker: boolean): SourceDraftState {
@@ -508,6 +531,120 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       case "finish-check": return value.checkAttempt === pending.request.attemptId;
     }
   }
+  async function refreshCorrection() {
+    const draft = current().correctionDraft;
+    if (!live() || !draft || flight.current || current().pendingCorrection) return;
+    const version = ++correctionRead.current;
+    update(before => ({ ...before, correctionLoading: true, correctionFailure: null, correctionRetryAllowed: false }));
+    try {
+      const basis = await sourceCommands.correctionBasis({ ...session, snapshotId: draft.snapshotId, ordinal: draft.ordinal });
+      if (!live() || version !== correctionRead.current || current().correctionDraft?.snapshotId !== draft.snapshotId
+        || current().correctionDraft?.ordinal !== draft.ordinal || current().pendingCorrection) return;
+      update(before => ({ ...before, correctionBasis: basis }));
+    } catch (error) {
+      if (live() && version === correctionRead.current) update(before => ({ ...before, correctionFailure: commandFailure(error), correctionBasis: null }));
+    } finally { if (live() && version === correctionRead.current) update(before => ({ ...before, correctionLoading: false })); }
+  }
+  async function openCorrection(snapshotId: string, ordinal: number) {
+    if (!live() || flight.current || !Number.isSafeInteger(ordinal) || ordinal < 0) return;
+    const before = current(), retained = before.correctionDraft;
+    if (retained && (retained.snapshotId !== snapshotId || retained.ordinal !== ordinal)) return;
+    if (!retained) {
+      if (hasPending()) return;
+      update(value => ({ ...value, editSeq: value.editSeq + 1, correctionReceipt: null,
+        correctionDraft: { snapshotId, ordinal, oldOccurrenceId: null, decision: "unresolved", actor: value.actor, reason: "" } }));
+    }
+    if (!current().pendingCorrection && !current().correctionBasis) await refreshCorrection();
+  }
+  function editCorrection(patch: Parameters<SourceSession["editCorrection"]>[0]) {
+    if (!live() || !current().correctionDraft) return;
+    const draft = { ...current().correctionDraft!, ...patch };
+    if (jsonIdentity(draft) === jsonIdentity(current().correctionDraft)) return;
+    update(before => ({ ...before, correctionDraft: draft, editSeq: before.editSeq + 1, correctionFailure: null }));
+  }
+  async function settleCorrection(request: SourceLineageCorrectionRequest, receipt: SourceLineageCorrectionReceipt) {
+    if (!sameSourceCorrectionReceipt(request, receipt)) invalidAcknowledgement();
+    const pinned = correctionReceipt.current;
+    if (pinned?.request === request && jsonIdentity(pinned.receipt) !== jsonIdentity(receipt)) invalidAcknowledgement();
+    correctionReceipt.current = { request, receipt };
+    update(before => ({ ...before, correctionReceipt: receipt, correctionRetryAllowed: false }));
+    const accepted = await resolvePrimary("recorded", before => before.pendingCorrection === request
+      ? { ...clearPrimary(before), correctionReceipt: receipt, correctionBasis: null, correctionFailure: null,
+        completionVersion: before.completionVersion + 1 } : before);
+    if (accepted && live()) reads.invalidate(["source", "translation", "review", "resources", "execution"], false);
+  }
+  async function dispatchCorrection(request: SourceLineageCorrectionRequest) {
+    update(before => ({ ...before, correctionRetryAllowed: false, correctionFailure: null }));
+    try {
+      const receipt = await sourceCommands.correctLineage(request);
+      if (live() && current().pendingCorrection === request) await settleCorrection(request, receipt);
+    } catch (error) {
+      if (!live() || current().pendingCorrection !== request) return;
+      update(before => ({ ...before, pendingUncertain: true, correctionFailure: commandFailure(error) }));
+      if (!hasUnknownOutcome(error)) {
+        try { await observePending(true); }
+        catch (observationError) { if (live()) update(before => ({ ...before, correctionFailure: commandFailure(observationError) })); }
+      }
+    }
+  }
+  async function applyCorrection() {
+    const value = current(), draft = value.correctionDraft, basis = value.correctionBasis;
+    if (!draft || !basis || value.correctionLoading || !draft.oldOccurrenceId || !draft.actor.trim() || !draft.reason.trim()
+      || basis.snapshotId !== draft.snapshotId || basis.ordinal !== draft.ordinal || hasPending()) return;
+    await run(async () => {
+      if (!await journal.flush() || !live() || current().correctionDraft !== draft || current().correctionBasis !== basis) return;
+      const actionId = await executionCommands.identity(session);
+      if (!live() || current().correctionDraft !== draft || current().correctionBasis !== basis) return;
+      const request: SourceLineageCorrectionRequest = Object.freeze({ ...session, correction: structuredClone({ projectId: session.projectId,
+        actionId, basis, oldOccurrenceId: draft.oldOccurrenceId!, decision: draft.decision, actor: draft.actor, reason: draft.reason }) });
+      try { await sourceCommands.validateCorrection(request); }
+      catch (error) {
+        const failure = commandFailure(error);
+        if (live()) update(before => ({ ...before, correctionFailure: failure,
+          correctionBasis: typeof failure !== "string" && failure.code === "dependency-conflict" ? null : before.correctionBasis }));
+        return;
+      }
+      if (!live() || current().correctionDraft !== draft || current().correctionBasis !== basis) return;
+      const submission = frozenSubmission();
+      update(before => ({ ...before, pendingCorrection: request, submission, pendingUncertain: false,
+        recoveredPending: false, pendingObserved: null, correctionRetryAllowed: false, correctionFailure: null }));
+      if (!await journal.flush() || !live() || current().pendingCorrection !== request) return;
+      await dispatchCorrection(request);
+    });
+  }
+  function canRetryCorrection() {
+    const request = current().pendingCorrection;
+    return live() && !!request && current().correctionRetryAllowed && correctionReceipt.current?.request !== request;
+  }
+  async function retryCorrection() {
+    const request = current().pendingCorrection;
+    if (request && canRetryCorrection()) await run(() => dispatchCorrection(request), true);
+  }
+  async function cancelCorrection() {
+    if (!current().pendingCorrection || flight.current) return;
+    await run(async () => {
+      const settled = await resolvePrimary("confirmed-not-applied", before => ({ ...clearPrimary(before), correctionBasis: null }));
+      if (!settled && journal.releaseRejectedCorrectionCancellation()) {
+        try { await observePending(true); }
+        catch (error) { if (live()) update(before => ({ ...before, correctionFailure: commandFailure(error) })); }
+      }
+    }, true);
+  }
+  async function retryJournal() {
+    const saved = await journal.retry();
+    if (saved || !journal.releaseRejectedCorrectionCancellation()) return saved;
+    await checkPending();
+    return journal.flush();
+  }
+  async function discardCorrection(expected: NonNullable<SourceDraftValue["correction"]>) {
+    const matches = () => live() && !flight.current && !current().pendingCorrection
+      && jsonIdentity(current().correctionDraft) === jsonIdentity(expected);
+    if (!matches() || !await journal.flush() || !matches()) return false;
+    correctionRead.current++;
+    update(before => ({ ...before, correctionDraft: null, correctionBasis: null, correctionReceipt: null,
+      correctionLoading: false, correctionFailure: null, correctionRetryAllowed: false, editSeq: before.editSeq + 1 }));
+    return journal.flush();
+  }
   function verifyReceipt(request: SourceAdoptRequest, receipt: Receipt, unitId: string) {
     const snapshotId = confirmSourceReceipt(request, unitId, receipt);
     const known = pendingReceipt.current;
@@ -540,7 +677,13 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
           checkReview: null, producerConsent: null, checkerConsent: null, confirmed: false, preparationExpired: true })); return;
       case "confirmed-not-applied":
         await resolvePrimary("confirmed-not-applied", before => pending.kind === "start" || pending.kind === "start-check"
-          ? clearClosedStart(before, pending.kind === "start-check") : { ...clearPrimary(before), confirmed: false }); return;
+          ? clearClosedStart(before, pending.kind === "start-check") : { ...clearPrimary(before), confirmed: false,
+            ...(pending.kind === "correct-lineage" ? { correctionBasis: null } : {}) }); return;
+      case "lineage-corrected": {
+        const request = current().pendingCorrection;
+        if (pending.kind !== "correct-lineage" || !request) invalidAcknowledgement();
+        await settleCorrection(request!, observation.receipt); return;
+      }
       case "capture": {
         if (pending.kind !== "capture") invalidAcknowledgement();
         const captureRequest = pending.request;
@@ -583,6 +726,11 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       const result = await sourceDraftCommands.observe({ sessionToken: session.sessionToken, key: { projectId: session.projectId }, target });
       if (!live() || jsonIdentity(sourcePendingValue(current())) !== jsonIdentity(pending) || jsonIdentity(result.target) !== jsonIdentity(target)) return;
       const observation = result.observation;
+      if (pending.kind === "correct-lineage") {
+        const request = current().pendingCorrection;
+        if (!request) invalidAcknowledgement();
+        if (observation.kind !== "lineage-corrected" && correctionReceipt.current?.request === request) invalidAcknowledgement();
+      }
       if (pending.kind === "adopt") {
         const request = current().pendingApply;
         if (!request) invalidAcknowledgement();
@@ -601,6 +749,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       const sameContinuation = originalContinuation && flight.current === reservation && !current().recoveredPending;
       if (observation.kind === "pending") {
         update(before => ({ ...before, receiptChecked: pending.kind === "adopt" && !before.recoveredPending,
+          correctionRetryAllowed: pending.kind === "correct-lineage" && explicit,
           startRetryAllowed: pending.kind === "start" && !!before.pendingStart ? originalStartPermission(before.pendingStart, false)
             : pending.kind === "start-check" && before.pendingPlugin?.pendingKind === "start-check" ? originalStartPermission(before.pendingPlugin.request, true) : false }));
       } else if (explicit || observation.kind === "adoption-prepared" || sameContinuation
@@ -756,9 +905,11 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       // the person actually chose, never text entered while cancellation waited.
       if (current().editSeq !== clickedSeq) return false;
       identity.current = null;
+      correctionRead.current++;
       nativeSelectionAttempted.current = false;
       hook.discardDraft();
       update(before => ({ ...before, selection: null, selectionLabel: null, captureRequest: null, checkPrepareRequest: null, comparisonRef: null, preparationExpired: false,
+        correctionDraft: null, correctionBasis: null, correctionReceipt: null, correctionLoading: false, correctionFailure: null,
         preflight: null, attempt: null, domain: "", producerConsent: null, checkReview: null, checkerConsent: null, checkAttempt: null, declared: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null, historicalQuery: "", comparison: null, preview: null,
         previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: before.editSeq + 1 }));
       return await journal.flush();
@@ -838,7 +989,9 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     if (!live() || reserved() || !proof() || ![current().attempt, current().checkAttempt].includes(originalAttempt)) return;
     await tasks.cancel({ taskId, attemptId: originalAttempt, origin: "source" }, () => live() && proof());
   }
-  return <SourceContext.Provider value={{ state, hook, journal: journalState, flush: () => journal.flush(), retryJournal: () => journal.retry(),
+  return <SourceContext.Provider value={{ state, hook, journal: journalState, flush: () => journal.flush(), retryJournal,
+    openCorrection, refreshCorrection, editCorrection, applyCorrection, checkCorrection: checkPending, retryCorrection, cancelCorrection, canRetryCorrection,
+    closeCorrection: () => journal.flush(), discardCorrection,
     keepLocal: expected => { const conflict = journal.getSnapshot().conflict; return conflict ? journal.keepLocal(expected, conflict) : Promise.resolve(false); },
     draftValue: () => sourceDraftValue(inputs(), journal.sequence()), blocked, hasDraft, subscribe: journal.subscribe, getDecisionActivity: journal.getDecisionActivity, checkPending, readPreparation,
     current, inFlight: () => !!flight.current, hasPending, qualified: () => identity.current?.qualified === true, setSource, consentProducer, consentChecker, setDomain, declare, edit, confirm,

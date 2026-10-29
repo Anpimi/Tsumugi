@@ -9,7 +9,8 @@ import type { SourceDraftValue } from "./sourceDraftCommands";
 import type { useSourceDraftSession } from "./SourceDraftSession";
 import styles from "./app-v2/features/source/SourceMaintenance.module.css";
 
-export default function SourceDraftRecovery({ owner, disabled = false }: { owner: ReturnType<typeof useSourceDraftSession>; disabled?: boolean }) {
+export default function SourceDraftRecovery({ owner, disabled = false, onRevealCorrection }: { owner: ReturnType<typeof useSourceDraftSession>; disabled?: boolean;
+  onRevealCorrection?: (snapshotId: string, ordinal: number) => void }) {
   const { t } = useTranslation(undefined, { keyPrefix: "sourceMaintenance" });
   const journal = owner.journal, state = owner.state, local = owner.draftValue(), stored = journal.conflict?.value;
   const [expanded, setExpanded] = useState(false), [confirmation, setConfirmation] = useState<SourceDraftValue | null>(null);
@@ -20,6 +21,9 @@ export default function SourceDraftRecovery({ owner, disabled = false }: { owner
     return [value.selectionLabel, value.sourceLanguage, value.actor, value.filter, value.historicalQuery,
       ...value.lineage.flatMap(choice => [t("entry", { number: choice.newOrdinal + 1 }),
         t(choice.decision === "continue" ? "recoveryContinue" : "recoveryReject"), choice.reason]),
+      ...(value.correction ? [t("correctionTitle"), t("entry", { number: value.correction.ordinal + 1 }),
+        t(value.correction.decision === "continue" ? "recoveryContinue" : value.correction.decision === "reject" ? "recoveryReject" : "unresolved"),
+        value.correction.actor, value.correction.reason] : []),
       value.hook.locale ? t("recoveryHookLocale", { locale: value.hook.locale }) : null].filter(value => value !== null && value !== "").join("\n\n");
   }
   async function copy() {
@@ -44,6 +48,8 @@ export default function SourceDraftRecovery({ owner, disabled = false }: { owner
       {state.checkPrepareRequest ? <Button disabled={disabled || owner.inFlight()} onClick={() => { void owner.readPreparation("prepare-check"); }}>{t("readCheckPreparation")}</Button> : null}
     </div> : null}
     {state.pickerUncertain ? <Banner tone="warning">{t("recoveryPicker")}</Banner> : null}
+    {local.correction && onRevealCorrection ? <Button disabled={disabled || journal.busy}
+      onClick={() => onRevealCorrection(local.correction!.snapshotId, local.correction!.ordinal)}>{t("correctionResume")}</Button> : null}
     {owner.hasPending() ? <Banner tone="warning" action={<div className={styles.actions}>
       <Button disabled={disabled || owner.inFlight() || journal.busy || journal.hydration !== "ready"} onClick={() => { void owner.checkPending(); }}>{t("recoveryCheck")}</Button>
       {state.pendingStart || state.pendingPlugin?.pendingKind === "start-check" ? <div><p>{t("cancelStartHelp")}</p>

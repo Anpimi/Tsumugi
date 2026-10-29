@@ -58,7 +58,8 @@ fn source_mapping(
         return Ok(SourceProjection { items: Vec::new(), complete: true });
     }
     // This source owner verifies immutable capture, receipt and lineage evidence.
-    let (_, (input, result, _, rows)) = super::super::content::snapshot_rows(c, snapshot, true)?;
+    let (_, (input, result, _, mut rows)) = super::super::content::snapshot_rows(c, snapshot, true)?;
+    super::super::content::lineage_corrections::effective_rows(c,&mut rows)?;
     if input.envelope().project_id != project {
         return Err(failure(ErrorCode::CorruptLedger, "decision-source-project"));
     }

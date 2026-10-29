@@ -187,7 +187,7 @@ pub(in crate::persistence) fn quality_in(c: &Connection, project: ExecutionId,
     let past_approval = historical_decision(c, project, revision.revision_id, true)?;
     let is_current = current_selection(c, revision.unit_id, &revision.locale)?
         .is_some_and(|s| s.revision_id == revision.revision_id);
-    let present: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o
+    let present: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_effective_occurrences o
         JOIN content_scope s ON s.current_snapshot=o.snapshot_id WHERE s.row_id=1 AND o.unit_id=?1)",
         [revision.unit_id.to_string()], |r| r.get(0)).map_err(super::super::ledger::sql_error)?;
     let active_locale = super::super::read_metadata_from(c)
@@ -206,14 +206,14 @@ fn entry_in(c: &Connection, project: ExecutionId, unit: ExecutionId, locale: &st
     let (revision, source_text, source_locale) = donor_content(c, project, unit, locale, revision)?;
     let quality = quality_in(c, project, &revision)?;
     let (namespace, native_key, count): (String, String, i64) = c.query_row(
-        "SELECT namespace,native_key,(SELECT COUNT(*) FROM source_occurrences p
+        "SELECT namespace,native_key,(SELECT COUNT(*) FROM source_binding_history p
              WHERE p.snapshot_id=o.snapshot_id AND p.unit_id=o.unit_id AND p.revision_id=o.revision_id)
-         FROM source_occurrences o WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3 ORDER BY ordinal LIMIT 1",
+         FROM source_binding_history o WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3 ORDER BY ordinal LIMIT 1",
         params![revision.source_snapshot_id.to_string(),unit.to_string(),revision.source_revision_id.to_string()],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(super::super::ledger::sql_error)?;
     let source_label = TranslationMemorySourceLabel { namespace, native_key,
         occurrence_count: u32::try_from(count).map_err(|_| error(ErrorCode::CorruptLedger, "tm-occurrences"))? };
-    let is_current_source: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o
+    let is_current_source: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM source_effective_occurrences o
         JOIN content_scope s ON s.current_snapshot=o.snapshot_id WHERE s.row_id=1 AND o.unit_id=?1 AND o.revision_id=?2)",
         params![unit.to_string(),revision.source_revision_id.to_string()], |r| r.get(0))
         .map_err(super::super::ledger::sql_error)?;

@@ -1,4 +1,5 @@
 import { commandFailure, type CommandFailure } from "./CommandFailure";
+import { isCommandError } from "./projectCommands";
 import type { SessionRequest } from "./executionCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import { sourceDraftCommands, canonicalSourceDraft, type SourceDraftHead, type SourceDraftValue, type SourceDraftPending,
@@ -23,10 +24,11 @@ function noToken<T extends SessionRequest>(value: T): Omit<T, "sessionToken"> { 
 
 /** Only an original frozen request, without the session's native authority. */
 export function sourcePendingValue(value: SourceDraftState): SourceDraftPending | null {
-  if (!value.pendingStart && !value.pendingPlugin && !value.pendingApply) return null;
+  if (!value.pendingStart && !value.pendingPlugin && !value.pendingApply && !value.pendingCorrection) return null;
   if (!value.submission) throw new Error("Source request is missing its original input sequence");
   const sequences = { submittedSeq: value.submission.submittedSeq, submittedMappingSeq: sequence(value.submission.submittedMappingSeq) };
   if (value.pendingStart) return { kind: "start", request: noToken(value.pendingStart), ...sequences };
+  if (value.pendingCorrection) return { kind: "correct-lineage", request: noToken(value.pendingCorrection), ...sequences };
   if (value.pendingApply) {
     if (!value.pendingApplyUnitId) throw new Error("Source adoption has no original unit");
     const request = noToken(value.pendingApply), confirmation = request.confirmation;
@@ -58,7 +60,8 @@ export function sourceDraftValue(inputs: SourceDraftInputs, editSeq: string): So
     previewAfter: value.previewAfter, comparisonAfter: value.comparisonAfter, historicalSearch: value.historicalSearch,
     receiptRef: value.receiptRef, pickerUncertain: value.pickerUncertain,
     hook: { locale: hook.locale, enabledIntent: hook.enabled, sourceActionId: hook.sourceActionId },
-    pending: sourcePendingValue(value), hookStop: sourceHookStopValue(hook) });
+    pending: sourcePendingValue(value), hookStop: sourceHookStopValue(hook),
+    ...(value.correctionDraft ? { correction: value.correctionDraft } : {}) });
 }
 export function restoreSourceDraft(initial: SourceDraftInputs, value: SourceDraftValue, session: SessionRequest): SourceDraftInputs {
   const pending = value.pending;
@@ -72,6 +75,10 @@ export function restoreSourceDraft(initial: SourceDraftInputs, value: SourceDraf
     preparationExpired: !!value.captureRequest || !!value.checkPrepareRequest || value.selectionLabel !== null,
     submission: pending ? { submittedSeq: pending.submittedSeq, submittedMappingSeq: sourceInputSequence(pending.submittedMappingSeq) } : null,
     pendingUncertain: pending !== null, pendingObserved: null, recoveredPending: pending !== null,
+    correctionDraft: value.correction ?? null,
+    pendingCorrection: pending?.kind === "correct-lineage" ? { ...pending.request, sessionToken: session.sessionToken } : null,
+    correctionBasis: pending?.kind === "correct-lineage" ? pending.request.correction.basis : null,
+    correctionReceipt: null, correctionLoading: false, correctionFailure: null, correctionRetryAllowed: false,
     pendingStart: pending?.kind === "start" ? { ...pending.request, sessionToken: session.sessionToken } : null,
     pendingApply: pending?.kind === "adopt" ? { ...pending.request, sessionToken: session.sessionToken } : null,
     pendingApplyUnitId: pending?.kind === "adopt" ? pending.unitId : null,
@@ -125,7 +132,8 @@ export class SourceDraftJournal {
     const inputs = this.access.current(), pending = sourcePendingValue(inputs.source), stop = sourceHookStopValue(inputs.hook);
     const actions: DecisionClientAction[] = [];
     if (pending) actions.push({ key: { kind: "source" }, slot: "primary", submittedSeq: pending.submittedSeq,
-      actionId: pending.kind === "adopt" ? pending.request.actionId : pending.kind === "finish-check" ? pending.request.resultId : pending.request.attemptId });
+      actionId: pending.kind === "adopt" ? pending.request.actionId : pending.kind === "correct-lineage" ? pending.request.correction.actionId
+        : pending.kind === "finish-check" ? pending.request.resultId : pending.request.attemptId });
     if (stop) actions.push({ key: { kind: "source" }, slot: "source-hook-stop", submittedSeq: stop.submittedSeq, actionId: stop.request.stop.actionId });
     this.activity.observe(actions, !this.kernel.live); this.listeners.forEach(listener => listener());
   }
@@ -218,6 +226,22 @@ export class SourceDraftJournal {
     this.writing = flight;
     try { return await flight; } catch (error) { if (this.live()) this.publish({ busy: false, failure: commandFailure(error) }); return false; }
     finally { if (this.writing === flight) this.writing = null; }
+  }
+  releaseRejectedCorrectionCancellation(): boolean {
+    const job = this.job, failure = this.state.failure;
+    if (!this.live() || this.writing || this.state.busy || job?.kind !== "resolve"
+      || job.request.resolve.disposition !== "confirmed-not-applied"
+      || job.request.resolve.target.kind !== "primary" || job.request.resolve.target.pending.kind !== "correct-lineage"
+      || !isCommandError(failure) || failure.code !== "result-mismatch" || failure.stage !== "draft-storage"
+      || failure.outcome !== "rejected" || failure.reason !== "source-drafts-disposition"
+      || !same(sourcePendingValue(this.access.current().source), job.request.resolve.target.pending)) return false;
+    // This exact Host rejection occurs before the journal write. Keep the
+    // original action and newer input, then allow its receipt to be checked.
+    this.job = null;
+    const value = sourceDraftValue(this.access.current(), this.editSeq);
+    this.desired = jsonIdentity(value) ?? "";
+    this.publish({ failure: null, dirty: !same(value, this.head?.value) });
+    return true;
   }
   async keepLocal(expected: SourceDraftValue, stored: SourceDraftHead): Promise<boolean> {
     if (!this.live() || this.writing || this.state.conflict !== stored) return false;

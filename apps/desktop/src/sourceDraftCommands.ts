@@ -20,14 +20,17 @@ const safeSequence = (value: string) => BigInt(value) <= BigInt(Number.MAX_SAFE_
 function canonicalPending(pending: Input["pending"]) {
   if (pending == null) return null;
   if (pending.kind !== "adopt") return pending;
-  return { ...pending, request: { ...pending.request, confirmation: { ...pending.request.confirmation,
+  const confirmation = { ...pending.request.confirmation,
     expectedCurrentSnapshot: pending.request.confirmation.expectedCurrentSnapshot ?? null,
     lineage: pending.request.confirmation.lineage ?? [], actor: pending.request.confirmation.actor ?? null,
-    lineageBaseSnapshot: pending.request.confirmation.lineageBaseSnapshot ?? null } } };
+    lineageBaseSnapshot: pending.request.confirmation.lineageBaseSnapshot ?? null };
+  if (confirmation.expectedMappingRevision == null) delete confirmation.expectedMappingRevision;
+  return { ...pending, request: { ...pending.request, confirmation } };
 }
 /** Complete nullable fields at the wire boundary; keep user input byte-for-byte. */
 export function canonicalSourceDraft(input: Input): SourceDraftValue {
-  const value = { ...input, source: input.source ?? null, selectionLabel: input.selectionLabel ?? null,
+  const { correction, ...fields } = input;
+  const value = { ...fields, ...(correction == null ? {} : { correction }), source: input.source ?? null, selectionLabel: input.selectionLabel ?? null,
     attemptId: input.attemptId ?? null, checkAttemptId: input.checkAttemptId ?? null,
     captureRequest: input.captureRequest ?? null, checkPrepareRequest: input.checkPrepareRequest ?? null,
     comparisonRef: input.comparisonRef == null ? null : { ...input.comparisonRef,
@@ -46,7 +49,9 @@ function related(value: SourceDraftValue, projectId: string) {
     && (value.captureRequest === null || value.captureRequest.projectId === projectId)
     && (value.checkPrepareRequest === null || value.checkPrepareRequest.projectId === projectId)
     && (value.pending === null || value.pending.request.projectId === projectId && within(value.pending.submittedSeq)
-      && within(value.pending.submittedMappingSeq, value.mappingSeq))
+      && within(value.pending.submittedMappingSeq, value.mappingSeq)
+      && (value.pending.kind !== "correct-lineage" || value.pending.request.correction.projectId === projectId
+        && value.pending.request.correction.basis.projectId === projectId))
     && (value.hookStop === null || value.hookStop.request.projectId === projectId
       && value.hookStop.request.stop.projectId === projectId && within(value.hookStop.submittedSeq));
 }
@@ -68,7 +73,7 @@ function observationMatches(observation: SourceDraftObservation, request: Reques
   switch (observation.kind) {
     case "pending": return true;
     case "preparation-expired": return pending.kind === "capture" || pending.kind === "prepare-check";
-    case "confirmed-not-applied": return pending.kind === "adopt" || pending.kind === "start" || pending.kind === "start-check" || pending.kind === "finish-check";
+    case "confirmed-not-applied": return pending.kind === "adopt" || pending.kind === "start" || pending.kind === "start-check" || pending.kind === "finish-check" || pending.kind === "correct-lineage";
     case "capture": return pending.kind === "capture" && observation.view.attemptId === pending.request.attemptId
       && observation.view.sourceLanguage === pending.request.sourceLanguage;
     case "started": return (pending.kind === "start" || pending.kind === "start-check")
@@ -79,6 +84,9 @@ function observationMatches(observation: SourceDraftObservation, request: Reques
       && observation.view.sourceAttemptId === pending.request.sourceAttemptId && observation.view.sourceResultId === pending.request.sourceResultId
       && sameSourceEnvironment(observation.view.source, pending.request.source);
     case "check-finished": return pending.kind === "finish-check";
+    case "lineage-corrected": return pending.kind === "correct-lineage"
+      && observation.receipt.request.projectId === request.key.projectId
+      && same(observation.receipt.request, pending.request.correction);
     case "adoption-prepared":
     case "adopted": {
       // The original Source owner must pin a matching receipt before checking

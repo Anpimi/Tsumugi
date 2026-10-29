@@ -788,7 +788,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 }
                 if let Some(v) = r.assessment {
                     for row in &v.rows {
-                        let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND r.text=?4 AND o.native_key=?5)",params![v.source_snapshot_id.to_string(),row.unit_id.to_string(),row.source_revision_id.to_string(),row.source_text,row.native_key],|r|r.get(0)).map_err(sql_error)?;
+                        let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history o JOIN source_revisions r ON r.revision_id=o.revision_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND r.text=?4 AND o.native_key=?5)",params![v.source_snapshot_id.to_string(),row.unit_id.to_string(),row.source_revision_id.to_string(),row.source_text,row.native_key],|r|r.get(0)).map_err(sql_error)?;
                         if !valid {
                             return Err(corrupt());
                         }

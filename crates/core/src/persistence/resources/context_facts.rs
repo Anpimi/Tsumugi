@@ -250,9 +250,8 @@ pub(super) fn validate(c: &Connection) -> rusqlite::Result<()> {
             .ok_or(rusqlite::Error::InvalidQuery)?
             .request;
         let scope = &request.basis.scope;
-        check_unit(c, scope.project_id, scope.unit_id)
-            .map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let key = (scope.source_snapshot_id.to_string(), scope.locale.clone());
+        if !super::super::content::unit_owned_by_project(c,scope.project_id,scope.unit_id).map_err(|_|rusqlite::Error::InvalidQuery)? {return Err(rusqlite::Error::InvalidQuery);}
+        let key = (scope.source_snapshot_id.to_string(), scope.locale.clone(),scope.unit_id,scope.source_revision_id);
         if !sources.contains_key(&key) {
             sources.insert(
                 key.clone(),

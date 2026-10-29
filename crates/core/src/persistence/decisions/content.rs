@@ -19,7 +19,7 @@ fn identity(raw: String) -> Result<ExecutionId, ExecutionError> {
 /// partial coverage, including when the visited prefix has no pending items.
 fn units_in(c: &Connection, project: ExecutionId) -> Result<(Vec<ExecutionId>, bool), ExecutionError> {
     let mut statement = c.prepare(
-        "SELECT o.unit_id FROM source_occurrences o
+        "SELECT o.unit_id FROM source_effective_occurrences o
          JOIN content_scope scope ON scope.current_snapshot=o.snapshot_id
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
          GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT ?2",

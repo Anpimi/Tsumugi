@@ -438,7 +438,7 @@ fn validate_suite(c: &Connection, suite: &StrategySuite) -> Result<(), Execution
         {
             return Err(corrupt());
         }
-        let source:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN source_units u ON u.unit_id=o.unit_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND r.text=?4 AND u.project_id=?5)",params![payload.source_snapshot_id.to_string(),unit.unit_id.to_string(),payload.source_revision_id.to_string(),payload.source_text,suite.project_id.to_string()],|r|r.get(0)).map_err(sql)?;
+        let source:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN source_units u ON u.unit_id=o.unit_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND r.text=?4 AND u.project_id=?5)",params![payload.source_snapshot_id.to_string(),unit.unit_id.to_string(),payload.source_revision_id.to_string(),payload.source_text,suite.project_id.to_string()],|r|r.get(0)).map_err(sql)?;
         if !source {
             return Err(corrupt());
         }

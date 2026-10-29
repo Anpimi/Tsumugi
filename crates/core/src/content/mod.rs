@@ -8,12 +8,14 @@ mod legacy_source;
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 mod legacy_translation;
 mod maintenance_hook;
+mod lineage_corrections;
 mod plugin_translation;
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 mod smapi;
 mod translation;
 mod translation_projection;
 pub use maintenance_hook::*;
+pub use lineage_corrections::*;
 #[cfg(any(test, feature = "execution-test-host", feature = "legacy-desktop-domain"))]
 pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
@@ -834,6 +836,9 @@ pub struct ContentScope {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceConfirmation {
+    /// Absent historical requests describe the original, uncorrected mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_mapping_revision: Option<Revision>,
     #[serde(deserialize_with = "required_maintenance_hook")]
     #[cfg_attr(
         feature = "wire-schema",

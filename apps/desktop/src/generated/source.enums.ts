@@ -16,6 +16,7 @@ export const SourceChangeKindValues = ["unchanged","moved","changed","added","re
 export const SourceContextDirectionValues = ["before","after"] as const;
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const SourceImpactStatusValues = ["preserved","reassess","unresolved"] as const;
+export const SourceLineageCorrectionDecisionValues = ["continue","reject","unresolved"] as const;
 export const SourceMaintenanceHookPhaseValues = ["prepared","pending","running","observed","failed","stopped","expired","superseded","interrupted","unknown"] as const;
 export const SourceMaintenanceHookReadStateValues = ["action-not-known","not-enabled","prepared","adopted"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;

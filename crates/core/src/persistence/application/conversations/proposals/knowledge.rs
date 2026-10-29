@@ -32,7 +32,7 @@ pub(super) fn source_current(
         if scope.current_snapshot != Some(basis.source_snapshot_id) {
             return Err(fail(ErrorCode::DependencyConflict, "knowledge-source"));
         }
-        let matches:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",params![basis.source_snapshot_id.to_string(),unit.to_string(),basis.source_revision_id.to_string()],|r|r.get(0)).map_err(sql)?;
+        let matches:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",params![basis.source_snapshot_id.to_string(),unit.to_string(),basis.source_revision_id.to_string()],|r|r.get(0)).map_err(sql)?;
         if !matches {
             return Err(fail(ErrorCode::DependencyConflict, "knowledge-source"));
         }

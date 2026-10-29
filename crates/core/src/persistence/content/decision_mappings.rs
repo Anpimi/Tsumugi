@@ -9,6 +9,7 @@ pub(in crate::persistence) struct PendingSourceMapping {
     pub item_id: ExecutionId,
     pub result_id: ExecutionId,
     pub scope: ContentScope,
+    pub mapping_revision: Revision,
     pub previous_snapshot_id: ExecutionId,
     pub result_digest: String,
     pub changed_count: u32,
@@ -46,8 +47,9 @@ pub(in crate::persistence) fn pending_in(
         // First imports have no predecessor correspondence to decide.
         return Ok((Vec::new(), true));
     };
-    let (_, (old_input, _, old_output, old_rows)) =
+    let (_, (old_input, _, old_output, mut old_rows)) =
         snapshot_rows(connection, previous_snapshot_id, true)?;
+    lineage_corrections::effective_rows(connection,&mut old_rows)?;
     let query_limit = scan_limit.checked_add(1)
         .and_then(|limit| i64::try_from(limit).ok())
         .ok_or_else(|| failure(ErrorCode::LimitExceeded, "source-mapping-limit"))?;
@@ -124,7 +126,7 @@ pub(in crate::persistence) fn pending_in(
             true
         };
         groups.push(PendingSourceMapping {
-            task_id, attempt_id, item_id, result_id, scope: scope.clone(), previous_snapshot_id,
+            task_id, attempt_id, item_id, result_id, scope: scope.clone(), mapping_revision:lineage_corrections::mapping_revision(connection,previous_snapshot_id)?, previous_snapshot_id,
             result_digest: result.digest().into(), changed_count: counts.changed,
             ambiguous_count: counts.ambiguous, rename_candidate_count: counts.rename_candidate,
             cancellation_revision, cancellation_requested: cancellation_revision.get() > captured_cancel,

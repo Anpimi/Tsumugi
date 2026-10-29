@@ -31,6 +31,11 @@ pub(super) fn validate_value(key: &SourceDraftKey, value: &SourceDraftValue) -> 
         if pending.project_id() != key.project_id {
             return Err(fail(ErrorCode::InvalidInput, "source-drafts-project"));
         }
+        if let SourceDraftPending::CorrectLineage { request, .. } = pending {
+            if request.correction.project_id != key.project_id || request.correction.basis.project_id != key.project_id {
+                return Err(fail(ErrorCode::InvalidInput, "source-drafts-project"));
+            }
+        }
     }
     if let Some(pending) = &value.hook_stop {
         sequence(pending.submitted_seq, value.edit_seq)?;
@@ -59,7 +64,19 @@ fn read(connection: &Connection, key: &SourceDraftKey, format: i64) -> Result<So
     let row = connection.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?2 THEN payload END FROM source_draft_heads WHERE project_id=?1",
         params![key.project_id.to_string(), MAX_RECORD as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
         .optional().map_err(sql)?;
-    row.map(|row| decode(key, row)).transpose().map(|head| head.unwrap_or_else(|| empty(key)))
+    let head = row.map(|row| decode(key, row)).transpose()?.unwrap_or_else(|| empty(key));
+    if format < FORMAT && head.value.as_ref().is_some_and(|value| value.correction.is_some()
+        || matches!(value.pending, Some(SourceDraftPending::CorrectLineage { .. }))) {
+        return Err(fail(ErrorCode::CorruptLedger, "source-drafts-format"));
+    }
+    Ok(head)
+}
+pub(super) fn validate_existing(connection: &Connection, format: i64) -> Result<()> {
+    let mut statement = connection.prepare("SELECT project_id FROM source_draft_heads ORDER BY project_id").map_err(sql)?;
+    let projects = statement.query_map([], |row| row.get::<_, String>(0)).map_err(sql)?
+        .collect::<std::result::Result<Vec<_>, _>>().map_err(sql)?;
+    for project in projects { read(connection, &SourceDraftKey { project_id: stored_id(&project)? }, format)?; }
+    Ok(())
 }
 fn persist(connection: &Connection, head: &SourceDraftHead, bytes: &[u8]) -> Result<()> {
     connection.execute("INSERT INTO source_draft_heads VALUES(?1,?2,?3,?4,?5) ON CONFLICT(project_id) DO UPDATE SET revision=excluded.revision,edit_seq=excluded.edit_seq,has_pending=excluded.has_pending,payload=excluded.payload",
@@ -75,7 +92,7 @@ fn keep_newer_input(old: &SourceDraftValue, new: &SourceDraftValue, target: &Sou
         || old.source_language != new.source_language || old.declared != new.declared || old.selection_label != new.selection_label
         || old.lineage != new.lineage || old.actor != new.actor || old.filter != new.filter || old.applied_filter != new.applied_filter
         || old.manual_ordinal != new.manual_ordinal || old.historical_query != new.historical_query
-        || old.hook.locale != new.hook.locale || old.hook.enabled_intent != new.hook.enabled_intent) {
+        || old.hook.locale != new.hook.locale || old.hook.enabled_intent != new.hook.enabled_intent || old.correction != new.correction) {
         return Err(fail(ErrorCode::DependencyConflict, "source-drafts-newer-input"));
     }
     Ok(())

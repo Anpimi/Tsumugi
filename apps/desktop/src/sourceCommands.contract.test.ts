@@ -327,3 +327,10 @@ it("reads only the complete original native Source start request and rejects eve
   }
   expect(invoke.mock.calls.every(([name,args]) => name === "read_source_import_start" && JSON.stringify(args.request) === JSON.stringify(request))).toBe(true);
 });
+
+it("binds source adoption acknowledgements to the frozen predecessor mapping version", () => {
+  const request: SourceAdoptRequest = { ...fixture.prepare, confirmation: { ...fixture.prepare.confirmation, expectedMappingRevision: "2" } };
+  const action = sourceActionFixture(request);
+  expect(() => confirmSourceAction(request, action.unitId, action)).not.toThrow();
+  expect(() => confirmSourceAction(request, action.unitId, { ...action, parameters: { ...request.confirmation, expectedMappingRevision: "3" } })).toThrow();
+});

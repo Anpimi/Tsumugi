@@ -3,6 +3,8 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type LineageDecision = "continue" | "reject";
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type SourceLineageCorrectionDecision = "continue" | "reject" | "unresolved";
 export type UnsignedDecimal = string;
 export type ExtensionHandling = "required" | "preserve" | "optional";
 export type ContentTarget =
@@ -30,6 +32,8 @@ export interface Requests {
   historyContent: HistoryContentRequest;
   impact: ImpactRequest;
   lineage: LineageRequest;
+  lineageCorrection: SourceLineageCorrectionRequest;
+  lineageCorrectionBasis: SourceLineageCorrectionBasisRequest;
   maintenanceHook: SourceMaintenanceHookReadRequest;
   maintenanceHookSession: SessionRequest;
   maintenanceHookStop: SourceMaintenanceHookStopRequest;
@@ -56,6 +60,10 @@ export interface SourceConfirmation {
   actor?: string | null;
   expectedContentRevision: Revision;
   expectedCurrentSnapshot?: ExecutionId | null;
+  /**
+   * Absent historical requests describe the original, uncorrected mapping.
+   */
+  expectedMappingRevision?: Revision | null;
   identityPolicy: string;
   lineage?: LineageChoice[];
   lineageBaseSnapshot?: ExecutionId | null;
@@ -158,6 +166,165 @@ export interface ImpactRequest {
   snapshotId: ExecutionId;
 }
 export interface LineageRequest {
+  ordinal: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+  snapshotId: ExecutionId;
+}
+export interface SourceLineageCorrectionRequest {
+  correction: CorrectSourceLineage;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface CorrectSourceLineage {
+  actionId: ExecutionId;
+  actor: string;
+  basis: SourceLineageCorrectionBasis;
+  decision: SourceLineageCorrectionDecision;
+  oldOccurrenceId: ExecutionId;
+  projectId: ExecutionId;
+  reason: string;
+}
+export interface SourceLineageCorrectionBasis {
+  bindings: SourceLineageBinding[];
+  candidates: LineageEvidence[];
+  mappingRevision: Revision;
+  ordinal: number;
+  /**
+   * Current occurrence through the actual unresolved origin, inclusive.
+   */
+  originChain: SourceLineageOrigin[];
+  previousSnapshotId: ExecutionId;
+  projectId: ExecutionId;
+  resultDigest: string;
+  resultId: ExecutionId;
+  savedWork: SourceLineageSavedWork[];
+  scope: ContentScope;
+  snapshotId: ExecutionId;
+}
+/**
+ * A saved binding remains addressable after another identity becomes current.
+ */
+export interface SourceLineageBinding {
+  occurrenceId: ExecutionId;
+  predecessorId?: ExecutionId | null;
+  relation: string;
+  sourceRevisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface LineageEvidence {
+  actionId: ExecutionId;
+  actor?: string | null;
+  appliedRelation?: string | null;
+  decision: string;
+  old: ContentRow;
+  oldSnapshotId: ExecutionId;
+  policy: string;
+  reason?: string | null;
+  relationship: string;
+}
+export interface ContentRow {
+  occurrence: SourceOccurrence;
+  occurrenceId?: ExecutionId | null;
+  sourceRevisionId?: ExecutionId | null;
+  unitId?: ExecutionId | null;
+}
+export interface SourceOccurrence {
+  artifactId: ExecutionId;
+  /**
+   * Opaque digest of the exact captured revision policy, text, protected
+   * fragments and only the policy-selected domain blocks.
+   */
+  identityBasis: string;
+  key: string;
+  /**
+   * Half-open UTF-8 byte offsets into the captured artifact, using its format profile.
+   *
+   * @minItems 2
+   * @maxItems 2
+   */
+  keyByteRange?: [number, number] | null;
+  namespace: string;
+  nativeIdentity?: NativeIdentityEvidence | null;
+  operationOccurrenceId: string;
+  operationSourceRevisionId: string;
+  operationUnitId: string;
+  ordinal: number;
+  source: SourceReference;
+  text: string;
+  /**
+   * Derived UTF-8 coordinates for existing readers; original coordinates are
+   * retained in `source`, including their explicit encoding.
+   *
+   * @minItems 2
+   * @maxItems 2
+   */
+  valueByteRange: [number, number];
+}
+export interface NativeIdentityEvidence {
+  display: NativeIdentityDisplay;
+  namespace: string;
+  policy: ContractRef;
+  /**
+   * The domain's canonical matching value, not necessarily its original
+   * literal spelling. Core does not normalize this value again.
+   */
+  value: string;
+}
+/**
+ * Domain-confirmed spelling for presentation, separate from canonical
+ * matching. A source reference is optional when the identity is derived.
+ */
+export interface NativeIdentityDisplay {
+  source: SourceReference | null;
+  value: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface SourceLineageOrigin {
+  mappingRevision: Revision;
+  occurrenceId: ExecutionId;
+  snapshotId: ExecutionId;
+}
+/**
+ * References and an exact observation of saved work; no translation is moved.
+ */
+export interface SourceLineageSavedWork {
+  basis: string;
+  checkActionIds: ExecutionId[];
+  locale: string;
+  protected: boolean;
+  protectionRevision?: Revision | null;
+  reviewActionIds: ExecutionId[];
+  selectionId?: ExecutionId | null;
+  translationRevisionId?: ExecutionId | null;
+  translationRevisionIds: ExecutionId[];
+  unitId: ExecutionId;
+}
+export interface ContentScope {
+  currentSnapshot?: ExecutionId | null;
+  revision: Revision;
+}
+export interface SourceLineageCorrectionBasisRequest {
   ordinal: number;
   projectId: ExecutionId;
   sessionToken: string;
@@ -266,15 +433,6 @@ export interface SourceContextBlockDescriptor {
   payloadBytes: number;
   schema: ContractRef;
   target: ContentTarget;
-}
-/**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
 }
 export interface StartRequest {
   attemptId: ExecutionId;

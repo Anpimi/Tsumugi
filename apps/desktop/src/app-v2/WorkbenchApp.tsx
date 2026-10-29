@@ -711,6 +711,7 @@ function WorkspaceShell() {
         if (!sourceOwner || sourceOwner.journal.hydration !== "ready") return false;
         const frame = sourceOwner.draftValue(), pending = destination.slot === "source-hook-stop" ? frame.hookStop : frame.pending;
         const actionId = pending && ("stop" in pending.request ? pending.request.stop.actionId
+          : "correction" in pending.request ? pending.request.correction.actionId
           : "actionId" in pending.request ? pending.request.actionId : "resultId" in pending.request ? pending.request.resultId : pending.request.attemptId);
         if (actionId !== destination.actionId || !current()) return false;
         intent.release(); setSourceTarget(null); setSourceOpen(true); return true;

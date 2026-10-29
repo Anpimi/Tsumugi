@@ -221,6 +221,15 @@ impl ReviewMaterial {
         }
         let source_digest = digest(&("review-source-material-1", &source.exchange, &binding))?;
         let mut mappings: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+        let mut rows=rows;
+        let originals=rows.clone();
+        let mut query=connection.prepare("SELECT occurrence_id,unit_id,revision_id FROM source_binding_history WHERE snapshot_id=?1 AND mapping_revision>0 ORDER BY mapping_revision,ordinal").map_err(super::super::sql)?;
+        let additional=query.query_map([snapshot.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).map_err(super::super::sql)?;
+        for entry in additional {
+            let (occurrence,unit,revision)=entry.map_err(super::super::sql)?;
+            let mut row=originals.iter().find(|row|row.occurrence_id.is_some_and(|id|id.to_string()==occurrence)).cloned().ok_or_else(||failure(ErrorCode::CorruptLedger,"review-source-mapping"))?;
+            row.unit_id=Some(ExecutionId::parse(&unit)?);row.source_revision_id=Some(ExecutionId::parse(&revision)?);rows.push(row);
+        }
         for row in rows {
             if let Some(unit) = row.unit_id {
                 mappings.entry(unit).or_default().insert((
@@ -261,10 +270,11 @@ impl ReviewMaterial {
             .mappings
             .get(&target.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-source-mapping"))?;
+        let mappings=mappings.iter().filter(|(revision,_,_)|*revision==target.source_revision_id).collect::<Vec<_>>();
         if mappings.len() != 1 {
             return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
         }
-        let (revision, unit_id, source_revision_id) = mappings.iter().next().unwrap();
+        let (revision, unit_id, source_revision_id) = mappings[0];
         if *revision != target.source_revision_id
             || self.units.get(unit_id)
                 != Some(&(source_revision_id.clone(), target.source_text.clone()))

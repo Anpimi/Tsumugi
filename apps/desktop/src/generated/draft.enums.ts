@@ -19,6 +19,7 @@ export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as c
 export const RuntimeOperatingSystemValues = ["macos","linux","windows"] as const;
 export const SelectionPolicyValues = ["candidates-only","missing-only","replace-captured-selection"] as const;
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
+export const SourceLineageCorrectionDecisionValues = ["continue","reject","unresolved"] as const;
 export const StageModeValues = ["manual","assisted","skipped"] as const;
 export const TeamWorkKindValues = ["translation","review","evidence"] as const;
 export const TermOriginValues = ["manual","external"] as const;

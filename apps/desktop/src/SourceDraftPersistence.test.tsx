@@ -7,7 +7,7 @@ import SourceDraftRecovery from "./SourceDraftRecovery";
 import { sourceDraftCommands, canonicalSourceDraft } from "./sourceDraftCommands";
 import { sourceCommands } from "./sourceCommands";
 import { executionCommands, type Receipt } from "./executionCommands";
-import type { ProjectView } from "./projectCommands";
+import type { CommandError, ProjectView } from "./projectCommands";
 import { Field, TextInput } from "./design-system/Field";
 import { i18n } from "./i18n";
 import { renderWorkbench } from "./testSupport/WorkbenchTestShell";
@@ -18,6 +18,9 @@ import { sourceActionFixture, sourceAttemptFixture, sourcePageFixture, sourceRec
 import { pluginSourceRequest, pluginSourceWorkflow } from "./testSupport/pluginSourceFixture";
 import { fixtureIdentity as id } from "./testSupport/executionFixture";
 import wire from "../test/fixtures/sourceCommands.contract.json";
+import { sourceCorrectionBasisFixture, sourceCorrectionReceiptFixture } from "./testSupport/sourceCorrectionFixture";
+import type { SourceLineageCorrectionReceipt, SourceLineageCorrectionRequest } from "./sourceCommands";
+import { validateResponseSourceObserved } from "./generated/draft.validators";
 
 const invoke = vi.hoisted(() => vi.fn()); vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { ...wire.session, locator: "/synthetic/source-persistence", reconciliationState: "settled",
@@ -160,4 +163,117 @@ it("records an already executed recovered checker result only after an explicit 
   expect(finish).toHaveBeenCalledExactlyOnceWith({ ...request, sessionToken: "reopened-source-session" });
   expect(owner.current().actor).toBe("Retained B 人工");
   expect(start).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); expect(executionCommands.identity).not.toHaveBeenCalled();
+});
+
+it("validates correction A before journaling, checkpoints it before dispatch, and keeps newer correction B after its receipt", async () => {
+  const basis = sourceCorrectionBasisFixture(key.projectId), reply = deferred<SourceLineageCorrectionReceipt>();
+  vi.spyOn(sourceCommands, "correctionBasis").mockResolvedValue(basis);
+  const validate = vi.spyOn(sourceCommands, "validateCorrection").mockImplementation(async () => {
+    expect((await sourceDraftCommands.read({ sessionToken: project.sessionToken, key })).value?.pending).toBeNull(); return null;
+  });
+  const correct = vi.spyOn(sourceCommands, "correctLineage").mockImplementation(async request => {
+    const head = await sourceDraftCommands.read({ sessionToken: request.sessionToken, key });
+    expect(head.value?.pending).toMatchObject({ kind: "correct-lineage", request: { projectId: key.projectId, correction: request.correction } });
+    expect(head.value?.correction?.reason).toBe("Correction A"); return reply.promise;
+  });
+  await open(); await act(async () => { await owner.openCorrection(basis.snapshotId, basis.ordinal); });
+  act(() => owner.editCorrection({ oldOccurrenceId: basis.candidates[0].old.occurrenceId!, decision: "continue", actor: "Reviewer", reason: "Correction A" }));
+  let saving!: Promise<void>; act(() => { saving = owner.applyCorrection(); });
+  await waitFor(() => expect(correct).toHaveBeenCalledOnce()); expect(validate).toHaveBeenCalledOnce();
+  act(() => owner.editCorrection({ reason: "Newer B 👩🏽‍💻\n人工理由", decision: "reject" }));
+  const request = correct.mock.calls[0][0];
+  await act(async () => { reply.resolve(sourceCorrectionReceiptFixture(request)); await saving; });
+  expect(owner.current().pendingCorrection).toBeNull(); expect(owner.current().correctionDraft?.reason).toBe("Newer B 👩🏽‍💻\n人工理由");
+  expect(owner.current().correctionDraft?.decision).toBe("reject"); expect(owner.current().correctionReceipt?.request.reason).toBe("Correction A");
+  expect(correct).toHaveBeenCalledOnce(); await act(async () => { await owner.flush(); });
+  const head = await sourceDraftCommands.read({ sessionToken: project.sessionToken, key });
+  expect(head.value?.pending).toBeNull(); expect(head.value?.correction?.reason).toBe("Newer B 👩🏽‍💻\n人工理由");
+});
+
+it("restores correction B and original request A without observing or replaying, then settles only an explicit original-request check", async () => {
+  installSourceDraftFixture(); const basis = sourceCorrectionBasisFixture(key.projectId);
+  const request: SourceLineageCorrectionRequest = { ...wire.session, correction: { projectId: key.projectId, actionId: id(2120), basis,
+    oldOccurrenceId: basis.candidates[0].old.occurrenceId!, decision: "continue", actor: "Reviewer A", reason: "Original A" } };
+  const { sessionToken: _token, ...original } = request;
+  const pending = { kind: "correct-lineage" as const, request: original, submittedSeq: "1", submittedMappingSeq: "1" };
+  await sourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key, expectedRevision: "0", writerId: id(2121),
+    value: canonicalSourceDraft({ ...sourceDraftValue(sourceDraftStateFixture(), "2"), mappingSeq: "2", pending,
+      correction: { snapshotId: basis.snapshotId, ordinal: basis.ordinal, oldOccurrenceId: request.correction.oldOccurrenceId,
+        decision: "reject", actor: "Reviewer B", reason: "Newer B" } }) } });
+  const correct = vi.spyOn(sourceCommands, "correctLineage"), validate = vi.spyOn(sourceCommands, "validateCorrection");
+  const observed = vi.spyOn(sourceDraftCommands, "observe").mockImplementation(async input => {
+    const value = { target: input.target, observation: { kind: "lineage-corrected", receipt: sourceCorrectionReceiptFixture(request) } };
+    if (!validateResponseSourceObserved(value)) throw new Error("Invalid synthetic correction observation");
+    return value;
+  });
+  await open({ ...project, sessionToken: "reopened-correction-session" });
+  expect(observed).not.toHaveBeenCalled(); expect(correct).not.toHaveBeenCalled(); expect(validate).not.toHaveBeenCalled();
+  expect(owner.current().correctionDraft?.reason).toBe("Newer B"); expect(owner.current().pendingCorrection?.sessionToken).toBe("reopened-correction-session");
+  await act(async () => { await owner.checkCorrection(); });
+  expect(observed).toHaveBeenCalledOnce(); expect(observed.mock.calls[0][0].target).toEqual({ kind: "primary", pending });
+  expect(owner.current().pendingCorrection).toBeNull(); expect(owner.current().correctionDraft?.reason).toBe("Newer B");
+  expect(owner.current().correctionReceipt?.request.actionId).toBe(request.correction.actionId); expect(correct).not.toHaveBeenCalled();
+});
+
+it("discards only the reviewed correction draft while keeping newer source import input", async () => {
+  const basis = sourceCorrectionBasisFixture(key.projectId); vi.spyOn(sourceCommands, "correctionBasis").mockResolvedValue(basis);
+  await open(); await act(async () => { await owner.openCorrection(basis.snapshotId, basis.ordinal); });
+  act(() => { owner.editCorrection({ reason: "Correction A" }); owner.edit("actor", "Other source input B"); });
+  const original = structuredClone(owner.current().correctionDraft!);
+  act(() => owner.editCorrection({ reason: "Newer correction B" }));
+  let removed = true; await act(async () => { removed = await owner.discardCorrection(original); });
+  expect(removed).toBe(false); expect(owner.current().correctionDraft?.reason).toBe("Newer correction B");
+  const reviewed = structuredClone(owner.current().correctionDraft!);
+  await act(async () => { removed = await owner.discardCorrection(reviewed); });
+  expect(removed).toBe(true); expect(owner.current().correctionDraft).toBeNull(); expect(owner.current().actor).toBe("Other source input B");
+  const saved = await sourceDraftCommands.read({ sessionToken: project.sessionToken, key });
+  expect(saved.value?.correction).toBeUndefined(); expect(saved.value?.actor).toBe("Other source input B");
+});
+
+it.each(["recorded", "unknown-then-recorded", "conflict", "unknown"] as const)("recovers a cancelled correction settlement only after a proven disposition rejection (%s)", async outcome => {
+  installSourceDraftFixture(); const basis = sourceCorrectionBasisFixture(key.projectId);
+  const request: SourceLineageCorrectionRequest = { ...wire.session, correction: { projectId: key.projectId, actionId: id(2130), basis,
+    oldOccurrenceId: basis.candidates[0].old.occurrenceId!, decision: "continue", actor: "Reviewer A", reason: "Original A" } };
+  const { sessionToken: _token, ...original } = request;
+  const pending = { kind: "correct-lineage" as const, request: original, submittedSeq: "1", submittedMappingSeq: "1" };
+  await sourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key, expectedRevision: "0", writerId: id(2131),
+    value: canonicalSourceDraft({ ...sourceDraftValue(sourceDraftStateFixture(), "2"), mappingSeq: "2", pending, actor: "Other source input B",
+      correction: { snapshotId: basis.snapshotId, ordinal: basis.ordinal, oldOccurrenceId: request.correction.oldOccurrenceId,
+        decision: "reject", actor: "Reviewer B", reason: "Newer B" } }) } });
+  const correct = vi.spyOn(sourceCommands, "correctLineage"), validate = vi.spyOn(sourceCommands, "validateCorrection");
+  const observed = vi.spyOn(sourceDraftCommands, "observe").mockImplementation(async input => {
+    const value = { target: input.target, observation: { kind: "lineage-corrected", receipt: sourceCorrectionReceiptFixture(request) } };
+    if (!validateResponseSourceObserved(value)) throw new Error("Invalid synthetic correction observation");
+    return value;
+  });
+  const resolve = sourceDraftCommands.resolve; let cancellations = 0;
+  vi.spyOn(sourceDraftCommands, "resolve").mockImplementation(async input => {
+    if (input.resolve.disposition !== "confirmed-not-applied") return resolve(input);
+    expect(input.resolve.target).toEqual({ kind: "primary", pending }); cancellations++;
+    const unknown = outcome === "unknown" || outcome === "unknown-then-recorded" && cancellations === 1;
+    const failure: CommandError = { code: unknown ? "outcome-unknown" : outcome === "conflict" ? "dependency-conflict" : "result-mismatch",
+      stage: "draft-storage", outcome: unknown ? "unknown" : "rejected", recoveryRequired: false,
+      reason: outcome === "conflict" ? "source-drafts-current" : "source-drafts-disposition" };
+    throw failure;
+  });
+  await open({ ...project, sessionToken: "reopened-cancel-session" });
+  expect(observed).not.toHaveBeenCalled();
+  await act(async () => { await owner.cancelCorrection(); });
+  if (outcome === "unknown-then-recorded") {
+    expect(owner.current().pendingCorrection).not.toBeNull(); expect(owner.journal.failure).not.toBeNull(); expect(observed).not.toHaveBeenCalled();
+    await act(async () => { await owner.retryJournal(); });
+  }
+  if (outcome === "recorded" || outcome === "unknown-then-recorded") {
+    expect(owner.current().pendingCorrection).toBeNull(); expect(owner.journal.failure).toBeNull();
+    expect(observed).toHaveBeenCalledOnce(); expect(observed.mock.calls[0][0].target).toEqual({ kind: "primary", pending });
+    expect(owner.current().correctionReceipt?.request.actionId).toBe(request.correction.actionId);
+  } else {
+    expect(owner.current().pendingCorrection?.correction.actionId).toBe(request.correction.actionId); expect(owner.journal.failure).not.toBeNull();
+    await act(async () => { await owner.checkCorrection(); }); expect(observed).not.toHaveBeenCalled();
+  }
+  expect(owner.current().correctionDraft?.reason).toBe("Newer B"); expect(owner.current().actor).toBe("Other source input B");
+  expect(correct).not.toHaveBeenCalled(); expect(validate).not.toHaveBeenCalled();
+  const saved = await sourceDraftCommands.read({ sessionToken: "reopened-cancel-session", key });
+  expect(saved.value?.correction?.reason).toBe("Newer B"); expect(saved.value?.actor).toBe("Other source input B");
+  expect(saved.value?.pending === null).toBe(outcome === "recorded" || outcome === "unknown-then-recorded");
 });

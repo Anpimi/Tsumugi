@@ -15,6 +15,7 @@ pub enum SourceDraftObservation {
     CheckFinished { valid: bool },
     AdoptionPrepared { value: AdoptionActionRead },
     Adopted { value: AdoptionActionRead },
+    LineageCorrected { receipt: tsumugi_core::content::SourceLineageCorrectionReceipt },
     HookStopped { receipt: tsumugi_core::content::SourceMaintenanceHookStopReceipt },
     ConfirmedNotApplied,
 }
@@ -110,6 +111,10 @@ pub async fn resolve_local_source_draft(state: State<'_, AppState>, request: Sou
                         &request.input_digest, request.grant_id, request.expires_at_ms.get(), request.unsandboxed_execution, &request.start_metadata).map_err(map_error)?;
                     observed = super::super::execution::source::plugin::observations::start_observation(proof);
                 }
+                if let SourceDraftPending::CorrectLineage { request, .. } = pending {
+                    let proof = active.store.cancel_source_lineage_correction(&request.correction).map_err(map_error)?;
+                    observed = super::super::execution::source::plugin::observations::lineage_observation(proof);
+                }
             }
         }
         let disposition = observed.disposition().ok_or_else(|| map_error(ExecutionError::new(ErrorCode::OutcomeUnknown, "source-drafts-pending")))?;
@@ -122,7 +127,8 @@ pub async fn resolve_local_source_draft(state: State<'_, AppState>, request: Sou
         // This is an explicit settlement of an already proven durable action.
         // Pure discovery and expired preparation never reconcile the project.
         if matches!(observed, SourceDraftObservation::Started { .. } | SourceDraftObservation::CheckFinished { .. }
-            | SourceDraftObservation::Adopted { .. } | SourceDraftObservation::HookStopped { .. }) && active.store.is_reconciling() {
+            | SourceDraftObservation::Adopted { .. } | SourceDraftObservation::LineageCorrected { .. }
+            | SourceDraftObservation::HookStopped { .. }) && active.store.is_reconciling() {
             active.store.reconcile_execution().map_err(map_error)?;
             if observe(active)?.disposition() != Some(disposition) {
                 return Err(map_error(ExecutionError::new(ErrorCode::OutcomeUnknown, "source-drafts-pending")));

@@ -14,7 +14,7 @@ fn write(project_id: ExecutionId) -> SourceDraftWrite {
             applied_filter: String::new(), manual_ordinal: None, historical_query: String::new(),
             preview_after: 0, comparison_after: 0, historical_search: None, receipt_ref: None,
             picker_uncertain: false, hook: SourceDraftHook { locale: "zh-CN".into(), enabled_intent: true, source_action_id: None },
-            pending: None, hook_stop: None,
+            pending: None, hook_stop: None, correction: None,
         },
     }
 }
@@ -33,7 +33,7 @@ fn primary_requests(project_id: ExecutionId) -> Vec<SourceDraftPending> {
         SourceDraftPending::StartCheck { request: start, submitted_seq: seq, submitted_mapping_seq: seq },
         SourceDraftPending::FinishCheck { request: SourceDraftCheckFinishRequest { project_id, attempt_id: ExecutionId::new(), result_id: ExecutionId::new() }, submitted_seq: seq, submitted_mapping_seq: seq },
         SourceDraftPending::Adopt { request: SourceDraftAdoptRequest { project_id, attempt_id: ExecutionId::new(), result_id: ExecutionId::new(), action_id: ExecutionId::new(),
-            confirmation: SourceConfirmation { maintenance_hook: None, result_digest: "b".repeat(64), identity_policy: "synthetic/1".into(), expected_content_revision: rev(1), source_language: "en-US".into(), expected_current_snapshot: None, lineage: vec![], actor: None, lineage_base_snapshot: None } },
+            confirmation: SourceConfirmation { maintenance_hook: None, result_digest: "b".repeat(64), identity_policy: "synthetic/1".into(), expected_content_revision: rev(1), expected_mapping_revision: None, source_language: "en-US".into(), expected_current_snapshot: None, lineage: vec![], actor: None, lineage_base_snapshot: None } },
             unit_id: ExecutionId::new(), submitted_seq: seq, submitted_mapping_seq: seq },
     ]
 }
@@ -172,4 +172,32 @@ fn format_ten_resource_survives_read_failed_upgrade_and_committed_source_write()
     assert_eq!(store.read_source(&source.key).unwrap(), saved);
     assert_eq!(blocker.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), FORMAT);
     assert_eq!(blocker.query_row("SELECT rowid,payload FROM resource_draft_heads", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))).unwrap(), row);
+}
+
+#[test]
+fn format_eleven_source_bytes_and_pending_survive_read_failed_upgrade_and_new_correction_draft() {
+    let temp = tempfile::tempdir().unwrap(); let store = DraftStore::at(temp.path().join("drafts")).unwrap();
+    let project = ExecutionId::new(); let mut original = write(project);
+    original.value.pending = Some(primary_requests(project).remove(0));
+    let head = store.write_source(&original).unwrap();
+    let path = store.directory.join(DATABASE); let blocker = Connection::open(&path).unwrap();
+    set_legacy_format(&blocker, SOURCE_FORMAT).unwrap();
+    let row: (i64, Vec<u8>) = blocker.query_row("SELECT rowid,payload FROM source_draft_heads WHERE project_id=?1", [project.to_string()], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert!(!String::from_utf8(row.1.clone()).unwrap().contains("\"correction\""));
+    assert_eq!(store.read_source(&original.key).unwrap(), head);
+    assert_eq!(blocker.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), SOURCE_FORMAT);
+    let mut other = write(ExecutionId::new());
+    other.value.correction = Some(SourceDraftCorrection { snapshot_id: ExecutionId::new(), ordinal: 3,
+        old_occurrence_id: None, decision: tsumugi_core::content::SourceLineageCorrectionDecision::Unresolved,
+        actor: "Newer B 人工".into(), reason: "Keep both saved translations".into() });
+    blocker.execute_batch("BEGIN; SELECT * FROM source_draft_heads;").unwrap();
+    assert_eq!(store.write_source(&other).unwrap_err().code, ErrorCode::OutcomeUnknown);
+    blocker.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(blocker.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), SOURCE_FORMAT);
+    assert_eq!(blocker.query_row("SELECT rowid,payload FROM source_draft_heads WHERE project_id=?1", [project.to_string()], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))).unwrap(), row);
+    let saved = store.write_source(&other).unwrap();
+    assert_eq!(store.read_source(&other.key).unwrap(), saved);
+    assert_eq!(blocker.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), FORMAT);
+    assert_eq!(blocker.query_row("SELECT rowid,payload FROM source_draft_heads WHERE project_id=?1", [project.to_string()], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))).unwrap(), row);
+    assert_eq!(store.read_source(&original.key).unwrap(), head);
 }

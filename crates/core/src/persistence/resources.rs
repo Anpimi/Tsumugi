@@ -937,7 +937,7 @@ fn check_unit(
     let owner: Option<String> = connection
         .query_row(
             "SELECT u.project_id FROM source_units u
-             JOIN source_occurrences o ON o.unit_id=u.unit_id
+             JOIN source_effective_occurrences o ON o.unit_id=u.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
              WHERE u.unit_id=?1",
             [unit_id.to_string()],
@@ -958,7 +958,7 @@ fn unit_for_native_key(
 ) -> Result<ExecutionId, ExecutionError> {
     let mut statement = connection
         .prepare(
-            "SELECT DISTINCT o.unit_id FROM source_occurrences o
+            "SELECT DISTINCT o.unit_id FROM source_effective_occurrences o
              JOIN source_units u ON u.unit_id=o.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
              WHERE o.native_key=?1 AND u.project_id=?2 LIMIT 2",
@@ -1374,7 +1374,7 @@ fn source_fact(
     let row: (String, String, String, String) = connection
         .query_row(
             "SELECT o.revision_id,o.namespace,o.native_key,r.text
-             FROM source_occurrences o
+             FROM source_effective_occurrences o
              JOIN source_revisions r ON r.revision_id=o.revision_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
              WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
@@ -2036,7 +2036,7 @@ impl ProjectStore {
             .prepare(
                 "SELECT o.unit_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,
                         COALESCE(b.last_change_rowid,0)
-                 FROM source_occurrences o
+                 FROM source_effective_occurrences o
                  JOIN source_units u ON u.unit_id=o.unit_id
                  JOIN source_revisions r ON r.revision_id=o.revision_id
                  JOIN content_scope c ON c.current_snapshot=o.snapshot_id
@@ -2046,7 +2046,7 @@ impl ProjectStore {
                    AND (?3 IS NULL OR o.unit_id IN (SELECT value FROM json_each(?3)))
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
-                   AND o.ordinal=(SELECT MIN(first.ordinal) FROM source_occurrences first
+                   AND o.ordinal=(SELECT MIN(first.ordinal) FROM source_effective_occurrences first
                                   WHERE first.snapshot_id=o.snapshot_id AND first.unit_id=o.unit_id)
                  ORDER BY o.unit_id LIMIT 2001",
             )
@@ -3275,7 +3275,7 @@ pub(super) fn resolve_terms_in(
     check_unit(connection, project_id, unit_id)?;
     let (source_revision, source_text): (String, String) = connection
         .query_row(
-            "SELECT o.revision_id,r.text FROM source_occurrences o
+            "SELECT o.revision_id,r.text FROM source_effective_occurrences o
                  JOIN source_revisions r ON r.revision_id=o.revision_id
                  JOIN content_scope c ON c.current_snapshot=o.snapshot_id
                  WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",

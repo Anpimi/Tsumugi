@@ -36,7 +36,7 @@ fn source_in(
     let snapshot = current_snapshot(c)?;
     let found: Option<(String, String)> = c
         .query_row(
-            "SELECT o.revision_id,r.text FROM source_occurrences o
+            "SELECT o.revision_id,r.text FROM source_effective_occurrences o
           JOIN source_units u ON u.unit_id=o.unit_id
           JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id
           WHERE u.project_id=?1 AND o.unit_id=?2 AND o.snapshot_id=?3 ORDER BY o.ordinal LIMIT 1",
@@ -69,7 +69,7 @@ fn source_in(
 fn historic_source(c: &Connection, basis: &McpTermQueryBasis) -> Result<String, ExecutionError> {
     let text: Option<String> = c
         .query_row(
-            "SELECT r.text FROM source_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
+            "SELECT r.text FROM source_binding_history o JOIN source_units u ON u.unit_id=o.unit_id
          JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id
          WHERE u.project_id=?1 AND o.unit_id=?2 AND o.snapshot_id=?3 AND o.revision_id=?4 LIMIT 1",
             params![
@@ -540,7 +540,7 @@ impl AdoptionHandler for McpTermQueryAdoptionHandler {
         let digest = codec::digest(&bytes);
         Ok(Box::new(move |tx| {
             let current: Vec<(String,String)> = tx.query_rows(
-                "SELECT o.snapshot_id,o.revision_id FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id JOIN source_units u ON u.unit_id=o.unit_id WHERE u.project_id=?1 AND o.unit_id=?2 ORDER BY o.ordinal LIMIT 1",
+                "SELECT o.snapshot_id,o.revision_id FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id JOIN source_units u ON u.unit_id=o.unit_id WHERE u.project_id=?1 AND o.unit_id=?2 ORDER BY o.ordinal LIMIT 1",
                 params![s.request.project_id.to_string(),s.request.unit_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?)))?;
             if current
                 != vec![(
@@ -728,7 +728,7 @@ fn current(c: &Connection, captured: &CapturedMcpTerms) -> Result<bool, Executio
         return Ok(false);
     }
     let basis: Option<(String,String)> = c.query_row(
-        "SELECT o.snapshot_id,o.revision_id FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id JOIN source_units u ON u.unit_id=o.unit_id
+        "SELECT o.snapshot_id,o.revision_id FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id JOIN source_units u ON u.unit_id=o.unit_id
           WHERE u.project_id=?1 AND o.unit_id=?2 ORDER BY o.ordinal LIMIT 1",
         params![b.project_id.to_string(), b.unit_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(sql)?;
     Ok(basis

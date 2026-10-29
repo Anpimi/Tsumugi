@@ -64,6 +64,10 @@ pub(in crate::commands) fn observe_persistent(store: &ProjectStore, key: &Source
     };
     match pending {
         Pending::Capture { .. } | Pending::PrepareCheck { .. } => Ok(Observation::Pending),
+        Pending::CorrectLineage { request, .. } => {
+            if request.correction.project_id != key.project_id { return Err(ExecutionError::new(ErrorCode::Unauthorized, "source-drafts-project")); }
+            store.source_lineage_correction_request_observation(&request.correction).map(lineage_observation)
+        }
         Pending::Start { request, .. } | Pending::StartCheck { request, .. } => {
             let operation = if matches!(pending, Pending::Start { .. }) { content::OPERATION } else { SOURCE_CHECK_OPERATION };
             store.source_plugin_start_request_observation(request.project_id, request.attempt_id, operation,
@@ -92,6 +96,14 @@ pub(in crate::commands) fn observe_persistent(store: &ProjectStore, key: &Source
                 Err(error) => Err(error),
             }
         }
+    }
+}
+
+pub(in crate::commands) fn lineage_observation(observed: content::SourceLineageCorrectionObservation) -> Observation {
+    match observed {
+        content::SourceLineageCorrectionObservation::Recorded { receipt } => Observation::LineageCorrected { receipt },
+        content::SourceLineageCorrectionObservation::ReceiptAbsent => Observation::Pending,
+        content::SourceLineageCorrectionObservation::ConfirmedNotApplied => Observation::ConfirmedNotApplied,
     }
 }
 

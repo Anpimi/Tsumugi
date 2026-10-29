@@ -878,7 +878,7 @@ pub(super) fn scope_membership(
             namespace,
             logical_paths,
         } => {
-            let mut q=c.prepare("SELECT o.namespace,f.logical_path FROM source_occurrences o JOIN source_files f ON f.artifact_id=o.artifact_id JOIN content_scope s ON s.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 ORDER BY o.ordinal").map_err(sql)?;
+            let mut q=c.prepare("SELECT o.namespace,f.logical_path FROM source_effective_occurrences o JOIN source_files f ON f.artifact_id=o.artifact_id JOIN content_scope s ON s.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 ORDER BY o.ordinal").map_err(sql)?;
             let occurrences = q
                 .query_map([unit.to_string()], |r| {
                     Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -1249,7 +1249,7 @@ mod tests {
         c.execute_batch("CREATE TABLE content_scope(current_snapshot TEXT);INSERT INTO content_scope VALUES('snapshot');
             CREATE TABLE source_snapshots(snapshot_id TEXT,set_id TEXT);INSERT INTO source_snapshots VALUES('snapshot','set');
             CREATE TABLE source_files(artifact_id TEXT,set_id TEXT,logical_path TEXT);INSERT INTO source_files VALUES('a','set','a.txt'),('c','set','c.txt');
-            CREATE TABLE source_occurrences(snapshot_id TEXT,unit_id TEXT,namespace TEXT,artifact_id TEXT,ordinal INTEGER);").unwrap();
+            CREATE TABLE source_occurrences(snapshot_id TEXT,unit_id TEXT,namespace TEXT,artifact_id TEXT,ordinal INTEGER); CREATE VIEW source_effective_occurrences AS SELECT * FROM source_occurrences;").unwrap();
         for (unit, artifact, ordinal) in [
             (full, "a", 0),
             (partial, "a", 1),

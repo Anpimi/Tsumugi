@@ -230,6 +230,7 @@ export type DecisionJournalKey =
     };
 export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact" | "source-hook-stop";
 export type DecisionLocalRequestKind =
+  | "source-lineage-correction"
   | "save"
   | "selection"
   | "merge"

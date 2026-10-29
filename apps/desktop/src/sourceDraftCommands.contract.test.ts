@@ -6,6 +6,8 @@ import { fixtureIdentity as id } from "./testSupport/executionFixture";
 import { sourceActionFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
 import source from "../test/fixtures/sourceCommands.contract.json";
 import * as validators from "./generated/draft.validators";
+import { sourceCorrectionBasisFixture, sourceCorrectionReceiptFixture } from "./testSupport/sourceCorrectionFixture";
+import type { SourceLineageCorrectionRequest } from "./sourceCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -111,4 +113,22 @@ it("uses an opaque native ticket and rejects a selection for another declared so
   expect(invoke).toHaveBeenLastCalledWith("select_dropped_plugin_source", { request });
   invoke.mockResolvedValueOnce({ ...pluginSourceWorkflow.selection, source: { ...pluginSourceWorkflow.selection.source, environmentDigest: "a".repeat(64) } });
   await expect(sourceCommands.selectDropped(request)).rejects.toThrow("Invalid IPC response");
+});
+
+it("checks a correction observation against its complete original request and keeps absence unresolved", async () => {
+  const basis = sourceCorrectionBasisFixture(projectId);
+  const request: SourceLineageCorrectionRequest = { projectId, sessionToken, correction: { projectId, actionId: id(2145), basis,
+    oldOccurrenceId: basis.candidates[0].old.occurrenceId!, decision: "continue", actor: "Recorder", reason: "Original A" } };
+  const { sessionToken: _token, ...original } = request;
+  const target = { kind: "primary" as const, pending: { kind: "correct-lineage" as const, request: original,
+    submittedSeq: "1", submittedMappingSeq: "1" } };
+  const receipt = sourceCorrectionReceiptFixture(request);
+  invoke.mockResolvedValueOnce({ target, observation: { kind: "lineage-corrected", receipt } });
+  expect((await sourceDraftCommands.observe({ sessionToken, key, target })).observation.kind).toBe("lineage-corrected");
+  invoke.mockResolvedValueOnce({ target, observation: { kind: "lineage-corrected", receipt: { ...receipt, request: { ...receipt.request, reason: "Another action" } } } });
+  await expect(sourceDraftCommands.observe({ sessionToken, key, target })).rejects.toThrow("Invalid IPC response");
+  for (const kind of ["pending", "confirmed-not-applied"] as const) {
+    invoke.mockResolvedValueOnce({ target, observation: { kind } });
+    expect((await sourceDraftCommands.observe({ sessionToken, key, target })).observation).toEqual({ kind });
+  }
 });

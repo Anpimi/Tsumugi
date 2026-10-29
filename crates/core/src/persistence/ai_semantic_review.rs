@@ -33,7 +33,7 @@ pub(super) fn verify_input_records(
     let project = input.envelope().project_id.to_string();
     for item in &preview.items {
         let source = &item.source;
-        let source_exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN source_snapshots s ON s.snapshot_id=o.snapshot_id JOIN source_units u ON u.unit_id=o.unit_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND o.native_key=?4 AND r.text=?5 AND s.source_language=?6 AND s.project_id=?7 AND u.project_id=?7)",
+        let source_exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM source_binding_history o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN source_snapshots s ON s.snapshot_id=o.snapshot_id JOIN source_units u ON u.unit_id=o.unit_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND o.native_key=?4 AND r.text=?5 AND s.source_language=?6 AND s.project_id=?7 AND u.project_id=?7)",
             params![source.source_snapshot_id.to_string(),source.unit_id.to_string(),source.source_revision_id.to_string(),source.native_key,source.source_text,source.source_locale,project],|r|r.get(0)).map_err(super::ledger::sql_error)?;
         let selection_exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM translation_selections s JOIN translation_revisions r ON r.revision_id=s.revision_id WHERE s.event_id=?1 AND s.revision_id=?2 AND s.project_id=?3 AND r.project_id=?3 AND s.unit_id=?4 AND r.unit_id=?4 AND s.locale=?5 AND r.locale=?5 AND r.text=?6)",
             params![item.selection_id.to_string(),item.translation_revision_id.to_string(),project,source.unit_id.to_string(),source.target_locale,item.translation_text],|r|r.get(0)).map_err(super::ledger::sql_error)?;
@@ -121,7 +121,7 @@ fn current_item(
     {
         return Ok(false);
     }
-    let current:Option<(String,String,String,String)>=c.query_row("SELECT o.snapshot_id,o.revision_id,o.native_key,r.text FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN content_scope s ON s.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
+    let current:Option<(String,String,String,String)>=c.query_row("SELECT o.snapshot_id,o.revision_id,o.native_key,r.text FROM source_effective_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN content_scope s ON s.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
         [source.unit_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(super::ledger::sql_error)?;
     let Some((snapshot, revision, key, text)) = current else {
         return Ok(false);

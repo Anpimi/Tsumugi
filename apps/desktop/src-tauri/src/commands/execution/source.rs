@@ -9,6 +9,7 @@ mod block_tests;
 pub(super) mod capture;
 pub mod native_drop;
 pub mod plugin;
+pub mod lineage_corrections;
 pub mod plugin_translation;
 #[cfg(test)]
 mod tests;

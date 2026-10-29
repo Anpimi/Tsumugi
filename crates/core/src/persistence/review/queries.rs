@@ -98,12 +98,12 @@ pub(super) fn targets_and_terms_in(
             "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2)),
          first_occurrences AS MATERIALIZED (
            SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
-           FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+           FROM source_effective_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id
            JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY o.snapshot_id,o.unit_id)
          SELECT o.unit_id,o.snapshot_id,o.revision_id,o.native_key,r.text,
                 s.event_id,s.revision_id,tr.text,cc.revision_id
          FROM first_occurrences first
-         JOIN source_occurrences o ON o.snapshot_id=first.snapshot_id
+         JOIN source_effective_occurrences o ON o.snapshot_id=first.snapshot_id
            AND o.unit_id=first.unit_id AND o.ordinal=first.ordinal
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
          JOIN source_revisions r ON r.revision_id=o.revision_id
@@ -353,7 +353,7 @@ pub(super) fn targets_and_terms_in(
         "WITH wanted AS MATERIALIZED (SELECT value unit_id FROM json_each(?3)),
          latest AS (SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id ORDER BY r.rowid DESC) position
          FROM review_fallbacks r JOIN wanted w ON w.unit_id=r.unit_id
-         JOIN source_occurrences o ON o.unit_id=r.unit_id AND o.revision_id=r.source_revision_id
+         JOIN source_effective_occurrences o ON o.unit_id=r.unit_id AND o.revision_id=r.source_revision_id
          JOIN content_scope c ON c.current_snapshot=o.snapshot_id
          WHERE r.project_id=?1 AND r.locale=?2 AND r.policy_version=?4)
          SELECT json_object('fallbackId',fallback_id,'actionId',action_id,'unitId',unit_id,

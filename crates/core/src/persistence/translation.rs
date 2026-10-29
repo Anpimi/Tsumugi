@@ -699,7 +699,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         }
         revision_ordinals.insert(key, ordinal);
         let source_valid: bool = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM source_occurrences o
+            "SELECT EXISTS(SELECT 1 FROM source_binding_history o
              JOIN source_units u ON u.unit_id=o.unit_id
              WHERE o.snapshot_id=?1 AND o.unit_id=?2 AND o.revision_id=?3 AND u.project_id=?4)",
             params![snapshot, unit, source, project],
@@ -804,7 +804,7 @@ fn source_basis(
     let row: Option<(String, String, String)> = connection
         .query_row(
             "SELECT o.snapshot_id,o.revision_id,u.project_id
-             FROM source_occurrences o
+             FROM source_effective_occurrences o
              JOIN source_units u ON u.unit_id=o.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
              WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
@@ -1090,7 +1090,7 @@ impl AdoptionHandler for TranslationAdoptionHandler {
                 return Err(error(ErrorCode::DependencyConflict, "translation-source"));
             }
             let (unit, revision, projection): (String, String, Vec<u8>) = tx.query_row(
-                "SELECT unit_id,revision_id,projection FROM source_occurrences
+                "SELECT unit_id,revision_id,projection FROM source_effective_occurrences
                  WHERE occurrence_id=?1 AND snapshot_id=?2",
                 rusqlite::params![
                     confirmation.occurrence_id.to_string(),
@@ -1118,7 +1118,7 @@ impl AdoptionHandler for TranslationAdoptionHandler {
                 return Err(error(ErrorCode::DependencyConflict, "translation-match"));
             }
             let matches: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM source_occurrences
+                "SELECT COUNT(*) FROM source_effective_occurrences
              WHERE snapshot_id=?1 AND comparison_key=?2",
                 rusqlite::params![
                     bundle.source_snapshot_id.to_string(),
@@ -1311,7 +1311,7 @@ impl ProjectStore {
         let mut statement = connection
             .prepare(
                 "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.projection,r.text
-                 FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+                 FROM source_effective_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
                  WHERE o.snapshot_id=?1 AND o.namespace=?2 ORDER BY o.ordinal",
             )
             .map_err(super::ledger::sql_error)?;

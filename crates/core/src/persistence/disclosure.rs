@@ -36,7 +36,7 @@ fn preview_in(
     }
     let source: Option<(String, String, String)> = connection
         .query_row(
-            "SELECT o.snapshot_id,o.revision_id,r.text FROM source_occurrences o
+            "SELECT o.snapshot_id,o.revision_id,r.text FROM source_effective_occurrences o
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
          JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id
          JOIN content_scope c ON c.current_snapshot=o.snapshot_id

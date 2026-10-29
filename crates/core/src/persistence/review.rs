@@ -65,7 +65,7 @@ fn validate_historical_basis(
 ) -> Result<(), ExecutionError> {
     let source: bool = c
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM source_occurrences
+            "SELECT EXISTS(SELECT 1 FROM source_binding_history
         WHERE snapshot_id=?1 AND unit_id=?2 AND revision_id=?3)",
             params![
                 basis.source_snapshot_id.to_string(),
@@ -849,7 +849,8 @@ impl ProjectStore {
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
         queries::read_snapshot(connection, |connection| {
             check_project(connection, project_id, locale)?;
-            let (_, units) = all_units(connection, project_id)?;
+            let (snapshot, units) = all_units(connection, project_id)?;
+            let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,snapshot,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
             let impacts = self.impact_map(project_id, locale)?;
             let targets = queries::targets_in_with_cancel(
                 connection,
@@ -863,6 +864,7 @@ impl ProjectStore {
                 .into_iter()
                 .map(|target| {
                     let (mut reasons, _) = assess(&target, impacts.contains_key(&target.unit_id));
+                    if unresolved.contains(&target.unit_id) {reasons.push("correspondence-unresolved".into());}
                     if let Some(changes) = impacts.get(&target.unit_id) {
                         if reasons
                             .iter()
@@ -956,7 +958,7 @@ impl ProjectStore {
         };
         let total: i64 = connection
             .query_row(
-                "SELECT COUNT(DISTINCT unit_id) FROM source_occurrences WHERE snapshot_id=?1",
+                "SELECT COUNT(DISTINCT unit_id) FROM source_effective_occurrences WHERE snapshot_id=?1",
                 [&snapshot],
                 |row| row.get(0),
             )
@@ -968,7 +970,7 @@ impl ProjectStore {
             // The usual list view only needs the requested page. Searching reads
             // text across the scope, but must not make every unfiltered page do so.
             let mut statement = connection
-                .prepare("SELECT unit_id,MIN(ordinal) FROM source_occurrences WHERE snapshot_id=?1 GROUP BY unit_id HAVING MIN(ordinal)>=?2 ORDER BY MIN(ordinal) LIMIT ?3")
+                .prepare("SELECT unit_id,MIN(ordinal) FROM source_effective_occurrences WHERE snapshot_id=?1 GROUP BY unit_id HAVING MIN(ordinal)>=?2 ORDER BY MIN(ordinal) LIMIT ?3")
                 .map_err(sql)?;
             let items = statement
                 .query_map(params![snapshot, after_ordinal, limit + 1], |row| {
@@ -982,7 +984,7 @@ impl ProjectStore {
             let query = query.to_lowercase();
             let mut statement = connection.prepare(
             "SELECT o.unit_id,MIN(o.ordinal) OVER(PARTITION BY o.unit_id),o.native_key,r.text,tr.text
-             FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+             FROM source_effective_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
              LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
                AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?2)
              LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
@@ -1591,7 +1593,7 @@ fn all_units(
     let snapshot_id = parse_id(snapshot.clone())?;
     let mut statement = connection
         .prepare(
-            "SELECT o.unit_id FROM source_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
+            "SELECT o.unit_id FROM source_effective_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
          WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001",
         )
         .map_err(sql)?;
@@ -1806,6 +1808,7 @@ impl ProjectStore {
                 check_project(connection, project_id, locale)?;
             }
             let (source_snapshot_id, units) = all_units(connection, project_id)?;
+            let unresolved=super::content::maintenance::unresolved_occurrences_in(connection,source_snapshot_id,MAX_SCOPE+1)?.into_iter().map(|(_,unit)|unit).collect::<BTreeSet<_>>();
             let mut outcomes = Vec::new();
             let mut bases = Vec::new();
             for locale in &requested {
@@ -1823,8 +1826,9 @@ impl ProjectStore {
                     cancellation,
                 )? {
                     let unit_id = target.unit_id;
-                    let (unit_blockers, unit_exceptions) =
+                    let (mut unit_blockers, unit_exceptions) =
                         assess(&target, impacts.contains_key(&unit_id));
+                    if unresolved.contains(&unit_id) {unit_blockers.push("correspondence-unresolved".into());}
                     blocker_count += unit_blockers.len() as u32;
                     exception_count += unit_exceptions.len() as u32;
                     let decision_id = target

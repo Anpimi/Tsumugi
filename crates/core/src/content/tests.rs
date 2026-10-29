@@ -86,6 +86,202 @@ fn prepare(store: &mut ProjectStore, input: &FixedInput, result: &FixedResult) -
         .unwrap()
 }
 
+fn lineage_save(store: &mut ProjectStore, project: ExecutionId, row: &ContentRow, locale: &str, text: &str) -> crate::TranslationSelection {
+    let history=store.translation_history(project,row.unit_id.unwrap(),locale,0,1).unwrap();
+    store.save_translation_revision(&crate::SaveTranslationRevision {
+        project_id:project,action_id:ExecutionId::new(),unit_id:row.unit_id.unwrap(),locale:locale.into(),
+        source_revision_id:row.source_revision_id.unwrap(),expected_selection_id:history.current.as_ref().map(|s|s.event_id),
+        text:text.into(),reuse_origin:None,
+    }).unwrap()
+}
+
+fn lineage_fixture(path:&std::path::Path)->(ProjectStore,ExecutionId,ExecutionId,Vec<ContentRow>,Vec<ContentRow>) {
+    let mut store=ProjectStore::create(path,ProjectMetadata::create("Lineage correction","en",["zh-CN","fr-FR"]).unwrap()).unwrap();
+    let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let (input,result)=generate(&mut store,small(r#"{"a":"Alpha","b":"Beta"}"#));
+    let action=prepare(&mut store,&input,&result);store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();
+    let s1=store.content_scope().unwrap().current_snapshot.unwrap();
+    let old=store.source_content(s1,0,10).unwrap().rows;
+    lineage_save(&mut store,project,&old[0],"zh-CN","Saved A");
+    lineage_save(&mut store,project,&old[0],"fr-FR","A conserve");
+    let (input,result)=generate(&mut store,small(r#"{"a":"Changed Alpha","b":"Beta"}"#));
+    let comparison=store.source_comparison(input.envelope().attempt_id,result.envelope().result_id,0,10).unwrap();
+    let action=store.prepare_adoption(input.envelope().attempt_id,input.envelope().units[0].unit_id,vec![result.envelope().result_id],value(&comparison.confirmation).unwrap()).unwrap();
+    store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();
+    let s2=store.content_scope().unwrap().current_snapshot.unwrap();
+    let new=store.source_content(s2,0,10).unwrap().rows;
+    lineage_save(&mut store,project,&new[0],"zh-CN","Saved B");
+    lineage_save(&mut store,project,&new[0],"fr-FR","B conserve");
+    (store,project,s2,old,new)
+}
+
+fn lineage_request(store:&ProjectStore,project:ExecutionId,snapshot:ExecutionId,old:ExecutionId,decision:SourceLineageCorrectionDecision)->CorrectSourceLineage {
+    CorrectSourceLineage{project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,snapshot,0).unwrap(),
+        old_occurrence_id:old,decision,actor:"Maintainer".into(),reason:"Checked the fixed source endpoints".into()}
+}
+
+#[test]
+fn adopted_lineage_correction_preserves_original_payload_and_both_human_histories() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("project");
+    let (mut store,project,s2,old,new)=lineage_fixture(&path);
+    let db=rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    let original:Vec<u8>=db.query_row("SELECT projection FROM source_occurrences WHERE occurrence_id=?1",[new[0].occurrence_id.unwrap().to_string()],|r|r.get(0)).unwrap();
+    let request=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    assert!(request.basis.saved_work.iter().any(|w|w.unit_id==old[0].unit_id.unwrap()&&w.selection_id.is_some()));
+    assert!(request.basis.saved_work.iter().any(|w|w.unit_id==new[0].unit_id.unwrap()&&w.selection_id.is_some()));
+    // A different unit is outside this correction's work CAS.
+    lineage_save(&mut store,project,&new[1],"zh-CN","Unrelated new work");
+    store.validate_source_lineage_correction(&request).unwrap();
+    let receipt=store.correct_source_lineage(&request).unwrap();
+    let current=store.source_content(s2,0,10).unwrap().rows;
+    assert_eq!(current[0].occurrence_id,new[0].occurrence_id);
+    assert_eq!(current[0].unit_id,old[0].unit_id);
+    assert_ne!(current[0].source_revision_id,old[0].source_revision_id);
+    assert_ne!(current[0].source_revision_id,new[0].source_revision_id);
+    assert_eq!(receipt.previous_bindings[0].unit_id,new[0].unit_id.unwrap());
+    let view=store.source_context(&crate::SourceContextRequest{project_id:project,source_snapshot_id:s2,unit_id:current[0].unit_id.unwrap(),source_revision_id:current[0].source_revision_id.unwrap(),locale:"zh-CN".into()}).unwrap();
+    assert_eq!(view.scope.unit_id,current[0].unit_id.unwrap());
+    for (row,text) in [(&old[0],"Saved A"),(&new[0],"Saved B")] {
+        let history=store.translation_history(project,row.unit_id.unwrap(),"zh-CN",0,10).unwrap();
+        assert_eq!(history.current_text.as_deref(),Some(text));
+        assert_eq!(history.total,1);
+    }
+    let bytes:Vec<u8>=db.query_row("SELECT projection FROM source_occurrences WHERE occurrence_id=?1",[new[0].occurrence_id.unwrap().to_string()],|r|r.get(0)).unwrap();
+    assert_eq!(original,bytes);
+    let stored_unit:String=db.query_row("SELECT unit_id FROM source_occurrences WHERE occurrence_id=?1",[new[0].occurrence_id.unwrap().to_string()],|r|r.get(0)).unwrap();
+    assert_eq!(stored_unit,new[0].unit_id.unwrap().to_string());
+    for locale in ["zh-CN","fr-FR"] {
+        let target=store.review_target(project,current[0].unit_id.unwrap(),locale).unwrap();
+        assert_eq!(target.source_revision_id,current[0].source_revision_id.unwrap());
+        assert!(target.current_decision.is_none());
+        let impact=store.source_impact(s2,locale,0,10).unwrap();
+        assert!(!impact.rows[0].reasons.iter().any(|r|r=="correspondence-unresolved"));
+    }
+    assert_eq!(store.correct_source_lineage(&request).unwrap(),receipt);
+    drop(db);drop(store);
+    let mut reopened=ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_lineage_correction_request_observation(&request).unwrap(),SourceLineageCorrectionObservation::Recorded{receipt:receipt.clone()});
+    assert_eq!(reopened.correct_source_lineage(&request).unwrap(),receipt);
+}
+
+#[test]
+fn adopted_lineage_correction_rejects_related_edits_and_closes_the_original_request() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("project");
+    let (mut store,project,s2,old,new)=lineage_fixture(&path);
+    let request=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    store.validate_source_lineage_correction(&request).unwrap();
+    assert_eq!(store.source_lineage_correction_request_observation(&request).unwrap(),SourceLineageCorrectionObservation::ReceiptAbsent);
+    lineage_save(&mut store,project,&new[0],"fr-FR","Newer B must survive");
+    assert_eq!(store.correct_source_lineage(&request).unwrap_err().code,ErrorCode::DependencyConflict);
+    assert_eq!(store.source_lineage_correction_request_observation(&request).unwrap(),SourceLineageCorrectionObservation::ConfirmedNotApplied);
+    assert_eq!(store.source_content(s2,0,10).unwrap().rows,new);
+    drop(store);
+    let reopened=ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_lineage_correction_request_observation(&request).unwrap(),SourceLineageCorrectionObservation::ConfirmedNotApplied);
+}
+
+#[test]
+fn adopted_lineage_correction_aba_and_next_source_adoption_use_frozen_bindings() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("project");
+    let (mut store,project,s2,old,new)=lineage_fixture(&path);
+    let first=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    store.correct_source_lineage(&first).unwrap();
+    let (input,result)=generate(&mut store,small(r#"{"a":"Changed Alpha","b":"Beta","c":"Gamma"}"#));
+    let stale=store.source_comparison(input.envelope().attempt_id,result.envelope().result_id,0,10).unwrap();
+    let stale_action=store.prepare_adoption(input.envelope().attempt_id,input.envelope().units[0].unit_id,vec![result.envelope().result_id],value(&stale.confirmation).unwrap()).unwrap();
+    let reject=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Reject);
+    store.correct_source_lineage(&reject).unwrap();
+    let independent=store.source_content(s2,0,10).unwrap().rows;
+    assert_eq!(independent[0].unit_id,new[0].unit_id);
+    assert_ne!(independent[0].source_revision_id,new[0].source_revision_id);
+    let history=store.translation_history(project,new[0].unit_id.unwrap(),"zh-CN",0,10).unwrap();
+    assert_eq!(history.current_text.as_deref(),Some("Saved B"));
+    let source=store.review_target(project,new[0].unit_id.unwrap(),"zh-CN").unwrap();
+    assert_ne!(source.source_revision_id,new[0].source_revision_id.unwrap());
+    assert_eq!(store.adopt_execution(&stale_action,&SourceAdoptionHandler).unwrap_err().code,ErrorCode::DependencyConflict);
+    let pending=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Unresolved);
+    store.correct_source_lineage(&pending).unwrap();
+    assert!(store.source_impact(s2,"zh-CN",0,10).unwrap().rows[0].reasons.iter().any(|r|r=="correspondence-unresolved"));
+    let comparison=store.source_comparison(input.envelope().attempt_id,result.envelope().result_id,0,10).unwrap();
+    let action=store.prepare_adoption(input.envelope().attempt_id,input.envelope().units[0].unit_id,vec![result.envelope().result_id],value(&comparison.confirmation).unwrap()).unwrap();
+    store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();
+    let s3=store.content_scope().unwrap().current_snapshot.unwrap();
+    let current=store.source_content(s3,0,10).unwrap().rows;
+    assert_eq!(current[0].unit_id,new[0].unit_id);
+    assert_ne!(current[0].source_revision_id,new[0].source_revision_id);
+    assert!(store.source_impact(s3,"zh-CN",0,10).unwrap().rows[0].reasons.iter().any(|r|r=="correspondence-unresolved"));
+    let inherited=lineage_request(&store,project,s3,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    assert_eq!(inherited.basis.previous_snapshot_id,first.basis.previous_snapshot_id);
+    assert_eq!(inherited.basis.origin_chain.len(),2);
+    assert_eq!(inherited.basis.origin_chain[1].snapshot_id,s2);
+    store.correct_source_lineage(&inherited).unwrap();
+    let current=store.source_content(s3,0,10).unwrap().rows;
+    assert_eq!(current[0].unit_id,old[0].unit_id);
+    assert!(!store.source_impact(s3,"zh-CN",0,10).unwrap().rows[0].reasons.iter().any(|r|r=="correspondence-unresolved"));
+    assert_eq!(store.source_content(s2,0,10).unwrap().rows,new);
+    assert_eq!(store.source_lineage_correction_request_observation(&first).unwrap(),SourceLineageCorrectionObservation::Recorded{receipt:store.correct_source_lineage(&first).unwrap()});
+    drop(store);
+    let reopened=ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_content(s3,0,10).unwrap().rows,current);
+}
+
+#[test]
+fn adopted_lineage_correction_rejects_one_candidate_and_keeps_the_other_actionable() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("project");let mut store=create(&path);
+    let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let (input,result)=generate(&mut store,small(r#"{"a":"Same","b":"Same"}"#));
+    let action=prepare(&mut store,&input,&result);store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();
+    let s1=store.content_scope().unwrap().current_snapshot.unwrap();let old=store.source_content(s1,0,10).unwrap().rows;
+    let (input,result)=generate(&mut store,small(r#"{"c":"Same"}"#));
+    let comparison=store.source_comparison(input.envelope().attempt_id,result.envelope().result_id,0,10).unwrap();
+    let action=store.prepare_adoption(input.envelope().attempt_id,input.envelope().units[0].unit_id,vec![result.envelope().result_id],value(&comparison.confirmation).unwrap()).unwrap();
+    store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();let s2=store.content_scope().unwrap().current_snapshot.unwrap();
+    let reject=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Reject);
+    store.correct_source_lineage(&reject).unwrap();
+    let next=lineage_request(&store,project,s2,old[1].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    assert!(next.basis.candidates.iter().any(|e|e.old.occurrence_id==old[0].occurrence_id&&e.decision=="reject"));
+    assert!(next.basis.candidates.iter().any(|e|e.old.occurrence_id==old[1].occurrence_id&&e.decision=="candidate"));
+    store.correct_source_lineage(&next).unwrap();assert_eq!(store.source_content(s2,0,10).unwrap().rows[0].unit_id,old[1].unit_id);
+    drop(store);ProjectStore::open(&path).unwrap();
+}
+
+#[test]
+fn adopted_lineage_correction_preflight_rejects_a_split_without_writing_or_hiding_it() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("project");let mut store=create(&path);
+    let project=ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let (input,result)=generate(&mut store,small(r#"{"a":"Alpha"}"#));let action=prepare(&mut store,&input,&result);store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();
+    let s1=store.content_scope().unwrap().current_snapshot.unwrap();let old=store.source_content(s1,0,10).unwrap().rows[0].clone();
+    let (input,result)=generate(&mut store,small(r#"{"a":"Alpha","c":"Different"}"#));
+    let mut confirmation=store.source_comparison(input.envelope().attempt_id,result.envelope().result_id,0,10).unwrap().confirmation;
+    confirmation.actor=Some("Maintainer".into());confirmation.lineage.push(LineageChoice{new_ordinal:1,old_occurrence_id:old.occurrence_id.unwrap(),decision:LineageDecision::Reject,reason:"Independent entry".into()});
+    let action=store.prepare_adoption(input.envelope().attempt_id,input.envelope().units[0].unit_id,vec![result.envelope().result_id],value(&confirmation).unwrap()).unwrap();store.adopt_execution(&action,&SourceAdoptionHandler).unwrap();
+    let s2=store.content_scope().unwrap().current_snapshot.unwrap();let before=store.source_content(s2,0,10).unwrap();
+    let request=CorrectSourceLineage{project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,s2,1).unwrap(),old_occurrence_id:old.occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Continue,actor:"Maintainer".into(),reason:"Would duplicate the authoritative unit".into()};
+    assert_eq!(store.validate_source_lineage_correction(&request).unwrap_err().stage,"source-lineage-split-original");
+    assert_eq!(store.source_lineage_correction_request_observation(&request).unwrap(),SourceLineageCorrectionObservation::ConfirmedNotApplied);
+    assert_eq!(store.source_content(s2,0,10).unwrap(),before);
+}
+
+#[test]
+fn adopted_lineage_correction_ignores_unrelated_group_versions() {
+    let directory=tempfile::tempdir().unwrap();let path=directory.path().join("project");
+    let (mut store,project,s2,old,new)=lineage_fixture(&path);
+    let first=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    let other=CorrectSourceLineage{project_id:project,action_id:ExecutionId::new(),basis:store.source_lineage_correction_basis(project,s2,1).unwrap(),old_occurrence_id:old[1].occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Reject,actor:"Maintainer".into(),reason:"Independent identity review".into()};
+    store.correct_source_lineage(&other).unwrap();
+    assert_eq!(store.source_lineage_correction_request_observation(&first).unwrap(),SourceLineageCorrectionObservation::ReceiptAbsent);
+    lineage_save(&mut store,project,&new[0],"zh-CN","New related work invalidates this one");
+    assert_eq!(store.source_lineage_correction_request_observation(&first).unwrap(),SourceLineageCorrectionObservation::ConfirmedNotApplied);
+    let fresh=lineage_request(&store,project,s2,old[0].occurrence_id.unwrap(),SourceLineageCorrectionDecision::Continue);
+    let other_basis=store.source_lineage_correction_basis(project,s2,1).unwrap();
+    let next=CorrectSourceLineage{project_id:project,action_id:ExecutionId::new(),basis:other_basis,old_occurrence_id:old[1].occurrence_id.unwrap(),decision:SourceLineageCorrectionDecision::Unresolved,actor:"Maintainer".into(),reason:"Keep this separate correspondence pending".into()};
+    store.correct_source_lineage(&next).unwrap();
+    store.validate_source_lineage_correction(&fresh).unwrap();
+    let receipt=store.correct_source_lineage(&fresh).unwrap();
+    assert!(receipt.mapping_revision.get()>fresh.basis.mapping_revision.get()+1);
+    drop(store);ProjectStore::open(&path).unwrap();
+}
+
 #[test]
 fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
     let temp = tempfile::tempdir().unwrap();

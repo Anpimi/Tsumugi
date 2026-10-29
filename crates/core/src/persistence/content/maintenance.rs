@@ -10,22 +10,25 @@ pub(in crate::persistence) fn unresolved_occurrences_in(
     snapshot: ExecutionId,
     limit: usize,
 ) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
-    let limit = i64::try_from(limit)
-        .map_err(|_| failure(ErrorCode::LimitExceeded, "source-mapping-limit"))?;
+    if limit==0 {return Err(failure(ErrorCode::InvalidInput,"source-mapping-limit"));}
+    i64::try_from(limit).map_err(|_|failure(ErrorCode::LimitExceeded,"source-mapping-limit"))?;
     let mut statement = connection.prepare(
-        "SELECT o.occurrence_id,o.unit_id FROM source_occurrences o
-         JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
-         WHERE o.snapshot_id=?1 AND l.relation IN ('new','unresolved')
-         AND EXISTS(SELECT 1 FROM source_lineage_evidence e WHERE e.new_occurrence_id=o.occurrence_id)
-         ORDER BY o.ordinal LIMIT ?2",
+        "SELECT o.occurrence_id,o.unit_id FROM source_effective_occurrences o
+         WHERE o.snapshot_id=?1 ORDER BY o.ordinal",
     ).map_err(sql_error)?;
-    statement.query_map(params![snapshot.to_string(), limit], |row| {
+    let rows=statement.query_map([snapshot.to_string()], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     }).map_err(sql_error)?
         .map(|row| {
             let (occurrence, unit) = row.map_err(sql_error)?;
             Ok((id(occurrence)?, id(unit)?))
-        }).collect()
+        }).collect::<Result<Vec<_>,ExecutionError>>()?;
+    let version=lineage_corrections::mapping_revision(connection,snapshot)?;
+    let mut unresolved=Vec::new();
+    for (occurrence,unit) in rows {
+        if lineage_corrections::unresolved_origin(connection,occurrence,version)?.is_some(){unresolved.push((occurrence,unit));if unresolved.len()==limit{break;}}
+    }
+    Ok(unresolved)
 }
 
 /// Keep capture, receipt, and lineage validation in the existing source owner.
@@ -35,7 +38,8 @@ pub(in crate::persistence) fn adopted_comparison_for_units(
     units: &[ExecutionId],
 ) -> Result<(Option<ExecutionId>, Vec<SourceVersionComparison>), ExecutionError> {
     let state = scope(connection)?;
-    let (revision, (input, _, _, current_rows)) = snapshot_rows(connection, current, true)?;
+    let (revision, (input, _, _, mut current_rows)) = snapshot_rows(connection, current, true)?;
+    lineage_corrections::effective_rows(connection,&mut current_rows)?;
     if state.current_snapshot != Some(current) || state.revision.get() != revision {
         return Err(corrupt());
     }
@@ -45,12 +49,13 @@ pub(in crate::persistence) fn adopted_comparison_for_units(
     ).map_err(sql_error)?;
     let action: AdoptionAction = codec::decode(&action_bytes, MAX_INPUT_BYTES)?;
     let confirmation: SourceConfirmation = from_value(&action.parameters)?;
-    let base = confirmation.expected_current_snapshot;
+    let base = confirmation.lineage_base_snapshot.or(confirmation.expected_current_snapshot);
     let old_rows = if let Some(base) = base {
-        let (base_revision, (_, _, _, rows)) = snapshot_rows(connection, base, true)?;
-        if base_revision.checked_add(1) != Some(revision) {
+        let (base_revision, (_, _, _, mut rows)) = snapshot_rows(connection, base, true)?;
+        if base_revision >= revision {
             return Err(corrupt());
         }
+        lineage_corrections::effective_rows(connection,&mut rows)?;
         rows
     } else {
         if revision != 2 {
@@ -124,14 +129,14 @@ pub(in crate::persistence) fn adopted_comparison_for_units(
 
 // All rows passed here have been validated against their immutable source capture.
 // Keep at most eight validated historical snapshots for this read, never a durable cache.
-fn lineage_evidence_in(
+pub(super) fn lineage_evidence_in(
     connection: &Connection,
     current: &ContentRow,
     snapshots: &mut BTreeMap<ExecutionId, Vec<ContentRow>>,
 ) -> Result<Vec<LineageEvidence>, ExecutionError> {
     let (predecessor, relation): (Option<String>, String) = connection
         .query_row(
-            "SELECT predecessor_id,relation FROM source_lineage WHERE occurrence_id=?1",
+            "SELECT predecessor_id,relation FROM source_effective_lineage WHERE occurrence_id=?1",
             [current.occurrence_id.unwrap().to_string()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -163,7 +168,8 @@ fn lineage_evidence_in(
                 let oldest = *snapshots.keys().next().ok_or_else(corrupt)?;
                 snapshots.remove(&oldest);
             }
-            let (_, (_, _, _, old_rows)) = snapshot_rows(connection, old_snapshot_id, true)?;
+            let (_, (_, _, _, mut old_rows)) = snapshot_rows(connection, old_snapshot_id, true)?;
+            lineage_corrections::effective_rows(connection,&mut old_rows)?;
             snapshots.insert(old_snapshot_id, old_rows);
         }
         let old = snapshots
@@ -186,6 +192,22 @@ fn lineage_evidence_in(
             policy,
             applied_relation,
         });
+    }
+    let snapshot:String=connection.query_row("SELECT snapshot_id FROM source_occurrences WHERE occurrence_id=?1",[current.occurrence_id.unwrap().to_string()],|r|r.get(0)).map_err(sql_error)?;
+    for receipt in lineage_corrections::receipts_in(connection,id(snapshot)?)? {
+        if !receipt.current_bindings.iter().any(|b|Some(b.occurrence_id)==current.occurrence_id) {continue;}
+        let request=&receipt.request;
+        if let Some(original)=request.basis.candidates.iter().find(|e|e.old.occurrence_id==Some(request.old_occurrence_id)).cloned() {
+            for prior in evidence.iter_mut().filter(|e|e.old.occurrence_id==Some(request.old_occurrence_id)) {prior.applied_relation=None;}
+            evidence.push(LineageEvidence {old:original.old,old_snapshot_id:original.old_snapshot_id,relationship:original.relationship,
+                decision:match request.decision {SourceLineageCorrectionDecision::Continue=>"continue",SourceLineageCorrectionDecision::Reject=>"reject",SourceLineageCorrectionDecision::Unresolved=>"candidate"}.into(),
+                actor:Some(request.actor.clone()),reason:Some(request.reason.clone()),action_id:request.action_id,policy:original.policy,
+                applied_relation:(predecessor.as_deref()==Some(request.old_occurrence_id.to_string().as_str())&&matches!(relation.as_str(),"unchanged"|"changed")).then(||relation.clone())});
+        }
+    }
+    // Historical continuations replaced by another edge are never current.
+    for edge in &mut evidence {
+        if edge.old.occurrence_id.map(|id|id.to_string())!=predecessor || !matches!(relation.as_str(),"unchanged"|"changed") {edge.applied_relation=None;}
     }
     Ok(evidence)
 }
@@ -273,6 +295,7 @@ impl ProjectStore {
             output,
             scope(connection)?,
             rows,
+            None,
             after,
             limit,
         )
@@ -312,6 +335,7 @@ impl ProjectStore {
         if comparison.confirmation.result_digest != confirmation.result_digest
             || comparison.scope.revision != confirmation.expected_content_revision
             || comparison.scope.current_snapshot != confirmation.expected_current_snapshot
+            || comparison.confirmation.expected_mapping_revision != confirmation.expected_mapping_revision
         {
             return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
         }
@@ -319,10 +343,12 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let (_, (_, _, _, current_rows)) =
+        let (_, (_, _, _, mut current_rows)) =
             snapshot_rows(connection, current.snapshot_id.unwrap(), true)?;
-        let (_, (_, _, _, base_rows)) =
+        lineage_corrections::effective_rows(connection,&mut current_rows)?;
+        let (_, (_, _, _, mut base_rows)) =
             snapshot_rows(connection, comparison.previous_snapshot_id, true)?;
+        lineage_corrections::effective_rows(connection,&mut base_rows)?;
         let input = self.execution_input(attempt)?;
         let output = validate_output(&input, &self.execution_result(attempt, result)?)?;
         let metadata = self
@@ -562,7 +588,7 @@ impl ProjectStore {
             let lineage = lineage_evidence_in(connection, &row, &mut lineage_snapshots)?;
             let predecessor: Option<String> = connection
                 .query_row(
-                    "SELECT predecessor_id FROM source_lineage WHERE occurrence_id=?1",
+                    "SELECT predecessor_id FROM source_effective_lineage WHERE occurrence_id=?1",
                     [row.occurrence_id.unwrap().to_string()],
                     |r| r.get(0),
                 )

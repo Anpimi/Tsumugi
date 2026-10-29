@@ -36,6 +36,7 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   const { t } = useTranslation(undefined, { keyPrefix: "sourceMaintenance" }), { t: old } = useTranslation();
   const reads = useSessionReads(), context = executionContext(project), dialogId = useId(), inputId = useId();
   const [inventoryRevision, setInventoryRevision] = useState(0), [targetBlocked, setTargetBlocked] = useState(false);
+  const [correctionLocation, setCorrectionLocation] = useState<{ snapshotId: string; ordinal: number } | null>(null);
   const [discardFrame, setDiscardFrame] = useState<SourceDraftValue | null>(null), [discarding, setDiscarding] = useState(false), discardDialogId = useId();
   useLayoutEffect(() => discardFrame ? gate.pushDialog(discardDialogId) : undefined, [discardFrame, gate, discardDialogId]);
   const dialogRelease = useRef<(() => void) | null>(null);
@@ -43,11 +44,27 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
   useLayoutEffect(() => { if (!open) return; dialogRelease.current = gate.pushDialog(dialogId); return release; }, [open, gate, dialogId]);
   useEffect(() => () => gate.releaseOwner(inputId), [gate, inputId]);
   const state = owner.state, inventoryOptions = sourceReads.inventory(inventoryRevision);
-  const historyOnly = savedSnapshotId !== null || target?.kind === "resolve-source-mapping";
-  const savedSnapshot = savedSnapshotId ?? (target?.kind === "resolve-source-mapping" ? target.snapshotId : !state.attempt ? state.receiptRef?.snapshotId : null);
-  const inventory = useSessionQuery({ ...inventoryOptions, enabled: open && !historyOnly });
+  const externalTarget = jsonIdentity(target), dropTicket = drop?.dropTicket;
+  const ordinaryPresentation = savedSnapshotId === null && target === null && !dropTicket;
+  useLayoutEffect(() => { setCorrectionLocation(null); }, [open, savedSnapshotId, externalTarget, dropTicket]);
+  const correctionSnapshot = state.correctionDraft?.snapshotId, correctionOrdinal = state.correctionDraft?.ordinal;
+  const correctionPending = state.pendingCorrection !== null;
+  useLayoutEffect(() => {
+    if (!open || !correctionSnapshot || correctionOrdinal === undefined) { setCorrectionLocation(null); return; }
+    // Keep this presentation in place when A settles while the person edits B.
+    if (correctionPending && ordinaryPresentation) {
+      setCorrectionLocation(before => before ?? { snapshotId: correctionSnapshot, ordinal: correctionOrdinal });
+    }
+  }, [open, ordinaryPresentation, correctionSnapshot, correctionOrdinal, correctionPending]);
+  const draftReady = owner.journal.hydration === "ready";
+  const correctionTarget = correctionLocation ?? (ordinaryPresentation && state.pendingCorrection && state.correctionDraft
+    ? { snapshotId: state.correctionDraft.snapshotId, ordinal: state.correctionDraft.ordinal } : null);
+  const historyOnly = correctionTarget !== null || savedSnapshotId !== null || target?.kind === "resolve-source-mapping";
+  const savedSnapshot = correctionTarget?.snapshotId ?? savedSnapshotId ?? (target?.kind === "resolve-source-mapping" ? target.snapshotId
+    : !state.attempt ? state.correctionDraft?.snapshotId ?? state.receiptRef?.snapshotId : null);
+  const inventory = useSessionQuery({ ...inventoryOptions, enabled: open && draftReady && !historyOnly });
   const sourceOptions = sourceReads.integration(context, state.source);
-  const source = useSessionQuery({ ...sourceOptions, enabled: open && !historyOnly && !!state.source });
+  const source = useSessionQuery({ ...sourceOptions, enabled: open && draftReady && !historyOnly && !!state.source });
   const detail = useSessionQuery({ key: ["source-attempt", state.attempt, 0, 100], scopes: ["execution"], enabled: open && !historyOnly && !!state.attempt,
     read: () => { if (!state.attempt) throw new Error("No source attempt"); return executionCommands.attempt({ ...context, attemptId: state.attempt, offset: 0, limit: 100 }); } });
   const check = useSessionQuery({ key: ["source-check", state.checkAttempt], scopes: ["execution"], enabled: open && !historyOnly && !!state.checkAttempt,
@@ -79,7 +96,8 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
     <div className={styles.body} onFocusCapture={event => { if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) gate.setInputOwner(viewId, inputId); }}
       onBlurCapture={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) gate.releaseOwner(inputId); }}
       onCompositionStart={() => gate.setComposing(inputId, true)} onCompositionEnd={() => gate.setComposing(inputId, false)}>
-      {!historyOnly ? <><SourceDraftRecovery owner={owner} disabled={disabled}/>
+      <SourceDraftRecovery owner={owner} disabled={disabled} onRevealCorrection={(snapshotId, ordinal) => setCorrectionLocation({ snapshotId, ordinal })}/>
+      {!historyOnly ? <>
       <TaskCancellationFeedback origin="source" taskId={detail.data?.taskId} disabled={disabled} visible={open}/>
       {targetBlocked ? <Banner tone="warning">{t("targetBlocked")}</Banner> : null}
       {drop ? <Banner>{t("droppedFolder", { folder: drop.folderName })}</Banner> : null}
@@ -149,7 +167,9 @@ export default function SourcePreparationSheet({ project, owner, open, disabled,
         {owner.hook.state.waitEnded ? <p role="status">{old("sourceHook.waitEnded")}</p> : null}
         {owner.hook.state.stopFailure ? <CommandFailureDetails failure={owner.hook.state.stopFailure}/> : null}
       </section> : null}</> : null}
-      {savedSnapshot ? <SourceSavedDetails key={savedSnapshot} project={project} snapshotId={savedSnapshot}
+      {savedSnapshot ? <SourceSavedDetails key={savedSnapshot} project={project} owner={owner} snapshotId={savedSnapshot}
+        disabled={readOnly}
+        initialOrdinal={correctionTarget?.ordinal} onRevealCorrection={(snapshotId, ordinal) => setCorrectionLocation({ snapshotId, ordinal })}
         target={target?.kind === "resolve-source-mapping" && target.snapshotId === savedSnapshot ? target : null} visible={open} current={current}
         onOpenEntry={(unitId, locale) => onOpenEntry(savedSnapshot, unitId, locale, release)}/> : null}
     </div>

@@ -114,6 +114,7 @@ fn supported_schema69_migration_backfills_only_proven_links_and_preserves_origin
         // This raw connection also exercises the production proof backfill.
         crate::persistence::ledger::register_input_reader(&c).unwrap();
         c.execute_batch("DROP TABLE source_validation_history").unwrap();
+        crate::persistence::content::lineage_corrections::make_legacy_schema(&c).unwrap();
         if version < 68 { crate::persistence::translation::make_legacy_memory_schema(&c).unwrap(); }
         if version < 66 { crate::persistence::resources::make_legacy_context_schema(&c).unwrap(); }
         if version < 65 { c.execute_batch("DROP TABLE application_conversation_planning_attempts").unwrap(); }
@@ -130,7 +131,7 @@ fn supported_schema69_migration_backfills_only_proven_links_and_preserves_origin
         drop(c);
         let reopened = ProjectStore::open(&path).unwrap();
         assert_eq!(old_rows(reopened.connection().unwrap()), before);
-        assert_eq!(reopened.connection().unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), 69);
+        assert_eq!(reopened.connection().unwrap().pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).unwrap(), crate::persistence::SCHEMA_VERSION);
         assert_eq!(reopened.source_check_finish_request_observation(fixture.project, b_attempt, b_result).unwrap(), Some(false));
         assert_eq!(reopened.source_check_finish_request_observation(fixture.project, a_attempt, a_result).unwrap(), None,
             "schema68 did not retain proof that an overwritten link was published");
