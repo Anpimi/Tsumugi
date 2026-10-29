@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowUp, BookOpen, ChevronDown, Circle, CircleDot, Command, Layers, PanelRight, Pin, Plus, Search, Settings, Sparkles, X } from "lucide-react";
 import { ApplicationReadProvider } from "../ApplicationReadProvider";
 import { ApplicationSettingsProvider, useApplicationSettings } from "./features/settings/ApplicationSettings";
-import ProjectMcpHost, { type ProjectMcpHandle } from "./features/settings/ProjectMcpHost";
+import ProjectReferenceHost, { type ProjectReferenceHandle } from "./features/settings/ProjectReferenceHost";
 import { SessionReadProvider, useSessionReadStatus } from "../SessionReadProvider";
 import { CommandFailureDetails } from "../CommandFailure";
 import { executionContext } from "../executionCommands";
@@ -138,7 +138,7 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
 }
 
 function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
-  const settings = useApplicationSettings(), mcp = useRef<ProjectMcpHandle>(null), mcpParticipant = useRef<LifecycleParticipant | null>(null);
+  const settings = useApplicationSettings(), mcp = useRef<ProjectReferenceHandle>(null), mcpParticipant = useRef<LifecycleParticipant | null>(null);
   const publishMcpParticipant = useCallback((value: LifecycleParticipant | null) => { mcpParticipant.current = value; }, []);
   const [ExecutionOwnerHost, setExecutionOwnerHost] = useState(createExecutionOwnerHost), [KnowledgeOwnerHost, setKnowledgeOwnerHost] = useState(createKnowledgeOwnerHost);
   const [store] = useState(() => createWorkspaceStore({ initialLocale: session.project.metadata.targetLocales[0] ?? "" }));
@@ -351,7 +351,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId]);
   useLayoutEffect(() => {
     if (!runtime || !drafts) return;
-    return settings.registerMcp({ open: (kind, origin) => mcp.current?.open(kind, origin), revealQuery: () => mcp.current?.revealQuery() ?? false });
+    return settings.registerMcp({ open: (kind, origin, fallback) => mcp.current?.open(kind, origin, fallback), revealQuery: () => mcp.current?.revealQuery() ?? false });
   }, [settings.registerMcp, runtime, drafts]);
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
@@ -392,7 +392,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     {comparisonsRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("comparisonUnavailable")} description={t("comparisonUnavailableHelp")} />}><Suspense fallback={null}>
       <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
     </Suspense></FeatureBoundary> : null}
-    {drafts ? <ProjectMcpHost ref={mcp} project={session.project} lifecycle={lifecycle} gate={gate} drafts={drafts} knowledgeOwner={executionTasks ? knowledgeOwner : null} onParticipant={publishMcpParticipant}/> : null}
+    {drafts ? <ProjectReferenceHost ref={mcp} project={session.project} lifecycle={lifecycle} gate={gate} drafts={drafts} knowledgeOwner={executionTasks ? knowledgeOwner : null} onParticipant={publishMcpParticipant}/> : null}
     {startupHandoff ? <StartupHandoff request={startupHandoff} owner={executionTasks ? sourceOwner : null} lifecycle={lifecycle} gate={gate} disabled={readOnly} onHandled={onStartupHandled} onOpen={revealSource}/> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <ExecutionTaskHandleProvider value={executionTasks}><RouterProvider router={runtime.router} /></ExecutionTaskHandleProvider>
@@ -427,11 +427,11 @@ function WorkspaceShell() {
   const [registries, setRegistries] = useState<Map<string | null, WorkbenchCommands>>(new Map());
   const [registeredCommands, setRegisteredCommands] = useState<WorkbenchCommands | null>(null);
   const [palette, setPalette] = useState(false), [drawer, setDrawer] = useState(false);
-  const drawerEditorClose = useRef(false);
+  const drawerEditorClose = useRef(false), drawerReferenceClose = useRef(false), dockTrigger = useRef<HTMLButtonElement>(null);
   const drawerRecoveryFocus = useRef(false);
   const drawerDecisionClose = useRef(false), decisionTrigger = useRef<HTMLButtonElement>(null);
   const paletteRelease = useRef<(() => void) | null>(null), drawerRelease = useRef<(() => void) | null>(null);
-  const paletteOrigin = useRef<Element | null>(null);
+  const paletteOrigin = useRef<Element | null>(null), paletteHandoff = useRef<HTMLElement | null>(null), commandTrigger = useRef<HTMLButtonElement>(null);
   const [commandFailed, setCommandFailed] = useState(false);
   const [presented, setPresented] = useState<{ candidates: string | null; protection: string | null; comparison: string | null; review: string | null }>({ candidates: null, protection: null, comparison: null, review: null });
   const reportPresented = useCallback((viewId: string, kind: "candidates" | "protection" | "comparison" | "review", visible: boolean) => setPresented(before => {
@@ -642,14 +642,16 @@ function WorkspaceShell() {
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
-      openDecisions: () => openDecisions(), openSettings: () => settings.open(), openExtensions: () => settings.openExtensions(),
-      openMcpQuery: settings.openMcpQuery, openMcpShare: settings.openMcpShare,
+      openDecisions: () => openDecisions(), openSettings: () => settings.open("general", paletteHandoff.current ?? undefined), openExtensions: () => settings.openExtensions(paletteHandoff.current ?? undefined),
+      openReferences: settings.openReferences ? () => settings.openReferences?.(paletteHandoff.current ?? undefined) : undefined,
+      openMcpQuery: settings.openMcpQuery ? () => settings.openMcpQuery?.(paletteHandoff.current ?? undefined) : undefined,
+      openMcpShare: settings.openMcpShare ? () => settings.openMcpShare?.(paletteHandoff.current ?? undefined) : undefined,
       openImport: () => actions.current.openImport(), canOpenImport: () => actions.current.canOpenImport(),
       openSource: () => actions.current.openSource(),
       confirm: advance => actions.current.confirm(advance), exitEditor: () => actions.current.exitEditor(), toggleFocus: () => actions.current.toggleFocus(),
       isEditing: () => actions.current.isEditing(), canConfirm: () => actions.current.canConfirm(), canAdvance: () => actions.current.canAdvance() }, onError: () => setCommandFailed(true) });
     setRegisteredCommands(commands); return remove;
-  }, [commands, currentId, gate, store, runtime, lifecycle, scope, narrow, readOnly, settings.open, settings.openExtensions, settings.openMcpQuery, settings.openMcpShare]);
+  }, [commands, currentId, gate, store, runtime, lifecycle, scope, narrow, readOnly, settings.open, settings.openExtensions, settings.openReferences, settings.openMcpQuery, settings.openMcpShare]);
   const dispatcher = useMemo(() => createWorkspaceCommandDispatcher({ gate, modifier: navigator.platform.includes("Mac") ? "meta" : "ctrl", getContext: () => {
     const id = store.getState().activeViewId, owner = registries.get(id), actualScope = currentScope();
     return owner && owner === registeredCommands && actualScope ? { viewId: id, scope: actualScope, commands: owner } : null;
@@ -929,7 +931,17 @@ function WorkspaceShell() {
     if (!gate.canDispatch({ viewId: intent.viewId, source: "button" })) return;
     void openKnowledge(intent.newView, intent.restoreDraft, true).catch(() => setCommandFailed(true));
   });
-  const openKnowledgeDraft = () => openKnowledge(false, true);
+  const openKnowledgeDraft = async () => {
+    if (knowledgeOwner && (knowledgeOwner.tool.blocked() || knowledgeOwner.tool.hasDraft())) {
+      if (!disabled && gate.canDispatch({ viewId: currentId, source: "button" })) {
+        const show = knowledgeOwner.tool.current().mode === "mcp" ? settings.openMcpQuery : settings.openReferences;
+        const origin = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+        if (show) show(origin, commandTrigger.current ?? undefined); else revealKnowledge();
+      }
+      return;
+    }
+    return openKnowledge(false, true);
+  };
   async function openKnowledgeTarget(proposal: ConversationKnowledgeProposalRef, entryIndex: number | null, current: () => boolean, beforeNavigate?: () => void) {
     const origin = document.activeElement;
     const navigationCurrent = () => current() && (document.activeElement === origin || document.activeElement === document.body);
@@ -956,7 +968,12 @@ function WorkspaceShell() {
           selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
-      <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? view.preset === "memory" ? <TranslationMemoryDetails project={session.project} view={view} visible={view.dock === "details" && (!narrow || drawer)}/> : contextKindForKnowledge(view.preset) ? <ContextResourceDetails project={session.project} owner={knowledgeOwner} disabled={disabled} gate={gate} preset={view.preset} locale={view.locale}
+      <TabsContent value="details" className={styles.dockContent}><div className={styles.actions}><Button disabled={disabled || !settings.openReferences} onClick={event => {
+        if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: narrow && drawer ? "workspace-dock" : undefined })) return;
+        paletteHandoff.current = narrow ? dockTrigger.current : event.currentTarget;
+        if (narrow) { drawerReferenceClose.current = true; closeDrawer(); }
+        dispatcher.dispatch("workspace.references", { source: "button", viewId: currentId }); paletteHandoff.current = null;
+      }}>{t("toolQuery.title")}</Button></div><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? view.preset === "memory" ? <TranslationMemoryDetails project={session.project} view={view} visible={view.dock === "details" && (!narrow || drawer)}/> : contextKindForKnowledge(view.preset) ? <ContextResourceDetails project={session.project} owner={knowledgeOwner} disabled={disabled} gate={gate} preset={view.preset} locale={view.locale}
         visible={view.dock === "details" && (!narrow || drawer)} current={dialogId => knowledgeCurrent(dialogId ?? (narrow && drawer ? "workspace-dock" : undefined))} onOpenProposal={openKnowledgeProposal}/> : <KnowledgeDetails project={session.project} owner={knowledgeOwner} disabled={disabled}
         visible={view.dock === "details" && (!narrow || drawer)} current={() => knowledgeCurrent(narrow && drawer ? "workspace-dock" : undefined)}/> : <LoadingState label={t("knowledge.readingTerms")}/> : <EntryDetails project={session.project} view={view} locale={activeLocale} disabled={disabled}
         visible={!importVisible && (!narrow || drawer)} drafts={drafts} owners={candidateOwners} commands={commandsReady ? commands ?? null : null} gate={gate}
@@ -975,8 +992,8 @@ function WorkspaceShell() {
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
       <Button size="sm" disabled={!drafts || draftState.summaries.length === 0} onClick={() => { const first = draftState.summaries[0]; if (first) revealDraft(first.key); }}>{message("draftRecoveryTitle")}</Button>
-      <Button className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
-      <IconButton className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
+      <Button ref={commandTrigger} className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
+      <IconButton ref={dockTrigger} className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
     </header>
     {sourceOpen && !sourceOwner ? <Banner role="status">{t("sourceMaintenance.recoveryLoading")}</Banner> : null}
     {readStatus ? <Banner tone={readStatus.message === "execution.updatesUnavailable" ? "warning" : "info"} role={readStatus.message === "execution.updatesUnavailable" ? "alert" : "status"}
@@ -1070,7 +1087,8 @@ function WorkspaceShell() {
         onOpenEntry={(snapshotId, unitId, locale, release) => { void openSourceAffected(snapshotId, unitId, locale, release); }}/>
     </Suspense></FeatureBoundary> : null}
     <Sheet open={drawer && narrow} onOpenAutoFocus={event => { if (drawerRecoveryFocus.current) { event.preventDefault(); drawerRecoveryFocus.current = false; } }} onCloseAutoFocus={event => {
-      if (drawerDecisionClose.current) {
+      if (drawerReferenceClose.current) { event.preventDefault(); drawerReferenceClose.current = false; }
+      else if (drawerDecisionClose.current) {
         event.preventDefault(); drawerDecisionClose.current = false;
         const state = store.getState();
         if (state.activeViewId && state.views[state.activeViewId]?.kind === "decisions") main.current?.focus(); else decisionTrigger.current?.focus();
@@ -1103,7 +1121,9 @@ function WorkspaceShell() {
         // known return point to Source instead of retaining the removed list.
         const sourceIntent = id === "source.import-upstream" ? { viewId: currentId, origin: paletteOrigin.current } : null;
         if (sourceIntent) sourcePresentation.current = sourceIntent;
+        paletteHandoff.current = paletteOrigin.current instanceof HTMLElement ? paletteOrigin.current : null;
         const dispatched = dispatcher.dispatch(id, { source: "palette", viewId: currentId });
+        paletteHandoff.current = null;
         if (!dispatched && sourcePresentation.current === sourceIntent) sourcePresentation.current = null;
       } }] : [];
     }) }]} />

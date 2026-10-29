@@ -1,6 +1,9 @@
 import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ApplicationReadProvider } from "../../../ApplicationReadProvider";
+import { pluginCommands } from "../../../pluginCommands";
+import { toolQueryInventory, toolQueryPackage, toolQueryView } from "../../../testSupport/pluginToolFixture";
 import { ExecutionTaskProvider } from "../../../ExecutionTaskSession";
 import { executionCommands } from "../../../executionCommands";
 import { i18n } from "../../../i18n";
@@ -22,7 +25,7 @@ import { ProjectLifecycle } from "../../platform/projectLifecycle";
 import { InteractionGate } from "../../workspace/interactionGate";
 import { TranslationDrafts } from "../editor/translationDrafts";
 import type { KnowledgeOwner } from "../knowledge/knowledgeTypes";
-import ProjectMcpHost, { type ProjectMcpHandle, type ProjectMcpProps } from "./ProjectMcpHost";
+import ProjectReferenceHost, { type ProjectReferenceHandle, type ProjectReferenceProps } from "./ProjectReferenceHost";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -38,9 +41,9 @@ const editor: ReviewEditorSnapshot = {
 };
 let observed: KnowledgeOwner | null, canonical: McpShareView | null, serial: number;
 const label = (key: keyof typeof mcpWorkbenchEn) => i18n.t(`mcpWorkbench.${key}`);
-function Surface(props: Omit<ProjectMcpProps, "knowledgeOwner">) {
+function Surface(props: Omit<ProjectReferenceProps, "knowledgeOwner">) {
   const owner = useResourceDraftSession(); useLayoutEffect(() => { observed = owner; });
-  return <ProjectMcpHost {...props} knowledgeOwner={owner}/>;
+  return <ProjectReferenceHost {...props} knowledgeOwner={owner}/>;
 }
 beforeEach(async () => {
   vi.restoreAllMocks(); await i18n.changeLanguage("en-US"); observed = null; canonical = null; serial = 9800;
@@ -83,18 +86,18 @@ async function harness() {
   } });
   expect(await drafts.initialize()).toBe(true);
   const gate = new InteractionGate(); gate.setVisibleOwner("synthetic-knowledge-view");
-  const handle = createRef<ProjectMcpHandle>(), register = vi.spyOn(lifecycle, "register");
-  render(<SessionReadProvider context={session.reads.context} reads={session.reads} bridge={false}>
+  const handle = createRef<ProjectReferenceHandle>(), register = vi.spyOn(lifecycle, "register");
+  render(<ApplicationReadProvider><SessionReadProvider context={session.reads.context} reads={session.reads} bridge={false}>
     <ExecutionTaskProvider project={project} mutations={drafts}><ResourceDraftSession project={project}>
       <Surface ref={handle} project={project} lifecycle={lifecycle} gate={gate} drafts={drafts}/>
     </ResourceDraftSession></ExecutionTaskProvider>
-  </SessionReadProvider>);
+  </SessionReadProvider></ApplicationReadProvider>);
   await waitFor(() => expect(observed?.journal.hydration).toBe("ready"));
   const participant = register.mock.calls.find(([entry]) => entry.id === "project-mcp-sharing")?.[0];
   if (!participant) throw new Error("Missing sharing lifecycle participant");
   return { handle, drafts, gate, lifecycle, session, participant };
 }
-async function beginShare(handle: ReturnType<typeof createRef<ProjectMcpHandle>>) {
+async function beginShare(handle: ReturnType<typeof createRef<ProjectReferenceHandle>>) {
   act(() => handle.current?.open("share"));
   await waitFor(() => expect(screen.getByRole("option", { name: mcpTarget.key })).toBeInTheDocument());
   fireEvent.change(screen.getByRole("combobox", { name: label("savedEntry") }), { target: { value: mcpTarget.unitId } });
@@ -168,4 +171,28 @@ it("invalidates sharing consent from the real retained translation owner while p
   expect(h.drafts.getEntry(key)?.value?.text).toBe("New retained draft B");
   expect(screen.getByRole("textbox", { name: i18n.t("mcpSharing.recipient") })).toHaveValue("Synthetic recipient B");
   expect(mcpCommands.authorize).not.toHaveBeenCalled();
+});
+
+
+it.each(["en-US", "zh-CN"] as const)("keeps the installed query owner, input and target when another provider is requested in %s", async language => {
+  await i18n.changeLanguage(language);
+  vi.spyOn(pluginCommands, "inventory").mockResolvedValue(toolQueryInventory);
+  vi.spyOn(pluginCommands, "package").mockResolvedValue(toolQueryPackage);
+  vi.spyOn(pluginCommands, "tool").mockResolvedValue(toolQueryView);
+  const h = await harness(); act(() => h.handle.current?.open("reference"));
+  const input = await screen.findByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) });
+  await waitFor(() => expect(input).toBeEnabled());
+  fireEvent.change(input, { target: { value: "保留 B 👩🏽‍💻 é" } });
+  const declaration = toolQueryView.binding.declaration.query; if (!declaration) throw new Error("Missing synthetic query declaration");
+  const target = await screen.findByRole("combobox", { name: declaration.target.label });
+  fireEvent.change(target, { target: { value: "ja" } });
+  act(() => h.handle.current?.open("query"));
+  expect(screen.getByText(label("switchBlocked"))).toBeVisible();
+  expect(observed?.tool.current().mode).toBe("plugin"); expect(observed?.tool.current().target).toBe("ja");
+  expect(screen.getByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) })).toHaveValue("保留 B 👩🏽‍💻 é");
+  fireEvent.click(screen.getByRole("button", { name: label("close") }));
+  act(() => h.handle.current?.open("reference"));
+  expect(screen.getByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) })).toHaveValue("保留 B 👩🏽‍💻 é");
+  expect(mcpRetrievalCommands.discover).not.toHaveBeenCalled(); expect(mcpRetrievalCommands.start).not.toHaveBeenCalled();
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_tool" || command === "start_plugin_tool")).toBe(false);
 });

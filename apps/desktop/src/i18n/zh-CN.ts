@@ -1,3 +1,4 @@
+import { pluginToolWorkbenchZh } from "./pluginToolWorkbench";
 import { settingsWorkbenchZh } from "./settingsWorkbench";
 import { mcpWorkbenchZh } from "./mcpWorkbench";
 import { pluginWorkbenchZh } from "./pluginWorkbench";
@@ -11,6 +12,7 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+pluginToolWorkbench: pluginToolWorkbenchZh,
 settingsWorkbench: settingsWorkbenchZh,
 mcpWorkbench: mcpWorkbenchZh,
 startup: startupZh,

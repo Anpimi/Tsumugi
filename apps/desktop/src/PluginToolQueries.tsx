@@ -2,8 +2,7 @@ import { useWorkbenchCommands, type ResourceToolPreparationCommandPayload, type 
   type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload, type CommandAvailability } from "./workbenchCommands";
 import { TaskCancellationFeedback } from "./ExecutionTaskSession";
 import type { PluginToolQuerySession, ToolQueryIntent } from "./PluginToolQuerySession";
-import { useEffect, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { useEffect, useId, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { createToolQuery, ToolQueryError, type ToolQueryPresentation } from "../../../crates/plugin-sdk/javascript/tool-query.mjs";
@@ -17,6 +16,11 @@ import { jsonIdentity, queryField as field, matchesTool as matches, readReferenc
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { currentPlugins, pluginInventoryReadKey, usePluginFacts } from "./ApplicationReadProvider";
+import { Button } from "./design-system/Button";
+import { Dialog } from "./design-system/Dialog";
+import { Field, TextArea } from "./design-system/Field";
+import { Banner, LoadingState } from "./design-system/Feedback";
+import styles from "./PluginToolQueries.module.css";
 
 export interface ToolQueryState { busy: boolean; pending: boolean; hasDraft: boolean }
 export interface ToolQueryHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; addText: (text: string) => boolean }
@@ -39,20 +43,30 @@ function matchesUi(view: PluginUiView, choice: { package: PluginToolRequest["pac
 
 /** Shared SDK input construction, original execution consent and ledger reads.
  * Drafts survive hidden panels; references never become project mutations. */
-export function PluginToolQueries({ project, session, open, disabled, onState, onAttention, ref }: {
+export function PluginToolQueries({ project, session, open, disabled, onState, onAttention, canInteract, onLeaveDialogChange, ref }: {
   project: ProjectView; session: PluginToolQuerySession; open: boolean; disabled: boolean;
   onState: (state: ToolQueryState) => void; onAttention: () => void; ref?: Ref<ToolQueryHandle>;
+  canInteract?: () => boolean; onLeaveDialogChange?: (open: boolean) => void;
 }) {
   const { t } = useTranslation(), context = executionContext(project), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const { t: surface } = useTranslation(undefined, { keyPrefix: "pluginToolWorkbench" });
   const pluginFacts = usePluginFacts();
   const commandScope = { ...context, area: "resources" as const };
   const { choiceKey, runtimeKey, refresh, rows, target, selections, capture, run, consent, submittedSequence, pending, busy, failure, inputFailure } = session.state;
   const { setChoiceKey, setRuntimeKey, setRefresh, setRows, setTarget, setSelections, setCapture, setConsent, setApplicationConsent, setFailure,
     setInputFailure, draftSequence, nextRow, running, perform, submit, edit } = session;
-  const mounted = useRef(false);
+  const mounted = useRef(false), interaction = useRef(canInteract), selectionsId = useId(), inputErrorId = useId();
+  useLayoutEffect(() => { interaction.current = canInteract; });
+  const interactive = () => interaction.current?.() ?? true;
   const [leave, setLeave] = useState(false), leaveProof = useRef<(() => boolean) | null>(null);
   const leaveIntent = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null), leaveTrigger = useRef<HTMLElement | null>(null);
+  const leaveDialogObserver = useRef(onLeaveDialogChange);
+  useLayoutEffect(() => {
+    if (leaveDialogObserver.current !== onLeaveDialogChange) leaveDialogObserver.current?.(false);
+    leaveDialogObserver.current = onLeaveDialogChange; onLeaveDialogChange?.(leave);
+  }, [leave, onLeaveDialogChange]);
+  useLayoutEffect(() => () => leaveDialogObserver.current?.(false), []);
   const errorRegion = useRef<HTMLDivElement>(null);
   const pluginInventory = useQuery({ queryKey: pluginInventoryReadKey, enabled: open && !disabled && !pluginFacts.reserved(),
     queryFn: async ({ signal }) => {
@@ -144,7 +158,7 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   }, [detail.data, detail.isFetching, detail.error, reads, attemptId, session]);
   function cancellationProof() {
     const known = session.current().knownTask;
-    return !!known && known.taskId === taskId && known.attemptId === attemptId && known.operation === "plugin-tool-query";
+    return interactive() && !!known && known.taskId === taskId && known.attemptId === attemptId && known.operation === "plugin-tool-query";
   }
   function environmentCurrent() {
     const pluginState = pluginFacts.client.getQueryState(pluginInventoryReadKey);
@@ -174,16 +188,16 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
 
   async function prepare(current: () => boolean) {
     const helper = available.value;
-    if (!helper || !currentTool || !toolRequest || unavailable) return;
+    if (!helper || !currentTool || !toolRequest || unavailable || !interactive()) return;
     const sequence = draftSequence.current;
     const payloads = rows.map(row => helper.prepare({ text: row.text, target: effectiveTarget, selections }));
     const id = await executionCommands.identity(context);
-    if (current() && environmentCurrent()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: currentTool, sequence }, current);
+    if (current() && interactive() && environmentCurrent()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: currentTool, sequence }, current);
   }
   async function start(current: () => boolean) {
-    if (!capture || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || !applicationReady()) return;
+    if (!capture || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || !applicationReady() || !interactive()) return;
     const grantId = await executionCommands.identity(context);
-    if (!current() || !environmentCurrent()) return;
+    if (!current() || !interactive() || !environmentCurrent()) return;
     if (capture.sequence !== draftSequence.current) throw new ToolQueryError("input-changed", "text");
     await submit({ kind: "start", review: capture.review, sequence: capture.sequence,
       request: { ...context, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest, grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true, applicationExecution: session.current().applicationConsent === capture.review.inputDigest } }, current);
@@ -201,19 +215,20 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
     if (capture) await submit({ kind: "discard", request: { ...context, attemptId: capture.review.attemptId } }, current);
   }
   async function discardAndLeave() {
-    let answer: boolean | null = null, settledSequence = draftSequence.current;
+    if (!leaveProof.current?.()) { answerLeave(false); return; }
+    let answer: boolean | null = null;
+    const sequence = draftSequence.current;
     await perform(async current => {
-      if (!leaveProof.current?.()) { answer = false; return; }
-      const sequence = draftSequence.current;
       await discard(current);
-      if (!current() || !leaveIntent.current?.() || draftSequence.current !== sequence || session.current().pending) { answer = false; return; }
-      if (session.current().mode === "mcp" && !session.clearMcpDraft()) { answer = false; return; }
-      setRows([{ id: nextRow.current++, text: "" }]); edit(); settledSequence = draftSequence.current; answer = true;
+      answer = current() && draftSequence.current === sequence && !session.current().pending;
     });
-    // Resolve after the owner has released its in-flight lock. The coordinator
-    // then inspects the settled owner rather than mistaking our own discard for new work.
-    if (mounted.current && answer !== null) answerLeave(answer && !!leaveIntent.current?.()
-      && draftSequence.current === settledSequence && !session.blocked());
+    if (!mounted.current || answer === null) return;
+    // The resource proof includes this Tool's running lock. Recheck it only
+    // after perform releases that lock, before clearing any retained input.
+    if (!answer || !leaveIntent.current?.() || draftSequence.current !== sequence || session.blocked()) { answerLeave(false); return; }
+    if (session.current().mode === "mcp" && !session.clearMcpDraft()) { answerLeave(false); return; }
+    setRows([{ id: nextRow.current++, text: "" }]); edit();
+    answerLeave(!!leaveIntent.current?.() && !session.blocked());
   }
   const preparationPayload: ResourceToolPreparationCommandPayload | undefined = toolRequest && currentTool
     ? { kind: "resource-tool-preparation", editSeq: draftSequence.current, tool: toolRequest, view: currentTool } : undefined;
@@ -239,15 +254,15 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
       ? { enabled: true } : { enabled: false, reason: "unavailable" };
   }
   async function stopInstance(current: () => boolean) {
-    if (!applicationBasis || !currentInstance()) return;
+    if (!applicationBasis || !currentInstance() || !interactive()) return;
     const basis = structuredClone(applicationBasis), actionId = await executionCommands.identity(context);
-    if (current()) await submit({ kind: "stop-instance", request: { actionId, basis } }, current);
+    if (current() && interactive()) await submit({ kind: "stop-instance", request: { actionId, basis } }, current);
   }
   const pendingPayload: ResourceToolPendingCommandPayload | undefined = pending ? { kind: "resource-tool-pending", intent: pending } : undefined;
   const cancelPayload: ExecutionCancellationCommandPayload | undefined = taskId && attemptId
     ? { kind: "execution-cancellation", taskId, attemptId, origin: "resources" } : undefined;
   function baseAvailability(): CommandAvailability {
-    return !open || leave || reads.retired ? { enabled: false, reason: "hidden" }
+    return !open || leave || reads.retired || !interactive() ? { enabled: false, reason: "hidden" }
       : disabled || session.running.current ? { enabled: false, reason: "busy" } : { enabled: true };
   }
   function preparationAvailability(payload?: ResourceToolPreparationCommandPayload): CommandAvailability {
@@ -308,54 +323,78 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
   });
   const runView = visibleRun?.review.tool;
   const runPresentation = useMemo(() => presentation(runView).value, [runView]);
+  const capturedPresentation = useMemo(() => presentation(capture?.review.tool).value, [capture?.review.tool]);
   function entries(resultId: string, itemId: string): string[][] | null {
     const result = output.data?.find(value => value?.resultId === resultId);
     if (!result || result.attemptId !== attemptId || result.projectId !== context.projectId || result.itemId !== itemId || result.outcome !== "succeeded" || !runPresentation) return null;
     try { return runPresentation.entries(result.output); } catch { return null; }
   }
   return <>
-    <section hidden={!open} aria-label={t("toolQuery.title")} aria-busy={busy || pluginInventory.isFetching || inventory.isFetching || ui.isFetching || environment.isFetching}>
+    <section hidden={!open} className={styles.panel} aria-label={t("toolQuery.title")} aria-busy={busy || pluginInventory.isFetching || inventory.isFetching || ui.isFetching || environment.isFetching}>
       <TaskCancellationFeedback origin="resources" taskId={taskId} disabled={disabled} visible={open} retryCommand={{ available: intent => retryCancelAvailability({ ...intent, kind: "execution-cancellation-retry" }).enabled,
         dispatch: intent => { registry.dispatch("resource.retry-tool-cancellation", commandScope, { ...intent, kind: "execution-cancellation-retry" }); } }} checkCommand={{available:intent=>retryCancelAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
           dispatch:intent=>{registry.dispatch("resource.check-tool-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});}}} />
       <h3>{t("toolQuery.title")}</h3><p>{t("toolQuery.help")}</p>
-      {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("toolQuery.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
-      {detail.error ? <div role="alert"><p>{t("toolQuery.recordReadFailed")}</p><CommandFailureDetails failure={commandFailure(detail.error)} />
-        <button type="button" className="secondary-button" disabled={detail.isFetching} onClick={() => void detail.refetch()}>{t("toolQuery.retryRead")}</button></div> : null}
-      {output.error ? <div role="alert"><p>{t("toolQuery.outputReadFailed")}</p><CommandFailureDetails failure={commandFailure(output.error)} />
-        <button type="button" className="secondary-button" disabled={output.isFetching} onClick={() => void output.refetch()}>{t("toolQuery.retryRead")}</button></div> : null}
-      {pluginInventory.isFetching || inventory.isFetching || ui.isFetching || environment.isFetching || busy || working ? <p role="status">{t("execution.working")}</p> : null}
-      <label className="source-field">{t("toolQuery.provider")}<select value={effectiveChoice} disabled={locked || !!capture || working} onChange={event => { setChoiceKey(event.target.value); setRuntimeKey(""); setTarget(""); setSelections([]); edit(); }}>
+      {failure ? <Banner tone="error" ref={errorRegion} role="alert" tabIndex={-1}><p>{t("toolQuery.failed")}</p><CommandFailureDetails failure={failure} /></Banner> : null}
+      {detail.error ? <Banner tone="error" role="alert" action={<Button type="button" variant="secondary" disabled={detail.isFetching} onClick={() => void detail.refetch()}>{t("toolQuery.retryRead")}</Button>}>
+        <p>{t("toolQuery.recordReadFailed")}</p><CommandFailureDetails failure={commandFailure(detail.error)} /></Banner> : null}
+      {output.error ? <Banner tone="error" role="alert" action={<Button type="button" variant="secondary" disabled={output.isFetching} onClick={() => void output.refetch()}>{t("toolQuery.retryRead")}</Button>}>
+        <p>{t("toolQuery.outputReadFailed")}</p><CommandFailureDetails failure={commandFailure(output.error)} /></Banner> : null}
+      {pluginInventory.isFetching || inventory.isFetching || ui.isFetching || environment.isFetching || busy || working ? <LoadingState label={t("execution.working")}/> : null}
+      <Field label={t("toolQuery.provider")}><select value={effectiveChoice} disabled={locked || !!capture || working} onChange={event => { setChoiceKey(event.target.value); setRuntimeKey(""); setTarget(""); setSelections([]); edit(); }}>
         <option value="">{t("toolQuery.chooseProvider")}</option>
         {choiceKey && !choice ? <option value={choiceKey}>{t("toolQuery.providerUnavailable")}</option> : null}
         {choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
-      </select></label>
-      {unsupportedViews.map(value => <p key={value} role="status">{t("toolQuery.unsupportedView", { provider: value })}</p>)}
-      <label className="source-field">{t("sourcePlugin.runtime")}<select value={effectiveRuntime} disabled={locked || !!capture || working} onChange={event => { setRuntimeKey(event.target.value); edit(); }}>
+      </select></Field>
+      {unsupportedViews.map(value => <Banner tone="warning" key={value} role="status">{t("toolQuery.unsupportedView", { provider: value })}</Banner>)}
+      <Field label={t("sourcePlugin.runtime")}><select value={effectiveRuntime} disabled={locked || !!capture || working} onChange={event => { setRuntimeKey(event.target.value); edit(); }}>
         <option value="">{t("sourcePlugin.chooseRuntime")}</option>{runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t(value.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(value.environment), system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}
-      </select></label>
-      <button className="secondary-button" disabled={locked || pluginInventory.isFetching} onClick={() => {
+      </select></Field>
+      <Button variant="secondary" disabled={locked || pluginInventory.isFetching} onClick={() => {
         setConsent(null); setFailure(null); setRefresh(value => value + 1); void pluginInventory.refetch(); reads.invalidate(["execution"]);
-      }}>{t("toolQuery.refresh")}</button>
+      }}>{t("toolQuery.refresh")}</Button>
       {unavailable && !pluginInventory.isFetching && !inventory.isFetching && !ui.isFetching && !environment.isFetching
-        ? <p role="status">{t(available.failed ? "toolQuery.noPresentation" : "toolQuery.unavailable")}</p> : null}
+        ? <Banner tone="warning" role="status">{t(available.failed ? "toolQuery.noPresentation" : "toolQuery.unavailable")}</Banner> : null}
       {query ? <><h4>{currentTool?.binding.declaration.title}</h4><p>{currentTool?.binding.declaration.description}</p>
-        <label className="source-field">{query.target.label}<select value={effectiveTarget} disabled={draftLocked} onChange={event => { setTarget(event.target.value); edit(); }}>{query.target.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><p>{query.target.description}</p>
-        <fieldset disabled={draftLocked}><legend>{query.selections.label}</legend><p>{query.selections.description}</p>
-          {query.selections.options.map(option => <label className="source-check" key={option.value}><input type="checkbox" checked={selections.includes(option.value)} onChange={event => { setSelections(values => event.target.checked ? [...values, option.value] : values.filter(value => value !== option.value)); edit(); }} />{option.label}<span>{option.description}</span></label>)}
+        {currentTool ? <details className={styles.provenance}><summary>{surface("packageDetails")}</summary>
+          <p>{currentTool.binding.capability.provider.plugin.id} {currentTool.binding.capability.provider.plugin.version}</p>
+          <p>{t("plugins.declaredPublisher", { publisher: currentTool.binding.capability.provider.plugin.publisher })}</p>
+          <p>{t("plugins.origin", { source: currentTool.packageOrigin.sourceId, publisher: currentTool.packageOrigin.publisherId })}</p>
+          <p>{surface("binding", { component: currentTool.binding.capability.provider.componentId, resource: currentTool.resourceId })}</p>
+          {choice?.kind === "ui" ? <p>{surface("view", { view: choice.uiId })}</p> : null}
+          <code>{currentTool.binding.capability.provider.packageDigest}</code>
+        </details> : null}
+        <Field label={query.target.label} description={query.target.description}><select value={effectiveTarget} disabled={draftLocked} onChange={event => { setTarget(event.target.value); edit(); }}>{query.target.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+        <fieldset disabled={draftLocked} className={styles.meanings} aria-describedby={`${selectionsId}-help`}><legend>{query.selections.label}</legend><p id={`${selectionsId}-help`}>{query.selections.description}</p>
+          {query.selections.options.map((option, index) => <div className={styles.meaning} key={option.value}><label className={styles.check}><input type="checkbox" checked={selections.includes(option.value)} aria-describedby={`${selectionsId}-${index}`}
+            onChange={event => { setSelections(values => event.target.checked ? [...values, option.value] : values.filter(value => value !== option.value)); edit(); }} />{option.label}</label>
+            <p id={`${selectionsId}-${index}`} className={styles.description}>{option.description}</p></div>)}
         </fieldset>
       </> : null}
-      <div aria-label={t("toolQuery.inputs")}>
-        {rows.map((row, index) => <div key={row.id}><label className="source-field">{t("toolQuery.text", { position: String(index + 1) })}<textarea value={row.text} rows={3} disabled={draftLocked} aria-invalid={!!inputFailure && inputFailure.field === "text"} onChange={event => { setRows(values => values.map(value => value.id === row.id ? { ...value, text: event.target.value } : value)); edit(); }} /></label>
-          {rows.length > 1 ? <button className="text-button" disabled={draftLocked} onClick={() => { setRows(values => values.filter(value => value.id !== row.id)); edit(); }}>{t("toolQuery.remove", { position: String(index + 1) })}</button> : null}</div>)}
-        <button className="secondary-button" disabled={draftLocked} onClick={() => { const id = nextRow.current++; setRows(values => [...values, { id, text: "" }]); edit(); }}>{t("toolQuery.add")}</button>
+      <div className={styles.inputs} aria-label={t("toolQuery.inputs")}>
+        {rows.map((row, index) => <div className={styles.inputRow} key={row.id}><Field label={t("toolQuery.text", { position: String(index + 1) })}>{control => <TextArea {...control} value={row.text} rows={3} disabled={draftLocked} aria-invalid={!!inputFailure && inputFailure.field === "text"}
+          aria-describedby={inputFailure?.field === "text" ? inputErrorId : control["aria-describedby"]} onChange={event => { setRows(values => values.map(value => value.id === row.id ? { ...value, text: event.target.value } : value)); edit(); }} />}</Field>
+          {rows.length > 1 ? <Button variant="link" disabled={draftLocked} onClick={() => { setRows(values => values.filter(value => value.id !== row.id)); edit(); }}>{t("toolQuery.remove", { position: String(index + 1) })}</Button> : null}</div>)}
+        <Button variant="secondary" disabled={draftLocked} onClick={() => { const id = nextRow.current++; setRows(values => [...values, { id, text: "" }]); edit(); }}>{t("toolQuery.add")}</Button>
       </div>
-      {inputFailure ? <p role="alert">{t(inputFailure.code === "text-required" ? "toolQuery.textRequired" : inputFailure.code === "invalid-selection" ? "toolQuery.selectionRequired" : inputFailure.code === "limit-exceeded" ? "toolQuery.tooLarge" : "toolQuery.inputChanged")}</p> : null}
-      {changed ? <p role="status">{t("toolQuery.inputChanged")}</p> : null}
-      {environmentChanged ? <p role="alert">{t("toolQuery.environmentChanged")}</p> : null}
-      <button className={capture && !changed && !environmentChanged && run?.review.attemptId !== capture.review.attemptId ? "secondary-button" : "primary-button"} disabled={!preparationAvailability(preparationPayload).enabled} onClick={() => { if (preparationPayload) registry.dispatch("resource.prepare-tool", commandScope, preparationPayload); }}>{t("toolQuery.prepare")}</button>
+      {inputFailure ? <Banner id={inputErrorId} tone="error" role="alert">{t(inputFailure.code === "text-required" ? "toolQuery.textRequired" : inputFailure.code === "invalid-selection" ? "toolQuery.selectionRequired" : inputFailure.code === "limit-exceeded" ? "toolQuery.tooLarge" : "toolQuery.inputChanged")}</Banner> : null}
+      {changed ? <Banner tone="warning" role="status">{t("toolQuery.inputChanged")}</Banner> : null}
+      {environmentChanged ? <Banner tone="warning" role="alert">{t("toolQuery.environmentChanged")}</Banner> : null}
+      <Button variant={capture && !changed && !environmentChanged && run?.review.attemptId !== capture.review.attemptId ? "secondary" : "primary"} disabled={!preparationAvailability(preparationPayload).enabled} onClick={() => { if (preparationPayload) registry.dispatch("resource.prepare-tool", commandScope, preparationPayload); }}>{t("toolQuery.prepare")}</Button>
       {capture ? <section aria-label={t("toolQuery.review")}>
         <p>{t(visibleRun?.review.attemptId === capture.review.attemptId ? "toolQuery.executionCaptured" : "toolQuery.captured", { count: capture.review.items.length })}</p>
+        {capturedPresentation ? <section aria-label={surface("preparedInputs")} className={styles.preview}>
+          <h4>{surface("preparedInputs")}</h4>
+          {capture.review.items.map((item, index) => {
+            const capturedQuery = capturedPresentation.query;
+            const text = field(item.payload, capturedQuery.textPath), targetValue = field(item.payload, capturedQuery.target.path), selected = field(item.payload, capturedQuery.selections.path);
+            if (typeof text !== "string" || typeof targetValue !== "string" || !Array.isArray(selected) || !selected.every(value => typeof value === "string")) return <Banner key={item.itemId} tone="error" role="alert">{surface("previewUnavailable")}</Banner>;
+            return <article key={item.itemId}><h5>{surface("preparedText", { position: index + 1 })}</h5><pre>{text}</pre>
+              <dl className={styles.selectionSummary}><div><dt>{capturedQuery.target.label}</dt><dd>{capturedQuery.target.options.find(option => option.value === targetValue)?.label ?? targetValue}</dd></div>
+                <div><dt>{capturedQuery.selections.label}</dt><dd><ul>{selected.map(value => <li key={value}>{capturedQuery.selections.options.find(option => option.value === value)?.label ?? value}</li>)}</ul></dd></div></dl>
+            </article>;
+          })}
+        </section> : null}
         <PluginPermissions permissions={capture.review.tool.binding.capability.declaration.permissions} /><p>{t("sourcePlugin.unsandboxed")}</p>
         <p>{t(`toolQuery.scopes.${capture.review.tool.componentScope}`)}</p>
         {applicationBasis ? <section aria-label={t("toolQuery.applicationTitle")}>
@@ -364,24 +403,26 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
           <p>{t("toolQuery.applicationCapabilities")}</p>
           <ul>{capture.review.applicationCapabilities.map(member => <li key={member.contributionId}>{member.contributionId}</li>)}</ul>
           {instance.isFetching ? <p role="status">{t("toolQuery.applicationLoading")}</p> : null}
-          {instance.error ? <div role="alert"><CommandFailureDetails failure={commandFailure(instance.error)} /></div> : null}
+          {instance.error ? <Banner tone="error" role="alert"><CommandFailureDetails failure={commandFailure(instance.error)} /></Banner> : null}
           {instance.data ? <p role="status">{t(`toolQuery.applicationStates.${instance.data.state}`)}</p> : null}
-          {instance.data?.state === "reserved" ? <label className="source-check"><input type="checkbox" checked={session.state.applicationConsent === capture.review.inputDigest}
+          {instance.data?.state === "reserved" ? <label className={styles.check}><input type="checkbox" checked={session.state.applicationConsent === capture.review.inputDigest}
             disabled={locked || changed || environmentChanged} onChange={event => setApplicationConsent(event.target.checked ? capture.review.inputDigest : null)} />{t("toolQuery.applicationConsent")}</label> : null}
-          <button type="button" disabled={busy} onClick={() => { void instance.refetch(); }}>{t("toolQuery.applicationRefresh")}</button>
-          <button type="button" disabled={!stopInstanceAvailability(capturePayload).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.stop-tool-instance", commandScope, capturePayload); }}>{t("toolQuery.applicationStop")}</button>
+          <Button type="button" disabled={busy} onClick={() => { void instance.refetch(); }}>{t("toolQuery.applicationRefresh")}</Button>
+          <Button type="button" disabled={!stopInstanceAvailability(capturePayload).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.stop-tool-instance", commandScope, capturePayload); }}>{t("toolQuery.applicationStop")}</Button>
         </section> : null}
         <details><summary>{t("sourcePlugin.fixedDetails")}</summary><p>{capture.review.tool.binding.declaration.title}</p><code>{capture.review.tool.binding.capability.provider.packageDigest}</code><p><code>{capture.review.tool.environmentDigest}</code></p>
-          {capture.review.items.map(item => <pre key={item.itemId}>{typeof field(item.payload, capture.review.tool.binding.declaration.query?.textPath ?? []) === "string" ? String(field(item.payload, capture.review.tool.binding.declaration.query?.textPath ?? [])) : t("toolQuery.invalidResult")}</pre>)}
+          <p>{t("plugins.declaredPublisher", { publisher: capture.review.tool.binding.capability.provider.plugin.publisher })}</p>
+          <p>{t("plugins.origin", { source: capture.review.tool.packageOrigin.sourceId, publisher: capture.review.tool.packageOrigin.publisherId })}</p>
+          <p>{surface("binding", { component: capture.review.tool.binding.capability.provider.componentId, resource: capture.review.tool.resourceId })}</p>
         </details>
-        {!run || run.review.attemptId !== capture.review.attemptId ? <><label className="source-check"><input type="checkbox" checked={consent === capture.review.inputDigest} disabled={locked || changed || environmentChanged || unavailable} onChange={event => setConsent(event.target.checked ? capture.review.inputDigest : null)} />{t("toolQuery.consent")}</label>
-          <button className="primary-button" disabled={!captureAvailability(capturePayload, true).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.start-tool", commandScope, capturePayload); }}>{t("toolQuery.start")}</button></> : null}
-        <button className="secondary-button" disabled={locked || working} onClick={() => { if (capturePayload) registry.dispatch("resource.discard-tool", commandScope, capturePayload); }}>{t("toolQuery.discardReview")}</button>
+        {!run || run.review.attemptId !== capture.review.attemptId ? <><label className={styles.check}><input type="checkbox" checked={consent === capture.review.inputDigest} disabled={locked || changed || environmentChanged || unavailable} onChange={event => setConsent(event.target.checked ? capture.review.inputDigest : null)} />{t("toolQuery.consent")}</label>
+          <Button variant="primary" disabled={!captureAvailability(capturePayload, true).enabled} onClick={() => { if (capturePayload) registry.dispatch("resource.start-tool", commandScope, capturePayload); }}>{t("toolQuery.start")}</Button></> : null}
+        <Button variant="secondary" disabled={locked || working} onClick={() => { if (capturePayload) registry.dispatch("resource.discard-tool", commandScope, capturePayload); }}>{t("toolQuery.discardReview")}</Button>
       </section> : null}
       {pending?.kind === "start" ? <section role="status"><p>{t(session.state.checkingStart ? "execution.checkingPluginStart" : "toolQuery.startUnknown")}</p>
-        <button className="secondary-button" disabled={!pendingAvailability(pendingPayload).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.check-tool-start", commandScope, pendingPayload); }}>{t("execution.checkPluginStart")}</button>
-        {session.state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload, true).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("execution.retryPluginStart")}</button></> : null}
-      </section> : pending ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload, true).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("toolQuery.retryOriginal")}</button> : null}
+        <Button variant="secondary" disabled={!pendingAvailability(pendingPayload).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.check-tool-start", commandScope, pendingPayload); }}>{t("execution.checkPluginStart")}</Button>
+        {session.state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><Button variant="secondary" disabled={!pendingAvailability(pendingPayload, true).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("execution.retryPluginStart")}</Button></> : null}
+      </section> : pending ? <Button variant="secondary" disabled={!pendingAvailability(pendingPayload, true).enabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("toolQuery.retryOriginal")}</Button> : null}
       {detail.data && visibleRun ? <section aria-label={t("toolQuery.results")}><h4>{t("toolQuery.results")}</h4><p>{t("toolQuery.references")}</p>
         {detail.data.items.map(item => {
           const fixed = visibleRun.review.items.find(value => value.itemId === item.status.itemId);
@@ -390,18 +431,18 @@ export function PluginToolQueries({ project, session, open, disabled, onState, o
           return <article key={item.status.itemId}><blockquote><pre>{typeof text === "string" ? text : t("toolQuery.invalidResult")}</pre></blockquote><p>{t(`execution.states.${item.status.execution}`)}</p>
             {item.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary><p>{item.status.diagnostic}</p></details> : null}
             {item.status.execution === "succeeded" && !output.isFetching && !output.error && runPresentation ? result === null ? <p role="alert">{t("toolQuery.invalidResult")}</p>
-              : result.length === 0 ? <p>{runPresentation.query.output.emptyDescription}</p> : <div className="source-table-scroll"><table className="source-table"><thead><tr>{runPresentation.query.output.columns.map(column => <th key={jsonIdentity(column.path)} scope="col">{column.label}</th>)}</tr></thead><tbody>{result.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}><pre>{cell}</pre></td>)}</tr>)}</tbody></table></div> : null}
+              : result.length === 0 ? <p>{runPresentation.query.output.emptyDescription}</p> : <div className={styles.scroll}><table className={styles.table}><thead><tr>{runPresentation.query.output.columns.map(column => <th key={jsonIdentity(column.path)} scope="col">{column.label}</th>)}</tr></thead><tbody>{result.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}><pre>{cell}</pre></td>)}</tr>)}</tbody></table></div> : null}
           </article>;
         })}
-        {working && taskId && attemptId ? <button className="secondary-button" disabled={!cancelAvailability(cancelPayload).enabled}
-          onClick={() => { if (cancelPayload) registry.dispatch("resource.cancel-tool", commandScope, cancelPayload); }}>{t("toolQuery.cancel")}</button> : null}
+        {working && taskId && attemptId ? <Button variant="secondary" disabled={!cancelAvailability(cancelPayload).enabled}
+          onClick={() => { if (cancelPayload) registry.dispatch("resource.cancel-tool", commandScope, cancelPayload); }}>{t("toolQuery.cancel")}</Button> : null}
       </section> : null}
     </section>
-    <Dialog.Root open={leave} onOpenChange={value => { if (!value && !busy) answerLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onCloseAutoFocus={event => { event.preventDefault(); leaveTrigger.current?.focus(); }}>
-      <Dialog.Title>{t("toolQuery.leaveTitle")}</Dialog.Title><Dialog.Description>{t("toolQuery.leaveHelp")}</Dialog.Description><div className="form-actions">
-        <button className="secondary-button" disabled={busy} onClick={() => answerLeave(false)}>{t("resource.stay")}</button>
-        <button className="primary-button" disabled={locked} onClick={() => void discardAndLeave()}>{t("resource.discardAndLeave")}</button>
-      </div>
-    </Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog open={leave} onOpenChange={value => { if (!value && !busy) answerLeave(false); }} title={t("toolQuery.leaveTitle")} description={t("toolQuery.leaveHelp")}
+      closeLabel={surface("closeConfirmation")} closeDisabled={busy} onPointerDownOutside={event => event.preventDefault()} onCloseAutoFocus={event => { event.preventDefault(); if (leaveTrigger.current?.isConnected) leaveTrigger.current.focus(); }}
+      footer={<div className={styles.actions}>
+        <Button variant="secondary" disabled={busy} onClick={() => answerLeave(false)}>{t("resource.stay")}</Button>
+        <Button variant="primary" pending={busy} disabled={locked} onClick={() => void discardAndLeave()}>{t("resource.discardAndLeave")}</Button>
+      </div>}>{busy ? <p role="status">{t("execution.working")}</p> : null}</Dialog>
   </>;
 }

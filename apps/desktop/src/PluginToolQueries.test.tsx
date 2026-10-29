@@ -139,8 +139,8 @@ async function open(presentation = true) {
   }
   const ui = (currentProject = project) => <><ResourceWorkbench ref={ref} project={currentProject} disabled={false} onOpenTranslation={() => true} /><Probe /></>;
   const view = render(ui(), project);
-  await user.click(screen.getByRole("button", { name: "Glossary and context" }));
-  await user.click(screen.getByRole("tab", { name: "Reference queries" }));
+  await user.click(screen.getByRole("button", { name: i18n.t("resource.title") }));
+  await user.click(screen.getByRole("tab", { name: i18n.t("resource.tabs.queries") }));
   if (presentation) {
     await screen.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
     await user.click(screen.getByRole("checkbox", { name: /^Term 👩🏽‍💻/ }));
@@ -166,6 +166,53 @@ async function start(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("checkbox", { name: /^I allow this component/ }));
   await user.click(screen.getByRole("button", { name: "Run reference queries" }));
 }
+
+it.each([
+  ["en-US", "I allow this component to run these queries once with my OS user account permissions (valid for up to 10 minutes)."],
+  ["zh-CN", "我允许该组件在本次运行中，使用当前操作系统用户权限查询上述文本（最长有效时间 10 分钟）。"],
+])("renders host controls and the fixed SDK input without translating plugin labels or user text (%s)", async (language, consentLabel) => {
+  declaredUi = true; await i18n.changeLanguage(language);
+  const { user } = await open(), query = toolQueryView.binding.declaration.query;
+  if (!query) throw new Error("Expected a synthetic query declaration");
+  const controls = within(screen.getByRole("region", { name: i18n.t("toolQuery.title") }));
+  const text = "Unchanged 👩🏽‍💻 é reference";
+  await user.type(controls.getByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) }), text);
+  await user.selectOptions(controls.getByRole("combobox", { name: query.target.label }), "ja");
+  await user.click(controls.getByRole("checkbox", { name: query.selections.options[1].label }));
+  expect(controls.getByRole("group", { name: query.selections.label })).toHaveAccessibleDescription(query.selections.description);
+  await user.click(controls.getByRole("button", { name: i18n.t("toolQuery.prepare") }));
+  const preview = await controls.findByRole("region", { name: i18n.t("pluginToolWorkbench.preparedInputs") });
+  expect(within(preview).getByText(text, { selector: "pre" })).toBeVisible();
+  expect(within(preview).getByText("日本語")).toBeVisible();
+  expect(within(preview).getByText("Term 👩🏽‍💻")).toBeVisible(); expect(within(preview).getByText("Other")).toBeVisible();
+  expect(controls.getByRole("checkbox", { name: consentLabel })).not.toBeChecked();
+  expect(controls.getByRole("button", { name: i18n.t("toolQuery.start") })).toBeDisabled();
+  expect(prepared?.items[0].payload).toEqual({ basis: { revision: "é-👩🏽‍💻" }, target: "ja", rows: [{ id: "original-query", text, selected: ["term", "other"] }] });
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
+});
+
+it("removes a revoked declared view while keeping its exact unknown start, draft and local recovery", async () => {
+  declaredUi = true;
+  const { user, owner, applicationReads } = await open();
+  const text = "Retained declared reference 👩🏽‍💻";
+  await user.type(screen.getByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) }), text);
+  await review(user); startBeforeEnqueue = true; await start(user);
+  await screen.findByRole("button", { name: i18n.t("execution.retryPluginStart") });
+  const original = owner().current().pending;
+  expect(original?.kind).toBe("start");
+  const revoked = structuredClone(inventory); revoked.settingsRevision = "2"; revoked.packageDecisions[0].enabled = false;
+  await act(async () => { applicationReads().setQueryData(pluginInventoryReadKey, revoked); });
+  await screen.findByText(i18n.t("toolQuery.unavailable"));
+  expect(screen.queryByRole("group", { name: "Reference senses" })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: i18n.t("toolQuery.text", { position: "1" }) })).toHaveValue(text);
+  expect(screen.getByRole("button", { name: i18n.t("toolQuery.prepare") })).toBeDisabled();
+  expect(owner().current().pending).toBe(original);
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.checkPluginStart") }));
+  await waitFor(() => expect(owner().current().checkingStart).toBe(false));
+  expect(owner().current().pending).toBe(original);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_plugin_ui")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_tool")).toHaveLength(1);
+});
 
 it("mounts a declared reference view once and uses the original query review and consent", async () => {
   declaredUi = true;
@@ -663,7 +710,9 @@ it("keeps a failed saved-result read distinct from empty or malformed output and
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("original input kept");
   const before = invoke.mock.calls.filter(([command]) => command === "read_execution_output").length;
   unavailable = false;
-  await user.click(within(notice.parentElement!).getByRole("button", { name: i18n.t("toolQuery.retryRead") }));
+  const readFailure = notice.closest('[role="alert"]');
+  if (!(readFailure instanceof HTMLElement)) throw new Error("Saved-result read failure requires its recovery region");
+  await user.click(within(readFailure).getByRole("button", { name: i18n.t("toolQuery.retryRead") }));
   await within(await screen.findByRole("region", { name: "Query results" })).findByText("<script>untrusted</script>");
   const reads = invoke.mock.calls.filter(([command]) => command === "read_execution_output").map(([, args]) => args.request);
   expect(reads).toHaveLength(before + 1); reads.forEach(request => expect(request).toEqual(reads[0]));

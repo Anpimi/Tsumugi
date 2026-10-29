@@ -728,3 +728,64 @@ it.each(["en-US", "zh-CN"])("reports the approved exception count when a build i
   expect(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") })).toBeEnabled();
   expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_build")).toBe(false);
 });
+
+it.each([
+  { locale: "en-US", builder: "Installed builder", paths: "Output paths for zh-CN", prepare: "Prepare build for review" },
+  { locale: "zh-CN", builder: "已安装的构建器", paths: "zh-CN 的输出路径", prepare: "准备构建并审阅" },
+])("keeps accessible host fields and exact fixed choices through an interface language change in $locale", async labels => {
+  await i18n.changeLanguage(labels.locale);
+  const user = userEvent.setup();
+  render(<ReleaseWorkbench project={project} disabled={false}/>);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  const builder = await screen.findByRole("combobox", { name: labels.builder });
+  await waitFor(() => expect(builder).toBeEnabled());
+  expect(screen.getByRole("button", { name: labels.prepare })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  const input = screen.getByRole("textbox", { name: labels.paths });
+  const text = "deliverables/zh-CN/译文.txt\ndeliverables/zh-CN/metadata.txt";
+  await user.type(input, text);
+  expect(input).toHaveAccessibleDescription(i18n.t("releasePlugin.pathHelp"));
+  await act(async () => { await i18n.changeLanguage(labels.locale === "en-US" ? "zh-CN" : "en-US"); });
+  expect(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).toHaveValue(text);
+  expect(screen.getByRole("checkbox", { name: "zh-CN" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "fr-FR" })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: i18n.t("release.check") }));
+  await screen.findByText(i18n.t("release.ready", { count: 0 }));
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") }));
+  await screen.findByText(i18n.t("releasePlugin.fixedBuild"));
+  expect(captured?.choices).toEqual([{ locale: "zh-CN", outputPaths: text.split("\n"), configuration: [] }]);
+  expect(captured?.build).toEqual({ package: {
+    plugin: pluginBuildView.builder.provider.plugin, packageDigest: pluginBuildView.builder.provider.packageDigest,
+  }, resourceId: pluginBuildView.resourceId, environmentDigest: pluginBuildView.environmentDigest });
+  expect(screen.getByRole("combobox", { name: i18n.t("releasePlugin.capturedBuilder") })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: i18n.t("releasePlugin.capturedRuntime") })).toHaveValue(pluginBuildView.environmentDigest);
+  expect(screen.getByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: i18n.t("release.build") })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+});
+
+it.each(["en-US", "zh-CN"])("preserves the output mapping when its installed builder is disabled in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation()!;
+  let enabled = true;
+  invoke.mockImplementation((command, args) => command === "read_plugin_inventory" && !enabled
+    ? { ...pluginBuildInventory, packageDecisions: pluginBuildInventory.packageDecisions.map(decision => ({ ...decision, enabled: false })) }
+    : original(command, args));
+  const user = userEvent.setup(), onOpenExtensions = vi.fn();
+  render(<ReleaseWorkbench project={project} disabled={false} onOpenExtensions={onOpenExtensions}/>);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") })).toBeEnabled());
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  const input = screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) });
+  await user.type(input, "deliverables/kept-original.txt");
+  enabled = false;
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") }));
+  await screen.findByText(i18n.t("releasePlugin.unavailable"));
+  expect(input).toHaveValue("deliverables/kept-original.txt");
+  expect(screen.getByRole("button", { name: i18n.t("release.check") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: i18n.t("plugins.open") }));
+  expect(onOpenExtensions).toHaveBeenCalledOnce();
+  expect(input).toHaveValue("deliverables/kept-original.txt");
+  expect(invoke.mock.calls.some(([command]) => ["create_execution_identity", "prepare_plugin_build", "start_plugin_build", "prepare_artifact_check", "adopt_execution"].includes(command))).toBe(false);
+});

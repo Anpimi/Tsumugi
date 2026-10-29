@@ -18,6 +18,7 @@ export const workspaceCommandCatalog = [
   { id: "workspace.commands", nameKey: "workbenchV2.commands", binding: "Mod+K" },
   { id: "workspace.settings", nameKey: "settingsWorkbench.title", binding: "Mod+," },
   { id: "workspace.extensions", nameKey: "plugins.title", binding: null },
+  { id: "workspace.references", nameKey: "toolQuery.title", binding: null },
   { id: "workspace.mcp-query", nameKey: "settingsWorkbench.query", binding: null },
   { id: "workspace.mcp-share", nameKey: "settingsWorkbench.share", binding: null },
   { id: "source.import-upstream", nameKey: "sourceMaintenance.title", binding: null },

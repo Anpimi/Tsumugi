@@ -15,7 +15,7 @@ import type { SessionExitPermit } from "../../../sessionNavigation";
 import type { ProjectLifecycle } from "../../platform/projectLifecycle";
 import { workspaceCommandCatalog } from "../../workspace/workspaceCommands";
 import type { InteractionGate } from "../../workspace/interactionGate";
-import type { ProjectMcpHandle } from "./ProjectMcpHost";
+import type { ProjectReferenceHandle } from "./ProjectReferenceHost";
 import styles from "./ApplicationSettings.module.css";
 
 type Section = "general" | "appearance" | "connections" | "shortcuts" | "about";
@@ -23,11 +23,12 @@ const sections: Section[] = ["general", "appearance", "connections", "shortcuts"
 interface SettingsContext {
   open: (section?: Section, returnTo?: HTMLElement) => void;
   openExtensions: (returnTo?: HTMLElement) => void;
-  openMcpQuery?: () => void;
-  openMcpShare?: () => void;
+  openReferences?: (returnTo?: HTMLElement, fallbackReturnTo?: HTMLElement) => void;
+  openMcpQuery?: (returnTo?: HTMLElement, fallbackReturnTo?: HTMLElement) => void;
+  openMcpShare?: (returnTo?: HTMLElement, fallbackReturnTo?: HTMLElement) => void;
   bindings: CommandBindings;
   bindingsRevision: number;
-  registerMcp: (handle: ProjectMcpHandle) => () => void;
+  registerMcp: (handle: ProjectReferenceHandle) => () => void;
 }
 const Context = createContext<SettingsContext | null>(null);
 export function useApplicationSettings() { const value = useContext(Context); if (!value) throw new Error("ApplicationSettingsProvider is required"); return value; }
@@ -45,16 +46,16 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
   const [open, setOpen] = useState(false), [section, setSection] = useState<Section>("general"), [extensionsOpen, setExtensionsOpen] = useState(false);
   const [shortcutInputs, setShortcutInputs] = useState<Record<string, string>>({}), [shortcutError, setShortcutError] = useState<Record<string, Exclude<BindingResult, { kind: "saved" }>>>({});
   const [shortcutNotice, setShortcutNotice] = useState<"saved" | "restored" | "storage" | null>(null), [shortcutExit, setShortcutExit] = useState(false);
-  const [mcp, setMcp] = useState<ProjectMcpHandle | null>(null), currentMcp = useRef<ProjectMcpHandle | null>(null);
+  const [mcp, setMcp] = useState<ProjectReferenceHandle | null>(null), currentMcp = useRef<ProjectReferenceHandle | null>(null);
   const [version, setVersion] = useState<{ kind: "idle" | "reading" | "failed" } | { kind: "ready"; value: string }>({ kind: "idle" });
   const [, setPluginBusy] = useState(false);
   const [versionAttempt, setVersionAttempt] = useState(0), [dark, setDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
   const plugins = useRef<PluginManagerHandle>(null), exitPermit = useRef<SessionExitPermit | null>(null);
-  const origin = useRef<HTMLElement | null>(null), handoff = useRef<{ target: ProjectMcpHandle; kind: "query" | "share" } | "extensions" | null>(null);
+  const origin = useRef<HTMLElement | null>(null), handoff = useRef<{ target: ProjectReferenceHandle; kind: "reference" | "query" | "share" } | "extensions" | null>(null);
   const settingsDialog = useId(), extensionsDialog = useId(), compositionOwner = useId();
   const current = useRef({ owner, shortcutInputs, open });
   useLayoutEffect(() => { current.current = { owner, shortcutInputs, open }; });
-  const registerMcp = useCallback((handle: ProjectMcpHandle) => {
+  const registerMcp = useCallback((handle: ProjectReferenceHandle) => {
     currentMcp.current = handle; setMcp(handle);
     return () => { if (currentMcp.current === handle) { currentMcp.current = null; setMcp(null); } };
   }, []);
@@ -128,19 +129,22 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
     setShortcutInputs(before => { const next = { ...before }; delete next[id]; return next; });
     setShortcutError(before => { const next = { ...before }; delete next[id]; return next; }); setShortcutNotice("saved");
   }
-  function handOff(target: "extensions" | "query" | "share") {
+  function handOff(target: "extensions" | "reference" | "query" | "share") {
     if (closeDisabled || lifecycle.getSnapshot().phase !== "idle") return;
     if (target === "extensions") handoff.current = "extensions";
     else if (currentMcp.current) handoff.current = { target: currentMcp.current, kind: target }; else return;
     setOpen(false);
   }
-  const openMcpQuery = useCallback(() => {
-    if (lifecycle.getSnapshot().phase === "idle" && gate.canDispatch({ viewId: gate.getSnapshot().visibleViewId, source: "button" })) currentMcp.current?.open("query");
+  const openReferences = useCallback((returnTo?: HTMLElement, fallbackReturnTo?: HTMLElement) => {
+    if (lifecycle.getSnapshot().phase === "idle" && gate.canDispatch({ viewId: gate.getSnapshot().visibleViewId, source: "button" })) currentMcp.current?.open("reference", returnTo, fallbackReturnTo);
   }, [lifecycle, gate]);
-  const openMcpShare = useCallback(() => {
-    if (lifecycle.getSnapshot().phase === "idle" && gate.canDispatch({ viewId: gate.getSnapshot().visibleViewId, source: "button" })) currentMcp.current?.open("share");
+  const openMcpQuery = useCallback((returnTo?: HTMLElement, fallbackReturnTo?: HTMLElement) => {
+    if (lifecycle.getSnapshot().phase === "idle" && gate.canDispatch({ viewId: gate.getSnapshot().visibleViewId, source: "button" })) currentMcp.current?.open("query", returnTo, fallbackReturnTo);
   }, [lifecycle, gate]);
-  const value = useMemo<SettingsContext>(() => ({ open: show, openExtensions, bindings, bindingsRevision: bindingState.revision, registerMcp, openMcpQuery: mcp ? openMcpQuery : undefined, openMcpShare: mcp ? openMcpShare : undefined }), [show, openExtensions, bindings, bindingState.revision, registerMcp, mcp, openMcpQuery, openMcpShare]);
+  const openMcpShare = useCallback((returnTo?: HTMLElement, fallbackReturnTo?: HTMLElement) => {
+    if (lifecycle.getSnapshot().phase === "idle" && gate.canDispatch({ viewId: gate.getSnapshot().visibleViewId, source: "button" })) currentMcp.current?.open("share", returnTo, fallbackReturnTo);
+  }, [lifecycle, gate]);
+  const value = useMemo<SettingsContext>(() => ({ open: show, openExtensions, bindings, bindingsRevision: bindingState.revision, registerMcp, openReferences: mcp ? openReferences : undefined, openMcpQuery: mcp ? openMcpQuery : undefined, openMcpShare: mcp ? openMcpShare : undefined }), [show, openExtensions, bindings, bindingState.revision, registerMcp, mcp, openReferences, openMcpQuery, openMcpShare]);
   return <Context.Provider value={value}><div className={styles.scope} onCompositionStartCapture={event => { if (event.target instanceof Element && event.target.closest('[role="dialog"]')) gate.setComposing(compositionOwner, true); }} onCompositionEndCapture={() => gate.setComposing(compositionOwner, false)}>{children}
     <Sheet open={open} onOpenChange={next => { if (!next) close(); }} title={t("settingsWorkbench.title")} description={t("settingsWorkbench.description")} closeLabel={t("settingsWorkbench.close")} closeDisabled={closeDisabled} className={styles.sheet}
       onEscapeKeyDown={event => { if (closeDisabled) event.preventDefault(); }} onInteractOutside={event => { if (closeDisabled) event.preventDefault(); }}
@@ -156,6 +160,7 @@ function ApplicationSettingsOwner({ lifecycle, gate, native, children }: { lifec
           {section === "general" ? <section className={styles.section}><h2>{t("settingsWorkbench.general")}</h2>
             <Field label={t("settingsWorkbench.language")} description={t("settingsWorkbench.languageHelp")}><select className={fieldStyles.input} value={i18n.resolvedLanguage} onChange={event => { if (isLocale(event.target.value)) void i18n.changeLanguage(event.target.value); }}>{localeOptions.map(locale => <option key={locale.value} value={locale.value}>{t(locale.labelKey)}</option>)}</select></Field>
             <h2>{t("settingsWorkbench.extensions")}</h2><p>{t("settingsWorkbench.extensionsHelp")}</p><div className={styles.actions}><Button variant="secondary" onClick={() => handOff("extensions")}>{t("settingsWorkbench.extensions")}</Button></div>
+            <h2>{t("toolQuery.title")}</h2><p>{t("toolQuery.help")}</p><div className={styles.actions}><Button disabled={!mcp || !lifecycleState.session} onClick={() => handOff("reference")}>{t("toolQuery.title")}</Button></div>
             <h2>{t("settingsWorkbench.mcp")}</h2><p>{t("settingsWorkbench.mcpHelp")}</p><p>{!lifecycleState.session ? t("settingsWorkbench.needsProject") : !mcp ? t("settingsWorkbench.projectLoading") : null}</p>
             <div className={styles.actions}><Button disabled={!mcp || !lifecycleState.session} onClick={() => handOff("query")}>{t("settingsWorkbench.query")}</Button><Button disabled={!mcp || !lifecycleState.session} onClick={() => handOff("share")}>{t("settingsWorkbench.share")}</Button></div>
           </section> : null}

@@ -1,4 +1,5 @@
 export const mcpWorkbenchEn = {
+  referenceTitle: "Installed reference tools", loadingReference: "Loading reference tools…", discardReference: "Discard reference query draft", switchBlocked: "Another query has unfinished work. Its input and original request are shown here. Finish or explicitly discard it before changing query providers.",
   queryTitle: "External term lookup", shareTitle: "Share saved material", close: "Close panel",
   temporaryConnection: "External services use a temporary connection for each request. Connecting or finding tools does not authorize sharing project text.",
   closeKeepsWork: "Closing this panel keeps drafts and pending requests. Reopen it to check the original request, stop a query, or revoke sharing.",
@@ -16,6 +17,7 @@ export const mcpWorkbenchEn = {
 };
 
 export const mcpWorkbenchZh = {
+  referenceTitle: "已安装的参考工具", loadingReference: "正在加载参考工具…", discardReference: "丢弃参考查询草稿", switchBlocked: "另一个查询还有未完成的操作，已打开它的输入和原请求。请先处理完，或明确丢弃草稿，再切换查询方式。",
   queryTitle: "外部术语检索", shareTitle: "分享已保存材料", close: "关闭面板",
   temporaryConnection: "每次请求使用临时外部连接。连接服务或获取工具列表，不代表允许发送项目文本。",
   closeKeepsWork: "关闭面板会保留草稿和待处理请求。重新打开后，可核对原请求、停止查询或撤回分享权限。",

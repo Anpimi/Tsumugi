@@ -1,3 +1,4 @@
+import { pluginToolWorkbenchEn } from "./pluginToolWorkbench";
 import { settingsWorkbenchEn } from "./settingsWorkbench";
 import { mcpWorkbenchEn } from "./mcpWorkbench";
 import { pluginWorkbenchEn } from "./pluginWorkbench";
@@ -9,6 +10,7 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+pluginToolWorkbench: pluginToolWorkbenchEn,
 settingsWorkbench: settingsWorkbenchEn,
 mcpWorkbench: mcpWorkbenchEn,
 startup: startupEn,

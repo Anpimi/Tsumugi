@@ -9,18 +9,18 @@ import { mcpProject } from "../../../testSupport/mcpSharingFixture";
 import type { SessionExitPermit } from "../../../sessionNavigation";
 import { ProjectLifecycle } from "../../platform/projectLifecycle";
 import { InteractionGate } from "../../workspace/interactionGate";
-import type { ProjectMcpHandle } from "./ProjectMcpHost";
+import type { ProjectReferenceHandle } from "./ProjectReferenceHost";
 import { ApplicationSettingsProvider, useApplicationSettings } from "./ApplicationSettings";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke, isTauri: () => false }));
 const label = (key: "title" | "connections" | "shortcuts" | "close" | "apply" | "discardShortcuts" | "query" | "needsProject") => i18n.t(`settingsWorkbench.${key}`);
-function Launcher({ mcp }: { mcp?: ProjectMcpHandle }) {
+function Launcher({ mcp }: { mcp?: ProjectReferenceHandle }) {
   const settings = useApplicationSettings();
   useLayoutEffect(() => mcp ? settings.registerMcp(mcp) : undefined, [settings.registerMcp, mcp]);
   return <button onClick={() => settings.open()}>{label("title")}</button>;
 }
-function harness(lifecycle = new ProjectLifecycle(), mcp?: ProjectMcpHandle) {
+function harness(lifecycle = new ProjectLifecycle(), mcp?: ProjectReferenceHandle) {
   const gate = new InteractionGate();
   const ui = render(<ApplicationReadProvider><ApplicationSettingsProvider lifecycle={lifecycle} gate={gate} native><Launcher mcp={mcp}/></ApplicationSettingsProvider></ApplicationReadProvider>);
   return { ...ui, lifecycle, gate };

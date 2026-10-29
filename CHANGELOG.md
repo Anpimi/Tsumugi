@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Installed reference tools are available from workspace settings, entry details and commands. Query drafts and original pending requests stay available when the panel is hidden or a view is removed. Switching providers keeps unfinished work in its original query. Plugin query and build forms use host controls, with explicit previews and separate execution consent.
+
 - The opt-in workspace now has application settings for interface language, system appearance, model connections and shortcuts. Connection drafts survive project changes, and shortcut conflicts are checked by the existing command registry. Extensions use Installed, Discover and Sources tabs with package permission comparisons. External terminology lookup and material sharing are reachable from settings and commands, with separate consent and recovery for each operation.
 
 - The opt-in workspace prepares a project from a native folder selection or drop, or from manually entered settings. Choose an installed source format and approved runtime, then check its declared files without running plugins or calling a model. Confirm the source language and edit the location and target languages before creation. The new project can pass the checked folder to the existing import workflow; running the import requires separate confirmation. Failed preparation or creation keeps the settings. An uncertain creation result keeps the original request and offers an explicit action to open its destination without repeating creation. The start screen shows recent opening times and supports Enter to continue the latest project.

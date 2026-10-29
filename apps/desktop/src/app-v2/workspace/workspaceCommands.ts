@@ -25,6 +25,7 @@ export interface WorkspaceCommandActions {
   openCommands?: () => void;
   openSettings?: () => void | Promise<unknown>;
   openExtensions?: () => void | Promise<unknown>;
+  openReferences?: () => void | Promise<unknown>;
   openMcpQuery?: () => void | Promise<unknown>;
   openMcpShare?: () => void | Promise<unknown>;
   openDecisions?: () => void | Promise<unknown>;
@@ -81,6 +82,7 @@ export function registerWorkspaceCommands({ commands, store, gate, viewId, scope
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.commands"), availability: () => available(!!actions.openCommands), handler: run(() => actions.openCommands?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.settings"), availability: () => available(!!actions.openSettings), handler: run(() => actions.openSettings?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.extensions"), availability: () => available(!!actions.openExtensions), handler: run(() => actions.openExtensions?.()) }),
+    commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.references"), availability: () => available(!!actions.openReferences), handler: run(() => actions.openReferences?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.mcp-query"), availability: () => available(!!actions.openMcpQuery), handler: run(() => actions.openMcpQuery?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.mcp-share"), availability: () => available(!!actions.openMcpShare), handler: run(() => actions.openMcpShare?.()) }),
     commands.register({ ...metadata, category: "translation", ...workspaceCommandMetadata("translation.import"), availability: () => available(!!actions.openImport && (actions.canOpenImport?.() ?? true)), handler: run(() => actions.openImport?.()) }),
