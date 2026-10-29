@@ -12,6 +12,26 @@ beforeEach(() => { localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem(COMMAND_BINDINGS_STORAGE_KEY); });
 
 describe("workspace commands in the existing registry", () => {
+  it("opens delivery through one command and rejects an outdated session, composing input and a modal", () => {
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [] });
+    const gate = new InteractionGate(), commands = new WorkbenchCommands(), openDelivery = vi.fn();
+    let liveScope = scope;
+    registerWorkspaceCommands({ commands, store, gate, viewId: null, scope, getCurrentScope: () => liveScope,
+      navigation: navigation(), actions: { openDelivery }, onError: vi.fn() });
+    const dispatcher = createWorkspaceCommandDispatcher({ gate, getContext: () => ({ viewId: null, scope, commands }), modifier: "meta" });
+    for (const source of ["button", "palette", "native-menu"] as const) {
+      expect(dispatcher.list({ source }).find(command => command.id === "workspace.delivery")).toMatchObject({ nameKey: "workbenchV2.delivery", binding: null });
+      expect(dispatcher.dispatch("workspace.delivery", { viewId: null, source })).toBe(true);
+    }
+    gate.setComposing("synthetic-input", true);
+    expect(dispatcher.dispatch("workspace.delivery", { viewId: null, source: "button" })).toBe(false);
+    gate.setComposing("synthetic-input", false);
+    const release = gate.pushDialog("synthetic-dialog");
+    expect(dispatcher.dispatch("workspace.delivery", { viewId: null, source: "palette" })).toBe(false); release();
+    liveScope = { ...scope, sessionToken: "different-session" };
+    expect(dispatcher.dispatch("workspace.delivery", { viewId: null, source: "native-menu" })).toBe(false);
+    expect(openDelivery).toHaveBeenCalledTimes(3);
+  });
   it("stages focused AI only from the current list and respects input, IME and modal ownership", () => {
     const gate = new InteractionGate(), commands = new WorkbenchCommands(), stage = vi.fn(); gate.setVisibleOwner("one");
     commands.register({ ...workspaceCommandMetadata("translation.stage-focused-ai"), category: "translation", risk: "writes-translation", confirmation: "none", scope,

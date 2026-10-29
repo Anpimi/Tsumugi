@@ -1,4 +1,5 @@
 export const decisionsEn = {
+  decisionDetailsOpenDelivery: "Open delivery",
   decisionsTargetSourceResult: "Source extraction preview", decisionsTargetProposal: "Saved proposal",
   decisionsProposalQuestionTitle: "A proposal has questions to clarify",
   decisionsProposalQuestions: "{{count, number}} questions in the original proposal",
@@ -65,6 +66,7 @@ export const decisionsEn = {
 };
 
 export const decisionsZh: typeof decisionsEn = {
+  decisionDetailsOpenDelivery: "前往交付",
   decisionsTargetSourceResult: "源文件提取预览", decisionsTargetProposal: "已保存提议",
   decisionsProposalQuestionTitle: "提议中还有问题需要澄清",
   decisionsProposalQuestions: "原提议中有 {{count, number}} 个问题",

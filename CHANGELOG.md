@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Delivery in the opt-in workspace presents readiness, build, artifact checks, export and history as one checklist. Build settings stay with the project when a view is closed. Saved releases remain available for export without a model connection; failed or uncertain exports keep their original release and request for checking. Delivery issues use the same decision records as the shared inbox and open the relevant entry or original record.
+
 - Installed reference tools are available from workspace settings, entry details and commands. Query drafts and original pending requests stay available when the panel is hidden or a view is removed. Switching providers keeps unfinished work in its original query. Plugin query and build forms use host controls, with explicit previews and separate execution consent.
 
 - The opt-in workspace now has application settings for interface language, system appearance, model connections and shortcuts. Connection drafts survive project changes, and shortcut conflicts are checked by the existing command registry. Extensions use Installed, Discover and Sources tabs with package permission comparisons. External terminology lookup and material sharing are reachable from settings and commands, with separate consent and recovery for each operation.
@@ -34,7 +36,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
   Source results awaiting adoption keep their original result identity and paged comparison evidence. Expired producer or checker permission marks that evidence stale without renewing permission. Local requests are checked against their original receipts without clearing input or resubmitting work. In-flight requests and active exports remain progress. Interrupted or uncertain deliveries keep the original release, action and affected languages; older records can be read without choosing a directory. Checking actual destination files still requires fresh directory permission through the delivery workflow. The shared refresh notices when a delivery job ends even if its final result could not be saved.
 
-  These reads do not store a separate approval or resolved state. Term proposals can be handled in Knowledge. Source correction and full delivery controls are still being connected.
+  These reads do not store a separate approval or resolved state. Term proposals can be handled in Knowledge, source corrections in the source workflow, and delivery recovery in Delivery.
 
 - Project planning IPC can run one explicitly permitted model request against the original material preview, model destination, sharing scope, budget and expiry. It uses the existing execution and usage records; cancellation, uncertain writes, stopping and reopening cannot restore an old permission. Results are checked explanations or plan suggestions, without creating or authorizing a work plan.
 

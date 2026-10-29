@@ -1,0 +1,10 @@
+.root { min-width: 0; font-size: var(--text-base); color: var(--color-text-primary); }
+.root > :is(h4, h5) { font-size: var(--text-md); }
+.root :is(p, li, dd) { overflow-wrap: anywhere; }
+.root :is(code, pre) { font: var(--text-sm)/var(--line-base) var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.root :is(ul, ol) { padding-inline-start: var(--space-7); }
+.root > ol { list-style: none; padding: 0; }
+.root > ol > li { padding-block: var(--space-6); border-block-end: var(--border-width) solid var(--color-border-default); }
+.root button { margin-block: var(--space-2); margin-inline-end: var(--space-3); }
+.consent { flex-direction: row; align-items: flex-start; gap: var(--space-4); max-width: none; margin-block: var(--space-5); }
+.consent input { order: -1; flex: none; margin-top: .25em; accent-color: var(--color-accent-solid); }

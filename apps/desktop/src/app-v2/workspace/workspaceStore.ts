@@ -16,6 +16,7 @@ export const emptyTranslationMemoryPresentation = (): TranslationMemoryPresentat
 
 export const viewKinds = ["entries", "knowledge", "runs", "delivery", "decisions", "extensions", "settings"] as const;
 export type ViewKind = typeof viewKinds[number];
+export interface DeliveryNavigationTarget { releaseId: string; deliveryId: string; actionId: string }
 
 /** Only presentation state belongs here. Project facts, drafts and grants have other owners. */
 export interface WorkspaceView {
@@ -30,6 +31,7 @@ export interface WorkspaceView {
   decisionCursor: DecisionCursor | null;
   decisionPrevious: readonly (DecisionCursor | null)[];
   decisionFinding: { runId: string; issueId: string; offset: number } | null;
+  deliveryTarget: DeliveryNavigationTarget | null;
   candidateAfterOrdinal: string;
   candidateInitialRevisionId: string | null;
   candidateCompareOpen: boolean;
@@ -99,6 +101,7 @@ export function makeWorkspaceView(input: NewWorkspaceView, id: string): Workspac
     decisionCursor: input.decisionCursor ? { ...input.decisionCursor } : null,
     decisionPrevious: (input.decisionPrevious ?? []).map(cursor => cursor ? { ...cursor } : null),
     decisionFinding: input.decisionFinding ? { ...input.decisionFinding } : null,
+    deliveryTarget: input.deliveryTarget ? { ...input.deliveryTarget } : null,
     candidateAfterOrdinal: input.candidateAfterOrdinal ?? "0",
     candidateInitialRevisionId: input.candidateInitialRevisionId ?? null,
     candidateCompareOpen: input.candidateCompareOpen ?? false,
@@ -185,6 +188,7 @@ export function createWorkspaceStore({ initialLocale, initialViews, createId = (
       const target = patch.focus !== undefined ? patch.focus : view.focus;
       const changedTarget = target !== view.focus || patch.locale !== undefined && patch.locale !== view.locale;
       const next = { ...view, ...patch,
+        ...(patch.deliveryTarget !== undefined ? { deliveryTarget: patch.deliveryTarget ? { ...patch.deliveryTarget } : null } : {}),
         ...(patch.translationMemory ? { translationMemory: { ...patch.translationMemory, filter: { ...patch.translationMemory.filter }, donor: patch.translationMemory.donor ? { ...patch.translationMemory.donor } : null } } : {}),
         ...(patch.decisionCursor !== undefined ? { decisionCursor: patch.decisionCursor ? { ...patch.decisionCursor } : null } : {}),
         ...(patch.decisionPrevious ? { decisionPrevious: patch.decisionPrevious.map(cursor => cursor ? { ...cursor } : null) } : {}),

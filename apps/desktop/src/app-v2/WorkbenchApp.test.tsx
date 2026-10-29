@@ -35,7 +35,14 @@ import { translationCaptureFixture, translationImportChoice, translationSelectio
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
 vi.mock("@tauri-apps/api/path", () => ({ sep: () => "/", join: async (...parts: string[]) => parts.join("/") }));
-const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null }));
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null, sourceValue: null as SourceOwner | null, deliveryFail: false }));
+vi.mock("./features/delivery/DeliveryOwnerHost", async original => {
+  const module = await original<typeof import("./features/delivery/DeliveryOwnerHost")>(), Actual = module.default;
+  return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    if (ownerLoad.deliveryFail) throw new Error("Synthetic initial delivery load failed");
+    return <Actual {...props}/>;
+  } };
+});
 vi.mock("./features/execution/ExecutionOwnerHost", async original => {
   const module = await original<typeof import("./features/execution/ExecutionOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
@@ -59,6 +66,15 @@ vi.mock("./features/source/SourceOwnerHost", async original => {
   } };
 });
 let importPresentation: TranslationImportPanelProps | null = null;
+type DeliveryPresentationProps = ComponentProps<typeof import("./features/delivery/DeliveryView").default>;
+let deliveryPresentation: DeliveryPresentationProps | null = null;
+vi.mock("./features/delivery/DeliveryView", () => ({ default: function DeliveryPresentationProbe(props: DeliveryPresentationProps) {
+  useLayoutEffect(() => { deliveryPresentation = props; });
+  return <section aria-label={i18n.t("workbenchV2.delivery")}>
+    <label>Synthetic delivery path<input value={props.owner.names["zh-CN"] ?? ""} disabled={props.disabled}
+      onChange={event => props.owner.setName("zh-CN", event.target.value)}/></label>
+  </section>;
+} }));
 vi.mock("./features/import/TranslationImportPanel", () => ({ default: function ImportPresentationProbe(props: TranslationImportPanelProps) {
   useLayoutEffect(() => { importPresentation = props; });
   return <section aria-label={i18n.t("workbenchV2.importTitle")}><h1>{i18n.t("workbenchV2.importTitle")}</h1>
@@ -89,9 +105,11 @@ let controller: ProjectLifecycle;
 beforeEach(async () => {
   ownerLoad.execution = null; ownerLoad.knowledge = null; ownerLoad.source = null;
   ownerLoad.sourceValue = null;
+  ownerLoad.deliveryFail = false;
   installResourceDraftPortsFixture();
   installSourceDraftPortsFixture();
   importPresentation = null;
+  deliveryPresentation = null;
   localStorage.clear(); history.replaceState(null, "", "/");
   await i18n.changeLanguage("zh-CN");
   vi.spyOn(sourceCommands, "scope").mockResolvedValue({ currentSnapshot: "snapshot", revision: "1" });
@@ -101,6 +119,56 @@ beforeEach(async () => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
 });
 afterEach(() => { cleanup(); controller?.dispose(); });
+
+it("retains the original delivery owner after navigating away and closing its view", async () => {
+  controller = new ProjectLifecycle({ open: vi.fn(async () => project) });
+  const register = vi.spyOn(controller, "register");
+  render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  await screen.findByText("Actual source from the read port", {}, { timeout: 5000 });
+  const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
+  const delivery = activity.getByRole("button", { name: i18n.t("workbenchV2.delivery") });
+  await waitFor(() => expect(delivery).toBeEnabled()); fireEvent.click(delivery);
+  const field = await screen.findByRole("textbox", { name: "Synthetic delivery path" }, { timeout: 5000 });
+  fireEvent.change(field, { target: { value: "i18n/人工.json" } });
+  const owner = deliveryPresentation!.owner;
+  expect(owner.current().names["zh-CN"]).toBe("i18n/人工.json");
+  fireEvent.click(activity.getByRole("button", { name: i18n.t("workbenchV2.entries") }));
+  await screen.findByText("Actual source from the read port");
+  expect(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.backToDelivery") })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.delivery") }) }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: i18n.t("workbenchV2.closeView", { name: i18n.t("workbenchV2.delivery") }) })).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.backToDelivery") }));
+  expect(await screen.findByRole("textbox", { name: "Synthetic delivery path" })).toHaveValue("i18n/人工.json");
+  expect(deliveryPresentation!.owner.current()).toBe(owner.current());
+  const participants = register.mock.calls.filter(([participant]) => participant.id === "delivery");
+  expect(participants.length).toBeGreaterThan(0);
+  expect(participants.at(-1)![0].inspect({ kind: "close-project" }).status).not.toBe("ready");
+}, 15000);
+
+it("recovers an initial delivery load failure without moving another workspace view", async () => {
+  ownerLoad.deliveryFail = true;
+  const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+  controller = new ProjectLifecycle({ open: vi.fn(async () => project) });
+  render(<WorkbenchApp controller={controller} native/>);
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
+  fireEvent.change(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), { target: { value: project.locator } });
+  fireEvent.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  await screen.findByText("Actual source from the read port", {}, { timeout: 5000 });
+  const activity = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.activity") }));
+  const delivery = activity.getByRole("button", { name: i18n.t("workbenchV2.delivery") });
+  await waitFor(() => expect(delivery).toBeEnabled()); fireEvent.click(delivery);
+  const retry = await screen.findByRole("button", { name: i18n.t("deliveryWorkbench.retryOwner") }, { timeout: 5000 });
+  expect(deliveryPresentation).toBeNull(); ownerLoad.deliveryFail = false; fireEvent.click(retry);
+  await screen.findByRole("textbox", { name: "Synthetic delivery path" });
+  fireEvent.click(activity.getByRole("button", { name: i18n.t("workbenchV2.entries") }));
+  await screen.findByText("Actual source from the read port");
+  expect(screen.queryByRole("textbox", { name: "Synthetic delivery path" })).not.toBeInTheDocument();
+  expect(controller.getSnapshot().session?.project.sessionToken).toBe(project.sessionToken);
+  errors.mockRestore();
+}, 15000);
 
 it("opens the real manual creation entry and adopts only its acknowledged project session", async () => {
   const create = vi.fn(async () => project);

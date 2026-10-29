@@ -25,7 +25,7 @@ import { ProjectLifecycle, type ProjectSession } from "./platform/projectLifecyc
 import { useNativeProjectClose, useProjectLifecycle } from "./platform/useProjectLifecycle";
 import type { OpenConversationRunCandidate } from "./features/assistant/conversationRunResultReads";
 import type { EntryReviewEditorRequest } from "./features/review/navigationTypes";
-import { createWorkspaceStore, type WorkspaceView } from "./workspace/workspaceStore";
+import { createWorkspaceStore, type WorkspaceView, type DeliveryNavigationTarget } from "./workspace/workspaceStore";
 import { createWorkspaceRouter } from "./workspace/workspaceRouter";
 import { InteractionGate } from "./workspace/interactionGate";
 import { registerWorkspaceCommands, createWorkspaceCommandDispatcher, workspaceCommandIds, type WorkspaceCommandId } from "./workspace/workspaceCommands";
@@ -36,6 +36,7 @@ import type { TranslationDrafts, TranslationDraftSnapshot } from "./features/edi
 import type { EditorCommand, SegmentEditorHandle } from "./features/editor/SegmentEditor";
 import type { LifecycleParticipant } from "./platform/projectLifecycle";
 import type { ImportOwners } from "./features/import/importTypes";
+import type { DeliveryOwnerHandle } from "./features/delivery/deliveryTypes";
 import type { CandidateOwners } from "./features/candidates/candidateTypes";
 import type { ReviewOwner } from "./features/review/reviewTypes";
 import type { CandidateBatchSnapshot } from "./features/candidates/CandidateBatchSession";
@@ -78,6 +79,8 @@ const ReviewOwnerHost = lazy(() => import("./features/review/ReviewOwnerHost"));
 const ReviewRecovery = lazy(() => import("./features/review/ReviewRecovery"));
 const ReviewBatchPanel = lazy(() => import("./features/review/ReviewBatchPanel"));
 const TranslationImportPanel = lazy(() => import("./features/import/TranslationImportPanel"));
+const createDeliveryOwnerHost = () => lazy(() => import("./features/delivery/DeliveryOwnerHost"));
+const DeliveryView = lazy(() => import("./features/delivery/DeliveryView"));
 const CandidateOwnerHost = lazy(() => import("./features/candidates/CandidateOwnerHost"));
 const CandidateRecovery = lazy(() => import("./features/candidates/CandidateRecovery"));
 const CandidateBatchPanel = lazy(() => import("./features/candidates/CandidateBatchPanel"));
@@ -99,6 +102,7 @@ type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type KnowledgeOpenIntent = { newView: boolean; restoreDraft: boolean; viewId: string | null; origin: Element | null };
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
   openSource: () => void;
+  openDelivery: () => Promise<boolean>;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void;
@@ -107,6 +111,8 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
   drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
   importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void;
+  deliveryOwner: DeliveryOwnerHandle | null; executionTasks: ReturnType<typeof useExecutionTaskSession> | null;
+  requestDelivery: () => void; deliveryReveal: number; deliveryLoadFailed: boolean; canRetryDelivery: boolean; retryDelivery: () => void;
   candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void;
   reviewOwner: ReviewOwner | null; requestReview: () => void; revealReview: () => void; reviewRecovery: boolean; hideReviewRecovery: () => void;
   reviewBatchOpen: boolean; setReviewBatchOpen: (open: boolean) => void; reviewBatchSelection: WorkspaceSelection | null; prepareReviewBatch: (selection: WorkspaceSelection) => void;
@@ -137,6 +143,11 @@ function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: 
     action={canRetry ? <Button onClick={onRetry}>{t("retryOwner")}</Button> : undefined}/>;
 }
 
+function DeliveryLoadFailure({ onFailure }: { onFailure: () => void }) {
+  useLayoutEffect(onFailure, [onFailure]);
+  return null;
+}
+
 function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, requestCreate, startupHandoff, onStartupHandled }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void; requestCreate: () => void; startupHandoff: StartupClaimRequest | null; onStartupHandled: () => void }) {
   const settings = useApplicationSettings(), mcp = useRef<ProjectReferenceHandle>(null), mcpParticipant = useRef<LifecycleParticipant | null>(null);
   const publishMcpParticipant = useCallback((value: LifecycleParticipant | null) => { mcpParticipant.current = value; }, []);
@@ -160,6 +171,23 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const revealImport = useCallback(() => { requestImport(); setImportRecovery(true); }, [requestImport]);
   const hideImportRecovery = useCallback(() => { setImportRecovery(false); }, []);
   const publishImportOwners = useCallback((value: ImportOwners | null) => { importStatus.current.owners = value; setImportOwners(value); }, []);
+  const [DeliveryOwnerHost, setDeliveryOwnerHost] = useState(createDeliveryOwnerHost), [deliveryAttempt, setDeliveryAttempt] = useState(0);
+  const [deliveryRequested, setDeliveryRequested] = useState(false), [deliveryOwner, setDeliveryOwner] = useState<DeliveryOwnerHandle | null>(null);
+  const [deliveryReveal, setDeliveryReveal] = useState(0), [deliveryLoadFailed, setDeliveryLoadFailed] = useState(false);
+  const deliveryStatus = useRef({ requested: false, hadOwner: false, owner: null as DeliveryOwnerHandle | null });
+  const deliveryParticipant = useRef<LifecycleParticipant | null>(null);
+  const requestDelivery = useCallback(() => { deliveryStatus.current.requested = true; setDeliveryRequested(true); }, []);
+  const revealDelivery = useCallback(() => { requestDelivery(); setDeliveryReveal(value => value + 1); }, [requestDelivery]);
+  const publishDeliveryParticipant = useCallback((participant: LifecycleParticipant | null) => { deliveryParticipant.current = participant; }, []);
+  const publishDeliveryOwner = useCallback((owner: DeliveryOwnerHandle | null) => {
+    if (!owner && deliveryStatus.current.hadOwner) return;
+    deliveryStatus.current.owner = owner; if (owner) deliveryStatus.current.hadOwner = true; setDeliveryOwner(owner);
+  }, []);
+  const failDeliveryLoad = useCallback(() => setDeliveryLoadFailed(true), []);
+  const retryDelivery = useCallback(() => {
+    if (deliveryStatus.current.hadOwner) return;
+    setDeliveryLoadFailed(false); setDeliveryOwnerHost(() => createDeliveryOwnerHost()); setDeliveryAttempt(value => value + 1); requestDelivery();
+  }, [requestDelivery]);
   const [candidatesRequested, setCandidatesRequested] = useState(false), [candidateOwners, setCandidateOwners] = useState<CandidateOwners | null>(null);
   const candidateStatus = useRef({ requested: false, owners: null as CandidateOwners | null });
   const requestCandidates = useCallback(() => { candidateStatus.current.requested = true; setCandidatesRequested(true); }, []);
@@ -184,10 +212,12 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const executionHadOwner = useRef(false), [executionAttempt, setExecutionAttempt] = useState(0);
   const publishExecutionTasks = useCallback((owner: ReturnType<typeof useExecutionTaskSession> | null) => { if (owner) executionHadOwner.current = true; setExecutionTasks(owner); }, []);
   const revealTask = useCallback((operation: string | null, attemptId: string | null) => {
-    if (operation === "source-import" || operation === "source-semantic-check" || operation === null && attemptId !== null
+    if (operation === "locale-build" || operation === "artifact-semantic-check" || operation === null && attemptId !== null
+      && [deliveryStatus.current.owner?.current().attempt, deliveryStatus.current.owner?.current().checkAttempt].includes(attemptId)) revealDelivery();
+    else if (operation === "source-import" || operation === "source-semantic-check" || operation === null && attemptId !== null
       && [sourceOwner?.current().attempt, sourceOwner?.current().checkAttempt].includes(attemptId)) revealSource();
     else if (operation === "ai-semantic-review" || operation === null && attemptId !== null && reviewStatus.current.owner?.semantic.current().attempts.includes(attemptId)) revealReview(); else revealImport();
-  }, [revealReview, revealImport, revealSource, sourceOwner]);
+  }, [revealReview, revealImport, revealSource, sourceOwner, revealDelivery]);
   const [candidateBatchOpen, setCandidateBatchOpen] = useState(false);
   const revealCandidateBatch = useCallback(() => { requestCandidates(); setCandidateBatchOpen(true); }, [requestCandidates]);
   const [comparisonsRequested, setComparisonsRequested] = useState(false), [comparisonOwner, setComparisonOwner] = useState<ComparisonSession | null>(null);
@@ -227,6 +257,13 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     prepareLeave: (intent, proof, current) => knowledgeParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
     reveal: () => { if (knowledgeParticipant.current) knowledgeParticipant.current.reveal?.(); else revealKnowledge(); },
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealKnowledge]);
+  useLayoutEffect(() => lifecycle.register({ id: "delivery", area: "release", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-delivery-session" }
+      : !deliveryStatus.current.requested ? { status: "ready", revision: "delivery-not-requested" }
+        : deliveryParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "delivery-owner-loading" },
+    prepareLeave: (intent, proof, current) => deliveryParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
+    reveal: revealDelivery,
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealDelivery]);
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   const [conversations, setConversations] = useState<ConversationSession | null>(null), [conversationLoadFailed, setConversationLoadFailed] = useState(false);
   const [conversationAttempt, setConversationAttempt] = useState(0), [conversationReveal, setConversationReveal] = useState(0);
@@ -360,6 +397,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
+    deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery: !deliveryStatus.current.hadOwner, retryDelivery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner: executionTasks ? reviewOwner : null, requestReview, revealReview, reviewRecovery, hideReviewRecovery,
     reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
@@ -393,6 +431,9 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
       <ComparisonOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onOwner={publishComparisonOwner} onReveal={requestComparisons}/>
     </Suspense></FeatureBoundary> : null}
     {drafts ? <ProjectReferenceHost ref={mcp} project={session.project} lifecycle={lifecycle} gate={gate} drafts={drafts} knowledgeOwner={executionTasks ? knowledgeOwner : null} onParticipant={publishMcpParticipant}/> : null}
+    {deliveryRequested ? <FeatureBoundary key={`delivery-owner-${deliveryAttempt}`} fallback={<DeliveryLoadFailure onFailure={failDeliveryLoad}/>}><Suspense fallback={null}>
+      <DeliveryOwnerHost project={session.project} lifecycle={lifecycle} gate={gate} onOwner={publishDeliveryOwner} onParticipant={publishDeliveryParticipant} onReveal={revealDelivery}/>
+    </Suspense></FeatureBoundary> : null}
     {startupHandoff ? <StartupHandoff request={startupHandoff} owner={executionTasks ? sourceOwner : null} lifecycle={lifecycle} gate={gate} disabled={readOnly} onHandled={onStartupHandled} onOpen={revealSource}/> : null}
     {navigationFailed ? <Banner tone="error">{t("leaveChanged")}</Banner> : null}
     <ExecutionTaskHandleProvider value={executionTasks}><RouterProvider router={runtime.router} /></ExecutionTaskHandleProvider>
@@ -405,6 +446,7 @@ function WorkspaceShell() {
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, requestCreate, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
     sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
+    deliveryOwner, executionTasks, requestDelivery, deliveryReveal, deliveryLoadFailed, canRetryDelivery, retryDelivery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
     knowledgeOwner, knowledgeLoadFailed, requestKnowledge, knowledgeReveal, revealKnowledge, knowledgeOpenIntent, setKnowledgeOpenIntent,
@@ -416,6 +458,7 @@ function WorkspaceShell() {
   const [knowledgeReview, setKnowledgeReview] = useState<KnowledgeReviewTarget | null>(null);
   const observedKnowledgeOpenIntent = useRef<KnowledgeOpenIntent | null>(null);
   useLayoutEffect(() => { if (view?.kind === "knowledge") requestKnowledge(); }, [view?.kind, requestKnowledge]);
+  useLayoutEffect(() => { if (view?.kind === "delivery") requestDelivery(); }, [view?.kind, requestDelivery]);
   const interaction = useSyncExternalStore(gate.subscribe, gate.getSnapshot, gate.getSnapshot);
   const draftState = useSyncExternalStore(drafts?.subscribe ?? noDraftSubscription, drafts?.getSnapshot ?? getNoDraftState, drafts?.getSnapshot ?? getNoDraftState);
   const conversationHydration = useSyncExternalStore(conversations?.subscribe ?? noDraftSubscription,
@@ -599,11 +642,11 @@ function WorkspaceShell() {
     if (commandsReady && commands) commands.dispatch("review.batch-preview", scope, payload);
   }
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
-    openSource,
+    openSource, openDelivery: async () => false,
     openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
   actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
-    openSource,
+    openSource, openDelivery: () => openDelivery(),
     openImport: async () => {
       requestImport();
       if (!importOwners) {
@@ -642,7 +685,7 @@ function WorkspaceShell() {
       actions: { openProject: () => actions.current.requestOpen(), closeProject: () => actions.current.close(), closeWindow: async () => {
         if (isTauri()) { const { getCurrentWindow } = await import("@tauri-apps/api/window"); await lifecycle.closeWindow(() => getCurrentWindow().destroy()); }
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
-      openDecisions: () => openDecisions(), openSettings: () => settings.open("general", paletteHandoff.current ?? undefined), openExtensions: () => settings.openExtensions(paletteHandoff.current ?? undefined),
+      openDecisions: () => openDecisions(), openDelivery: () => actions.current.openDelivery(), openSettings: () => settings.open("general", paletteHandoff.current ?? undefined), openExtensions: () => settings.openExtensions(paletteHandoff.current ?? undefined),
       openReferences: settings.openReferences ? () => settings.openReferences?.(paletteHandoff.current ?? undefined) : undefined,
       openMcpQuery: settings.openMcpQuery ? () => settings.openMcpQuery?.(paletteHandoff.current ?? undefined) : undefined,
       openMcpShare: settings.openMcpShare ? () => settings.openMcpShare?.(paletteHandoff.current ?? undefined) : undefined,
@@ -692,6 +735,22 @@ function WorkspaceShell() {
       && now.session?.project.sessionToken === session.project.sessionToken
       && store.getState().activeViewId === currentId && (actual?.focus ?? null) === (view?.focus ?? null)
       && actual?.dock === view?.dock;
+  }
+  async function openDelivery(newView = false, target?: DeliveryNavigationTarget, locale = activeLocale) {
+    const now = lifecycle.getSnapshot(), origin = document.activeElement;
+    if (readOnly || now.phase !== "idle" || now.pending || session.reads.retired
+      || !gate.canDispatch({ viewId: store.getState().activeViewId, source: "button" })) return false;
+    requestDelivery();
+    const state = store.getState(), existing = [...state.viewOrder].reverse().find(id => state.views[id].kind === "delivery");
+    const accepted = await (!newView && existing ? target ? runtime.navigation.update(existing, { deliveryTarget: target, locale }) : runtime.navigation.activate(existing)
+      : runtime.navigation.open({ kind: "delivery", locale, deliveryTarget: target ?? null, editing: false, queueActive: false }));
+    if (accepted) requestAnimationFrame(() => {
+      const now = lifecycle.getSnapshot(), state = store.getState();
+      if (!session.reads.retired && now.phase === "idle" && !now.pending && now.session?.project.sessionToken === session.project.sessionToken
+        && state.activeViewId && state.views[state.activeViewId]?.kind === "delivery"
+        && (document.activeElement === origin || document.activeElement === document.body)) main.current?.focus();
+    });
+    return accepted;
   }
   async function openDecisions(newView = false) {
     const now = lifecycle.getSnapshot();
@@ -757,7 +816,20 @@ function WorkspaceShell() {
           revisionId: destination.revisionId, focus: focusRetained() }); return true;
       }
       if (destination.kind === "knowledge-proposal") return await openKnowledgeTarget(destination.proposal, destination.entryIndex, current, intent.release);
-      if (destination.kind === "details") return false;
+      if (destination.kind === "details") {
+        const action = item.action;
+        if (action.kind !== "inspect-delivery" && action.kind !== "inspect-delivery-outcome") return false;
+        const { readDecisionTarget } = await import("./features/decisions/decisionTargetReads");
+        const detail = await readDecisionTarget(executionContext(session.project), item, current);
+        if (!current()) return false;
+        if (action.kind === "inspect-delivery" && detail.kind === "delivery") {
+          intent.release(); return await openDelivery(false, undefined, action.locale);
+        }
+        if (action.kind === "inspect-delivery-outcome" && detail.kind === "delivery-outcome" && detail.record) {
+          intent.release(); return await openDelivery(false, { releaseId: action.releaseId, deliveryId: action.deliveryId, actionId: action.actionId }, item.locale ?? activeLocale);
+        }
+        return false;
+      }
       intent.release();
       const accepted = await runtime.navigation.open({ kind: "entries", locale: destination.locale, focus: destination.unitId,
         editing: false, queueActive: false, dock: "details", focusMode: false,
@@ -849,6 +921,18 @@ function WorkspaceShell() {
       : await runtime.navigation.open({ kind: "entries", ...target, queueActive: false });
     if (accepted) { hideReviewRecovery(); if (narrow) showDock(); }
     return accepted;
+  }
+  async function openDeliveryDecision(item: DecisionItem) {
+    const page = decisionFeed.first.data;
+    if (!page || !page.items.includes(item) || !decisionFeed.current(page.basis) || !decisionCurrent()
+      || !gate.canDispatch({ viewId: currentId, source: "button" })) return false;
+    if (["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal",
+      "review-knowledge-proposal", "compare-source-mapping", "resolve-source-mapping", "inspect-delivery", "inspect-delivery-outcome"].includes(item.action.kind)) {
+      return await navigateDecision(item, () => decisionFeed.current(page.basis));
+    }
+    const state = store.getState(), existing = [...state.viewOrder].reverse().find(id => state.views[id].kind === "decisions");
+    const target = { locale: item.locale ?? activeLocale, focus: item.decisionId, decisionCursor: null, decisionPrevious: [] };
+    return await (existing ? runtime.navigation.update(existing, target) : runtime.navigation.open({ kind: "decisions", ...target, editing: false, queueActive: false }));
   }
   function renderCandidate(row: SegmentRow) {
     if (row.content.unitId !== view?.focus || !row.aiCandidateCount || !drafts || !candidateOwners || !commandsReady || !commands) return null;
@@ -1001,6 +1085,9 @@ function WorkspaceShell() {
     {commandFailed ? <Banner tone="error">{message("actionFailed")}</Banner> : null}
     {knowledgeOwner && (knowledgeBlocked(knowledgeOwner) || knowledgeHasDraft(knowledgeOwner)) && view?.kind !== "knowledge" || !knowledgeOwner && knowledgeReveal > 0 && view?.kind !== "knowledge" ? <Banner tone="warning"
       action={<Button disabled={disabled} onClick={() => { void openKnowledgeDraft().catch(() => setCommandFailed(true)); }}>{t("knowledge.backToDraft")}</Button>}>{t(knowledgeOwner ? "knowledge.draftKept" : "knowledge.readingTerms")}</Banner> : null}
+    {view?.kind !== "delivery" && (deliveryOwner && (deliveryOwner.buildDirty || deliveryOwner.deliveryDirty || deliveryOwner.prepared || deliveryOwner.checkReview || deliveryOwner.workflow || deliveryOwner.reserved())
+      || !deliveryOwner && deliveryReveal > 0) ? <Banner tone="warning"
+      action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.delivery")}>{t("deliveryWorkbench.backToDelivery")}</Button>}>{t("deliveryWorkbench.ownerKept")}</Banner> : null}
     {pendingImport && !importOwners ? <Banner>{message("importLoading")}</Banner> : null}
     {draftLoadFailed || draftState.hydration === "failed" ? <Banner tone="error" action={<Button onClick={retryDrafts}>{message("draftIndexRetry")}</Button>}>{message("draftIndexFailed")}</Banner>
       : !drafts || draftState.hydration === "idle" || draftState.hydration === "loading" ? <Banner>{message("draftIndexLoading")}</Banner> : null}
@@ -1036,8 +1123,9 @@ function WorkspaceShell() {
     <div className={styles.body}>
       <nav className={styles.activity} aria-label={message("activity")}>
         {[{ id: "entries", icon: <Layers /> }, { id: "knowledge", icon: <BookOpen /> }, { id: "runs", icon: <Sparkles /> }, { id: "delivery", icon: <ArrowUp /> }, { id: "decisions", icon: <CircleDot /> }].map(({ id, icon }) => <div key={id} className={styles.activityItem} data-active={view?.kind === id || undefined} aria-busy={id === "knowledge" && knowledgeOpenIntent !== null || undefined}><IconButton ref={id === "decisions" ? decisionTrigger : undefined} label={message(id === "entries" ? "entries" : id === "knowledge" ? "knowledge" : id === "runs" ? "runs" : id === "delivery" ? "delivery" : "decisions")} aria-describedby={id === "decisions" ? decisionBadgeId : undefined}
-          disabled={id !== "entries" && id !== "knowledge" && id !== "decisions" || disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} title={id !== "entries" && id !== "knowledge" && id !== "decisions" ? message("comingLater") : undefined} onClick={event => {
+          disabled={id === "runs" || disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} title={id === "runs" ? message("comingLater") : undefined} onClick={event => {
           if (id === "decisions") { if (event.metaKey || event.ctrlKey) void openDecisions(true); else dispatch("workspace.decisions"); return; }
+          if (id === "delivery") { if (event.metaKey || event.ctrlKey) void openDelivery(true).catch(() => setCommandFailed(true)); else dispatch("workspace.delivery"); return; }
           if (id === "knowledge") { void openKnowledge(event.metaKey || event.ctrlKey).catch(() => setCommandFailed(true)); return; }
           const existing = store.getState().viewOrder.find(key => store.getState().views[key].kind === "entries");
           if (!(event.metaKey || event.ctrlKey) && existing) void runtime.navigation.activate(existing); else dispatch("workspace.new-view");
@@ -1053,7 +1141,7 @@ function WorkspaceShell() {
           if (pixels !== view.dockSize) store.getState().patch(view.id, { dockSize: pixels });
         }
       }}>
-        <SplitPanel minSize={0} className={styles.mainPanel}><main ref={main} tabIndex={view?.kind === "decisions" ? -1 : undefined} className={styles.main}>
+        <SplitPanel minSize={0} className={styles.mainPanel}><main ref={main} tabIndex={view?.kind === "decisions" || view?.kind === "delivery" ? -1 : undefined} className={styles.main}>
           <div className={styles.viewTabs} aria-label={message("views")} role="navigation">{state.viewOrder.map(id => {
             const item = state.views[id], name = item.kind === "entries" ? message("viewName", { locale: item.locale }) : message(item.kind);
             return <div key={id} className={appStyles.viewTab} data-active={id === currentId || undefined}>
@@ -1074,6 +1162,16 @@ function WorkspaceShell() {
             {knowledgeOwner ? <KnowledgeView project={session.project} owner={knowledgeOwner} view={view} drafts={drafts} onEditTranslation={openCandidateEditor} onRevealTranslationDraft={(unitId, locale) => revealDraft({ projectId: session.project.metadata.projectId, unitId, locale })} disabled={disabled} gate={gate} current={knowledgeCurrent}
               patch={patch => store.getState().patch(view.id, patch)} onDetails={() => { store.getState().patch(view.id, { dock: "details" }); showDock(); }} reviewTarget={knowledgeReview?.proposal.projectId === session.project.metadata.projectId ? knowledgeReview : null} onReviewOpened={() => setKnowledgeReview(null)}/>
               : <LoadingState label={t("knowledge.readingTerms")}/>}
+          </Suspense></FeatureBoundary> : view.kind === "delivery" ? <FeatureBoundary key="delivery-presentation" fallback={<ErrorState title={t("deliveryWorkbench.ownerFailed")}/>}><Suspense fallback={<LoadingState label={t("deliveryWorkbench.loading")}/>}>
+            {deliveryLoadFailed ? <ErrorState title={t("deliveryWorkbench.ownerFailed")} action={canRetryDelivery ? <Button onClick={retryDelivery}>{t("deliveryWorkbench.retryOwner")}</Button> : undefined}/>
+              : deliveryOwner && executionTasks && commands ? <DeliveryView project={session.project} owner={deliveryOwner} tasks={executionTasks} commands={commands} gate={gate} viewId={view.id}
+              visible={!importVisible} disabled={disabled || !commandsReady}
+              target={view.deliveryTarget} inbox={{ page: decisionFeed.first.data, loading: decisionFeed.first.isFetching, failure: decisionFeed.first.error, current: decisionFeed.current, retry: () => { void decisionFeed.refresh(); } }}
+              onOpenDecision={openDeliveryDecision}
+              onOpenEntry={async (unitId, locale) => decisionCurrent() && gate.canDispatch({ viewId: currentId, source: "button" }) ? inspectReview(unitId, locale) : false}
+              onOpenDecisions={() => { void openDecisions().catch(() => setCommandFailed(true)); }} onOpenKnowledge={() => { void openKnowledge().catch(() => setCommandFailed(true)); }}
+              onOpenExtensions={() => settings.openExtensions()}/>
+              : <LoadingState label={t("deliveryWorkbench.loading")}/>}
           </Suspense></FeatureBoundary> : <EmptyState title={message(view.kind)} description={message("comingLater")} /> : <EmptyState icon={<Layers />} title={message("noViews")} action={<Button disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.new-view")}>{message("openEntries")}</Button>} />}
         </main></SplitPanel>
         {!narrow ? <><SplitHandle label={message("resizeDock")} elementRef={splitHandle} /><SplitPanel id="workspace-dock" key={wide ? "wide" : "compact"} groupResizeBehavior="preserve-pixel-size" defaultSize={view?.dockSize ?? (wide ? 380 : 340)} minSize={300} maxSize="45%"><aside className={styles.dock} ref={dock} tabIndex={-1} aria-label={message("agent")}>{panel()}</aside></SplitPanel></> : null}

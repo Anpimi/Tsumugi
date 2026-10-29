@@ -289,6 +289,15 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
     catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
     finally { navigation.current = false; if (mounted.current) setOpening(false); }
   }
+  async function openDelivery() {
+    const expected = view, callback = live.current.onNavigate;
+    if (!expected || expected.kind !== "delivery" && expected.kind !== "delivery-outcome" || expected.kind === "delivery-outcome" && !expected.record
+      || !callback || !currentView(expected) || navigation.current) return;
+    navigation.current = true; setOpening(true); setFailure(null);
+    try { if (!await callback(item, () => currentView(expected)) && currentView(expected)) setFailure({ cause: null }); }
+    catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
+    finally { navigation.current = false; if (mounted.current) setOpening(false); }
+  }
   function refresh() {
     if (!present() || query.isFetching || navigation.current) return;
     setFailure(null); void query.refetch();
@@ -319,6 +328,8 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
       {view?.kind === "execution" ? <ExecutionDetails view={view} item={item} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery" ? <DeliveryDetails view={view} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery-outcome" ? <DeliveryOutcomeDetails view={view}/> : null}
+      {onNavigate && (view?.kind === "delivery" || view?.kind === "delivery-outcome" && view.record) ? <Button size="sm" disabled={!fresh || opening}
+        onClick={() => { void openDelivery(); }}>{t("decisionDetailsOpenDelivery")}</Button> : null}
       {view?.kind === "overview" ? <p>{t(item.action.kind === "compare-candidate" ? "decisionDetailsCandidateOverview"
         : item.action.kind === "review-translation" ? "decisionDetailsReviewOverview" : item.action.kind === "review-finding" ? "decisionDetailsFindingOverview"
         : item.action.kind === "inspect-local-request" ? "decisionDetailsRequestOverview" : "decisionDetailsOverview")}</p> : null}

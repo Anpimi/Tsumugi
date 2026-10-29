@@ -1,4 +1,8 @@
 import { refreshWorkbenchReads, renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { installSourceDraftPortsFixture } from "./testSupport/sourceDraftFixture";
+import { installResourceDraftPortsFixture } from "./testSupport/resourceDraftFixture";
+import { sourceDraftCommands } from "./sourceDraftCommands";
+import { resourceDraftCommands } from "./resourceDraftCommands";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -27,6 +31,7 @@ const release: ReleaseView = { releaseId: fixtureIdentity(702), actionId: fixtur
 let releases: typeof release[];
 let deliveryRows: DeliveryView[];
 beforeEach(async () => {
+  installSourceDraftPortsFixture(); installResourceDraftPortsFixture();
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   await i18n.changeLanguage("en-US");
   releases = [];
@@ -99,6 +104,9 @@ function savedBuildReads(read: (attemptId: string) => Promise<SavedPluginBuildVi
 }
 function expectHistoricalReadsOnly() {
   expect(invoke.mock.calls.every(([command]) => ["read_plugin_inventory", "list_releases", "read_saved_plugin_build"].includes(command))).toBe(true);
+  for (const commands of [sourceDraftCommands, resourceDraftCommands]) {
+    expect(commands.write).not.toHaveBeenCalled(); expect(commands.resolve).not.toHaveBeenCalled(); expect(commands.clear).not.toHaveBeenCalled();
+  }
 }
 
 it.each(["en-US", "zh-CN"])("inspects a historical plugin build without an installed builder or renewed approval in %s", async language => {

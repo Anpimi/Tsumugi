@@ -9,12 +9,17 @@ import { releaseCommands, sameArtifactWorkflowMaterialization, type ArtifactChec
 import type { AttemptDetail } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import { enUS } from "./i18n/en-US";
+import { Button } from "./design-system/Button";
+import { Field } from "./design-system/Field";
+import { Banner } from "./design-system/Feedback";
+import styles from "./ArtifactCheckWorkflowControls.module.css";
 import { useWorkbenchCommands, type CommandAvailability, type ReleaseWorkflowCommandPayload,
   type ReleaseWorkflowConsentCommandPayload, type ReleaseWorkflowPrepareCommandPayload,
   type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload } from "./workbenchCommands";
 
-export function ArtifactCheckWorkflowControls({ project, open, disabled, detail, buildKey, readProof }: {
+export function ArtifactCheckWorkflowControls({ project, open, disabled, detail, buildKey, readProof, presentation = "legacy", canInteract }: {
   project: ProjectView; open: boolean; disabled: boolean; detail: AttemptDetail | null;
+  presentation?: "legacy" | "workbench"; canInteract?: () => boolean;
   buildKey: readonly unknown[]; readProof: () => ReleaseReadProof;
 }) {
   const { t } = useTranslation(), owner = useReleaseDraftSession(), reads = useSessionReads(), registry = useWorkbenchCommands(), tasks = useExecutionTaskSession();
@@ -31,7 +36,7 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
     && !sameArtifactWorkflowMaterialization(capture.review, observation.view);
   // A read can settle an original uncertain command. It never starts a step.
   useEffect(() => { if (open && request && observation) owner.observeWorkflow(request, observation); });
-  useEffect(() => { if (open && status.error) errorRegion.current?.focus(); }, [open, status.error]);
+  useEffect(() => { if (open && status.error && presentation === "legacy") errorRegion.current?.focus(); }, [open, status.error, presentation]);
   // The finite Host intent is not a reliable change event. Poll only its read
   // projection while visible and progressing; errors require an explicit retry.
   useEffect(() => {
@@ -57,7 +62,7 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
       && current.fetchStatus === "idle" && reads.client.getQueryData(reads.key(key)) === observation;
   }
   function gate(recovery = false): CommandAvailability {
-    if (!mounted.current || !open || reads.retired || reads.context.projectId !== scope.projectId || reads.context.sessionToken !== scope.sessionToken)
+    if (!mounted.current || !open || canInteract?.() === false || reads.retired || reads.context.projectId !== scope.projectId || reads.context.sessionToken !== scope.sessionToken)
       return { enabled: false, reason: "hidden" };
     if (disabled) return no;
     if (owner.current().busy && !(recovery && owner.current().workflow?.pending)) return { enabled: false, reason: "busy" };
@@ -151,22 +156,24 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
   }
   if (!detail && !capture) return null;
   const allApproved = !!capture?.review?.steps.length && capture.review.steps.every(item => capture.approved.includes(item.step.attemptId));
-  return <section aria-label={t("releaseWorkflow.title")}>
+  return <section className={presentation === "workbench" ? styles.root : undefined} aria-label={t("releaseWorkflow.title")}
+    onChangeCapture={event => { if (canInteract?.() === false) { event.preventDefault(); event.stopPropagation(); } }}
+    onClickCapture={event => { if (canInteract?.() === false) { event.preventDefault(); event.stopPropagation(); } }}>
     <h4>{t("releaseWorkflow.title")}</h4><p>{t("releaseWorkflow.help")}</p>
-    {!capture ? <button className="secondary-button" disabled={!prepareAvailability(preparePayload()).enabled} onClick={() => {
+    {!capture ? <Button variant="secondary" disabled={!prepareAvailability(preparePayload()).enabled} onClick={() => {
       const payload = preparePayload(); if (payload) registry.dispatch("release.prepare-check-workflow", scope, payload);
-    }}>{t("releaseWorkflow.prepare")}</button> : <>
+    }}>{t("releaseWorkflow.prepare")}</Button> : <>
       {!capture.review && !capture.stop && !capture.safety?.admissionClosed && !status.error
         && (observation?.view?.phase === "preparing" || capture.pending === "prepare" && !capture.uncertain && !owner.failure)
         ? <p role="status">{t("releaseWorkflow.materializing")}</p> : null}
       {capture.pending || capture.stopPending ? <p role="status">{t("releaseWorkflow.pending")}</p> : null}
-      {status.error ? <div role="alert" ref={errorRegion} tabIndex={-1}><p>{t("releaseWorkflow.readFailed")}</p><CommandFailureDetails failure={commandFailure(status.error)}/></div> : null}
+      {status.error ? <Banner tone="warning" role="alert" ref={errorRegion} tabIndex={-1}><p>{t("releaseWorkflow.readFailed")}</p><CommandFailureDetails failure={commandFailure(status.error)}/></Banner> : null}
       {materializationChanged ? <p role="alert">{t("releaseWorkflow.readFailed")}</p> : null}
       {observation?.view ? <p role="status">{t(`releaseWorkflow.phase.${observation.view.phase}`)}</p> : null}
       {observation?.view?.error ? <CommandFailureDetails failure={observation.view.error}/> : null}
       {observation && observation.kind !== "current" ? <p role="status">{t("releaseWorkflow.retired")}</p> : null}
-      {capture.review && !capture.start && !capture.stop && (!observation || observation.kind === "current") ? <label><input type="checkbox" checked={allApproved}
-        disabled={!consentAvailability(consentPayload(null, !allApproved)).enabled} onChange={event => { const payload = consentPayload(null, event.target.checked); if (payload) registry.dispatch("release.confirm-workflow-checker", scope, payload); }}/>{t("releaseWorkflow.consentAll")}</label> : null}
+      {capture.review && !capture.start && !capture.stop && (!observation || observation.kind === "current") ? <Field className={styles.consent} label={t("releaseWorkflow.consentAll")}><input type="checkbox" checked={allApproved}
+        disabled={!consentAvailability(consentPayload(null, !allApproved)).enabled} onChange={event => { const payload = consentPayload(null, event.target.checked); if (payload) registry.dispatch("release.confirm-workflow-checker", scope, payload); }}/></Field> : null}
       {view?.steps.length ? <ol>{view.steps.map(item => {
         const historical = !!observation && observation.view === null;
         const originalResult = historical ? observation.steps.find(result => result.step.attemptId === item.step.attemptId) : undefined;
@@ -181,22 +188,22 @@ export function ArtifactCheckWorkflowControls({ project, open, disabled, detail,
           <dt>{t("releaseWorkflow.input")}</dt><dd><code>{item.step.inputDigest}</code></dd>
           <dt>{t("releaseWorkflow.buildResult")}</dt><dd><code>{item.step.buildResultId}</code></dd>
         </dl></details>
-        {!historical && !capture.start && !capture.stop ? <label><input type="checkbox" checked={capture.approved.includes(item.step.attemptId)}
-          disabled={!consentAvailability(consentPayload(item.step.attemptId, true)).enabled} onChange={event => { const payload = consentPayload(item.step.attemptId, event.target.checked); if (payload) registry.dispatch("release.confirm-workflow-checker", scope, payload); }}/>{t("releaseWorkflow.consentFor", { defaultValue: enUS.releaseWorkflow.consentFor, locale: item.step.locale })}</label> : null}
+        {!historical && !capture.start && !capture.stop ? <Field className={styles.consent} label={t("releaseWorkflow.consentFor", { defaultValue: enUS.releaseWorkflow.consentFor, locale: item.step.locale })}><input type="checkbox" checked={capture.approved.includes(item.step.attemptId)}
+          disabled={!consentAvailability(consentPayload(item.step.attemptId, true)).enabled} onChange={event => { const payload = consentPayload(item.step.attemptId, event.target.checked); if (payload) registry.dispatch("release.confirm-workflow-checker", scope, payload); }}/></Field> : null}
         {proof ? <p>{t(proof.valid ? "releaseWorkflow.proofPassed" : proof.checks === null ? "releaseWorkflow.proofUnavailable" : "releaseWorkflow.proofFailed")}</p> : null}
         {proof?.checks ? <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify(proof.checks, null, 2)}</pre></details> : null}
         {item.error ? <CommandFailureDetails failure={item.error}/> : null}
       </li>; })}</ol> : null}
-      {!capture.start && !capture.stop ? <button className="primary-button" disabled={!controlAvailability(controlPayload(), "run").enabled} onClick={() => dispatchControl("release.run-check-workflow")}>{t("releaseWorkflow.run")}</button> : null}
-      <button className="secondary-button" disabled={!controlAvailability(controlPayload(), "stop").enabled} onClick={() => dispatchControl("release.stop-check-workflow")}>{t("releaseWorkflow.stop")}</button>
+      {!capture.start && !capture.stop ? <Button variant={presentation === "workbench" ? "secondary" : "primary"} disabled={!controlAvailability(controlPayload(), "run").enabled} onClick={() => dispatchControl("release.run-check-workflow")}>{t("releaseWorkflow.run")}</Button> : null}
+      <Button variant="secondary" disabled={!controlAvailability(controlPayload(), "stop").enabled} onClick={() => dispatchControl("release.stop-check-workflow")}>{t("releaseWorkflow.stop")}</Button>
       <p>{t("releaseWorkflow.stopHelp")}</p>
-      {task ? <section aria-label={t("releaseWorkflow.currentTask")}><p>{t("releaseWorkflow.currentTask")} · {view?.steps.find(item => item.step.attemptId === task.attemptId)?.step.locale}</p><details><summary>{t("execution.diagnostic")}</summary><code>{task.taskId}</code></details><button disabled={!cancelAvailability(cancellation()).enabled} onClick={() => { const payload = cancellation(); if (payload) registry.dispatch("release.cancel-workflow-task", scope, payload); }}>{t("execution.cancel")}</button>
+      {task ? <section aria-label={t("releaseWorkflow.currentTask")}><p>{t("releaseWorkflow.currentTask")} · {view?.steps.find(item => item.step.attemptId === task.attemptId)?.step.locale}</p><details><summary>{t("execution.diagnostic")}</summary><code>{task.taskId}</code></details><Button disabled={!cancelAvailability(cancellation()).enabled} onClick={() => { const payload = cancellation(); if (payload) registry.dispatch("release.cancel-workflow-task", scope, payload); }}>{t("execution.cancel")}</Button>
         <TaskCancellationFeedback origin="release" taskId={task.taskId} visible={open} disabled={owner.busy} retryCommand={{ available: intent => retryAvailability({ ...intent, kind: "execution-cancellation-retry" }).enabled,
           dispatch: intent => { registry.dispatch("release.retry-workflow-cancellation", scope, { ...intent, kind: "execution-cancellation-retry" }); } }} checkCommand={{available:intent=>retryAvailability({...intent,kind:"execution-cancellation-retry"},false).enabled,
             dispatch:intent=>{registry.dispatch("release.check-workflow-cancellation",scope,{...intent,kind:"execution-cancellation-retry"});}}}/></section> : null}
       {capture.safety?.admissionClosed && !capture.safety.callbacksDrained ? <p role="status">{t("releaseWorkflow.draining")}</p> : null}
-      <button className="secondary-button" disabled={!controlAvailability(controlPayload()).enabled} onClick={() => dispatchControl("release.check-check-workflow")}>{t("releaseWorkflow.refresh")}</button>
-      <button className="text-button" disabled={!controlAvailability(controlPayload(), "close").enabled} onClick={() => dispatchControl("release.close-check-workflow")}>{t("releaseWorkflow.close")}</button>
+      <Button variant="secondary" disabled={!controlAvailability(controlPayload()).enabled} onClick={() => dispatchControl("release.check-check-workflow")}>{t("releaseWorkflow.refresh")}</Button>
+      <Button variant="link" disabled={!controlAvailability(controlPayload(), "close").enabled} onClick={() => dispatchControl("release.close-check-workflow")}>{t("releaseWorkflow.close")}</Button>
       <p>{t("releaseWorkflow.manualRelease")}</p>
     </>}
   </section>;

@@ -1,0 +1,37 @@
+.document { min-width: 0; padding: var(--space-8); color: var(--color-text-primary); font: var(--text-base)/var(--line-base) var(--font-ui); }
+.header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-6); margin-block-end: var(--space-8); }
+.header h1 { margin: 0; font-size: var(--text-xl); line-height: var(--line-xl); font-weight: var(--weight-semibold); }
+.header p { margin: var(--space-3) 0 0; color: var(--color-text-secondary); max-width: 70ch; }
+.document :is(p, li, dd, dt, span) { overflow-wrap: anywhere; }
+.document :is(code, pre) { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--text-sm)/var(--line-base) var(--font-mono); user-select: text; }
+.document :is(h2, h3) { font-size: var(--text-md); line-height: var(--line-lg); font-weight: var(--weight-semibold); }
+.document > [role="alert"], .document > [role="status"] { margin-block: var(--space-5); }
+.settings { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3) var(--space-6); padding-block: var(--space-5); border-block: var(--border-width) solid var(--color-border-default); }
+.settings > span { min-width: 0; flex: 1 1 22ch; color: var(--color-text-secondary); }
+.settings svg, .stepHeader svg { width: var(--icon-size); height: var(--icon-size); flex: none; }
+.settingsBody { padding: var(--space-6); background: var(--color-bg-subtle); }
+.stepper { list-style: none; margin: var(--space-5) 0; padding: 0; }
+.stepper > li { display: flex; gap: var(--space-6); padding-block: var(--space-7); border-block-end: var(--border-width) solid var(--color-border-subtle); }
+.number { display: inline-grid; place-items: center; flex: none; align-self: start; width: var(--control-sm); height: var(--control-sm); border: var(--border-width) solid var(--color-border-default); border-radius: var(--radius-round); font-size: var(--text-sm); color: var(--color-text-secondary); }
+.stepContent { min-width: 0; flex: 1; }
+.stepHeader { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3) var(--space-7); }
+.stepHeader h2 { margin: 0; }
+.stepHeader h2 button { padding-inline: 0; font-size: var(--text-md); font-weight: var(--weight-medium); color: var(--color-text-primary); }
+.stepHeader > p { margin: 0; color: var(--color-text-secondary); }
+.stepBody { padding-block: var(--space-6) var(--space-2); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-block: var(--space-5); }
+.historyList, .fileList { list-style: none; margin: 0; padding: 0; }
+.historyList > li, .fileList > li { padding-block: var(--space-5); border-block-end: var(--border-width) solid var(--color-border-subtle); }
+.historyList button[aria-pressed="true"] { color: var(--color-accent-text); box-shadow: inset var(--selection-width) 0 var(--color-accent-solid); background: var(--color-accent-soft); }
+.historyList > li > p { margin-block: var(--space-2); color: var(--color-text-secondary); }
+.fileList > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3) var(--space-6); }
+.fileList > li > span { color: var(--color-text-secondary); }
+.consent { flex-direction: row; align-items: flex-start; gap: var(--space-4); max-width: none; margin-block: var(--space-6); }
+.consent input { flex: none; order: -1; margin-top: .25em; accent-color: var(--color-accent-solid); }
+.issues { margin-block-start: var(--space-6); padding-block-start: var(--space-5); border-block-start: var(--border-width) solid var(--color-border-default); }
+.issues li { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); align-items: baseline; }
+.outcome { padding-block: var(--space-5); border-block-end: var(--border-width) solid var(--color-border-subtle); }
+.document details { margin-block: var(--space-4); color: var(--color-text-secondary); }
+.document summary { cursor: pointer; color: var(--color-accent-text); }
+.document summary:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }
+@media (max-width: 960px) { .document { padding: var(--space-6); } .header { flex-wrap: wrap; } .stepper > li { gap: var(--space-4); } }

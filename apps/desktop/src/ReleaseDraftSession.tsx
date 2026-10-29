@@ -704,8 +704,12 @@ function useReleaseOwner(project: ProjectView) {
     observeWorkflow, reconcileWorkflow, closeWorkflow,
     chooseRelease, chooseFolder, previewFolder, setOverwrite, exportFiles, checkExport, reconcile, reportFailure, reset };
 }
-type ReleaseOwner = ReturnType<typeof useReleaseOwner>;
+export type ReleaseOwner = ReturnType<typeof useReleaseOwner>;
 const ReleaseContext = createContext<ReleaseOwner | null>(null);
+/** Borrow the project's existing release owner without creating another session. */
+export function ReleaseDraftHandleProvider({ value, children }: { value: ReleaseOwner; children: ReactNode }) {
+  return <ReleaseContext.Provider value={value}>{children}</ReleaseContext.Provider>;
+}
 /** Own preparation and original actions independently of Release workspace consumers. */
 export function ReleaseDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
   const owner = useReleaseOwner(project);

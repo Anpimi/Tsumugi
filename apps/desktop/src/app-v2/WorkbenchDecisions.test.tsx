@@ -22,6 +22,8 @@ import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { SessionReads } from "../sessionReads";
 import { sourceCommands } from "../sourceCommands";
 import { fixtureIdentity as id } from "../testSupport/executionFixture";
+import { installResourceDraftPortsFixture } from "../testSupport/resourceDraftFixture";
+import { installSourceDraftPortsFixture } from "../testSupport/sourceDraftFixture";
 import { reviewDiagnosticFixture } from "../testSupport/reviewDiagnosticFixture";
 import { conversationProposalFixture } from "../testSupport/conversationProposalFixture";
 import { reviewSummaryFor } from "../testSupport/reviewFixture";
@@ -31,6 +33,8 @@ import WorkbenchApp from "./WorkbenchApp";
 import { ProjectLifecycle } from "./platform/projectLifecycle";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
+vi.mock("./features/delivery/DeliveryView", () => ({ default: (props: import("./features/delivery/DeliveryView").DeliveryViewProps) =>
+  <section aria-label={i18n.t("workbenchV2.delivery")}><output aria-label="Original delivery target">{JSON.stringify(props.target)}</output></section> }));
 type Label = { [K in keyof typeof workbenchEn]: typeof workbenchEn[K] extends string ? K : never }[keyof typeof workbenchEn];
 const w = (key: Label, values?: Record<string, string | number>) => i18n.t(`workbenchV2.${key}`, values);
 const copy = <T,>(value: T): T => structuredClone(value);
@@ -88,6 +92,7 @@ function deliveryRecord(): DeliveryRecordView {
 }
 
 beforeEach(async () => {
+  installResourceDraftPortsFixture(); installSourceDraftPortsFixture();
   localStorage.clear(); history.replaceState(null, "", "/"); await i18n.changeLanguage("en-US");
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1440 });
   fixture = reviewDiagnosticFixture(); knownCount = 2; originalItems = null; basis = "a".repeat(64); reads = new SessionReads(context);
@@ -141,11 +146,12 @@ async function openWorkspace() {
   controller = new ProjectLifecycle({ open: async () => project, close: async () => ({ closed: true }), createReads: () => reads,
     status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
   render(<StrictMode><WorkbenchApp controller={controller} native /></StrictMode>);
+  await user.click(screen.getByRole("button", { name: i18n.t("startup.openExisting") }));
   fireEvent.change(screen.getByRole("textbox", { name: w("projectFolder") }), { target: { value: project.locator } });
   await user.click(screen.getByRole("button", { name: w("openProject") }));
   const entry = await screen.findByRole("button", { name: w("showEntryDetails", { key: fixture.target.nativeKey }) }, { timeout: 5000 });
   await waitFor(() => expect(entry).toBeEnabled());
-  await waitFor(() => expect(vi.mocked(decisionCommands.page).mock.lastCall?.[0].activity).toHaveLength(2));
+  await waitFor(() => expect(vi.mocked(decisionCommands.page).mock.lastCall?.[0].activity).toHaveLength(4));
   await waitFor(() => expect(reads.client.isFetching({ queryKey: reads.key(["workbench-decisions"]) })).toBe(0));
   await waitFor(() => expect(activity().getByRole("button", { name: w("decisions") })).toBeEnabled());
   return user;
@@ -169,7 +175,7 @@ it("shares current counts across the activity badge, fixed tray and list, then r
   expect(dock().getByRole("button", { name: w("decisionsTrayPartial", { count: 3 }) })).toBeEnabled();
   expect(vi.mocked(decisionCommands.page)).toHaveBeenCalledTimes(before + 1);
   const liveRequest = vi.mocked(decisionCommands.page).mock.lastCall?.[0];
-  expect(liveRequest?.activity).toHaveLength(2);
+  expect(liveRequest?.activity).toHaveLength(4);
   expect(liveRequest?.activity?.every(owner => owner.actions.length === 0)).toBe(true);
 
   const open = within(list).getAllByRole("button", { name: w("decisionsDeliveryOpen") })[0];
@@ -187,6 +193,22 @@ it("shares current counts across the activity badge, fixed tray and list, then r
   expect(views().getByRole("button", { name: w("viewName", { locale: "zh-CN" }) })).toBeInTheDocument();
   expect(views().getByRole("button", { name: w("decisions") })).toHaveAttribute("aria-current", "page");
 });
+
+it("opens delivery from the exact saved outcome without authorizing a destination or repeating an export", async () => {
+  const user = await openWorkspace();
+  await user.click(activity().getByRole("button", { name: w("decisions") }));
+  const list = await screen.findByRole("region", { name: w("decisionsTitle") });
+  await waitFor(() => expect(reads.client.isFetching({ queryKey: reads.key(["workbench-decisions"]) })).toBe(0));
+  await user.click(within(list).getAllByRole("button", { name: w("decisionsDeliveryOpen") })[0]);
+  await screen.findByText("dialogue.zh.json");
+  const open = screen.getByRole("button", { name: w("decisionDetailsOpenDelivery") });
+  await waitFor(() => expect(open).toBeEnabled()); await user.click(open);
+  const target = await screen.findByLabelText("Original delivery target", {}, { timeout: 5000 });
+  expect(JSON.parse(target.textContent!)).toEqual({ releaseId, deliveryId, actionId });
+  expect(views().getByRole("button", { name: w("delivery") })).toHaveAttribute("aria-current", "page");
+  expect(views().getByRole("button", { name: w("decisions") })).toBeInTheDocument();
+  for (const mutation of [releaseCommands.deliveryAction, releaseCommands.choose, releaseCommands.preview, releaseCommands.export, releaseCommands.reconcile]) expect(mutation).not.toHaveBeenCalled();
+}, 15000);
 
 it("keeps an incomplete zero count unconfirmed and blocks both decision entrances during composition before opening the same list from the tray", async () => {
   knownCount = 0;

@@ -29,6 +29,7 @@ export interface WorkspaceCommandActions {
   openMcpQuery?: () => void | Promise<unknown>;
   openMcpShare?: () => void | Promise<unknown>;
   openDecisions?: () => void | Promise<unknown>;
+  openDelivery?: () => void | Promise<unknown>;
   openImport?: () => void | Promise<unknown>;
   canOpenImport?: () => boolean;
   openSource?: () => void;
@@ -76,6 +77,7 @@ export function registerWorkspaceCommands({ commands, store, gate, viewId, scope
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.agent"), availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "agent", dockOpen: true }); actions.focusAgent?.(); }) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.details"), availability: () => available(!!view()), handler: run(() => { if (viewId) store.getState().patch(viewId, { dock: "details", dockOpen: true }); actions.focusDetails?.(); }) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.decisions"), availability: () => available(!!actions.openDecisions), handler: run(() => actions.openDecisions?.()) }),
+    commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.delivery"), availability: () => available(!!actions.openDelivery), handler: run(() => actions.openDelivery?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.focus-search"), availability: () => available(view()?.kind === "entries" && view()?.entryMode !== "import" && !!actions.focusSearch), handler: run(() => actions.focusSearch?.()) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.search"), availability: () => available(view()?.kind === "entries" && view()?.entryMode !== "import"), handler: run(() => { const current = view(); return current ? navigation.update(current.id, { query: current.searchInput, afterOrdinal: 0, cursor: null, scroll: { top: 0, left: 0 }, focus: null }) : undefined; }) }),
     commands.register({ ...metadata, ...workspaceCommandMetadata("workspace.refresh"), availability: () => available(!!actions.refresh), handler: run(() => actions.refresh?.()) }),

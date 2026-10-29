@@ -1,12 +1,19 @@
-import { createRef, useLayoutEffect, type Ref } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { createRef, useLayoutEffect, useState, type Ref } from "react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
 import { useReleaseDraftSession } from "./ReleaseDraftSession";
+import { useExecutionTaskSession } from "./ExecutionTaskSession";
+import Delivery from "./app-v2/features/delivery/DeliveryView";
+import { InteractionGate } from "./app-v2/workspace/interactionGate";
 import { useWorkbenchCommands } from "./workbenchCommands";
 import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
+import { installSourceDraftPortsFixture } from "./testSupport/sourceDraftFixture";
+import { installResourceDraftPortsFixture } from "./testSupport/resourceDraftFixture";
+import { sourceDraftCommands } from "./sourceDraftCommands";
+import { resourceDraftCommands } from "./resourceDraftCommands";
 import { pluginBuildView, pluginBuildRequest, pluginBuildInventory, pluginBuildPackage, pluginBuildWorkflow, savedPluginBuild } from "./testSupport/pluginBuildFixture";
 import { artifactWorkflowView, artifactWorkflowObservation, startArtifactWorkflow, proveArtifactWorkflowStep } from "./testSupport/artifactWorkflowFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -32,8 +39,20 @@ function requests(command: string): unknown[] { return calls(command).map(([, ar
 function currentWorkflow() { if (!workflow) throw new Error("Expected original workflow"); return workflow; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function Probe() { const value = useReleaseDraftSession(), commands = useWorkbenchCommands(); useLayoutEffect(() => { owner = value; registry = commands; }); return null; }
-function Harness({ consumer = true, handle }: { consumer?: boolean; handle?: Ref<ReleaseHandle> }) {
-  return <><Probe/>{consumer ? <ReleaseWorkbench project={project} disabled={false} ref={handle}/> : null}</>;
+function DeliveryConsumer() {
+  const value = useReleaseDraftSession(), tasks = useExecutionTaskSession(), commands = useWorkbenchCommands();
+  const [gate] = useState(() => { const gate = new InteractionGate(); gate.setVisibleOwner("workflow-delivery"); return gate; });
+  useLayoutEffect(() => () => gate.dispose(), [gate]);
+  return <Delivery project={project} owner={value} tasks={tasks} commands={commands} gate={gate} viewId="workflow-delivery" visible disabled={false}
+    onOpenDecisions={() => {}} onOpenKnowledge={() => {}} onOpenExtensions={() => {}}/>;
+}
+function Harness({ consumer = true, handle, presentation = "legacy" }: { consumer?: boolean; handle?: Ref<ReleaseHandle>; presentation?: "legacy" | "workbench" }) {
+  return <><Probe/>{consumer ? presentation === "workbench" ? <DeliveryConsumer/> : <ReleaseWorkbench project={project} disabled={false} ref={handle}/> : null}</>;
+}
+function deliveryPrimary() {
+  const header = screen.getByRole("heading", { name: i18n.t("deliveryWorkbench.title"), level: 1 }).closest("header");
+  if (!header) throw new Error("Expected delivery header");
+  return within(header).getByRole("button");
 }
 function buildDetail(attemptId: string, request: PluginBuildPrepareRequest): AttemptDetail {
   const items = request.choices.map((choice, index) => ({ scope: { kind: "release-build", id: sourceId, locale: choice.locale }, resultId: fixtureIdentity(800 + index),
@@ -48,6 +67,7 @@ function buildDetail(attemptId: string, request: PluginBuildPrepareRequest): Att
 }
 
 beforeEach(async () => {
+  installSourceDraftPortsFixture(); installResourceDraftPortsFixture();
   await i18n.changeLanguage("en-US"); serial = 1000; captured = null; build = null; workflow = null; drainOnStop = true; releases = [];
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args?: { request: unknown }) => {
@@ -114,19 +134,26 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-async function ready() {
-  const user = userEvent.setup(), handle = createRef<ReleaseHandle>(), view = render(<Harness handle={handle}/>, project);
-  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
-  await screen.findByText(/Example text artifact/);
+async function ready(presentation: "legacy" | "workbench" = "legacy") {
+  const user = userEvent.setup(), handle = createRef<ReleaseHandle>(), view = render(<Harness handle={handle} presentation={presentation}/>, project);
+  if (presentation === "workbench") {
+    await waitFor(() => expect(deliveryPrimary()).toBeEnabled());
+    await user.click(deliveryPrimary());
+    await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("deliveryWorkbench.builder") })).toBeEnabled());
+  } else {
+    await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+    await screen.findByText(/Example text artifact/);
+  }
   for (const locale of project.metadata.targetLocales) {
     await user.click(screen.getByRole("checkbox", { name: locale }));
     await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale }) }), `${locale}.txt`);
   }
-  await user.click(screen.getByRole("button", { name: i18n.t("release.check") }));
+  await user.click(presentation === "workbench" ? deliveryPrimary() : screen.getByRole("button", { name: i18n.t("release.check") }));
   await screen.findByText(i18n.t("release.ready", { count: 0 }));
-  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") }));
+  await user.click(presentation === "workbench" ? deliveryPrimary() : screen.getByRole("button", { name: i18n.t("releasePlugin.capture") }));
   await user.click(await screen.findByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") }));
-  await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
+  await user.click(presentation === "workbench" ? deliveryPrimary() : screen.getByRole("button", { name: i18n.t("release.build") }));
+  if (presentation === "workbench") await user.click(screen.getByRole("button", { name: i18n.t("deliveryWorkbench.verification") }));
   await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("releaseWorkflow.prepare") })).toBeEnabled());
   return { user, handle, view };
 }
@@ -357,4 +384,45 @@ it("shows saved negative proof and checker provenance as read-only history witho
   render(<SavedPluginBuildSummary build={history}/>, project);
   expect(screen.getByText(i18n.t("releaseWorkflow.proofUnavailable"))).toBeInTheDocument();
   expect(screen.getByText(/check-artifact/)).toBeInTheDocument(); expect(invoke).not.toHaveBeenCalled();
+  for (const commands of [sourceDraftCommands, resourceDraftCommands]) {
+    expect(commands.write).not.toHaveBeenCalled(); expect(commands.resolve).not.toHaveBeenCalled(); expect(commands.clear).not.toHaveBeenCalled();
+  }
+});
+
+
+it("advances the workbench primary action through separately approved multi-language verification and explicit release recording", async () => {
+  const { user } = await ready("workbench");
+  expect(captured?.choices).toEqual(project.metadata.targetLocales.map(locale => ({ locale, outputPaths: [`${locale}.txt`], configuration: [] })));
+  expect(calls("prepare_plugin_build")).toHaveLength(1); expect(calls("start_plugin_build")).toHaveLength(1);
+  await prepareBatch(user);
+  expect(screen.getAllByRole("button").filter(button => button.getAttribute("data-variant") === "primary")).toEqual([deliveryPrimary()]);
+  expect(deliveryPrimary()).toHaveAccessibleName(i18n.t("deliveryWorkbench.verify"));
+  expect(deliveryPrimary()).toBeDisabled();
+  const chinese = screen.getByRole("checkbox", { name: i18n.t("releaseWorkflow.consentFor", { locale: "zh-CN" }) });
+  const french = screen.getByRole("checkbox", { name: i18n.t("releaseWorkflow.consentFor", { locale: "fr-FR" }) });
+  expect(chinese).not.toBeChecked(); expect(french).not.toBeChecked();
+  expect(calls("start_artifact_check_workflow")).toHaveLength(0);
+  await user.click(chinese);
+  expect(chinese).toBeChecked(); expect(french).not.toBeChecked();
+  expect(calls("start_artifact_check_workflow")).toHaveLength(0);
+  await user.click(french);
+  await waitFor(() => expect(deliveryPrimary()).toBeEnabled());
+  const steps = structuredClone(currentWorkflow().steps.map(item => item.step));
+  await user.click(deliveryPrimary());
+  await waitFor(() => expect(calls("start_artifact_check_workflow")).toHaveLength(1));
+  const request = check(requests("start_artifact_check_workflow")[0], validation.validateRequestArtifactWorkflowStart);
+  expect(request.projectId).toBe(project.metadata.projectId); expect(request.sessionToken).toBe(project.sessionToken);
+  expect(request.start.consents).toHaveLength(2);
+  expect(new Set(request.start.consents.map(consent => consent.grantId)).size).toBe(2);
+  expect(request.start.consents.map(consent => consent.step)).toEqual(expect.arrayContaining(steps));
+  expect(request.start.consents.every(consent => consent.unsandboxedExecution)).toBe(true);
+  expect(calls("start_artifact_check")).toHaveLength(0);
+  await completeSelected();
+  await waitFor(() => expect(deliveryPrimary()).toHaveAccessibleName(i18n.t("deliveryWorkbench.saveBuild")));
+  expect(deliveryPrimary()).toBeEnabled();
+  expect(calls("adopt_execution")).toHaveLength(0); expect(calls("export_release")).toHaveLength(0);
+  await user.click(deliveryPrimary());
+  await screen.findByText(i18n.t("releasePlugin.recorded"));
+  expect(calls("adopt_execution")).toHaveLength(1); expect(calls("start_artifact_check_workflow")).toHaveLength(1);
+  expect(calls("choose_delivery_folder")).toHaveLength(0); expect(calls("export_release")).toHaveLength(0);
 });

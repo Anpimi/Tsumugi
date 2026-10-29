@@ -4,6 +4,20 @@ import { workspaceViewHref } from "./workspaceRouter";
 const selected = (id: string, locale = "zh-CN") => ({ kind: "ids" as const, locale, sourceSnapshotId: "snapshot", unitIds: [id] });
 
 describe("workspace view state", () => {
+  it("keeps an exact delivery target separate from entry state and copies caller references", () => {
+    const target = { releaseId: "release-a", deliveryId: "delivery-a", actionId: "action-a" };
+    const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "delivery", kind: "delivery", locale: "zh-CN", deliveryTarget: target }] });
+    target.actionId = "changed-outside-view";
+    expect(store.getState().views.delivery.deliveryTarget?.actionId).toBe("action-a");
+    expect(store.getState().views.delivery).toMatchObject({ editing: false, queueActive: false, queueAnchor: null });
+    const next = { releaseId: "release-b", deliveryId: "delivery-b", actionId: "action-b" };
+    store.getState().patch("delivery", { deliveryTarget: next }); next.deliveryId = "changed-outside-view";
+    store.getState().open({ id: "entries", kind: "entries", locale: "ja" });
+    expect(store.getState().views.entries.deliveryTarget).toBeNull();
+    store.getState().activate("delivery");
+    expect(store.getState().views.delivery.deliveryTarget).toEqual({ releaseId: "release-b", deliveryId: "delivery-b", actionId: "action-b" });
+    expect(workspaceViewHref(store.getState().views.delivery)).not.toMatch(/releaseId|deliveryId|actionId/);
+  });
   it("keeps a project decision and its page separate from the entry editing queue", () => {
     const store = createWorkspaceStore({ initialLocale: "zh-CN", initialViews: [{ id: "inbox", kind: "decisions", locale: "zh-CN", focus: "delivery-unknown:original" }] });
     const cursor = { basis: "a".repeat(64), afterId: "delivery-unknown:earlier" };
