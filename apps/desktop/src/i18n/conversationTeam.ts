@@ -11,7 +11,8 @@ export const conversationTeamEn = {
   execution: { queued: "Queued", dispatched: "Dispatched; result not confirmed", succeeded: "Output received", failed: "Request failed", "cancelled-before-dispatch": "Cancelled before dispatch", unknown: "Result unconfirmed" },
   validation: { absent: "No validation record", pending: "Validation pending", valid: "Output validated", invalid: "Output did not pass validation" },
   verdict: { accept: "Review suggestion: acceptable", revise: "Review suggestion: revise", unresolved: "Review issue remains unresolved" },
-  postKind: { note: "Note", challenge: "Challenge", rejection: "Rejection", resolution: "Resolution record" },
+  awaitingHuman: "The member recorded a question for you. Read member questions before deciding how to continue.",
+  postKind: { "human-question": "Question or response", note: "Note", challenge: "Challenge", rejection: "Rejection", resolution: "Resolution record" },
 };
 export const conversationTeamZh = {
   reply: "回复这条讨论", title: "团队记录", show: "查看团队记录", hide: "收起团队记录", help: "查看原成员工作、消息与讨论。读取记录不会恢复运行许可。",
@@ -26,5 +27,6 @@ export const conversationTeamZh = {
   execution: { queued: "已排队", dispatched: "已派发，结果尚未确认", succeeded: "已收到输出", failed: "请求失败", "cancelled-before-dispatch": "派发前已取消", unknown: "结果待核对" },
   validation: { absent: "暂无校验记录", pending: "等待校验", valid: "输出已通过校验", invalid: "输出未通过校验" },
   verdict: { accept: "审阅建议：可以接受", revise: "审阅建议：需要修改", unresolved: "审阅问题仍未解决" },
-  postKind: { note: "说明", challenge: "质疑", rejection: "拒绝理由", resolution: "处理记录" },
+  awaitingHuman: "成员记录了一条需要你答复的问题。可以先查看成员提问，再决定是否续作。",
+  postKind: { "human-question": "提问或答复", note: "说明", challenge: "质疑", rejection: "拒绝理由", resolution: "处理记录" },
 };

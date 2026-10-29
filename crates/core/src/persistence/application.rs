@@ -10,6 +10,7 @@ pub(in crate::persistence) mod maintenance;
 mod selection;
 mod services;
 pub(crate) mod team;
+pub(crate) mod team_questions;
 mod tools;
 mod tool_history;
 use super::ProjectStore;
@@ -56,7 +57,7 @@ pub(super) fn validate_after_open_version(
 ) -> Result<(), ExecutionError> {
     if version >= 62 { self::conversations::validate_version(c, version)?; }
     control::validate_after_open(c, inputs)?;
-    team::validate(c)?;
+    team::validate_version(c, version)?;
     coordination::validate(c)
 }
 pub use selection::{
@@ -194,6 +195,7 @@ impl ProjectStore {
                 let preview = self.preview_ai(config, locale, units)?;
                 let mut options = options;
                 let team = options.team_execution.take();
+                let questions = options.team_questions.take();
                 let guidance = options.tool_guidance.take();
                 let mut captures = Vec::new();
                 if let Some(team) = &team {
@@ -210,7 +212,7 @@ impl ProjectStore {
                     .with_tools(tools)?
                     .with_tool_guidance(guidance)?;
                 if let Some(team) = team {
-                    plan.with_team(team, captures)
+                    plan.with_team(team, captures, questions)
                 } else {
                     Ok(plan)
                 }
@@ -821,6 +823,7 @@ mod tests {
             deliver: false,
             team_discussions: None,
             team_execution: None,
+            team_questions: None,
             tool_guidance: None,
             mcp_term_query: None,
         };

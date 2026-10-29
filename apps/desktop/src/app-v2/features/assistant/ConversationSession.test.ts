@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConversationSession } from "./ConversationSession";
+import { SessionReads } from "../../../sessionReads";
+import type { strategyCommands } from "../../../strategyCommands";
 import { canonicalConversationDraft, type ConversationDraftHead, type ConversationDraftPending, type ConversationDraftResolveTarget } from "../../../conversationDraftCommands";
 import type { PreparedConversationPlanning, ProjectConversation, ProjectConversationMessage } from "../../../conversationCommands";
 import type { conversationCommands } from "../../../conversationCommands";
@@ -112,7 +114,8 @@ function harness() {
     if (!validateResponseWorkPlanReceipt(result)) throw new Error("Invalid synthetic control receipt"); return result;
   });
   const readPlanControlSettlement = vi.fn<typeof workPlanCommands.controlSettlement>(async request => controlSettlement(request, { kind: "pending" }));
-  const all = { ...ports, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
+  const readStrategyDefault = vi.fn<typeof strategyCommands.default>(async () => null);
+  const all = { ...ports, readStrategyDefault, write, resolve, create, append, recoverCreate, recoverMessage, preparePlanning, validatePlanning, startPlanning, recoverPlanning, recoverProposalCapture, recoverProposalRevision, recoverProposalWorkPlan, captureSelection,
     captureProposal, reviseProposal, validateProposal, readPlanning, prepareProposalWorkPlan, authorizeProposalWorkPlan, planStatus, startPlan, readPlanStartSettlement, controlPlan, readPlanControlSettlement };
   const make = () => new ConversationSession(context, recorded, reveal, all);
   const owner = make();
@@ -193,6 +196,8 @@ describe("ConversationSession", () => {
     };
     h.ports.authorizeProposalWorkPlan.mockImplementation(async request => receipt(request));
     h.owner.beginWorkPlan(fixture.revision); h.owner.setWorkPlanConfig(conversationId, fixture.config);
+    const reads = new SessionReads(context);
+    await h.owner.loadWorkPlanStrategyDefault(conversationId, reads); reads.retire();
     if (prepare) await h.owner.prepareWorkPlan(conversationId);
     return { ...h, ...fixture, conversationId, receipt };
   }
@@ -571,6 +576,8 @@ describe("ConversationSession", () => {
     h.owner.beginProposalEdit(h.revision); await h.owner.flush();
     await h.owner.prepareWorkPlan(h.conversationId); expect(h.ports.prepareProposalWorkPlan).not.toHaveBeenCalled();
     const edit = h.current().value.proposalEdits![0]; h.owner.discardProposalEdit(h.conversationId, edit.proposalId, edit.editSeq); await h.owner.flush();
+    const reads = new SessionReads(context);
+    await h.owner.loadWorkPlanStrategyDefault(h.conversationId, reads); reads.retire();
     await h.owner.prepareWorkPlan(h.conversationId);
     expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledOnce();
     expect(h.ports.prepareProposalWorkPlan.mock.calls[0][0]).toMatchObject({ proposal: { proposalId: h.revision.proposalId, revisionId: h.current().workPlan.revision?.revisionId }, toolSelection: null, advisoryChecks: [] });
@@ -594,6 +601,8 @@ describe("ConversationSession", () => {
     const second = conversationWorkPlanFixture({ ...context, conversationId: secondId });
     h.owner.beginWorkPlan(second.revision); h.owner.setWorkPlanConfig(secondId, second.config);
     h.ports.validateProposal.mockResolvedValue(second.revision); h.ports.readPlanning.mockResolvedValue(second.run);
+    const reads = new SessionReads(context);
+    await h.owner.loadWorkPlanStrategyDefault(secondId, reads); reads.retire();
     const response = deferred<typeof second.prepared>(); h.ports.prepareProposalWorkPlan.mockReturnValueOnce(response.promise);
     const preparing = h.owner.prepareWorkPlan(secondId);
     await vi.waitFor(() => expect(h.ports.prepareProposalWorkPlan).toHaveBeenCalledTimes(2));

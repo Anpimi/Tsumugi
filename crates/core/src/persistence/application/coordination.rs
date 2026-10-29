@@ -153,6 +153,7 @@ pub(super) fn derive(
         instructions: request.map_or_else(|| selected.role.clone(), |r| r.instructions.clone()),
         post_ids: request.map_or_else(Vec::new, |r| r.post_ids.clone()),
         cause_message_id: request.and_then(|r| r.cause_message_id),
+        team_questions: plan.options.team_questions,
     })
     .map_err(|_| corrupt())?;
     FixedInput::capture(e)
@@ -198,6 +199,7 @@ fn validate_input_basis(c: &Connection, input: &FixedInput) -> Result<WorkPlan, 
     let template = control::load(c, plan.plan_id)?.plan.fixed_input()?;
     if s.binding.role_version_id() != selected.role_version_id
         || s.config != selected.config
+        || s.team_questions != plan.options.team_questions
         || s.root_request_limit != ai::settings(&template)?.config.max_requests
     {
         return Err(corrupt());
@@ -430,6 +432,7 @@ pub(crate) fn validate_provider_parent_history_in(
         || !ai::team::settings(parent)?.binding.is_root()
         || s.config.max_requests > s.root_request_limit
         || s.root_request_limit != ai::team::settings(parent)?.root_request_limit
+        || s.team_questions != ai::team::settings(parent)?.team_questions
     {
         return Err(denied());
     }
@@ -687,7 +690,7 @@ fn validate_request(
         let message = message(c, id)?.ok_or_else(denied)?;
         if message.plan_id != plan.plan_id
             || message.recipient_member_id != author.author.member_id
-            || message.sender.binding().lease != author.author.binding.lease
+            || message.sender.binding().is_none_or(|binding| binding.lease != author.author.binding.lease)
             || message.target != request.target
         {
             return Err(denied());
@@ -914,7 +917,7 @@ fn check_message_cause(
         if prior.plan_id != author.binding.lease.plan_id
             || prior.target != *target
             || prior.recipient_member_id != author.member_id
-            || prior.sender.binding().lease != author.binding.lease
+            || prior.sender.binding().is_none_or(|binding| binding.lease != author.binding.lease)
             || before.is_some_and(|sequence| prior.sequence >= sequence)
         {
             return Err(denied());
@@ -925,7 +928,7 @@ fn check_message_cause(
 
 /// Validate immutable provenance without asking whether the old grant is live.
 fn message_history(c: &Connection, value: &TeamMessage) -> Result<(), ExecutionError> {
-    let binding = value.sender.binding();
+    let binding = value.sender.binding().ok_or_else(corrupt)?;
     let plan = recovery::plan_in(c, value.plan_id, binding.lease.generation)?;
     if binding.lease.plan_id != plan.plan_id
         || plan.options.team_discussions.is_none()
@@ -972,6 +975,7 @@ fn message_history(c: &Connection, value: &TeamMessage) -> Result<(), ExecutionE
                 return Err(corrupt());
             }
         }
+        TeamDiscussionAuthor::LocalHuman { .. } => return Err(corrupt()),
     }
     check_message_content(c, &plan, &value.target, &value.body, &value.post_ids)
 }
@@ -1230,7 +1234,7 @@ impl ProjectStore {
                 let value =
                     message(c, ExecutionId::parse(&id.map_err(sql)?)?)?.ok_or_else(corrupt)?;
                 if value.target == author.target
-                    && value.sender.binding().lease == author.author.binding.lease
+                    && value.sender.binding().is_some_and(|binding| binding.lease == author.author.binding.lease)
                 {
                     message_history(c, &value)?;
                     messages.push(value);
@@ -1302,7 +1306,7 @@ pub(crate) fn validate_provider_view_history_in(
             || value.plan_id != record.receipt.plan_id
             || value.recipient_member_id != view.author.member_id
             || value.recipient_role_version_id != view.author.role_version_id
-            || value.sender.binding().lease != view.author.binding.lease
+            || value.sender.binding().is_none_or(|binding| binding.lease != view.author.binding.lease)
             || value.target != view.discussion.target
         {
             return Err(corrupt());
@@ -1490,6 +1494,17 @@ pub(crate) fn validate_result(
             for id in requested_intent_ids {
                 let record = work(c, id)?.ok_or_else(denied)?;
                 if !seen.insert(id) || record.author.as_ref() != Some(&author) {
+                    return Err(denied());
+                }
+            }
+        }
+        TeamWorkOutcome::AwaitingHuman { question_post_ids } => {
+            let plan = recovery::plan_in(c, s.binding.scope().lease.plan_id, s.binding.scope().lease.generation)?;
+            if plan.options.team_questions.is_none() { return Err(denied()); }
+            let mut seen = std::collections::BTreeSet::new();
+            for id in question_post_ids {
+                let post = check_post(id, true)?;
+                if !seen.insert(id) || !matches!(post.publication.question, Some(TeamQuestionEvent::Open { .. })) {
                     return Err(denied());
                 }
             }

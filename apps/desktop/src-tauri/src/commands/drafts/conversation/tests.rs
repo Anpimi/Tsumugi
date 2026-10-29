@@ -229,7 +229,7 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
                 "sourceSnapshotId":ExecutionId::new(),"sourceRevisionId":ExecutionId::new()},"body":"Original team A"}},"submittedSeq":"6"})).unwrap();
     write.expected_revision = serde_json::from_value(settled["revision"].clone()).unwrap();
     write.value.edit_seq = Revision::new(6).unwrap(); write.value.pending = Some(pending.clone());
-    write.value.team_drafts = vec![ConversationTeamDraft { plan_id, plan_digest: "a".repeat(64), recovery: None, recovery_recorded: None,
+    write.value.team_drafts = vec![ConversationTeamDraft { questions: vec![], plan_id, plan_digest: "a".repeat(64), recovery: None, recovery_recorded: None,
         guidance: Some(ConversationTeamGuidanceDraft { edit_seq: Revision::new(6).unwrap(), member_id: Some(member_id), unit_id: Some(unit_id), body: "Original team A".into() }), publication: None }];
     let retained = call(&window, "write_local_conversation_draft", json!({"sessionToken":new_token,"write":write})).unwrap();
     for disposition in [ConversationDraftDisposition::Recorded, ConversationDraftDisposition::FencedNotApplied] {

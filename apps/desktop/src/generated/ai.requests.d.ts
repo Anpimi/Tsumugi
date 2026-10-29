@@ -107,13 +107,41 @@ export type TeamExecutionPolicy = {
   profile: "bounded-team-1";
 };
 export type TeamWorkKind = "translation" | "review" | "evidence";
+export type TeamQuestionPolicy = {
+  profile: "current-plan-1";
+};
 /**
  * Explicit model sharing of guidance declared by the captured tools.
  */
 export type ToolGuidancePolicy = {
   profile: "declared-tools-1";
 };
-export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
+export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution" | "human-question";
+/**
+ * The body and target remain in the original publication fields.
+ */
+export type TeamQuestionEvent =
+  | {
+      kind: "open";
+      options: TeamQuestionOption[];
+    }
+  | {
+      answer: TeamQuestionAnswer;
+      kind: "resolve";
+      questionPostId: ExecutionId;
+    }
+  | {
+      kind: "dismiss";
+      questionPostId: ExecutionId;
+    };
+export type TeamQuestionAnswer =
+  | {
+      kind: "choice";
+      optionId: ExecutionId;
+    }
+  | {
+      kind: "text";
+    };
 export type TeamArtifactReference =
   | {
       kind: "translation-revision";
@@ -124,6 +152,19 @@ export type TeamArtifactReference =
       kind: "source-result";
       resultId: ExecutionId;
       snapshotId: ExecutionId;
+    };
+export type TeamQuestionResponse =
+  | {
+      kind: "choice";
+      optionId: ExecutionId;
+    }
+  | {
+      body: string;
+      kind: "text";
+    }
+  | {
+      kind: "dismiss";
+      reason: string;
     };
 
 export interface Requests {
@@ -158,6 +199,7 @@ export interface Requests {
   workPlanGenerationPrepare: WorkPlanGenerationPrepareRequest;
   workPlanGenerationStart: WorkPlanGenerationStartRequest;
   workPlanGenerationStartRead: WorkPlanGenerationStartReadRequest;
+  workPlanHistory: WorkPlanHistoryRequest;
   workPlanPrepare: WorkPlanPrepareRequest;
   workPlanRun: WorkPlanStatusRequest;
   workPlanStart: WorkPlanStartRequest;
@@ -173,6 +215,10 @@ export interface Requests {
   workPlanTeamPublicationAction: WorkPlanTeamPublicationActionRequest;
   workPlanTeamPublicationSettlement: WorkPlanTeamPublicationActionRequest;
   workPlanTeamPublish: WorkPlanTeamPublishRequest;
+  workPlanTeamQuestion: WorkPlanTeamQuestionRequest;
+  workPlanTeamQuestionRespond: WorkPlanTeamQuestionRespondRequest;
+  workPlanTeamQuestionResponseSettlement: WorkPlanTeamQuestionRespondRequest;
+  workPlanTeamQuestions: WorkPlanTeamQuestionsRequest;
   workPlanTeamRecoveryAction: WorkPlanTeamRecoveryAuthorizeRequest;
   workPlanTeamRecoveryAuthorize: WorkPlanTeamRecoveryAuthorizeRequest;
   workPlanTeamRecoveryEnd: WorkPlanTeamRecoveryAuthorizeRequest;
@@ -667,6 +713,33 @@ export interface WorkPlanGenerationStartReadRequest {
   sessionToken: string;
   taskId: ExecutionId;
 }
+export interface WorkPlanHistoryRequest {
+  after: Revision;
+  baseline?: WorkPlanHistoryBaseline | null;
+  limit: number;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanHistoryBaseline {
+  /**
+   * Includes a proven team recovery start. A late enqueue changes this basis
+   * even when no new control generation has been committed.
+   */
+  lastStart?: WorkPlanStartReceipt | null;
+  lease: AutomationLease;
+}
+/**
+ * Evidence that the exact authorized fixed input was durably enqueued.
+ */
+export interface WorkPlanStartReceipt {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  expectedGeneration: Revision;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  taskId: ExecutionId;
+}
 export interface WorkPlanPrepareRequest {
   advisoryChecks: PluginTextReviewSelection[];
   config?: AiConfig | null;
@@ -746,6 +819,10 @@ export interface PlanOptions {
    */
   teamDiscussions?: TeamDiscussionPolicy | null;
   teamExecution?: TeamExecutionPolicy | null;
+  /**
+   * Explicit questions and later human answers under the captured sharing boundary.
+   */
+  teamQuestions?: TeamQuestionPolicy | null;
   /**
    * Absent means that tool guidance is available only to the human reader.
    */
@@ -1045,15 +1122,47 @@ export interface PublishTeamDiscussion {
   body: string;
   kind: TeamDiscussionKind;
   postId: ExecutionId;
+  question?: TeamQuestionEvent | null;
   references: TeamArtifactReference[];
   replyTo?: ExecutionId | null;
   supersedes?: ExecutionId | null;
   target: TeamDiscussionTarget;
 }
+export interface TeamQuestionOption {
+  label: string;
+  optionId: ExecutionId;
+}
 export interface WorkPlanTeamPublishRequest {
   lease: AutomationLease;
   projectId: ExecutionId;
   publication: PublishTeamDiscussion;
+  sessionToken: string;
+}
+export interface WorkPlanTeamQuestionRequest {
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  questionPostId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanTeamQuestionRespondRequest {
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  response: RespondTeamQuestion;
+  sessionToken: string;
+}
+/**
+ * An immutable local action identity; it never captures an automation permit.
+ */
+export interface RespondTeamQuestion {
+  postId: ExecutionId;
+  questionPostId: ExecutionId;
+  response: TeamQuestionResponse;
+}
+export interface WorkPlanTeamQuestionsRequest {
+  after?: Revision | null;
+  limit: number;
+  planId: ExecutionId;
+  projectId: ExecutionId;
   sessionToken: string;
 }
 export interface WorkPlanTeamRecoveryAuthorizeRequest {

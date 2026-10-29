@@ -8,8 +8,11 @@ import { reviewCommands, type Eligibility, type EligibilityLocale } from "../../
 import { sourceCommands, type ContentPage, type ContentRow, type LineageEvidence, type SourceChangePage } from "../../../sourceCommands";
 import { conversationCommands, type ConversationKnowledgeDecision, type ConversationKnowledgeEntry, type ConversationProposalRevision } from "../../../conversationCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
+import { teamQuestionCommands } from "../../../teamQuestionCommands";
+import type { TeamQuestionView } from "../../../generated/ai.responses";
 
 export type DecisionTargetDetails =
+  | { kind: "team-question"; view: TeamQuestionView; conversationId: string | null }
   | { kind: "resource"; preview: ResourcePreview; proposal: { kind: "row"; row: ResourcePreviewRow } | { kind: "removed"; term: TermRevision } }
   | { kind: "knowledge"; revision: ConversationProposalRevision; entry: ConversationKnowledgeEntry; entryIndex: number; decision: ConversationKnowledgeDecision | null }
   | { kind: "mapping"; page: ContentPage; row: ContentRow; lineage: LineageEvidence[] }
@@ -30,6 +33,7 @@ export interface DecisionTargetReadPorts {
   deliveryRecord: typeof releaseCommands.deliveryRecord;
   proposal: typeof conversationCommands.readProposal;
   knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
+  teamQuestion: typeof teamQuestionCommands.question;
 }
 const ports: DecisionTargetReadPorts = {
   preview: request => resourceCommands.preview(request), historyContent: request => sourceCommands.historyContent(request),
@@ -38,7 +42,24 @@ const ports: DecisionTargetReadPorts = {
   output: request => executionCommands.output(request), eligibility: request => reviewCommands.eligibility(request),
   deliveryRecord: request => releaseCommands.deliveryRecord(request),
   proposal: request => conversationCommands.readProposal(request), knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
+  teamQuestion: request => teamQuestionCommands.question(request),
 };
+
+/** Match an explicit member question to its original typed inbox evidence.
+ * A free-form discussion post never acquires question or conversation identity. */
+export function teamQuestionMatchesDecision(item: DecisionItem, view: TeamQuestionView): boolean {
+  const action = item.action, question = view.question, post = question.publication, author = question.author, evidence = item.evidence;
+  const plans = item.targets.filter(target => target.kind === "plan"), entries = item.targets.filter(target => target.kind === "entry");
+  const conversations = item.targets.filter(target => target.kind === "conversation");
+  return action.kind === "answer-team-question" && item.source === "agent-question" && item.targetsComplete
+    && item.sourceActionId === action.questionPostId && question.planId === action.planId && post.postId === action.questionPostId
+    && post.kind === "human-question" && post.question?.kind === "open" && author.kind === "member"
+    && author.author.binding.lease.planId === action.planId && evidence?.kind === "team-question"
+    && evidence.memberId === author.author.memberId && evidence.roleVersionId === author.author.roleVersionId
+    && item.locale === post.target.locale && plans.length === 1 && plans[0]?.planId === action.planId
+    && entries.length === 1 && entries[0]?.unitId === post.target.unitId && conversations.length <= 1
+    && item.targets.every(target => target.kind === "plan" || target.kind === "entry" || target.kind === "conversation");
+}
 
 export class DecisionTargetReadError extends Error {
   constructor(readonly reason: "changed" | "missing" | "mismatch") { super(`Decision target ${reason}`); }
@@ -58,6 +79,12 @@ export async function readDecisionTarget(context: SessionRequest, item: Decision
   function match(condition: boolean): asserts condition { if (!condition) throw new DecisionTargetReadError("mismatch"); }
   present();
   switch (action.kind) {
+    case "answer-team-question": {
+      const view = await commands.teamQuestion({ ...ctx, planId: action.planId, questionPostId: action.questionPostId }); present();
+      match(teamQuestionMatchesDecision(fixed.item, view));
+      const conversation = fixed.item.targets.find(target => target.kind === "conversation");
+      return { kind: "team-question", view, conversationId: conversation?.conversationId ?? null };
+    }
     case "review-knowledge-proposal": {
       match(action.proposal.projectId === ctx.projectId && Number.isInteger(action.entryIndex) && action.entryIndex >= 0
         && fixed.item.targets.some(target => target.kind === "conversation-proposal" && target.conversationId === action.proposal.conversationId && target.proposalId === action.proposal.proposalId));

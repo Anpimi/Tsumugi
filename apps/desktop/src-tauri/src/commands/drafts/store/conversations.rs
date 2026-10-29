@@ -107,6 +107,43 @@ fn valid_recovery_record(key: &ConversationDraftKey, plan: ExecutionId, record: 
         && valid_digest(&receipt.input_digest)
 }
 
+fn question_input_matches(draft: &ConversationTeamQuestionDraft, response: &tsumugi_core::application::TeamQuestionResponse) -> bool {
+    use tsumugi_core::application::TeamQuestionResponse;
+    match response {
+        TeamQuestionResponse::Text { body } => draft.mode == ConversationTeamQuestionMode::Text && draft.body == *body,
+        TeamQuestionResponse::Choice { option_id } => draft.mode == ConversationTeamQuestionMode::Choice && draft.option_id == Some(*option_id),
+        TeamQuestionResponse::Dismiss { reason } => draft.dismiss_reason == *reason,
+    }
+}
+
+fn validate_question_request(
+    request: &crate::commands::execution::work_plans::questions::TeamQuestionResponseOriginal,
+    question: &tsumugi_core::application::TeamDiscussionPost,
+) -> Result<()> {
+    use tsumugi_core::application::{TeamDiscussionAuthor, TeamDiscussionKind, TeamQuestionEvent, TeamQuestionResponse};
+    if question.plan_id != request.plan_id || question.publication.post_id != request.response.question_post_id
+        || request.response.post_id == request.response.question_post_id
+        || question.publication.kind != TeamDiscussionKind::HumanQuestion
+        || !matches!(question.author, TeamDiscussionAuthor::Member { .. })
+        || !matches!(question.publication.question, Some(TeamQuestionEvent::Open { .. }))
+        || question.publication.reply_to.is_some() || question.publication.supersedes.is_some()
+    { return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team-question")); }
+    let body = match &request.response.response {
+        TeamQuestionResponse::Text { body } => body,
+        TeamQuestionResponse::Dismiss { reason } => reason,
+        TeamQuestionResponse::Choice { option_id } => {
+            let Some(TeamQuestionEvent::Open { options }) = &question.publication.question else { unreachable!() };
+            &options.iter().find(|option| option.option_id == *option_id)
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "conversation-drafts-team-question"))?.label
+        }
+    };
+    if body.trim().is_empty() || body.len() > tsumugi_core::application::TeamDiscussionLimits::current_plan().max_post_bytes as usize {
+        return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team-question"));
+    }
+    super::encode_bounded(&(request, question), tsumugi_core::execution::MAX_INPUT_BYTES)?;
+    Ok(())
+}
+
 fn validate_pending(
     key: &ConversationDraftKey,
     pending: &ConversationDraftPending,
@@ -116,6 +153,16 @@ fn validate_pending(
     team_drafts: &[ConversationTeamDraft],
 ) -> Result<()> {
     let (project, thread, submitted) = match pending {
+        ConversationDraftPending::TeamQuestionResponse { conversation_id, request, question, submitted_seq } => {
+            validate_question_request(request, question)?;
+            let draft = team_drafts.iter().find(|draft| draft.plan_id == request.plan_id)
+                .and_then(|draft| draft.questions.iter().find(|draft| draft.question_post_id == request.response.question_post_id))
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "conversation-drafts-team-question"))?;
+            if *submitted_seq > draft.edit_seq || *submitted_seq == draft.edit_seq && !question_input_matches(draft, &request.response.response) {
+                return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team-question"));
+            }
+            (request.project_id, *conversation_id, *submitted_seq)
+        }
         ConversationDraftPending::Create {
             request,
             submitted_seq,
@@ -256,8 +303,11 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
     }
     let mut plans = BTreeSet::new();
     for draft in &value.team_drafts {
+        if draft.questions.len() > 32 { return Err(fail(ErrorCode::LimitExceeded, "conversation-drafts-team-question-limit")); }
+        let mut questions = BTreeSet::new();
         if !plans.insert(draft.plan_id)
             || !valid_digest(&draft.plan_digest)
+            || draft.questions.iter().any(|question| question.edit_seq > value.edit_seq || !questions.insert(question.question_post_id))
             || draft.guidance.as_ref().is_some_and(|input| input.edit_seq > value.edit_seq)
             || draft.publication.as_ref().is_some_and(|input| input.edit_seq > value.edit_seq)
             || draft.recovery.as_ref().is_some_and(|input| {
@@ -321,6 +371,7 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
 }
 fn pending_action(pending: &ConversationDraftPending) -> ExecutionId {
     match pending {
+        ConversationDraftPending::TeamQuestionResponse { request, .. } => request.response.post_id,
         ConversationDraftPending::Create { request, .. } => request.action_id,
         ConversationDraftPending::Append { request, .. } => request.action_id,
         ConversationDraftPending::Planning { request, .. } => request.consent.action_id,
@@ -383,7 +434,7 @@ fn apply_write(
         {
             let previous = old.ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
             if matches!(pending, ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }
-                | ConversationDraftPending::TeamRecovery { .. }) {
+                | ConversationDraftPending::TeamRecovery { .. } | ConversationDraftPending::TeamQuestionResponse { .. }) {
                 let mut expected = previous.clone();
                 expected.pending = None;
                 expected.edit_seq = r.value.edit_seq;
@@ -405,6 +456,11 @@ fn apply_write(
                                 .and_then(|draft| draft.publication.as_mut())
                                 .ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
                             if draft.edit_seq == *submitted_seq { draft.body.clear(); draft.edit_seq = r.value.edit_seq; }
+                        }
+                        ConversationDraftPending::TeamQuestionResponse { request, submitted_seq, .. } => {
+                            let draft = expected.team_drafts.iter_mut().find(|draft| draft.plan_id == request.plan_id)
+                                .ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
+                            draft.questions.retain(|draft| draft.question_post_id != request.response.question_post_id || draft.edit_seq != *submitted_seq);
                         }
                         ConversationDraftPending::TeamRecovery { .. } => (),
                         _ => unreachable!("team pending selected above"),
@@ -497,6 +553,8 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
         || format < REVOCATION_FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
         || format < TEAM_DRAFT_FORMAT && value.is_some_and(|value| !value.team_drafts.is_empty()
             || matches!(value.pending, Some(ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. })))
+        || format < TEAM_QUESTION_FORMAT && value.is_some_and(|value| value.team_drafts.iter().any(|draft| !draft.questions.is_empty())
+            || matches!(value.pending, Some(ConversationDraftPending::TeamQuestionResponse { .. })))
         || format < TEAM_RECOVERY_FORMAT && value.is_some_and(|value| value.team_drafts.iter().any(|draft| draft.recovery.is_some() || draft.recovery_recorded.is_some())
             || matches!(value.pending, Some(ConversationDraftPending::TeamRecovery { .. })))
         || format < KNOWLEDGE_PROPOSAL_FORMAT && value.is_some_and(|value| {
@@ -669,19 +727,26 @@ impl DraftStore {
         validate_value(&r.write.key, &r.write.value)?;
         match &r.target {
             ConversationDraftResolveTarget::Pending { pending } => {
-                validate_pending(
-                    &r.write.key, pending, r.write.value.edit_seq,
-                    r.write.value.message_edit_seq.unwrap_or(r.write.value.edit_seq),
-                    &r.write.value.text,
-                    &r.write.value.team_drafts,
-                )?;
+                // The stored pending and full old input are checked by decode
+                // and exact target matching below. A recorded answer may remove
+                // just its submitted question input from the resulting value.
+                if let ConversationDraftPending::TeamQuestionResponse { request, question, .. } = pending {
+                    validate_question_request(request, question)?;
+                } else {
+                    validate_pending(
+                        &r.write.key, pending, r.write.value.edit_seq,
+                        r.write.value.message_edit_seq.unwrap_or(r.write.value.edit_seq),
+                        &r.write.value.text, &r.write.value.team_drafts,
+                    )?;
+                }
                 if r.write.value.pending.is_some()
                     || r.disposition == ConversationDraftDisposition::FencedNotApplied
                         && !matches!(pending, ConversationDraftPending::WorkPlanStart { .. }
                             | ConversationDraftPending::WorkPlanControl { .. }
                             | ConversationDraftPending::TeamMessage { .. }
                             | ConversationDraftPending::TeamPublication { .. }
-                            | ConversationDraftPending::TeamRecovery { .. })
+                            | ConversationDraftPending::TeamRecovery { .. }
+                            | ConversationDraftPending::TeamQuestionResponse { .. })
                 {
                     return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
                 }
@@ -797,3 +862,6 @@ impl DraftStore {
 mod tests;
 #[cfg(test)]
 mod recovery_tests;
+
+#[cfg(test)]
+mod question_tests;

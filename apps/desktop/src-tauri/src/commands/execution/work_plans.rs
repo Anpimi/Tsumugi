@@ -5,8 +5,10 @@ pub(crate) mod coordination;
 pub(crate) mod recovery;
 pub(crate) mod generation;
 pub(crate) mod guidance;
+pub(crate) mod history;
 pub(crate) mod member;
 pub(crate) mod team;
+pub(crate) mod questions;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
@@ -1889,6 +1891,8 @@ mod tests {
     mod tool_result_reads;
     mod team_history;
     mod run;
+    mod history;
+    mod questions;
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     mod team_discussions;
     use super::*;

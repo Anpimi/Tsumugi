@@ -647,6 +647,7 @@ fn supported_migrations_preserve_plans_discussions_proposals_and_receipts_at_abo
                         references: vec![],
                         reply_to: None,
                         supersedes: None,
+                        question: None,
                     },
                 )
                 .unwrap();

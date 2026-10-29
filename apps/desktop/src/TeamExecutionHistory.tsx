@@ -73,7 +73,7 @@ export function TeamExecutionHistory({ context, status, open, onOpenTask, onOpen
       <h4>{t("ai.team.messages")}</h4>
       {view.messages.length ? view.messages.map(message => {
         const included = view.consumptions.filter(value => value.messageId === message.messageId);
-        return <article key={message.messageId}><h5>{message.sender.kind === "human" ? t("ai.teamHistory.localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h5>
+        return <article key={message.messageId}><h5>{message.sender.kind !== "member" ? t("ai.teamHistory.localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h5>
           <p>{entryName(message.target.unitId)} · {message.target.locale}</p><pre className="ai-text">{message.body}</pre>
           <p>{t(included.length ? "ai.team.included" : "ai.team.addressed", { count: included.length })}</p>{postButtons(message.postIds)}
           <details><summary>{t("ai.team.identityDetails")}</summary><p>{message.messageId}</p>{message.causeMessageId ? <p>{message.causeMessageId}</p> : null}

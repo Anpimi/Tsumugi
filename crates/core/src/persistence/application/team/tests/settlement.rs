@@ -42,6 +42,7 @@ fn original(plan: &WorkPlan, units: &[ExecutionId]) -> PublishTeamDiscussion {
         references: vec![],
         reply_to: None,
         supersedes: None,
+        question: None,
     }
 }
 

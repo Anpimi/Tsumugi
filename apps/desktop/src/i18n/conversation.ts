@@ -4,7 +4,12 @@ import { conversationRunsEn, conversationRunsZh } from "./conversationRuns";
 import { conversationKnowledgeEn, conversationKnowledgeZh } from "./conversationKnowledge";
 
 export const conversationEn = {
+  planStrategyDefaultLoading: "Reading the saved context choice for this plan…",
+  planStrategyDefaultFailed: "The saved context choice could not be read. Read it again before preparing the plan; your current settings are kept.",
+  planStrategyDefaultRetry: "Read saved context choice again",
+  planStrategyDefaultApplied: "The saved context choice for this target language is included. Check the material before confirming the plan.",
   teamMessageRequest: "Send guidance to a team member", teamPublicationRequest: "Post in the team discussion",
+  teamQuestionResponseRequest: "Answer a member question", teamQuestionResponded: "The original response is saved in the project. No member was started.", teamQuestionClosed: "Another saved response already closed this question. Your newer input is kept.", teamQuestionPendingHelp: "This response still needs checking. Check the original request before saving it again. Stopping a plan does not cancel a local answer.", teamQuestionOriginalResponse: "Original response",
   teamRecoveryRequest: "Team recovery", teamRecoveryRecorded: "The original team recovery is recorded. Reopening does not restore permission to start.", teamRecoveryPendingHelp: "This preparation or confirmation still needs checking. Your newer input is kept. Closing a preparation does not prove that a confirmation was never recorded; take over or stop the plan, then check the original request again.",
   teamMessageSaved: "Your guidance is saved. This does not mean the member has read it.", teamPublicationSaved: "Your discussion post is saved.",
   teamOriginal: "View the original team request", teamOriginalBody: "Text from the original request", teamOriginalTarget: "Entry: {{entry}} → {{locale}}",
@@ -87,7 +92,12 @@ export const conversationEn = {
 };
 
 export const conversationZh: typeof conversationEn = {
+  planStrategyDefaultLoading: "正在读取适用于这个计划的已保存上下文选择…",
+  planStrategyDefaultFailed: "无法读取已保存的上下文选择。请重新读取后再准备计划；当前设置会保留。",
+  planStrategyDefaultRetry: "重新读取上下文选择",
+  planStrategyDefaultApplied: "已包含这个目标语言的已保存上下文选择。确认计划前，请核对实际分享的材料。",
   teamMessageRequest: "向成员发送指导", teamPublicationRequest: "发表团队讨论",
+  teamQuestionResponseRequest: "答复成员提问", teamQuestionResponded: "原答复已保存在项目里，没有启动成员。", teamQuestionClosed: "另一条已保存的处理记录关闭了这条问题，新输入还在。", teamQuestionPendingHelp: "这次答复仍需核对，请先核对原请求，再决定是否重新保存。停止计划不会取消本机答复。", teamQuestionOriginalResponse: "原答复",
   teamRecoveryRequest: "团队恢复", teamRecoveryRecorded: "原团队恢复已记录。重开不会恢复启动许可。", teamRecoveryPendingHelp: "这次准备或确认仍需核对，新输入会保留。关闭准备不代表确认从未记录；接管或停止计划后，可以再次核对原请求。",
   teamMessageSaved: "指导已保存，这不代表成员已经读到。", teamPublicationSaved: "讨论已保存。",
   teamOriginal: "查看这次团队请求的原内容", teamOriginalBody: "原来准备发送的内容", teamOriginalTarget: "条目：{{entry}} → {{locale}}",

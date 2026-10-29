@@ -17,6 +17,7 @@ type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
 const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
 export function conversationPendingActionId(pending: ConversationDraftPending): string {
+  if (pending.kind === "team-question-response") return pending.request.response.postId;
   if (pending.kind === "team-recovery") return pending.authorization?.recovery.actionId ?? pending.request.preparationId;
   if (pending.kind === "planning") return pending.request.consent.actionId;
   if (pending.kind === "team-message") return pending.request.message.messageId;
@@ -28,7 +29,7 @@ export function isConversationTeamPending(pending: ConversationDraftPending | nu
 }
 export function conversationPendingTarget(pending: ConversationDraftPending) {
   return pending.kind === "proposal-work-plan" ? pending.request.proposal
-    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" || pending.kind === "team-message" || pending.kind === "team-publication" || pending.kind === "team-recovery"
+    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" || pending.kind === "team-message" || pending.kind === "team-publication" || pending.kind === "team-recovery" || pending.kind === "team-question-response"
       ? { projectId: pending.request.projectId, conversationId: pending.conversationId } : pending.request;
 }
 export function locallyReplayableConversationRequest(pending: ConversationDraftPending | null | undefined) {
@@ -36,7 +37,7 @@ export function locallyReplayableConversationRequest(pending: ConversationDraftP
 }
 export function canonicalConversationDraft(value: Requests["conversationWrite"]["write"]["value"]) {
   const { proposalEdits, messageEditSeq, revocations, teamDrafts, ...rest } = value;
-  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}), ...(revocations?.length ? { revocations } : {}), ...(teamDrafts?.length ? { teamDrafts } : {}) };
+  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}), ...(revocations?.length ? { revocations } : {}), ...(teamDrafts?.length ? { teamDrafts: teamDrafts.map(({ questions, ...draft }) => ({ ...draft, ...(questions?.length ? { questions } : {}) })) } : {}) };
 }
 function teamDraftsMatch(value: ConversationDraftValue) {
   const drafts = value.teamDrafts ?? [], pending = value.pending;
@@ -45,6 +46,13 @@ function teamDraftsMatch(value: ConversationDraftValue) {
       || draft.guidance && BigInt(draft.guidance.editSeq) > BigInt(value.editSeq)
       || draft.publication && BigInt(draft.publication.editSeq) > BigInt(value.editSeq)
       || draft.recovery && BigInt(draft.recovery.editSeq) > BigInt(value.editSeq))) return false;
+  if (drafts.some(draft => (draft.questions?.length ?? 0) > 32 || new Set(draft.questions?.map(value => value.questionPostId)).size !== (draft.questions?.length ?? 0)
+    || draft.questions?.some(question => BigInt(question.editSeq) > BigInt(value.editSeq)))) return false;
+  if (pending?.kind === "team-question-response") {
+    const draft = drafts.find(draft => draft.planId === pending.request.planId)?.questions?.find(draft => draft.questionPostId === pending.request.response.questionPostId);
+    return !!draft && BigInt(draft.editSeq) >= BigInt(pending.submittedSeq) && pending.question.planId === pending.request.planId
+      && pending.question.publication.postId === pending.request.response.questionPostId && pending.question.publication.question?.kind === "open";
+  }
   if (pending?.kind === "team-recovery") {
     const part = drafts.find(draft => draft.planId === pending.request.recovery.planId)?.recovery;
     const original = pending.request, authorization = pending.authorization;

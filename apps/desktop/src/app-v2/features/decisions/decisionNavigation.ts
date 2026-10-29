@@ -8,7 +8,9 @@ import { currentDiagnosticRun, sameReviewBasis } from "../../../reviewDiagnostic
 import { translationCommands, translationHistoryAfter } from "../../../translationCommands";
 import { resourceDraftCommands, resourcePendingProject } from "../../../resourceDraftCommands";
 import { sourceDraftCommands } from "../../../sourceDraftCommands";
-import { readDecisionTarget } from "./decisionTargetReads";
+import { readDecisionTarget, teamQuestionMatchesDecision } from "./decisionTargetReads";
+import { teamQuestionCommands } from "../../../teamQuestionCommands";
+import { validateResponseProposalWorkPlanLink } from "../../../generated/conversations.validators";
 import type { SourceReviewTarget } from "../source/sourceTypes";
 
 export type DecisionNavigation =
@@ -21,6 +23,7 @@ export type DecisionNavigation =
   | { kind: "source-request"; slot: "primary" | "source-hook-stop"; actionId: string }
   | { kind: "source-review"; target: SourceReviewTarget }
   | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
+  | { kind: "conversation-team-question"; conversationId: string; planId: string; questionPostId: string }
   | { kind: "knowledge-proposal"; proposal: ConversationProposalRef; entryIndex: number }
   | { kind: "details" };
 
@@ -35,6 +38,8 @@ export interface DecisionNavigationPorts {
   sourceTarget: typeof readDecisionTarget;
   proposal: typeof conversationCommands.readProposal;
   knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
+  teamQuestion: typeof teamQuestionCommands.question;
+  proposalWorkPlan: typeof conversationCommands.readProposalWorkPlan;
 }
 const ports: DecisionNavigationPorts = {
   revision: request => translationCommands.revision(request),
@@ -47,6 +52,8 @@ const ports: DecisionNavigationPorts = {
   sourceTarget: (...args) => readDecisionTarget(...args),
   proposal: request => conversationCommands.readProposal(request),
   knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
+  teamQuestion: request => teamQuestionCommands.question(request),
+  proposalWorkPlan: request => conversationCommands.readProposalWorkPlan(request),
 };
 
 export class DecisionNavigationChanged extends Error {
@@ -76,6 +83,16 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
   }
   present();
   switch (action.kind) {
+    case "answer-team-question": {
+      const question = await commands.teamQuestion({ ...ctx, planId: action.planId, questionPostId: action.questionPostId }); present();
+      match(teamQuestionMatchesDecision(fixed.item, question) && fixed.item.state === "pending" && question.state === "open" && question.response === null);
+      const conversation = fixed.item.targets.find(target => target.kind === "conversation");
+      if (!conversation) return { kind: "details" };
+      const link = await commands.proposalWorkPlan({ ...ctx, conversationId: conversation.conversationId, planId: action.planId }); present();
+      match(validateResponseProposalWorkPlanLink(link) && link.projectId === ctx.projectId && link.conversationId === conversation.conversationId
+        && link.planId === action.planId && BigInt(link.ordinal) > 0n && /^[a-f0-9]{64}$/.test(link.planDigest));
+      return { kind: "conversation-team-question", conversationId: link.conversationId, planId: link.planId, questionPostId: action.questionPostId };
+    }
     case "compare-source-mapping":
     case "resolve-source-mapping": {
       const target = await commands.sourceTarget(ctx, fixed.item, current); present();
@@ -232,7 +249,8 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
         const target = conversationPendingTarget(pending);
         const actionId = conversationPendingActionId(pending);
         const planId = pending.kind === "proposal-work-plan" || pending.kind === "work-plan-start" || pending.kind === "work-plan-control"
-          ? pending.request.planId : pending.kind === "team-message" || pending.kind === "team-publication" ? pending.request.lease.planId
+          ? pending.request.planId : pending.kind === "team-question-response" ? pending.request.planId
+            : pending.kind === "team-message" || pending.kind === "team-publication" ? pending.request.lease.planId
             : pending.kind === "team-recovery" ? pending.request.recovery.planId : null;
         match(target.projectId === ctx.projectId && target.conversationId === conversationId && actionId === original.actionId && planMatches(planId));
       }

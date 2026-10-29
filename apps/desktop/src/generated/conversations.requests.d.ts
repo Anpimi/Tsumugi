@@ -148,6 +148,9 @@ export type TeamExecutionPolicy = {
   profile: "bounded-team-1";
 };
 export type TeamWorkKind = "translation" | "review" | "evidence";
+export type TeamQuestionPolicy = {
+  profile: "current-plan-1";
+};
 /**
  * Explicit model sharing of guidance declared by the captured tools.
  */
@@ -520,6 +523,10 @@ export interface PlanOptions {
    */
   teamDiscussions?: TeamDiscussionPolicy | null;
   teamExecution?: TeamExecutionPolicy | null;
+  /**
+   * Explicit questions and later human answers under the captured sharing boundary.
+   */
+  teamQuestions?: TeamQuestionPolicy | null;
   /**
    * Absent means that tool guidance is available only to the human reader.
    */

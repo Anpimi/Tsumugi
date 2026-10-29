@@ -78,7 +78,7 @@ export function TeamDiscussionHistory({ context, status, open, writable, session
     const replyTo = post.publication.replyTo, supersedes = post.publication.supersedes;
     return <article key={post.publication.postId}>
       <h4>{targetName(post)}</h4>
-      <p>{author.kind === "human" ? t("ai.teamHistory.localUser") : role?.request.displayName}</p>
+      <p>{author.kind !== "member" ? t("ai.teamHistory.localUser") : role?.request.displayName}</p>
       {role ? <details><summary>{t("ai.teamHistory.roleAtPublication")}</summary><pre className="ai-text">{role.request.role}</pre><p>{role.request.roleVersionId}</p></details> : null}
       <p>{t(`ai.teamHistory.kinds.${post.publication.kind}`)}</p><pre className="ai-text">{post.publication.body}</pre>
       <div className="execution-actions">

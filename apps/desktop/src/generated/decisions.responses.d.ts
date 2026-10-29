@@ -145,6 +145,11 @@ export type DecisionDeliveryJobKind = "preview" | "export" | "reconcile";
  */
 export type DecisionAction =
   | {
+      kind: "answer-team-question";
+      planId: ExecutionId;
+      questionPostId: ExecutionId;
+    }
+  | {
       kind: "compare-candidate";
       revisionId: ExecutionId;
       sourceRevisionId: ExecutionId;
@@ -245,6 +250,7 @@ export type DecisionLocalRequestKind =
   | "team-message"
   | "team-publication"
   | "team-recovery"
+  | "team-question-response"
   | "resource-typed-context-save"
   | "resource-typed-context-withdraw"
   | "resource-knowledge-decision"
@@ -262,6 +268,11 @@ export type DecisionLocalRequestKind =
   | "source-adopt"
   | "source-hook-stop";
 export type DecisionEvidence =
+  | {
+      kind: "team-question";
+      memberId: ExecutionId;
+      roleVersionId: ExecutionId;
+    }
   | {
       blockerCount: number;
       kind: "delivery";

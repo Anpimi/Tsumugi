@@ -1,4 +1,6 @@
 export const conversationWorkPlansEn = {
+  questionPlanTargetLoading: "Reading the original plan for this member question…",
+  questionPlanTargetFailed: "The question’s original plan could not be read or matched to this conversation. Read it again; your input is kept.",
   planTitle: "Confirm a work plan", planReviewOpen: "Review a work plan", planClose: "Close work-plan setup", planConfirming: "Recording work-plan confirmation…",
   planHelp: "Review this saved proposal, choose the connection and limits, then prepare its exact work plan. Planning consent is not carried over.",
   planBasedOn: "From proposal version {{number}}", planFixedScope: "{{count, number}} fixed entries. The proposal’s steps and selection policy are kept.",
@@ -30,6 +32,8 @@ export const conversationWorkPlansEn = {
 };
 
 export const conversationWorkPlansZh: typeof conversationWorkPlansEn = {
+  questionPlanTargetLoading: "正在读取成员问题所属的原计划…",
+  questionPlanTargetFailed: "没能读到问题所属的原计划，或计划与这个会话不符。可以重新读取，当前输入仍保留。",
   planTitle: "确认工作计划", planReviewOpen: "核对工作计划", planClose: "收起工作计划设置", planConfirming: "正在记录工作计划的确认…",
   planHelp: "先核对已保存的提议，选择连接和限额，再准备实际工作计划。之前规划时的许可不会沿用。",
   planBasedOn: "来自提议第 {{number}} 版", planFixedScope: "固定处理 {{count, number}} 个条目，保留提议中的步骤和译文选择方式。",

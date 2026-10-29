@@ -22,8 +22,12 @@ pub mod team_execution;
 pub use team_execution::*;
 pub mod team_recovery;
 pub use team_recovery::*;
+pub mod team_questions;
+pub use team_questions::*;
 pub mod team_tool_history;
 pub use team_tool_history::*;
+mod run_history;
+pub use run_history::*;
 pub mod mcp_retrieval;
 pub use mcp_retrieval::*;
 mod maintenance;
@@ -681,6 +685,9 @@ pub struct PlanOptions {
     pub team_discussions: Option<TeamDiscussionPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_execution: Option<TeamExecutionPolicy>,
+    /// Explicit questions and later human answers under the captured sharing boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_questions: Option<TeamQuestionPolicy>,
     /// Absent means that tool guidance is available only to the human reader.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_guidance: Option<ToolGuidancePolicy>,
@@ -720,6 +727,7 @@ impl Default for PlanOptions {
             deliver: false,
             team_discussions: None,
             team_execution: None,
+            team_questions: None,
             tool_guidance: None,
             mcp_term_query: None,
         }
@@ -743,6 +751,8 @@ impl PlanOptions {
             || (self.deliver && !self.assisted(WorkStage::Delivery))
             || (self.team_discussions.is_some() && !self.assisted(WorkStage::Generation))
             || (self.team_execution.is_some() && self.team_discussions.is_none())
+            || (self.team_questions.is_some()
+                && (self.team_execution.is_none() || self.team_discussions.is_none()))
             || (self.tool_guidance.is_some() && !self.assisted(WorkStage::Generation))
             || (self.mcp_term_query.is_some()
                 && (!self.assisted(WorkStage::Generation) || self.team_execution.is_some()))
@@ -993,6 +1003,7 @@ impl WorkPlan {
         mut self,
         policy: TeamExecutionPolicy,
         inputs: Vec<TeamMemberInput>,
+        questions: Option<TeamQuestionPolicy>,
     ) -> Result<Self, ExecutionError> {
         let root_limit = ai::settings(&self.fixed_input()?)?.config.max_requests;
         // A member may perform several bounded requests within one EX item.
@@ -1011,6 +1022,7 @@ impl WorkPlan {
             .limits
             .timeout_ms = timeout_ms as u32;
         self.options.team_execution = Some(policy);
+        self.options.team_questions = questions;
         self.team_inputs = inputs;
         self.digest = self.computed_digest()?;
         self.validate()?;

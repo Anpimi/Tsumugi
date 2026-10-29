@@ -161,7 +161,7 @@ fn team_human_messages_bind_original_scope_limits_and_stopped_history() {
     );
     assert!(accepted.post_ids.is_empty());
     assert_eq!(accepted.cause_message_id, None);
-    assert_eq!(accepted.sender.binding(), &scope.execution_binding());
+    assert_eq!(accepted.sender.binding(), Some(&scope.execution_binding()));
     assert_eq!(
         store
             .send_human_team_message(&scope, "local-user", &write)

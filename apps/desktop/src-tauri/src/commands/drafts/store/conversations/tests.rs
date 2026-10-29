@@ -1541,7 +1541,7 @@ fn team_pending_fixture(write: &mut ConversationDraftWrite, publication: bool) -
         source_snapshot_id: ExecutionId::new(), source_revision_id: ExecutionId::new() };
     let body = "  Original A e\u{301} 👩🏽‍💻 {{name}}  ".to_string();
     let reply_to = Some(ExecutionId::new());
-    write.value.team_drafts.push(ConversationTeamDraft { plan_id, plan_digest: "a".repeat(64), recovery: None, recovery_recorded: None,
+    write.value.team_drafts.push(ConversationTeamDraft { questions: vec![], plan_id, plan_digest: "a".repeat(64), recovery: None, recovery_recorded: None,
         guidance: Some(ConversationTeamGuidanceDraft { edit_seq: rev(1), member_id: Some(member_id), unit_id: Some(target.unit_id),
             body: if publication { "Other unsent guidance".into() } else { body.clone() } }),
         publication: Some(ConversationTeamPublicationDraft { edit_seq: rev(1), unit_id: Some(target.unit_id), reply_to,
@@ -1551,7 +1551,7 @@ fn team_pending_fixture(write: &mut ConversationDraftWrite, publication: bool) -
         ConversationDraftPending::TeamPublication { conversation_id: write.key.conversation_id, target_name: "Captured entry {{name}} 中文".into(),
             request: TeamPublicationOriginal { project_id: write.key.project_id, lease,
                 publication: PublishTeamDiscussion { post_id: ExecutionId::new(), target, kind: TeamDiscussionKind::Note,
-                    body, references: vec![], reply_to, supersedes: None } }, submitted_seq: rev(1) }
+                    body, references: vec![], reply_to, supersedes: None, question: None } }, submitted_seq: rev(1) }
     } else {
         ConversationDraftPending::TeamMessage { conversation_id: write.key.conversation_id, target_name: "Captured entry {{name}} 中文".into(),
             request: TeamMessageOriginal { project_id: write.key.project_id, lease,

@@ -661,6 +661,7 @@ fn proposal_migration_preserves_supported_history_across_abort_boundaries() {
                         references: vec![],
                         reply_to: None,
                         supersedes: None,
+                        question: None,
                     },
                 )
                 .unwrap();

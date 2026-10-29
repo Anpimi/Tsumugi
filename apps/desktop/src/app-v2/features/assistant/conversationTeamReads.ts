@@ -78,13 +78,15 @@ function checkExecution(link: ConversationPlanLink, status: WorkPlanStatusView, 
     checkTarget(status, message.target);
     match(hasRole(page.roleVersions, message.recipientMemberId, message.recipientRoleVersionId));
     if (message.sender.kind === "member") checkAuthor(status, page.roleVersions, message.sender.author);
-    else match(message.sender.binding.lease.planId === plan.planId && generation(message.sender.binding.lease.generation, status.lease.generation));
+    else if (message.sender.kind === "human") match(message.sender.binding.lease.planId === plan.planId && generation(message.sender.binding.lease.generation, status.lease.generation));
   }
   match(page.consumptions.every(consumption => page.messages.some(message => message.messageId === consumption.messageId)));
 }
 function checkPost(status: WorkPlanStatusView, post: TeamDiscussionPost, roles: readonly TeamMemberRole[]) {
   match(post.planId === status.plan.planId); checkTarget(status, post.publication.target);
   if (post.author.kind === "member") checkAuthor(status, roles, post.author.author);
+  else if (post.author.kind === "local-human") match(post.author.actor === "local-user" && post.publication.kind === "human-question"
+    && post.publication.question != null && post.publication.question.kind !== "open");
   else match(post.author.binding.lease.planId === status.plan.planId && generation(post.author.binding.lease.generation, status.lease.generation));
 }
 

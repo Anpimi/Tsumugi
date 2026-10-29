@@ -1,4 +1,8 @@
 export const decisionDetailsEn = {
+  decisionDetailsTeamQuestionHelp: "Read the member’s original question, then open its saved conversation to answer it.",
+  decisionDetailsTeamQuestionReadOnly: "This question has no saved conversation association. Its original text remains available here; no conversation or answer permission is created.",
+  decisionDetailsTeamQuestionBody: "Original member question", decisionDetailsTeamQuestionResponse: "Recorded human response",
+  decisionDetailsTeamQuestionOpen: "Open and answer original question", decisionDetailsTeamQuestionState: { open: "Awaiting a human answer", resolved: "A human answer is recorded", dismissed: "The question was dismissed" },
   decisionsKnowledgeProposalTitle: "Knowledge to review",
   decisionsKnowledgeProposalHelp: "Review an exact saved proposal item, choose its destination and scope, then adopt, keep or reject it.",
   decisionsKnowledgeProposalOpen: "Review knowledge proposal",
@@ -8,6 +12,7 @@ export const decisionDetailsEn = {
   decisionDetailsKnowledgeEvidence: "Based on {{count, number}} original entries",
   decisionDetailsContent: "Original record contents",
   decisionDetailsTitles: {
+    "answer-team-question": "Team member question",
     "review-knowledge-proposal": "Knowledge proposal review",
     "compare-source-mapping": "Source matches before import", "clarify-conversation-proposal": "Proposal questions",
     "review-resource": "Knowledge proposal", "resolve-source-mapping": "Source mapping", "inspect-execution": "Execution record",
@@ -73,6 +78,10 @@ export const decisionDetailsEn = {
 };
 
 export const decisionDetailsZh: typeof decisionDetailsEn = {
+  decisionDetailsTeamQuestionHelp: "先核对成员提出的原问题，再回到它所属的已保存会话回答。",
+  decisionDetailsTeamQuestionReadOnly: "这个问题没有关联已保存的会话。这里保留原文供你查看，不会新建会话或建立回答许可。",
+  decisionDetailsTeamQuestionBody: "成员的原问题", decisionDetailsTeamQuestionResponse: "已记录的人工答复",
+  decisionDetailsTeamQuestionOpen: "打开并回答原问题", decisionDetailsTeamQuestionState: { open: "等待人工回答", resolved: "已记录人工回答", dismissed: "问题已忽略" },
   decisionsKnowledgeProposalTitle: "待核对的知识提议",
   decisionsKnowledgeProposalHelp: "查看这项提议，选好要保存到的资料和适用范围，再决定采用、保留还是拒绝。",
   decisionsKnowledgeProposalOpen: "核对知识提议",
@@ -82,6 +91,7 @@ export const decisionDetailsZh: typeof decisionDetailsEn = {
   decisionDetailsKnowledgeEvidence: "依据 {{count, number}} 个原条目",
   decisionDetailsContent: "原记录内容",
   decisionDetailsTitles: {
+    "answer-team-question": "团队成员提问",
     "review-knowledge-proposal": "知识提议审定",
     "compare-source-mapping": "导入前的源文对应", "clarify-conversation-proposal": "提议中的问题",
     "review-resource": "知识提议", "resolve-source-mapping": "源内容对应关系", "inspect-execution": "执行记录",

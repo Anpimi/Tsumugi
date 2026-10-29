@@ -13,6 +13,7 @@ import type {
   WorkPlanTeamExecutionRequest, WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanTeamRecoveryStateRequest, WorkPlanTeamRecoverySettlementRequest,
   WorkPlanTeamWorkToolsRequest,
   WorkPlanTeamMessageRequest,
+  WorkPlanHistoryRequest,
 } from "./generated/ai.requests";
 import type { AttemptDetail, ExecutionOutputView, WorkPlanView, TeamDiscussionPost, WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolView, WorkPlanToolSpec, PlanSelectionBasis,
   WorkPlanAgentGuidanceView, WorkPlanAgentGuidanceTextView, WorkPlanTeamRecoveryPreviewView, TeamRecoveryReceipt, WorkPlanTeamRecoveryStateView, WorkPlanTeamRecoveryActionView,
@@ -24,6 +25,7 @@ import { checkerIdentity, contractIdentity } from "./reviewIdentity";
 import { validWorkPlanApplicationTools } from "./workPlanApplicationTools";
 export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkPlanRunView, WorkProtection,
+  WorkPlanHistoryPage, WorkPlanHistoryRow, WorkPlanHistoryBaseline,
   MaintenanceAssessment, MaintenanceAction, MaintenanceChoice, MaintenancePlanBasis,
   TeamHistoryPage, TeamDiscussionPost, TeamMemberRole,
   TeamExecutionView,
@@ -355,7 +357,7 @@ export const workPlanCommands = {
         || BigInt(work.sequence) <= BigInt(index ? value.works[index - 1].sequence : request.afterWork ?? "0"))
       || value.messages.some((message, index) => message.planId !== request.planId
         || (message.sender.kind === "human" ? message.sender.actor !== "local-user" || message.sender.binding.lease.planId !== request.planId || message.sender.binding.delegation !== null
-          : message.sender.author.binding.lease.planId !== request.planId || !value.roleVersions.some(role => message.sender.kind === "member" && role.request.memberId === message.sender.author.memberId && role.request.roleVersionId === message.sender.author.roleVersionId))
+          : message.sender.kind !== "member" || message.sender.author.binding.lease.planId !== request.planId || !value.roleVersions.some(role => message.sender.kind === "member" && role.request.memberId === message.sender.author.memberId && role.request.roleVersionId === message.sender.author.roleVersionId))
         || !value.roleVersions.some(role => role.request.memberId === message.recipientMemberId && role.request.roleVersionId === message.recipientRoleVersionId)
         || BigInt(message.sequence) <= BigInt(index ? value.messages[index - 1].sequence : request.afterMessage ?? "0"))
       || new Set(value.works.map(work => work.receipt.intentId)).size !== value.works.length
@@ -370,7 +372,8 @@ export const workPlanCommands = {
     const roles = value.authorRoles;
     if (value.planId !== request.planId || value.posts.length > request.limit
       || value.posts.some((post, index) => post.planId !== request.planId
-        || (post.author.kind === "human" ? post.author.binding : post.author.author.binding).lease.planId !== request.planId
+        || (post.author.kind === "local-human" ? post.author.actor !== "local-user" || post.publication.question == null || post.publication.question.kind === "open"
+          : (post.author.kind === "human" ? post.author.binding : post.author.author.binding).lease.planId !== request.planId)
         || BigInt(post.sequence) <= BigInt(index ? value.posts[index - 1].sequence : request.after ?? "0"))
       || new Set(value.posts.map(post => post.publication.postId)).size !== value.posts.length
       || value.members.some(role => role.planId !== request.planId)
@@ -385,8 +388,9 @@ export const workPlanCommands = {
   teamPost: async (request: WorkPlanTeamPostRequest) => {
     if (!validators.validateRequestWorkPlanTeamPost(request)) throw new Error("Invalid team post request");
     const value = await checkedInvoke("read_work_plan_team_post", request, validators.validateResponseWorkPlanTeamPost);
-    const binding = value.author.kind === "human" ? value.author.binding : value.author.author.binding;
-    if (value.planId !== request.planId || value.publication.postId !== request.postId || binding.lease.planId !== request.planId) invalidAcknowledgement();
+    const binding = value.author.kind === "local-human" ? null : value.author.kind === "human" ? value.author.binding : value.author.author.binding;
+    if (value.planId !== request.planId || value.publication.postId !== request.postId || (binding ? binding.lease.planId !== request.planId : value.author.kind !== "local-human" || value.author.actor !== "local-user"
+      || value.publication.question == null || value.publication.question.kind === "open")) invalidAcknowledgement();
     return value;
   },
   publishTeam: async (input: WorkPlanTeamPublishRequest) => {
@@ -537,6 +541,48 @@ export const workPlanCommands = {
       || (value.budget !== null || start !== null) && value.budgetRootTaskId === null
       || start !== null && (start.projectId !== request.projectId || start.planId !== request.planId
         || BigInt(start.expectedGeneration) === 0n || BigInt(start.expectedGeneration) > BigInt(value.lease.generation))) invalidAcknowledgement();
+    return value;
+  },
+  history: async (input: WorkPlanHistoryRequest) => {
+    const request = structuredClone(input);
+    if (!validators.validateRequestWorkPlanHistory(request) || request.after !== "0" && request.baseline === null
+      || request.baseline != null && request.baseline.lease.planId !== request.planId) throw new Error("Invalid work-plan history request");
+    const value = await checkedInvoke("read_work_plan_history", request, validators.validateResponseWorkPlanHistory);
+    const basis = value.baseline, last = basis.lastStart, generation = BigInt(basis.lease.generation), after = BigInt(request.after);
+    if (value.projectId !== request.projectId || value.planId !== request.planId || basis.lease.planId !== request.planId
+      || !/^[a-f0-9]{64}$/.test(value.planDigest) || generation === 0n || after > generation
+      || request.baseline != null && jsonIdentity(request.baseline) !== jsonIdentity(basis)
+      || last !== null && (last.projectId !== request.projectId || last.planId !== request.planId
+        || BigInt(last.expectedGeneration) === 0n || BigInt(last.expectedGeneration) > generation)
+      || value.rows.length > request.limit || BigInt(value.rows.length) > generation - after
+      || (value.rows.length === 0) !== (after === generation)
+      || new Set(value.rows.map(row => row.actionId)).size !== value.rows.length) invalidAcknowledgement();
+    for (const [index, row] of value.rows.entries()) {
+      const action = row.action, input = row.input, start = row.start;
+      if (row.lease.planId !== request.planId || BigInt(row.lease.generation) !== after + BigInt(index) + 1n
+        || input !== null && !/^[a-f0-9]{64}$/.test(input.inputDigest)
+        || start !== null && (!input || start.projectId !== request.projectId || start.planId !== request.planId
+          || start.actionId !== row.actionId || start.expectedGeneration !== row.lease.generation
+          || start.taskId !== input.taskId || start.attemptId !== input.attemptId
+          || !last || BigInt(start.expectedGeneration) > BigInt(last.expectedGeneration))
+        || last !== null && last.expectedGeneration === row.lease.generation && jsonIdentity(last) !== jsonIdentity(start)) invalidAcknowledgement();
+      if (action.kind === "authorize") {
+        if (row.lease.generation !== "1" || row.state !== "active" || !action.confirmed || action.digest !== value.planDigest
+          || row.cancellationRevision !== "0" || !input || input.parentTask !== null) invalidAcknowledgement();
+      } else if (action.kind === "control") {
+        const state = { pause: "paused", stop: "stopped", "take-over": "taken-over", continue: "active" }[action.command];
+        if (row.lease.generation === "1" || BigInt(action.expectedGeneration) + 1n !== BigInt(row.lease.generation) || row.state !== state
+          || (action.command === "continue" ? !action.confirmed || action.expiresAt === null || !input : input !== null || start !== null || action.expiresAt !== null)) invalidAcknowledgement();
+      } else if (row.state !== "active" || !action.confirmed || !/^[a-f0-9]{64}$/.test(action.digest)
+        || action.baseLease.planId !== request.planId || BigInt(action.baseLease.generation) + 1n !== BigInt(row.lease.generation)
+        || action.baseEffectiveVersion.lease.planId !== request.planId
+        || BigInt(action.baseEffectiveVersion.lease.generation) > BigInt(action.baseLease.generation)
+        || !input || input.parentTask === null || !action.members.some(member => member.memberId === action.work.memberId)
+        || new Set(action.members.map(member => member.memberId)).size !== action.members.length
+        || new Set(action.members.map(member => member.roleVersionId)).size !== action.members.length) invalidAcknowledgement();
+    }
+    const end = after + BigInt(value.rows.length), expectedNext = end < generation ? end.toString() : null;
+    if (value.nextAfter !== expectedNext) invalidAcknowledgement();
     return value;
   },
   action: async (request: WorkPlanActionRequest) => {

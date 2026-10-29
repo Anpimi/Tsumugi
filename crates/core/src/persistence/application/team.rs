@@ -88,7 +88,7 @@ fn human_publication_action_in(
             actor: saved,
             binding,
         } => saved == actor && binding.lease == *lease && binding.delegation.is_none(),
-        TeamDiscussionAuthor::Member { .. } => false,
+        TeamDiscussionAuthor::Member { .. } | TeamDiscussionAuthor::LocalHuman { .. } => false,
     };
     if post.plan_id != plan.plan_id || post.publication != *publication || !matches {
         return Err(fail(ErrorCode::ResultMismatch, "team-human-action"));
@@ -596,7 +596,7 @@ fn same_author(left: &TeamDiscussionAuthor, right: &TeamDiscussionAuthor) -> boo
 }
 /// Only an explicit resolution at the current chain tip releases its objections.
 fn required_posts(posts: &[TeamDiscussionPost]) -> std::collections::BTreeSet<ExecutionId> {
-    posts
+    let mut required: std::collections::BTreeSet<_> = posts
         .iter()
         .filter(|post| {
             if !matches!(
@@ -615,9 +615,12 @@ fn required_posts(posts: &[TeamDiscussionPost]) -> std::collections::BTreeSet<Ex
             tip.publication.kind != TeamDiscussionKind::Resolution
         })
         .map(|post| post.publication.post_id)
-        .collect()
+        .collect();
+    required.extend(super::team_questions::required(posts));
+    required
 }
-fn check_content(write: &PublishTeamDiscussion) -> Result<(), ExecutionError> {
+pub(super) fn check_content(write: &PublishTeamDiscussion) -> Result<(), ExecutionError> {
+    super::team_questions::check_content(write)?;
     if write.body.trim().is_empty() {
         return Err(fail(ErrorCode::InvalidInput, "team-body"));
     }
@@ -667,8 +670,19 @@ fn publish(
             return Err(conflict());
         }
     }
+    append_post(c, plan.plan_id, author, write, &previous)
+}
+
+pub(super) fn append_post(
+    c: &Connection,
+    plan_id: ExecutionId,
+    author: TeamDiscussionAuthor,
+    write: &PublishTeamDiscussion,
+    previous: &[TeamDiscussionPost],
+) -> Result<TeamDiscussionPost, ExecutionError> {
+    super::team_questions::check_capacity(previous, write)?;
     let value = TeamDiscussionPost {
-        plan_id: plan.plan_id,
+        plan_id,
         sequence: Revision::new(previous.len() as u64 + 1)?,
         author,
         publication: write.clone(),
@@ -678,7 +692,7 @@ fn publish(
         "INSERT INTO application_team_posts VALUES(?1,?2,?3,?4,?5,?6,?7)",
         params![
             write.post_id.to_string(),
-            plan.plan_id.to_string(),
+            plan_id.to_string(),
             value.sequence.get() as i64,
             write.reply_to.map(|id| id.to_string()),
             write.supersedes.map(|id| id.to_string()),
@@ -836,6 +850,9 @@ impl ProjectStore {
         author: &CapturedTeamAuthor,
         write: &PublishTeamDiscussion,
     ) -> Result<TeamDiscussionPost, ExecutionError> {
+        if write.question.is_some() || write.kind == TeamDiscussionKind::HumanQuestion {
+            return Err(fail(ErrorCode::Unauthorized, "team-question-dedicated-action"));
+        }
         let tx = self.execution_write()?;
         self.check_work_plan_agent_scope(&author.scope)?;
         author_live(&tx, &author.scope, &author.author)?;
@@ -860,6 +877,9 @@ impl ProjectStore {
         actor: &str,
         write: &PublishTeamDiscussion,
     ) -> Result<TeamDiscussionPost, ExecutionError> {
+        if write.question.is_some() || write.kind == TeamDiscussionKind::HumanQuestion {
+            return Err(fail(ErrorCode::Unauthorized, "team-question-dedicated-action"));
+        }
         if scope.delegation.is_some() || actor.trim().is_empty() || actor.len() > 128 {
             return Err(denied());
         }
@@ -1071,7 +1091,7 @@ impl ProjectStore {
             let through_sequence = Revision::new(posts.last().map_or(0, |p| p.sequence.get()))?;
             let visible: Vec<_> = posts
                 .into_iter()
-                .filter(|p| p.publication.target == author.target)
+                .filter(|p| p.publication.target == author.target && super::team_questions::visible(&plan, p))
                 .collect();
             let required = required_posts(&visible);
             let limits = TeamDiscussionLimits::current_plan();
@@ -1185,7 +1205,8 @@ fn validate_view(c: &Connection, view: &TeamDiscussionView) -> Result<(), Execut
     }
     let visible: Vec<_> = known
         .iter()
-        .filter(|p| p.sequence <= view.through_sequence && p.publication.target == view.target)
+        .filter(|p| p.sequence <= view.through_sequence && p.publication.target == view.target
+            && super::team_questions::visible(&plan, p))
         .collect();
     let mut seen = std::collections::BTreeSet::new();
     let required = required_posts(&visible.iter().map(|p| (*p).clone()).collect::<Vec<_>>());
@@ -1273,7 +1294,7 @@ pub(crate) fn validate_team_provider_view_in(
     Ok(())
 }
 
-struct TeamHistory {
+pub(super) struct TeamHistory {
     members: Vec<TeamMemberRole>,
     roles: std::collections::BTreeMap<ExecutionId, TeamMemberRole>,
     posts: Vec<TeamDiscussionPost>,
@@ -1326,7 +1347,7 @@ pub(super) fn human_author_history(
 }
 
 /// Reopening and trusted history reads use the same bounded historical checks.
-fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionError> {
+pub(super) fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionError> {
     let mut query=c.prepare("SELECT member_id,task_id FROM application_team_members WHERE plan_id=?1 ORDER BY member_id LIMIT 9").map_err(sql)?;
     let members = query
         .query_map([plan.plan_id.to_string()], |r| {
@@ -1421,6 +1442,12 @@ fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionE
                 human_author_history(c, plan, actor, binding)?;
                 binding
             }
+            TeamDiscussionAuthor::LocalHuman { .. } => {
+                if !matches!(p.publication.question, Some(TeamQuestionEvent::Resolve { .. } | TeamQuestionEvent::Dismiss { .. })) {
+                    return Err(corrupt());
+                }
+                continue;
+            }
         };
         if binding.lease.plan_id != plan.plan_id
             || binding.lease.generation.get() == 0
@@ -1448,6 +1475,7 @@ fn history_in(c: &Connection, plan: &WorkPlan) -> Result<TeamHistory, ExecutionE
             }
         }
     }
+    super::team_questions::validate_history(plan, &posts)?;
     Ok(TeamHistory {
         members: latest,
         roles,
@@ -1479,6 +1507,11 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
         history_in(c, &plan)?;
     }
     Ok(())
+}
+
+pub(super) fn validate_version(c: &Connection, version: i64) -> Result<(), ExecutionError> {
+    if version < 71 { super::team_questions::validate_legacy(c)?; }
+    validate(c)
 }
 
 #[cfg(test)]
@@ -1555,6 +1588,7 @@ mod tests {
             references: vec![],
             reply_to: None,
             supersedes: None,
+            question: None,
         }
     }
     fn control(plan: &WorkPlan, generation: u64, command: WorkPlanCommand) -> ControlWorkPlan {

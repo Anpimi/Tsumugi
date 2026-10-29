@@ -3,6 +3,7 @@ use crate::persistence::application::tests::{config, consent, fixture};
 
 mod human_guidance;
 mod work_budget;
+mod questions;
 
 fn setup(
     no_progress: u32,
@@ -21,6 +22,17 @@ fn setup(
 fn setup_with_budget(
     no_progress: u32,
     root_limit: u32,
+) -> (
+    tempfile::TempDir, ProjectStore, WorkPlan, WorkPlanReceipt, PreparedTeamWork,
+    DispatchRequest, CapturedTeamAuthor, Vec<TeamExecutionMember>,
+) {
+    setup_with_questions(no_progress, root_limit, false)
+}
+
+fn setup_with_questions(
+    no_progress: u32,
+    root_limit: u32,
+    questions: bool,
 ) -> (
     tempfile::TempDir,
     ProjectStore,
@@ -67,6 +79,7 @@ fn setup_with_budget(
     ];
     let mut options = PlanOptions::default();
     options.team_discussions = Some(TeamDiscussionPolicy::CurrentPlanV2 {});
+    options.team_questions = questions.then_some(TeamQuestionPolicy::CurrentPlanV1 {});
     options.team_execution = Some(TeamExecutionPolicy::BoundedTeamV1 {
         initial_member_id: members[0].member_id,
         initial_unit_id: units[0],
@@ -804,6 +817,7 @@ fn team_coordination_new_text_and_reference_ids_do_not_reset_unconfirmed_complet
                     references: vec![TeamArtifactReference::TranslationRevision { revision_id }],
                     reply_to: None,
                     supersedes: None,
+                    question: None,
                 },
             )
             .unwrap();

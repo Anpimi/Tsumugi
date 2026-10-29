@@ -109,6 +109,7 @@ pub enum TeamDiscussionKind {
     Challenge,
     Rejection,
     Resolution,
+    HumanQuestion,
 }
 
 /// Model arguments contain content and relationships, never an author override.
@@ -123,6 +124,8 @@ pub struct PublishTeamDiscussion {
     pub references: Vec<TeamArtifactReference>,
     pub reply_to: Option<ExecutionId>,
     pub supersedes: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<super::TeamQuestionEvent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,13 +151,15 @@ pub enum TeamDiscussionAuthor {
         actor: String,
         binding: WorkPlanAgentExecutionBinding,
     },
+    LocalHuman { actor: String },
 }
 impl TeamDiscussionAuthor {
     /// Durable provenance shared by member and trusted human publications.
-    pub fn binding(&self) -> &WorkPlanAgentExecutionBinding {
+    pub fn binding(&self) -> Option<&WorkPlanAgentExecutionBinding> {
         match self {
-            Self::Member { author } => &author.binding,
-            Self::Human { binding, .. } => binding,
+            Self::Member { author } => Some(&author.binding),
+            Self::Human { binding, .. } => Some(binding),
+            Self::LocalHuman { .. } => None,
         }
     }
 }

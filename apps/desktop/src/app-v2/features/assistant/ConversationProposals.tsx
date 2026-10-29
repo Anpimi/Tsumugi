@@ -104,6 +104,13 @@ function ProposalEditor({ owner, input, draft, visible, disabled, gate, viewId, 
     </div> : <><ConversationKnowledgeFields entries={content.entries} unitIds={scope?.kind === "units" ? scope.unitIds : []} labels={labels} disabled={blocked} allowed={allowed}
       change={edit => owner.editProposal(conversationId, proposalId, value => value.kind === "knowledge-proposal" ? { ...value, entries: edit(value.entries) } : value)}/>
       {!validProposalContent(content, run) ? <p role="status">{t("knowledgeProposalInvalid")}</p> : null}</>}
+    {content.kind === "proposal" && content.options.teamExecution && content.options.teamDiscussions ? <label className={styles.check}>
+      <TextInput type="checkbox" className={styles.checkbox} checked={content.options.teamQuestions != null} disabled={blocked}
+        onChange={event => { if (allowed()) owner.editProposal(conversationId, proposalId, value => value.kind === "proposal"
+          ? { ...value, options: { ...value.options, teamQuestions: event.target.checked ? { profile: "current-plan-1" } : undefined } } : value); }}/>
+      <span>{global("conversationTeamQuestions.enable")}</span>
+    </label> : null}
+    {content.kind === "proposal" && content.options.teamQuestions ? <p>{global("conversationTeamQuestions.enableHelp")}</p> : null}
     {failure ? <Banner tone="error"><p>{t("proposalSaveFailed")}</p><CommandFailureDetails failure={failure}/></Banner> : null}
     <div className={styles.actions}><Button variant="secondary" size="sm" disabled={blocked || (!!input.busy || input.journalBusy) || pending || readFailed || reading || changed || !base.data || !latest.data || !run || run.resultId !== base.data.origin.resultId || !validProposalContent(content, run)}
       onClick={event => { if (allowed()) { focus.current = event.currentTarget; void owner.saveProposal(conversationId, proposalId, current); } }}>{t("proposalSaveVersion")}</Button>

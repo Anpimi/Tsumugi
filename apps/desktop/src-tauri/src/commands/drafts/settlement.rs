@@ -45,6 +45,25 @@ pub(in crate::commands) fn observe_conversation_target(
         unreachable!("revocation handled above");
     };
     let recorded = match pending {
+        ConversationDraftPending::TeamQuestionResponse { conversation_id, request, question, .. }
+            if request.project_id == key.project_id && *conversation_id == key.conversation_id =>
+        {
+            store.read_conversation_proposal_work_plan(key.project_id, key.conversation_id, request.plan_id)?;
+            let current = store.read_team_question(request.project_id, request.plan_id, request.response.question_post_id)?;
+            if current.question != *question {
+                return Err(ExecutionError::new(ErrorCode::ResultMismatch, "conversation-drafts-team-question"));
+            }
+            let proof = store.team_question_response_settlement(request.project_id, request.plan_id,
+                crate::commands::execution::work_plans::team::LOCAL_ACTOR, &request.response)?;
+            use tsumugi_core::application::TeamQuestionResponseOutcome;
+            return Ok(match proof.outcome {
+                TeamQuestionResponseOutcome::Recorded { .. } => WorkPlanRequestOutcome::Recorded { receipt: () },
+                TeamQuestionResponseOutcome::Pending {} => WorkPlanRequestOutcome::Pending,
+                // Only an immutable terminal post for this exact question proves
+                // the answer cannot apply; lease withdrawal alone never does.
+                TeamQuestionResponseOutcome::ClosedByOther { .. } => WorkPlanRequestOutcome::FencedNotApplied,
+            });
+        }
         ConversationDraftPending::Create { request, .. }
             if request.project_id == key.project_id
                 && request.conversation_id == key.conversation_id =>

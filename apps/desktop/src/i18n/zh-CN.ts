@@ -1,4 +1,6 @@
+import { conversationTeamQuestionsZh } from "./conversationTeamQuestions";
 import { conversationTeamRecoveryZh } from "./conversationTeamRecovery";
+import { conversationRunHistoryZh } from "./conversationRunHistory";
 import { conversationTeamActionsZh } from "./conversationTeamActions";
 import { conversationTeamZh } from "./conversationTeam";
 import { deliveryWorkbenchZh } from "./deliveryWorkbench";
@@ -16,6 +18,8 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+  conversationTeamQuestions: conversationTeamQuestionsZh,
+conversationRunHistory: conversationRunHistoryZh,
 conversationTeamRecovery: conversationTeamRecoveryZh,
 conversationTeamActions: conversationTeamActionsZh,
 conversationTeam: conversationTeamZh,
@@ -1415,6 +1419,7 @@ ai: {
     "absent": "暂未查到匹配记录，原请求已保留。请稍后再次核对，或在授权有效期内重试。",
     "viewRecorded": "查看已保存的说明",
     "kinds": {
+      "human-question": "向你提问",
       "note": "说明",
       "challenge": "质疑",
       "rejection": "反对",

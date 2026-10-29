@@ -91,17 +91,49 @@ struct RequestedStart {
 struct History {
     last_start: Option<WorkPlanStartReceipt>,
     requested_start: Option<WorkPlanStartReceipt>,
+    latest_enqueue: Option<WorkPlanStartReceipt>,
+    rows: Vec<WorkPlanHistoryRow>,
+}
+
+fn history_row(request: &Request, receipt: &WorkPlanReceipt) -> Result<WorkPlanHistoryRow, ExecutionError> {
+    let action = match request {
+        Request::Authorize { request, .. } => WorkPlanHistoryAction::Authorize {
+            digest: request.plan_digest.clone(), confirmed: request.confirmed,
+            effects: request.effects.clone(), expires_at: request.expires_at.into(),
+        },
+        Request::Control { request } => WorkPlanHistoryAction::Control {
+            expected_generation: request.expected_generation, command: request.command,
+            confirmed: request.confirmed, expires_at: request.expires_at.map(Into::into),
+        },
+        Request::TeamRecovery { request, capture } => WorkPlanHistoryAction::TeamRecovery {
+            digest: request.digest.clone(), confirmed: request.confirmed, effects: request.effects.clone(),
+            base_lease: capture.preview.base_lease,
+            base_effective_version: capture.preview.base_effective_version.clone(),
+            expires_at_ms: capture.preview.expires_at_ms.into(),
+            members: capture.preview.members.clone(), work: capture.preview.work.clone(),
+        },
+    };
+    let input = receipt.input.as_ref().map(|input| {
+        let fixed = FixedInput::capture(input.clone())?;
+        Ok::<_, ExecutionError>(WorkPlanHistoryInput { task_id: input.task_id, attempt_id: input.attempt_id,
+            input_digest: fixed.digest().into(), parent_task: receipt.parent_task })
+    }).transpose()?;
+    Ok(WorkPlanHistoryRow { action_id: receipt.action_id, lease: receipt.lease, state: receipt.state,
+        cancellation_revision: receipt.cancellation_revision, action, input, start: None })
 }
 
 fn history(
     c: &Connection,
     stored: &StoredPlan,
     requested: Option<RequestedStart>,
+    window: Option<(Revision, u32)>,
 ) -> Result<History, ExecutionError> {
     let mut generations = BTreeSet::new();
     let mut enqueued = BTreeMap::new();
     let mut latest: Option<WorkPlanStartReceipt> = None;
     let mut requested_start = None;
+    let mut latest_enqueue: Option<WorkPlanStartReceipt> = None;
+    let mut page = BTreeMap::new();
     let mut query = c.prepare("SELECT action_id,request,request_digest,receipt,receipt_digest FROM application_actions WHERE plan_id=?1").map_err(sql)?;
     let rows = query
         .query_map([stored.plan.plan_id.to_string()], |row| {
@@ -130,6 +162,9 @@ fn history(
             return Err(err(ErrorCode::CorruptLedger, "work-plan-run-action"));
         }
         validate_receipt(&request, &receipt, stored)?;
+        let selected = window.is_some_and(|(after, limit)| receipt.lease.generation > after
+            && receipt.lease.generation.get() <= after.get().saturating_add(u64::from(limit)));
+        if selected { page.insert(receipt.lease.generation, history_row(&request, &receipt)?); }
         let is_requested = requested.is_some_and(|target| target.action == request.action());
         if is_requested {
             let target = requested.unwrap();
@@ -177,6 +212,10 @@ fn history(
             Some(evidence.association.clone()),
         )?;
         evidence.matched = true;
+        if latest_enqueue.as_ref().is_none_or(|old| old.expected_generation < start.expected_generation) {
+            latest_enqueue = Some(start.clone());
+        }
+        if let Some(row) = page.get_mut(&receipt.lease.generation) { row.start = Some(start.clone()); }
         if is_requested {
             requested_start = Some(start.clone());
         }
@@ -200,6 +239,8 @@ fn history(
     Ok(History {
         last_start: latest,
         requested_start,
+        latest_enqueue,
+        rows: page.into_values().collect(),
     })
 }
 
@@ -272,7 +313,7 @@ impl ProjectStore {
                     action,
                     generation: expected_generation,
                     attempt: expected_attempt_id,
-                }))?;
+                }), None)?;
                 Ok(settlement(&stored, expected_generation, read.requested_start))
             },
         )
@@ -293,7 +334,7 @@ impl ProjectStore {
                 let recorded = recorded_action_read(c, project, &Request::Control {
                     request: request.clone(),
                 })?;
-                history(c, &stored, None)?;
+                history(c, &stored, None, None)?;
                 Ok(settlement(&stored, request.expected_generation, recorded))
             },
         )
@@ -311,7 +352,7 @@ impl ProjectStore {
         super::super::super::review::read_snapshot(connection, |c| {
             let stored = scoped_plan(c, project, plan)?;
             let root = stored.plan.input.as_ref().map(|input| input.task_id);
-            let last_start = history(c, &stored, None)?.last_start;
+            let last_start = history(c, &stored, None, None)?.last_start;
             let budget = match root {
                 Some(root) => super::super::super::ledger::provider::provider_budget_in(c, root)?,
                 None => None,
@@ -326,6 +367,53 @@ impl ProjectStore {
                 budget_root_task_id: root,
                 budget,
             })
+        })
+    }
+
+    /// Observe a bounded page of original grants and controls. The basis fences
+    /// both appended actions and a late start of the current grant. No runtime
+    /// is initialized and no unresolved execution is reconciled here.
+    pub fn read_work_plan_history(
+        &self, project: ExecutionId, plan: ExecutionId, after: Revision,
+        baseline: Option<&WorkPlanHistoryBaseline>, limit: u32,
+    ) -> Result<WorkPlanHistoryPage, ExecutionError> {
+        if !(1..=16).contains(&limit) {
+            return Err(err(ErrorCode::LimitExceeded, "work-plan-history-page"));
+        }
+        if after.get() > 0 && baseline.is_none() {
+            return Err(err(ErrorCode::InvalidInput, "work-plan-history-baseline"));
+        }
+        let connection = self.connection().map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        super::super::super::review::read_snapshot(connection, |c| {
+            let stored = scoped_plan(c, project, plan)?;
+            // Reuse the authority owner's full transition and recovery-capture
+            // validation, including records outside this displayed page.
+            validate_history(c, &stored)?;
+            let observed = history(c, &stored, None, Some((after, limit)))?;
+            let current = WorkPlanHistoryBaseline { lease: stored.lease, last_start: observed.latest_enqueue };
+            if baseline.is_some_and(|expected| expected != &current) {
+                return Err(err(ErrorCode::DependencyConflict, "work-plan-history-changed"));
+            }
+            if after > stored.lease.generation {
+                return Err(err(ErrorCode::InvalidInput, "work-plan-history-cursor"));
+            }
+            let next_after = observed.rows.last().filter(|row| row.lease.generation < stored.lease.generation)
+                .map(|row| row.lease.generation);
+            let mut page = WorkPlanHistoryPage { project_id: project, plan_id: plan, plan_digest: stored.plan.digest,
+                locale: stored.plan.locale, scope: stored.plan.selection_basis,
+                baseline: current, rows: observed.rows, next_after };
+            // A byte-limited page may contain fewer than `limit` whole rows.
+            // Never truncate one record or silently skip it on the next page.
+            loop {
+                match codec::encode(&page, MAX_INPUT_BYTES) {
+                    Ok(_) => return Ok(page),
+                    Err(error) if error.code == ErrorCode::LimitExceeded && error.stage == "limit-exceeded" && page.rows.len() > 1 => {
+                        page.rows.pop();
+                        page.next_after = page.rows.last().map(|row| row.lease.generation);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
         })
     }
 }

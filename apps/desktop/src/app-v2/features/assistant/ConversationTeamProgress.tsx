@@ -35,7 +35,7 @@ function PostCard({ post, roles, status, allowed, openPost, onReply }: {
   const role = author.kind === "member" ? roles.find(value => value.request.memberId === author.author.memberId && value.request.roleVersionId === author.author.roleVersionId) : null;
   const target = post.publication.target, entry = status.plan.scope.find(unit => unit.unitId === target.unitId)?.nativeKey ?? t("entryUnknown");
   return <article className={styles.post} aria-label={t("target", { entry, locale: target.locale })}>
-    <h5>{author.kind === "human" ? t("localUser") : role?.request.displayName ?? t("memberUnknown")} · {t(`postKind.${post.publication.kind}`)}</h5>
+    <h5>{author.kind !== "member" ? t("localUser") : role?.request.displayName ?? t("memberUnknown")} · {t(`postKind.${post.publication.kind}`)}</h5>
     <p className={styles.meta}>{t("target", { entry, locale: target.locale })}</p><p className={styles.text}>{post.publication.body}</p>
     <div className={styles.actions}>
       {onReply ? <Button size="sm" disabled={!allowed} onClick={() => { if (allowed) onReply(post); }}>{t("reply")}</Button> : null}
@@ -202,7 +202,7 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
               {human?.priorWork.length ? <><h6>{t("priorWork")}</h6><ul>{human.priorWork.map(reference => <li key={reference.attemptId}><code>{reference.taskId}</code> · <code>{reference.attemptId}</code></li>)}</ul></> : null}
             </details>
             {outcome?.kind === "translation" ? <><p>{t(work.candidateRevisionId ? "candidate" : "suggestion")}</p><details><summary>{t("fullText")}</summary>{outcome.text === "" ? <p>{t("emptyTranslation")}</p> : <p className={styles.text}><TokenizedText text={outcome.text} tone="ai"/></p>}</details></> : null}
-            {outcome?.kind === "review" ? <p>{t(`verdict.${outcome.verdict}`)}</p> : outcome?.kind === "waiting" ? <p>{t("waiting")}</p> : outcome?.kind === "evidence" ? <p>{t("evidence")}</p> : null}
+            {outcome?.kind === "review" ? <p>{t(`verdict.${outcome.verdict}`)}</p> : outcome?.kind === "waiting" ? <p>{t("waiting")}</p> : outcome?.kind === "awaiting-human" ? <p>{t("awaitingHuman")}</p> : outcome?.kind === "evidence" ? <p>{t("evidence")}</p> : null}
             <div className={styles.actions}>{postButtons([...(work.request?.postIds ?? human?.postIds ?? []), ...(outcome?.kind === "review" || outcome?.kind === "evidence" ? outcome.postIds : [])])}
               {candidate && onOpenCandidate ? <Button size="sm" disabled={!fresh || busyWork !== null} onClick={() => void openCandidate(work)}>{t(busyWork === work.receipt.intentId ? "openingCandidate" : "openCandidate")}</Button> : null}
             </div>
@@ -215,7 +215,7 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate,
       </section>
       <section aria-label={t("messages")}><h5>{t("messages")}</h5>{!page.messages.length && fresh ? <p>{t("noMessages")}</p> : page.messages.map(message => {
         const included = page.consumptions.filter(item => item.messageId === message.messageId);
-        return <article className={styles.message} key={message.messageId}><h6>{message.sender.kind === "human" ? t("localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h6><p className={styles.meta}>{t("target", { entry: entryName(message.target.unitId), locale: message.target.locale })}</p><p className={styles.text}>{message.body}</p><p className={styles.meta}>{t(included.length ? "included" : "addressed", { count: included.length })}</p><div className={styles.actions}>{postButtons(message.postIds)}</div></article>;
+        return <article className={styles.message} key={message.messageId}><h6>{message.sender.kind !== "member" ? t("localUser") : memberName(message.sender.author.memberId, message.sender.author.roleVersionId)} → {memberName(message.recipientMemberId, message.recipientRoleVersionId)}</h6><p className={styles.meta}>{t("target", { entry: entryName(message.target.unitId), locale: message.target.locale })}</p><p className={styles.text}>{message.body}</p><p className={styles.meta}>{t(included.length ? "included" : "addressed", { count: included.length })}</p><div className={styles.actions}>{postButtons(message.postIds)}</div></article>;
       })}
         <div className={styles.actions}><Button size="sm" disabled={!fresh || afterMessage === null} onClick={() => { if (fresh) setMessageCursor({ frame, value: null }); }}>{t("firstMessage")}</Button><Button size="sm" disabled={!fresh || !page.nextMessageAfter} onClick={() => { if (fresh && page.nextMessageAfter) setMessageCursor({ frame, value: page.nextMessageAfter }); }}>{t("nextMessage")}</Button></div>
       </section>

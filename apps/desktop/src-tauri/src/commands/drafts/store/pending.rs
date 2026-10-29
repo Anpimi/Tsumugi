@@ -32,6 +32,7 @@ impl PendingJournalSlot {
             Self::Translation(DraftPending::Save { request, .. }
                 | DraftPending::Merge { request, .. }) => request.action_id,
             Self::Translation(DraftPending::Selection { request, .. }) => request.action_id,
+            Self::Conversation(ConversationDraftPending::TeamQuestionResponse { request, .. }) => request.response.post_id,
             Self::Conversation(ConversationDraftPending::Create { request, .. }) => request.action_id,
             Self::Conversation(ConversationDraftPending::Append { request, .. }) => request.action_id,
             Self::Conversation(ConversationDraftPending::Planning { request, .. }) => request.consent.action_id,
@@ -57,7 +58,8 @@ impl PendingJournalSlot {
             Self::Translation(DraftPending::Save { submitted_seq, .. }
                 | DraftPending::Selection { submitted_seq, .. }
                 | DraftPending::Merge { submitted_seq, .. }) => *submitted_seq,
-            Self::Conversation(ConversationDraftPending::Create { submitted_seq, .. }
+            Self::Conversation(ConversationDraftPending::TeamQuestionResponse { submitted_seq, .. }
+                | ConversationDraftPending::Create { submitted_seq, .. }
                 | ConversationDraftPending::Append { submitted_seq, .. }
                 | ConversationDraftPending::Planning { submitted_seq, .. }
                 | ConversationDraftPending::ProposalCapture { submitted_seq, .. }

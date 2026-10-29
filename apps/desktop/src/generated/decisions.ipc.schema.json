@@ -798,6 +798,27 @@
             "additionalProperties": false,
             "properties": {
               "kind": {
+                "const": "answer-team-question",
+                "type": "string"
+              },
+              "planId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "questionPostId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "planId",
+              "questionPostId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
                 "const": "compare-candidate",
                 "type": "string"
               },
@@ -1267,6 +1288,27 @@
           {
             "additionalProperties": false,
             "properties": {
+              "kind": {
+                "const": "team-question",
+                "type": "string"
+              },
+              "memberId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "roleVersionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "memberId",
+              "roleVersionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "blockerCount": {
                 "format": "uint32",
                 "maximum": 4294967295,
@@ -1678,6 +1720,7 @@
           "team-message",
           "team-publication",
           "team-recovery",
+          "team-question-response",
           "resource-typed-context-save",
           "resource-typed-context-withdraw",
           "resource-knowledge-decision",

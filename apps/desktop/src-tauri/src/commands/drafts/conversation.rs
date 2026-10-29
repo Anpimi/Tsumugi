@@ -159,7 +159,7 @@ pub async fn resolve_local_conversation_draft(
                     && matches!(&original.resolve.target, ConversationDraftResolveTarget::Pending { pending }
                         if !matches!(pending, ConversationDraftPending::WorkPlanStart { .. } | ConversationDraftPending::WorkPlanControl { .. }
                             | ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }
-                            | ConversationDraftPending::TeamRecovery { .. }))
+                            | ConversationDraftPending::TeamRecovery { .. } | ConversationDraftPending::TeamQuestionResponse { .. }))
                 {
                     return Err(map_error(ExecutionError::new(ErrorCode::InvalidInput, "conversation-drafts-disposition")));
                 }

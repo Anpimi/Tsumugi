@@ -21,12 +21,12 @@ import { isRunPending } from "./conversationRun";
 import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
-import type { ConversationProposalTarget } from "./conversationNavigation";
+import type { ConversationProposalTarget, ConversationTeamQuestionTarget } from "./conversationNavigation";
 import styles from "../../WorkbenchLayout.module.css";
 import local from "./ConversationPanel.module.css";
 
 export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
-interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null }
+interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null; questionTarget?: ConversationTeamQuestionTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
 const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending ? conversationPendingActionId(pending) : undefined;
 
@@ -59,7 +59,7 @@ function PlanningResult({ owner, input, attemptId, visible, disabled, gate, view
   </section>;
 }
 
-function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, proposalTarget, proposalFocusTargets }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>> }) {
+function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, proposalTarget, questionTarget, proposalFocusTargets }: Omit<Props, "owner"> & { owner: ConversationSession; input: ConversationInput; proposalFocusTargets: RefObject<WeakSet<ConversationProposalTarget>> }) {
   const context = owner.context, conversationId = input.key.conversationId, planning = input.planning;
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const messages = useSessionInfiniteQuery({ key: ["conversation", conversationId, "messages"], scopes: ["project"], enabled: visible,
@@ -95,12 +95,12 @@ function ThreadHistory({ owner, input, visible, disabled, gate, viewId, parentDi
     {attempts.hasNextPage ? <Button pending={attempts.isFetchingNextPage} onClick={() => void attempts.fetchNextPage()}>{t("moreReplies")}</Button> : null}
     {proposals.isError ? <Banner tone="error" action={<Button size="sm" onClick={() => void proposals.refetch()}>{t("retryRead")}</Button>}>{t("proposalReadFailed")}</Banner> : null}
     <ConversationProposals owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} revisions={revisions} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} onOpenKnowledgeProposal={onOpenKnowledgeProposal}/>
-    <ConversationWorkPlanPanel onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/>
+    <ConversationWorkPlanPanel onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} owner={owner} input={input} visible={visible} disabled={disabled} gate={gate} viewId={viewId} parentDialogId={parentDialogId} questionTarget={questionTarget}/>
     {proposals.hasNextPage ? <Button pending={proposals.isFetchingNextPage} onClick={() => void proposals.fetchNextPage()}>{t("moreProposalVersions")}</Button> : null}
   </>;
 }
 
-export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget }: Props) {
+export default function ConversationPanel({ owner, visible, disabled, gate, viewId, parentDialogId, selection, onOpenCandidate, onOpenTeamCandidate, onOpenKnowledgeProposal, decisionTray, maintenanceBrief, recoveryTarget, proposalTarget, questionTarget }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads();
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
@@ -122,7 +122,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
   const pending = input?.value.pending;
   const runPending = isRunPending(pending);
-  const replayable = locallyReplayableConversationRequest(pending) || !!activeId && (owner.canRetryRun(activeId) || owner.canRetryTeam(activeId));
+  const replayable = locallyReplayableConversationRequest(pending) || !!activeId && (owner.canRetryRun(activeId) || owner.canRetryTeam(activeId) || owner.canRetryQuestion(activeId));
   const exists = pending?.kind !== "create" || input?.outcome === "recorded";
   const primaryRecovery = !!recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "primary" && pendingAction(pending) === recoveryTarget.actionId;
   const revocationRecovery = recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "revocation"
@@ -161,6 +161,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       case "proposal-revision": return t("proposalSaveVersion");
       case "proposal-work-plan": return t("planConfirm");
       case "work-plan-start": return t("runStart");
+      case "team-question-response": return t("teamQuestionResponseRequest");
       case "team-recovery": return t("teamRecoveryRequest");
       case "team-message": return t("teamMessageRequest");
       case "team-publication": return t("teamPublicationRequest");
@@ -188,7 +189,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       {!activeId ? <EmptyState icon={<MessageSquare/>} title={t("welcome")} description={t("welcomeHelp")}
         action={<Button variant="secondary" disabled={blocked || state.hydration !== "ready"} onClick={() => void owner.create()}>{t("newThread")}</Button>}/>
         : !input ? state.inputFailure?.conversationId === activeId ? <ErrorState title={t("inputReadFailed")} description={<CommandFailureDetails failure={state.inputFailure.cause}/>} action={<Button onClick={() => void owner.open(activeId)}>{t("retryRead")}</Button>}/>
-          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} onOpenKnowledgeProposal={onOpenKnowledgeProposal} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets}/> : <p role="status">{t("creatingThread")}</p>}
+          : <LoadingState label={t("readingInput")}/> : exists ? <ThreadHistory onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} onOpenKnowledgeProposal={onOpenKnowledgeProposal} key={activeId} owner={owner} input={input} visible={visible} disabled={blocked} gate={gate} viewId={viewId} parentDialogId={parentDialogId} selection={selection} proposalTarget={proposalTarget} proposalFocusTargets={proposalFocusTargets} questionTarget={questionTarget?.conversationId === activeId ? questionTarget : null}/> : <p role="status">{t("creatingThread")}</p>}
     </div>
     {decisionTray}
     {input ? <div className={styles.composer}>
@@ -213,6 +214,11 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
         className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
         aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
         {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
+      {pending.kind === "team-question-response" ? <><p>{t("teamQuestionPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
+        <p>{pending.question.publication.body}</p><Field label={t("teamQuestionOriginalResponse")}><TextArea readOnly value={pending.request.response.response.kind === "text" ? pending.request.response.response.body
+          : pending.request.response.response.kind === "dismiss" ? pending.request.response.response.reason : pending.question.publication.question?.kind === "open"
+            ? pending.question.publication.question.options.find(option => pending.request.response.response.kind === "choice" && option.optionId === pending.request.response.response.optionId)?.label ?? "" : ""}/></Field>
+      </details></> : null}
       {pending.kind === "team-recovery" ? <><p>{t("teamRecoveryPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
         <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.request.recovery.work.instructions}/></Field>
         {pending.request.recovery.members.map(member => <div key={member.memberId}><p>{t("teamOriginalRecipient", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><p>{member.role}</p></div>)}

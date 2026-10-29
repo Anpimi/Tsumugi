@@ -268,16 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn pagination_retains_partial_source_coverage_and_rejects_an_old_revision_cursor() {
+    fn pagination_retains_complete_source_coverage_and_rejects_an_old_revision_cursor() {
         let (_directory, mut store, project, units) = fixture();
         let first_request = capture(&mut store, project, units[0], &["Which audience?"]);
         capture(&mut store, project, units[1], &["Which tone?"]);
         let first = page(&store, project, None).unwrap();
         assert_eq!(first.items.len(), 1);
         assert_eq!(first.known_count, 2);
-        assert_eq!(first.total, None);
-        assert_eq!(first.coverage[0].state, DecisionCoverageState::Partial);
-        assert_eq!(first.coverage[0].reason, Some(DecisionCoverageReason::SourceNotImplemented));
+        assert_eq!(first.total, Some(2));
+        assert_eq!(first.coverage[0].state, DecisionCoverageState::Complete);
+        assert_eq!(first.coverage[0].reason, None);
         let cursor = first.next.as_ref().unwrap();
         let second = page(&store, project, Some(cursor)).unwrap();
         assert_eq!(second.items.len(), 1);
@@ -333,7 +333,7 @@ mod tests {
         let page = page(&store, project, None).unwrap();
         assert!(page.items.is_empty());
         assert_eq!(page.total, None);
-        assert_eq!(page.coverage[0].state, DecisionCoverageState::Unavailable);
+        assert_eq!(page.coverage[0].state, DecisionCoverageState::Partial);
         assert_eq!(page.coverage[0].error_code, Some(ErrorCode::CorruptLedger));
     }
 
@@ -346,7 +346,7 @@ mod tests {
         let page = page(&store, project, None).unwrap();
         assert!(page.items.is_empty());
         assert_eq!(page.total, None);
-        assert_eq!(page.coverage[0].state, DecisionCoverageState::Unavailable);
+        assert_eq!(page.coverage[0].state, DecisionCoverageState::Partial);
         assert_eq!(page.coverage[0].error_code, Some(ErrorCode::OutcomeUnknown));
         assert!(store.is_reconciling());
     }

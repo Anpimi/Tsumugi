@@ -46,6 +46,42 @@ fn settlement_preparation(f: &Fixture) -> PrepareTeamRecovery {
 }
 
 #[test]
+fn original_action_history_retains_recovery_material_and_its_exact_late_start() {
+    let mut f = setup();
+    control(&mut f, WorkPlanCommand::Pause);
+    let request = settlement_preparation(&f);
+    let prepared = f.runtime.prepare_team_recovery(&f.store, &request).unwrap();
+    let authorization = authorization(&prepared);
+    let receipt = f.runtime.authorize_team_recovery(&mut f.store, &prepared, &authorization).unwrap();
+    let zero = Revision::new(0).unwrap();
+    let before = pure_recovery_read(&f.store, || f.store.read_work_plan_history(f.plan.project_id, f.plan.plan_id, zero, None, 16)).unwrap();
+    assert_eq!(before.rows.len(), 3);
+    let row = &before.rows[2];
+    assert_eq!(row.action_id, receipt.action_id);
+    let WorkPlanHistoryAction::TeamRecovery { members, work, base_lease, digest, .. } = &row.action else { panic!("missing recovery action") };
+    assert_eq!(members, &request.members);
+    assert_eq!(work, &request.work);
+    assert_eq!(*base_lease, request.expected_lease);
+    assert_eq!(digest, &authorization.digest);
+    assert_eq!(row.input.as_ref().unwrap().task_id, receipt.task_id);
+    assert!(row.start.is_none());
+    let human = f.store.prepare_team_start(receipt.effective_version.lease, receipt.action_id).unwrap();
+    f.runtime.submit_team_work(&mut f.store, &human).unwrap();
+    let conflict = pure_recovery_read(&f.store, || f.store.read_work_plan_history(f.plan.project_id, f.plan.plan_id, zero, Some(&before.baseline), 16)).unwrap_err();
+    assert_eq!(conflict.code, ErrorCode::DependencyConflict);
+    let after = pure_recovery_read(&f.store, || f.store.read_work_plan_history(f.plan.project_id, f.plan.plan_id, zero, None, 16)).unwrap();
+    assert_eq!(after.baseline.lease, before.baseline.lease);
+    let start = after.rows[2].start.as_ref().unwrap();
+    assert_eq!(start.action_id, receipt.action_id);
+    assert_eq!(start.task_id, receipt.task_id);
+    assert_eq!(start.attempt_id, receipt.attempt_id);
+    assert_eq!(after.baseline.last_start.as_ref(), Some(start));
+    // The existing run summary intentionally continues to describe only the
+    // original authorization or an ordinary continue, never a member's work.
+    assert_eq!(f.store.read_work_plan_run(f.plan.project_id, f.plan.plan_id).unwrap().last_start.unwrap().action_id, f.receipt.action_id);
+}
+
+#[test]
 fn recovery_settlement_missing_authorization_needs_a_permanent_generation_fence() {
     let mut f = setup();
     control(&mut f, WorkPlanCommand::Pause);
@@ -432,6 +468,7 @@ fn publication(f: &mut Fixture, author: &CapturedTeamAuthor) -> TeamDiscussionPo
                 }],
                 reply_to: None,
                 supersedes: None,
+                question: None,
             },
         )
         .unwrap()

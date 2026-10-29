@@ -27,10 +27,12 @@ import { ConversationRunPanel } from "./ConversationRunPanel";
 
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
+import type { ConversationTeamQuestionTarget } from "./conversationNavigation";
 
 interface Props {
   owner: ConversationSession; input: ConversationInput; visible: boolean; disabled: boolean;
   gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate;
+  questionTarget?: ConversationTeamQuestionTarget | null;
 }
 type PlanPage = Awaited<ReturnType<typeof conversationCommands.proposalWorkPlans>>;
 type PlanLink = PlanPage["rows"][number];
@@ -62,7 +64,7 @@ function WorkPlanHistoryRecord({ owner, link, visible, canRead, ...runProps }: P
 }
 
 /** A saved proposal fixes scope and policy; all new sharing and execution consent is explicit. */
-export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenTeamCandidate }: Props) {
+export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenTeamCandidate, questionTarget }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" }), { t: global } = useTranslation();
   const reads = useSessionReads(), facts = useConnectionFacts(), workPlan = input.workPlan;
   const conversationId = input.key.conversationId, revision = workPlan.revision;
@@ -86,6 +88,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
     && !!proposal && proposal.unitIds.length <= workPlan.config.maxItems;
   const canRead = () => live.current.mounted && live.current.visible && !live.current.disabled && !owner.getSnapshot().retired
     && gate.canDispatch({ viewId, source: "button", dialogId: parentDialogId });
+  const strategyDefaultReady = workPlan.strategyDefault === "ready";
   const allowed = () => !blocked && canRead();
   // Journal construction clears final consent and adds a pending request. Those
   // changes must not invalidate this same, already confirmed authorization.
@@ -100,8 +103,28 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
     initialPageParam: null as string | null, nextPage: last => last.nextAfter ?? undefined,
     read: after => conversationCommands.proposalWorkPlans({ ...owner.context, conversationId, after, limit: 50 }) });
   const links = history.data?.pages.flatMap(page => page.rows) ?? [];
+  const questionPlan = questionTarget?.conversationId === conversationId ? questionTarget : null;
+  const exactPlan = useSessionQuery({ key: ["conversation", conversationId, "question-plan", questionPlan?.planId, questionPlan?.questionPostId],
+    scopes: ["project"], enabled: visible && questionPlan !== null,
+    read: async () => {
+      if (!questionPlan) throw new Error("No original question plan selected");
+      const link = await conversationCommands.readProposalWorkPlan({ ...owner.context, conversationId, planId: questionPlan.planId });
+      if (link.projectId !== owner.context.projectId || link.conversationId !== conversationId || link.planId !== questionPlan.planId)
+        throw new Error("Original question plan association changed");
+      return link;
+    } });
+  const exactLink = !exactPlan.error && exactPlan.data && exactPlan.data.planId === questionPlan?.planId ? exactPlan.data : null;
+  const records = [...new Map(links.map(link => [link.planId, link])).values()];
+  if (exactLink) {
+    const index = records.findIndex(link => link.planId === exactLink.planId);
+    if (index < 0) records.unshift(exactLink); else records[index] = exactLink;
+  }
 
   useEffect(() => () => { disposeProof(); gate.releaseOwner(inputOwner); }, [gate, inputOwner]);
+  useEffect(() => {
+    if (open && workPlan.strategyDefault === "idle") void owner.loadWorkPlanStrategyDefault(conversationId, reads, canRead);
+    if (!open) owner.cancelWorkPlanStrategyDefault(conversationId);
+  }, [open, conversationId, owner, reads, revision?.revisionId, workPlan.strategyDefault]);
   useEffect(() => {
     // Duration changes keep the same prepared material and its read witnesses.
     if (!workPlan.prepared) disposeProof();
@@ -142,7 +165,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
 
   const toolChoice = useRef<PlanToolChoiceHandle>(null);
   async function prepare(button: HTMLElement) {
-    if (!allowed() || !valid || !connectionCurrent || unresolved || unsavedProposal) return;
+    if (!allowed() || !valid || !connectionCurrent || !strategyDefaultReady || unresolved || unsavedProposal) return;
     disposeProof(); setCaptureFailure(null);
     let selected: ProposalWorkPlanTools;
     try {
@@ -184,6 +207,11 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
       {unresolved ? <Banner tone="warning"><p>{t("planUnresolvedQuestions", { count: unresolved })}</p><ul>{proposal.questions.map((question, index) => <li key={index}>{question}</li>)}</ul></Banner> : null}
       {unsavedProposal ? <Banner tone="warning">{t("planUnsavedProposal")}</Banner> : null}
       {pending ? <Banner tone="warning">{t("planPending")}</Banner> : null}
+      {workPlan.strategyDefault === "idle" || workPlan.strategyDefault === "loading" ? <p role="status">{t("planStrategyDefaultLoading")}</p> : null}
+      {workPlan.strategyDefault === "failed" ? <Banner tone="error" action={<Button size="sm" disabled={blocked} onClick={() => {
+        if (allowed()) void owner.loadWorkPlanStrategyDefault(conversationId, reads, canRead);
+      }}>{t("planStrategyDefaultRetry")}</Button>}><p>{t("planStrategyDefaultFailed")}</p><CommandFailureDetails failure={workPlan.strategyDefaultFailure}/></Banner> : null}
+      {strategyDefaultReady && workPlan.config.contextStrategy ? <p role="status">{t("planStrategyDefaultApplied")}</p> : null}
       <fieldset className={styles.configuration} disabled={blocked}><legend>{t("planDestination")}</legend>
         <ModelConnectionPicker config={workPlan.config} label={global("connections.choose")} active={open} disabled={blocked} editSeq={workPlan.sequence}
           onSelect={(view, profileId, sequence) => {
@@ -221,7 +249,7 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
       <p>{t("planPreparationHelp")}</p>
       {workPlan.failure ? <Banner tone="error"><p>{t("planFailure")}</p><CommandFailureDetails failure={workPlan.failure}/></Banner> : null}
       {captureFailure ? <Banner tone="error"><p>{t("planToolCaptureFailed")}</p><CommandFailureDetails failure={captureFailure}/></Banner> : null}
-      <div className={styles.actions}><Button size="sm" pending={workPlan.busy === "prepare"} disabled={blocked || !valid || !connectionCurrent || !!unresolved || unsavedProposal}
+      <div className={styles.actions}><Button size="sm" pending={workPlan.busy === "prepare"} disabled={blocked || !valid || !connectionCurrent || !strategyDefaultReady || !!unresolved || unsavedProposal}
         onClick={event => void prepare(event.currentTarget)}>{t("planPrepare")}</Button></div>
       {workPlan.busy ? <p role="status">{t(workPlan.busy === "prepare" ? "planPreparing" : "planAuthorizing")}</p> : null}
       {plan ? <section ref={previewRegion} tabIndex={-1} className={styles.preview} aria-label={t("planPreview")}>
@@ -270,9 +298,13 @@ export function ConversationWorkPlanPanel({ owner, input, visible, disabled, gat
       {history.isError ? <Banner tone="error" action={<Button size="sm" pending={history.isFetching} onClick={() => {
         if (canRead()) void history.refetch();
       }}>{t("retryRead")}</Button>}><p>{t("planHistoryFailed")}</p><CommandFailureDetails failure={commandFailure(history.error)}/></Banner> : null}
-      {history.isSuccess && links.length === 0 ? <p>{t("planHistoryEmpty")}</p> : null}
-      {links.map(link => <WorkPlanHistoryRecord onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
-        gate={gate} viewId={viewId} parentDialogId={parentDialogId} canRead={canRead}/>)}
+      {questionPlan && exactPlan.isPending ? <LoadingState label={t("questionPlanTargetLoading")}/> : null}
+      {questionPlan && exactPlan.error ? <Banner tone="error"><p>{t("questionPlanTargetFailed")}</p><CommandFailureDetails failure={commandFailure(exactPlan.error)}/>
+        <Button size="sm" disabled={!canRead() || exactPlan.isFetching} onClick={() => { if (canRead()) void exactPlan.refetch(); }}>{t("retryRead")}</Button></Banner> : null}
+      {history.isSuccess && records.length === 0 && !questionPlan ? <p>{t("planHistoryEmpty")}</p> : null}
+      {records.map(link => <WorkPlanHistoryRecord onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} key={link.planId} owner={owner} input={input} link={link} visible={visible} disabled={disabled}
+        gate={gate} viewId={viewId} parentDialogId={parentDialogId} canRead={canRead}
+        questionTarget={exactLink && questionPlan?.planId === link.planId ? questionPlan : null}/>)}
       {history.hasNextPage ? <div className={styles.actions}><Button size="sm" pending={history.isFetchingNextPage} disabled={!visible || disabled || history.isFetching}
         onClick={() => { if (canRead()) void history.fetchNextPage(); }}>{t("planHistoryMore")}</Button></div> : null}
     </section>

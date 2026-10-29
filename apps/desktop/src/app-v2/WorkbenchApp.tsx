@@ -50,7 +50,7 @@ import type { ComparisonView } from "../arenaCommands";
 import type { SegmentRow } from "../segmentCommands";
 import type { ConversationSession } from "./features/assistant/ConversationSession";
 import type { ConversationRecoveryTarget } from "./features/assistant/ConversationPanel";
-import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, OpenKnowledgeProposal } from "./features/assistant/conversationNavigation";
+import type { ConversationProposalTarget, ConversationKnowledgeProposalRef, ConversationTeamQuestionTarget, OpenKnowledgeProposal } from "./features/assistant/conversationNavigation";
 import type { KnowledgeReviewTarget } from "./features/knowledge/KnowledgeProposalPanel";
 import type { DecisionItem } from "../decisionCommands";
 import { contextKindForKnowledge, type KnowledgeOwner } from "./features/knowledge/knowledgeTypes";
@@ -122,8 +122,9 @@ type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; ru
   knowledgeOwner: KnowledgeOwner | null; knowledgeLoadFailed: boolean; requestKnowledge: () => void; knowledgeReveal: number; revealKnowledge: () => void;
   knowledgeOpenIntent: KnowledgeOpenIntent | null; setKnowledgeOpenIntent: Dispatch<SetStateAction<KnowledgeOpenIntent | null>>;
   conversations: ConversationSession | null; conversationLoadFailed: boolean; retryConversations: () => void; conversationReveal: number;
-  conversationRecovery: ConversationRecoveryTarget | null; conversationProposal: ConversationProposalTarget | null;
-  revealConversation: (target?: ConversationRecoveryTarget) => void; revealConversationProposal: (target: ConversationProposalTarget) => void };
+  conversationRecovery: ConversationRecoveryTarget | null; conversationProposal: ConversationProposalTarget | null; conversationTeamQuestion: ConversationTeamQuestionTarget | null;
+  revealConversation: (target?: ConversationRecoveryTarget) => void; revealConversationProposal: (target: ConversationProposalTarget) => void;
+  revealConversationTeamQuestion: (target: ConversationTeamQuestionTarget) => void };
 const WorkspaceContext = createContext<SessionContext | null>(null);
 function useWorkspaceContext() { const value = useContext(WorkspaceContext); if (!value) throw new Error("A project workspace is required"); return value; }
 function subscribeWidth(listener: () => void) { window.addEventListener("resize", listener); return () => window.removeEventListener("resize", listener); }
@@ -268,7 +269,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
   const draftParticipant = useRef<LifecycleParticipant | null>(null), draftOwner = useRef<TranslationDrafts | null>(null), readonlyRef = useRef(readOnly);
   const [conversations, setConversations] = useState<ConversationSession | null>(null), [conversationLoadFailed, setConversationLoadFailed] = useState(false);
   const [conversationAttempt, setConversationAttempt] = useState(0), [conversationReveal, setConversationReveal] = useState(0);
-  const [conversationTarget, setConversationTarget] = useState<{ kind: "request"; value: ConversationRecoveryTarget } | { kind: "proposal"; value: ConversationProposalTarget } | null>(null);
+  const [conversationTarget, setConversationTarget] = useState<{ kind: "request"; value: ConversationRecoveryTarget } | { kind: "proposal"; value: ConversationProposalTarget }
+    | { kind: "team-question"; value: ConversationTeamQuestionTarget } | null>(null);
   const conversationParticipant = useRef<LifecycleParticipant | null>(null), conversationOwner = useRef<ConversationSession | null>(null);
   readonlyRef.current = readOnly;
   useLayoutEffect(() => lifecycle.register({ id: "conversation-input", area: "tasks", scope: { kind: "project", ...executionContext(session.project) },
@@ -406,8 +408,10 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen, req
     conversations, conversationLoadFailed, retryConversations: () => setConversationAttempt(value => value + 1), conversationReveal,
     conversationRecovery: conversationTarget?.kind === "request" ? conversationTarget.value : null,
     conversationProposal: conversationTarget?.kind === "proposal" ? conversationTarget.value : null,
+    conversationTeamQuestion: conversationTarget?.kind === "team-question" ? conversationTarget.value : null,
     revealConversation: target => { setConversationTarget(target ? { kind: "request", value: { ...target } } : null); setConversationReveal(value => value + 1); },
-    revealConversationProposal: target => { setConversationTarget({ kind: "proposal", value: { ...target } }); setConversationReveal(value => value + 1); } }}>
+    revealConversationProposal: target => { setConversationTarget({ kind: "proposal", value: { ...target } }); setConversationReveal(value => value + 1); },
+    revealConversationTeamQuestion: target => { setConversationTarget({ kind: "team-question", value: { ...target } }); setConversationReveal(value => value + 1); } }}>
     {(importRequested || reviewRequested || knowledgeRequested) && drafts ? <FeatureBoundary key={executionAttempt} fallback={knowledgeRequested ? <KnowledgeLoadFailure canRetry={!executionHadOwner.current && !knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(true)}/> : <ErrorState title={t("reviewUnavailable")} />}><Suspense fallback={null}>
       <ExecutionOwnerHost project={session.project} drafts={drafts} lifecycle={lifecycle} onReveal={revealTask} onOwner={publishExecutionTasks} onParticipant={publishExecutionParticipant}>
         {importRequested ? <FeatureBoundary fallback={<ErrorState title={t("importUnavailable")} description={t("importHelp")} />}><Suspense fallback={null}>
@@ -451,7 +455,8 @@ function WorkspaceShell() {
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
     knowledgeOwner, knowledgeLoadFailed, requestKnowledge, knowledgeReveal, revealKnowledge, knowledgeOpenIntent, setKnowledgeOpenIntent,
-    conversations, conversationLoadFailed, retryConversations, conversationReveal, conversationRecovery, conversationProposal, revealConversation, revealConversationProposal } = useWorkspaceContext();
+    conversations, conversationLoadFailed, retryConversations, conversationReveal, conversationRecovery, conversationProposal, conversationTeamQuestion,
+    revealConversation, revealConversationProposal, revealConversationTeamQuestion } = useWorkspaceContext();
   const { t, i18n } = useTranslation();
   const message = useTranslation(undefined, { keyPrefix: "workbenchV2" }).t;
   const state = useStore(store), view = state.activeViewId ? state.views[state.activeViewId] : null;
@@ -816,6 +821,11 @@ function WorkspaceShell() {
         intent.release(); revealConversationProposal({ conversationId: destination.conversationId, proposalId: destination.proposalId,
           revisionId: destination.revisionId, focus: focusRetained() }); return true;
       }
+      if (destination.kind === "conversation-team-question") {
+        if (!conversations || !await conversations.open(destination.conversationId) || !current()) return false;
+        intent.release(); revealConversationTeamQuestion({ conversationId: destination.conversationId, planId: destination.planId,
+          questionPostId: destination.questionPostId, focus: focusRetained(), origin }); return true;
+      }
       if (destination.kind === "knowledge-proposal") return await openKnowledgeTarget(destination.proposal, destination.entryIndex, current, intent.release);
       if (destination.kind === "details") {
         const action = item.action;
@@ -942,7 +952,8 @@ function WorkspaceShell() {
     if (!page || !page.items.includes(item) || !decisionFeed.current(page.basis) || !decisionCurrent()
       || !gate.canDispatch({ viewId: currentId, source: "button" })) return false;
     if (["compare-candidate", "review-translation", "review-finding", "inspect-local-request", "clarify-conversation-proposal",
-      "review-knowledge-proposal", "compare-source-mapping", "resolve-source-mapping", "inspect-delivery", "inspect-delivery-outcome"].includes(item.action.kind)) {
+      "review-knowledge-proposal", "compare-source-mapping", "resolve-source-mapping", "inspect-delivery", "inspect-delivery-outcome"].includes(item.action.kind)
+      || item.action.kind === "answer-team-question" && item.targets.some(target => target.kind === "conversation")) {
       return await navigateDecision(item, () => decisionFeed.current(page.basis));
     }
     const state = store.getState(), existing = [...state.viewOrder].reverse().find(id => state.views[id].kind === "decisions");
@@ -1064,7 +1075,7 @@ function WorkspaceShell() {
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
         {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} onOpenTeamCandidate={openTeamCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
-          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
+          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal} questionTarget={conversationTeamQuestion}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><div className={styles.actions}><Button disabled={disabled || !settings.openReferences} onClick={event => {

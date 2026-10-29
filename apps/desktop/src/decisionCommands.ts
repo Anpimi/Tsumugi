@@ -44,6 +44,10 @@ function relatedItem(item: DecisionItem, projectId: string): boolean {
   if (!item.decisionId.startsWith(`${item.source}:`) || item.basis.length !== 64 || item.targets.length === 0) return false;
   const action = item.action;
   switch (action.kind) {
+    case "answer-team-question":
+      return item.source === "agent-question" && item.evidence?.kind === "team-question" && item.locale !== null
+        && item.sourceActionId === action.questionPostId && item.targets.some(target => target.kind === "plan" && target.planId === action.planId)
+        && item.targets.some(target => target.kind === "entry");
     case "compare-candidate":
       return item.source === "translation-candidate" && item.evidence === null
         && item.targets.some(target => target.kind === "entry" && target.unitId === action.unitId);

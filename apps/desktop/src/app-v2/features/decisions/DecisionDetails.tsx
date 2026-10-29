@@ -289,6 +289,15 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
     catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
     finally { navigation.current = false; if (mounted.current) setOpening(false); }
   }
+  async function openTeamQuestion() {
+    const expected = view, callback = live.current.onNavigate;
+    if (!expected || expected.kind !== "team-question" || expected.view.state !== "open" || expected.conversationId === null
+      || !callback || !currentView(expected) || navigation.current) return;
+    navigation.current = true; setOpening(true); setFailure(null);
+    try { if (!await callback(item, () => currentView(expected)) && currentView(expected)) setFailure({ cause: null }); }
+    catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
+    finally { navigation.current = false; if (mounted.current) setOpening(false); }
+  }
   async function openDelivery() {
     const expected = view, callback = live.current.onNavigate;
     if (!expected || expected.kind !== "delivery" && expected.kind !== "delivery-outcome" || expected.kind === "delivery-outcome" && !expected.record
@@ -318,6 +327,16 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
       {opening ? <p role="status">{t("decisionDetailsOpening")}</p> : null}
       {failure ? <Banner tone="warning" role="alert"><p>{t("decisionDetailsOpenFailed")}</p><CommandFailureDetails failure={failure.cause}/></Banner> : null}
       {view?.kind === "resource" ? <ResourceDetails view={view}/> : null}
+      {view?.kind === "team-question" ? <>
+        <p>{t(view.conversationId === null ? "decisionDetailsTeamQuestionReadOnly" : "decisionDetailsTeamQuestionHelp")}</p>
+        <TextBlock label={t("decisionDetailsTeamQuestionBody")} text={view.view.question.publication.body}/>
+        <p>{t(`decisionDetailsTeamQuestionState.${view.view.state}`)}</p>
+        {view.view.question.publication.question?.kind === "open" && view.view.question.publication.question.options.length > 0 ? <ul>{view.view.question.publication.question.options.map(option =>
+          <li key={option.optionId}><TokenizedText text={option.label}/></li>)}</ul> : null}
+        {view.view.response ? <TextBlock label={t("decisionDetailsTeamQuestionResponse")} text={view.view.response.publication.body}/> : null}
+        {onNavigate && view.conversationId !== null ? <Button size="sm" disabled={!fresh || opening || view.view.state !== "open"}
+          onClick={() => void openTeamQuestion()}>{t("decisionDetailsTeamQuestionOpen")}</Button> : null}
+      </> : null}
       {view?.kind === "knowledge" ? <><KnowledgeDetails view={view}/>{onNavigate ? <div><Button size="sm" disabled={!fresh || opening || view.decision !== null}
         onClick={() => { void openKnowledge(); }}>{t("decisionsKnowledgeProposalOpen")}</Button></div> : null}</> : null}
       {view?.kind === "mapping" ? <><MappingDetails view={view}/>{onNavigate ? <Button size="sm" disabled={!fresh || opening} onClick={() => void openSource()}>{t("decisionDetailsSavedSource")}</Button> : null}</> : null}

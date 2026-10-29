@@ -14,6 +14,9 @@ export interface ConversationWorkPlanInput {
   sequence: number;
   revision: ConversationProposalRevision | null;
   config: AiConfig;
+  strategyDefault: "idle" | "loading" | "ready" | "failed";
+  strategyDefaultSequence: number;
+  strategyDefaultFailure: CommandFailure | null;
   toolDraft: PlanToolDraft | null;
   advisoryChecks: PluginTextReviewSelection[];
   prepared: ProposalWorkPlanPrepared | null;
@@ -25,7 +28,7 @@ export interface ConversationWorkPlanInput {
 }
 export const emptyExecutionConsent = (): WorkPlanExecutionConsent => ({ checkers: [], tools: null, applications: [] });
 export function workPlanInput(): ConversationWorkPlanInput {
-  return { open: false, sequence: 0, revision: null, config: structuredClone(defaultAiConfig), toolDraft: null, advisoryChecks: [],
+  return { open: false, sequence: 0, revision: null, config: structuredClone(defaultAiConfig), strategyDefault: "idle", strategyDefaultSequence: 0, strategyDefaultFailure: null, toolDraft: null, advisoryChecks: [],
     prepared: null, consent: false, executionConsent: emptyExecutionConsent(), minutes: 60, busy: null, failure: null };
 }
 export function workPlanMinutesValid(minutes: number) { return Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440; }

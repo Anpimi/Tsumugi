@@ -28,6 +28,13 @@ export type DraftPending =
  */
 export type ConversationDraftPending =
   | {
+      conversationId: ExecutionId;
+      kind: "team-question-response";
+      question: TeamDiscussionPost;
+      request: TeamQuestionResponseOriginal;
+      submittedSeq: Revision;
+    }
+  | {
       kind: "create";
       request: CreateProjectConversation;
       submittedSeq: Revision;
@@ -92,6 +99,70 @@ export type ConversationDraftPending =
       kind: "team-recovery";
       request: WorkPlanTeamRecoveryPrepareOriginal;
       submittedSeq: Revision;
+    };
+export type TeamDiscussionAuthor =
+  | {
+      author: TeamMemberAuthor;
+      kind: "member";
+    }
+  | {
+      actor: string;
+      binding: WorkPlanAgentExecutionBinding;
+      kind: "human";
+    }
+  | {
+      actor: string;
+      kind: "local-human";
+    };
+export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution" | "human-question";
+/**
+ * The body and target remain in the original publication fields.
+ */
+export type TeamQuestionEvent =
+  | {
+      kind: "open";
+      options: TeamQuestionOption[];
+    }
+  | {
+      answer: TeamQuestionAnswer;
+      kind: "resolve";
+      questionPostId: ExecutionId;
+    }
+  | {
+      kind: "dismiss";
+      questionPostId: ExecutionId;
+    };
+export type TeamQuestionAnswer =
+  | {
+      kind: "choice";
+      optionId: ExecutionId;
+    }
+  | {
+      kind: "text";
+    };
+export type TeamArtifactReference =
+  | {
+      kind: "translation-revision";
+      revisionId: ExecutionId;
+    }
+  | {
+      attemptId: ExecutionId;
+      kind: "source-result";
+      resultId: ExecutionId;
+      snapshotId: ExecutionId;
+    };
+export type TeamQuestionResponse =
+  | {
+      kind: "choice";
+      optionId: ExecutionId;
+    }
+  | {
+      body: string;
+      kind: "text";
+    }
+  | {
+      kind: "dismiss";
+      reason: string;
     };
 export type UnsignedDecimal = string;
 export type ConversationPlanningModelOutput =
@@ -201,6 +272,9 @@ export type TeamExecutionPolicy = {
   profile: "bounded-team-1";
 };
 export type TeamWorkKind = "translation" | "review" | "evidence";
+export type TeamQuestionPolicy = {
+  profile: "current-plan-1";
+};
 /**
  * Explicit model sharing of guidance declared by the captured tools.
  */
@@ -223,19 +297,8 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
-export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
-export type TeamArtifactReference =
-  | {
-      kind: "translation-revision";
-      revisionId: ExecutionId;
-    }
-  | {
-      attemptId: ExecutionId;
-      kind: "source-result";
-      resultId: ExecutionId;
-      snapshotId: ExecutionId;
-    };
 export type WorkPlanRevocationCommand = "pause" | "stop" | "take-over";
+export type ConversationTeamQuestionMode = "text" | "choice";
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 export type CommandErrorCode =
   | "invalid-input"
@@ -760,6 +823,86 @@ export interface ConversationDraftValue {
   teamDrafts?: ConversationTeamDraft[];
   text: string;
 }
+export interface TeamDiscussionPost {
+  author: TeamDiscussionAuthor;
+  planId: ExecutionId;
+  publication: PublishTeamDiscussion;
+  sequence: Revision;
+}
+export interface TeamMemberAuthor {
+  attemptId: ExecutionId;
+  binding: WorkPlanAgentExecutionBinding;
+  dispatchToken: ExecutionId;
+  itemId: ExecutionId;
+  memberId: ExecutionId;
+  roleVersionId: ExecutionId;
+}
+/**
+ * Immutable provenance, never a substitute for a live opaque scope.
+ */
+export interface WorkPlanAgentExecutionBinding {
+  callerId: ExecutionId;
+  delegation: WorkPlanAgentSubset | null;
+  lease: AutomationLease;
+  rootTask: ExecutionId;
+}
+export interface WorkPlanAgentSubset {
+  delegationId: ExecutionId;
+  parentScopeId: ExecutionId;
+  /**
+   * @maxItems 32
+   */
+  toolHandles: ExecutionId[];
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
+}
+/**
+ * A reference to durable authority. Possessing or editing this reference does
+ * not grant permission; Core checks the stored generation at every boundary.
+ */
+export interface AutomationLease {
+  generation: Revision;
+  planId: ExecutionId;
+}
+/**
+ * Model arguments contain content and relationships, never an author override.
+ */
+export interface PublishTeamDiscussion {
+  body: string;
+  kind: TeamDiscussionKind;
+  postId: ExecutionId;
+  question?: TeamQuestionEvent | null;
+  references: TeamArtifactReference[];
+  replyTo: ExecutionId | null;
+  supersedes: ExecutionId | null;
+  target: TeamDiscussionTarget;
+}
+export interface TeamQuestionOption {
+  label: string;
+  optionId: ExecutionId;
+}
+export interface TeamDiscussionTarget {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TeamQuestionResponseOriginal {
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  response: RespondTeamQuestion;
+}
+/**
+ * An immutable local action identity; it never captures an automation permit.
+ */
+export interface RespondTeamQuestion {
+  postId: ExecutionId;
+  questionPostId: ExecutionId;
+  response: TeamQuestionResponse;
+}
 export interface CreateProjectConversation {
   actionId: ExecutionId;
   conversationId: ExecutionId;
@@ -824,6 +967,10 @@ export interface PlanOptions {
    */
   teamDiscussions?: TeamDiscussionPolicy | null;
   teamExecution?: TeamExecutionPolicy | null;
+  /**
+   * Explicit questions and later human answers under the captured sharing boundary.
+   */
+  teamQuestions?: TeamQuestionPolicy | null;
   /**
    * Absent means that tool guidance is available only to the human reader.
    */
@@ -1174,14 +1321,6 @@ export interface TeamMessageOriginal {
   projectId: ExecutionId;
 }
 /**
- * A reference to durable authority. Possessing or editing this reference does
- * not grant permission; Core checks the stored generation at every boundary.
- */
-export interface AutomationLease {
-  generation: Revision;
-  planId: ExecutionId;
-}
-/**
  * A trusted human action. The original command captures its lease separately.
  */
 export interface SendHumanTeamMessage {
@@ -1191,28 +1330,10 @@ export interface SendHumanTeamMessage {
   recipientMemberId: ExecutionId;
   target: TeamDiscussionTarget;
 }
-export interface TeamDiscussionTarget {
-  locale: string;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
-}
 export interface TeamPublicationOriginal {
   lease: AutomationLease;
   projectId: ExecutionId;
   publication: PublishTeamDiscussion;
-}
-/**
- * Model arguments contain content and relationships, never an author override.
- */
-export interface PublishTeamDiscussion {
-  body: string;
-  kind: TeamDiscussionKind;
-  postId: ExecutionId;
-  references: TeamArtifactReference[];
-  replyTo: ExecutionId | null;
-  supersedes: ExecutionId | null;
-  target: TeamDiscussionTarget;
 }
 export interface WorkPlanTeamRecoverySettlementOriginal {
   applicationToolExecutions: ApplicationScopeBasis[];
@@ -1602,6 +1723,10 @@ export interface ConversationTeamDraft {
   planDigest: string;
   planId: ExecutionId;
   publication: ConversationTeamPublicationDraft | null;
+  /**
+   * @maxItems 32
+   */
+  questions?: ConversationTeamQuestionDraft[];
   recovery?: ConversationTeamRecoveryDraft | null;
   recoveryRecorded?: ConversationTeamRecoveryRecorded | null;
 }
@@ -1616,6 +1741,17 @@ export interface ConversationTeamPublicationDraft {
   editSeq: Revision;
   replyTo: ExecutionId | null;
   unitId: ExecutionId | null;
+}
+/**
+ * Local answer input may be incomplete and carries no execution authority.
+ */
+export interface ConversationTeamQuestionDraft {
+  body: string;
+  dismissReason: string;
+  editSeq: Revision;
+  mode: ConversationTeamQuestionMode;
+  optionId: ExecutionId | null;
+  questionPostId: ExecutionId;
 }
 /**
  * Incomplete recovery input, with stable tool identities and no live permit.

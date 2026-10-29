@@ -493,6 +493,9 @@ pub enum TeamWorkOutcome {
     Waiting {
         requested_intent_ids: Vec<ExecutionId>,
     },
+    AwaitingHuman {
+        question_post_ids: Vec<ExecutionId>,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

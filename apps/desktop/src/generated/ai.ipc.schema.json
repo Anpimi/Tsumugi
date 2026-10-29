@@ -1328,6 +1328,17 @@
               }
             ]
           },
+          "teamQuestions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamQuestionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit questions and later human answers under the captured sharing boundary."
+          },
           "toolGuidance": {
             "anyOf": [
               {
@@ -1587,6 +1598,16 @@
           "postId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamQuestionEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "references": {
             "items": {
               "$ref": "#/definitions/TeamArtifactReference"
@@ -1623,6 +1644,27 @@
           "kind",
           "body",
           "references"
+        ],
+        "type": "object"
+      },
+      "RespondTeamQuestion": {
+        "additionalProperties": false,
+        "description": "An immutable local action identity; it never captures an automation permit.",
+        "properties": {
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "questionPostId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "response": {
+            "$ref": "#/definitions/TeamQuestionResponse"
+          }
+        },
+        "required": [
+          "postId",
+          "questionPostId",
+          "response"
         ],
         "type": "object"
       },
@@ -1896,7 +1938,8 @@
           "note",
           "challenge",
           "rejection",
-          "resolution"
+          "resolution",
+          "human-question"
         ],
         "type": "string"
       },
@@ -2134,6 +2177,191 @@
           "priorWork"
         ],
         "type": "object"
+      },
+      "TeamQuestionAnswer": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "choice",
+                "type": "string"
+              },
+              "optionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "optionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionEvent": {
+        "description": "The body and target remain in the original publication fields.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "open",
+                "type": "string"
+              },
+              "options": {
+                "items": {
+                  "$ref": "#/definitions/TeamQuestionOption"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "options"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "$ref": "#/definitions/TeamQuestionAnswer"
+              },
+              "kind": {
+                "const": "resolve",
+                "type": "string"
+              },
+              "questionPostId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "questionPostId",
+              "answer"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "dismiss",
+                "type": "string"
+              },
+              "questionPostId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "questionPostId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionOption": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "optionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "optionId",
+          "label"
+        ],
+        "type": "object"
+      },
+      "TeamQuestionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionResponse": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "choice",
+                "type": "string"
+              },
+              "optionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "optionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "body"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "dismiss",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TeamWorkKind": {
         "enum": [
@@ -3020,6 +3248,70 @@
         ],
         "type": "object"
       },
+      "WorkPlanHistoryBaseline": {
+        "additionalProperties": false,
+        "properties": {
+          "lastStart": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanStartReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Includes a proven team recovery start. A late enqueue changes this basis\neven when no new control generation has been committed."
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          }
+        },
+        "required": [
+          "lease"
+        ],
+        "type": "object"
+      },
+      "WorkPlanHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/Revision"
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanHistoryBaseline"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 16,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
       "WorkPlanPrepareRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3086,6 +3378,39 @@
           "options",
           "advisoryChecks",
           "maintenance"
+        ],
+        "type": "object"
+      },
+      "WorkPlanStartReceipt": {
+        "additionalProperties": false,
+        "description": "Evidence that the exact authorized fixed input was durably enqueued.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedGeneration": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "actionId",
+          "expectedGeneration",
+          "attemptId",
+          "taskId"
         ],
         "type": "object"
       },
@@ -3346,6 +3671,91 @@
           "projectId",
           "lease",
           "publication"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamQuestionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "questionPostId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "questionPostId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamQuestionRespondRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "response": {
+            "$ref": "#/definitions/RespondTeamQuestion"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "response"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamQuestionsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 16,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "limit"
         ],
         "type": "object"
       },
@@ -3790,6 +4200,9 @@
       "workPlanGenerationStartRead": {
         "$ref": "#/definitions/WorkPlanGenerationStartReadRequest"
       },
+      "workPlanHistory": {
+        "$ref": "#/definitions/WorkPlanHistoryRequest"
+      },
       "workPlanPrepare": {
         "$ref": "#/definitions/WorkPlanPrepareRequest"
       },
@@ -3834,6 +4247,18 @@
       },
       "workPlanTeamPublish": {
         "$ref": "#/definitions/WorkPlanTeamPublishRequest"
+      },
+      "workPlanTeamQuestion": {
+        "$ref": "#/definitions/WorkPlanTeamQuestionRequest"
+      },
+      "workPlanTeamQuestionRespond": {
+        "$ref": "#/definitions/WorkPlanTeamQuestionRespondRequest"
+      },
+      "workPlanTeamQuestionResponseSettlement": {
+        "$ref": "#/definitions/WorkPlanTeamQuestionRespondRequest"
+      },
+      "workPlanTeamQuestions": {
+        "$ref": "#/definitions/WorkPlanTeamQuestionsRequest"
       },
       "workPlanTeamRecoveryAction": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryAuthorizeRequest"
@@ -3890,6 +4315,11 @@
       "workPlanGenerationStartRead",
       "workPlanGenerationDiscard",
       "workPlanAgentOpen",
+      "workPlanHistory",
+      "workPlanTeamQuestions",
+      "workPlanTeamQuestion",
+      "workPlanTeamQuestionRespond",
+      "workPlanTeamQuestionResponseSettlement",
       "workPlanTeamHistory",
       "workPlanTeamExecution",
       "workPlanTeamWorkTools",
@@ -7621,6 +8051,17 @@
               }
             ]
           },
+          "teamQuestions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamQuestionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit questions and later human answers under the captured sharing boundary."
+          },
           "toolGuidance": {
             "anyOf": [
               {
@@ -8251,6 +8692,16 @@
           "postId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamQuestionEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "references": {
             "items": {
               "$ref": "#/definitions/TeamArtifactReference"
@@ -8480,6 +8931,27 @@
         "required": [
           "policy",
           "requirements"
+        ],
+        "type": "object"
+      },
+      "RespondTeamQuestion": {
+        "additionalProperties": false,
+        "description": "An immutable local action identity; it never captures an automation permit.",
+        "properties": {
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "questionPostId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "response": {
+            "$ref": "#/definitions/TeamQuestionResponse"
+          }
+        },
+        "required": [
+          "postId",
+          "questionPostId",
+          "response"
         ],
         "type": "object"
       },
@@ -9771,6 +10243,23 @@
               "binding"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "local-human",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "actor"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -9779,7 +10268,8 @@
           "note",
           "challenge",
           "rejection",
-          "resolution"
+          "resolution",
+          "human-question"
         ],
         "type": "string"
       },
@@ -10527,6 +11017,331 @@
         ],
         "type": "object"
       },
+      "TeamQuestionAnswer": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "choice",
+                "type": "string"
+              },
+              "optionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "optionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionEvent": {
+        "description": "The body and target remain in the original publication fields.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "open",
+                "type": "string"
+              },
+              "options": {
+                "items": {
+                  "$ref": "#/definitions/TeamQuestionOption"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "options"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "$ref": "#/definitions/TeamQuestionAnswer"
+              },
+              "kind": {
+                "const": "resolve",
+                "type": "string"
+              },
+              "questionPostId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "questionPostId",
+              "answer"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "dismiss",
+                "type": "string"
+              },
+              "questionPostId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "questionPostId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionOption": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "optionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "optionId",
+          "label"
+        ],
+        "type": "object"
+      },
+      "TeamQuestionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionResponse": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "choice",
+                "type": "string"
+              },
+              "optionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "optionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "body"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "dismiss",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionResponseOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/TeamDiscussionPost"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "closed-by-other",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/TeamDiscussionPost"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionResponseSettlement": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/definitions/TeamQuestionResponseOutcome"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "request": {
+            "$ref": "#/definitions/RespondTeamQuestion"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "request",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "TeamQuestionState": {
+        "enum": [
+          "open",
+          "resolved",
+          "dismissed"
+        ],
+        "type": "string"
+      },
+      "TeamQuestionView": {
+        "additionalProperties": false,
+        "properties": {
+          "question": {
+            "$ref": "#/definitions/TeamDiscussionPost"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamDiscussionPost"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/definitions/TeamQuestionState"
+          }
+        },
+        "required": [
+          "question",
+          "state",
+          "response"
+        ],
+        "type": "object"
+      },
+      "TeamQuestionsPage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/definitions/TeamQuestionView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "planId",
+          "questions",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
       "TeamRecoveryDiscussionPreview": {
         "additionalProperties": false,
         "properties": {
@@ -10997,6 +11812,26 @@
             "required": [
               "kind",
               "requestedIntentIds"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "awaiting-human",
+                "type": "string"
+              },
+              "questionPostIds": {
+                "items": {
+                  "$ref": "#/definitions/ExecutionId"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "questionPostIds"
             ],
             "type": "object"
           }
@@ -12444,6 +13279,293 @@
           }
         ]
       },
+      "WorkPlanHistoryAction": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "confirmed": {
+                "type": "boolean"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "effects": {
+                "items": {
+                  "$ref": "#/definitions/AutomationEffect"
+                },
+                "type": "array"
+              },
+              "expiresAt": {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              "kind": {
+                "const": "authorize",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "digest",
+              "confirmed",
+              "effects",
+              "expiresAt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "$ref": "#/definitions/WorkPlanCommand"
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "expectedGeneration": {
+                "$ref": "#/definitions/Revision"
+              },
+              "expiresAt": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/UnsignedDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "const": "control",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "expectedGeneration",
+              "command",
+              "confirmed",
+              "expiresAt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "baseEffectiveVersion": {
+                "$ref": "#/definitions/TeamEffectiveVersion"
+              },
+              "baseLease": {
+                "$ref": "#/definitions/AutomationLease"
+              },
+              "confirmed": {
+                "type": "boolean"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "effects": {
+                "items": {
+                  "$ref": "#/definitions/AutomationEffect"
+                },
+                "type": "array"
+              },
+              "expiresAtMs": {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              "kind": {
+                "const": "team-recovery",
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "$ref": "#/definitions/TeamExecutionMember"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              },
+              "work": {
+                "$ref": "#/definitions/TeamHumanWork"
+              }
+            },
+            "required": [
+              "kind",
+              "digest",
+              "confirmed",
+              "effects",
+              "baseLease",
+              "baseEffectiveVersion",
+              "expiresAtMs",
+              "members",
+              "work"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkPlanHistoryBaseline": {
+        "additionalProperties": false,
+        "properties": {
+          "lastStart": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanStartReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Includes a proven team recovery start. A late enqueue changes this basis\neven when no new control generation has been committed."
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          }
+        },
+        "required": [
+          "lease",
+          "lastStart"
+        ],
+        "type": "object"
+      },
+      "WorkPlanHistoryInput": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "parentTask": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "parentTask"
+        ],
+        "type": "object"
+      },
+      "WorkPlanHistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline": {
+            "$ref": "#/definitions/WorkPlanHistoryBaseline"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextAfter": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planDigest": {
+            "type": "string"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/WorkPlanHistoryRow"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "planDigest",
+          "locale",
+          "scope",
+          "baseline",
+          "rows",
+          "nextAfter"
+        ],
+        "type": "object"
+      },
+      "WorkPlanHistoryRow": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/WorkPlanHistoryAction"
+          },
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanHistoryInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An authorized input is distinct from a durable enqueue."
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "start": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanStartReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "actionId",
+          "lease",
+          "state",
+          "cancellationRevision",
+          "action",
+          "input",
+          "start"
+        ],
+        "type": "object"
+      },
       "WorkPlanReceiptView": {
         "additionalProperties": false,
         "properties": {
@@ -13861,6 +14983,9 @@
           }
         ]
       },
+      "workPlanHistory": {
+        "$ref": "#/definitions/WorkPlanHistoryPage"
+      },
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
@@ -13921,6 +15046,18 @@
       "workPlanTeamPublicationSettlement": {
         "$ref": "#/definitions/WorkPlanTeamPublicationSettlementView"
       },
+      "workPlanTeamQuestion": {
+        "$ref": "#/definitions/TeamQuestionView"
+      },
+      "workPlanTeamQuestionRespond": {
+        "$ref": "#/definitions/TeamDiscussionPost"
+      },
+      "workPlanTeamQuestionResponseSettlement": {
+        "$ref": "#/definitions/TeamQuestionResponseSettlement"
+      },
+      "workPlanTeamQuestions": {
+        "$ref": "#/definitions/TeamQuestionsPage"
+      },
       "workPlanTeamRecoveryAction": {
         "anyOf": [
           {
@@ -13969,6 +15106,11 @@
       "workPlanGenerationStartRead",
       "workPlanAgent",
       "workPlanTeamHistory",
+      "workPlanHistory",
+      "workPlanTeamQuestions",
+      "workPlanTeamQuestion",
+      "workPlanTeamQuestionRespond",
+      "workPlanTeamQuestionResponseSettlement",
       "workPlanTeamExecution",
       "workPlanTeamWorkTools",
       "workPlanTeamRecoveryPreview",

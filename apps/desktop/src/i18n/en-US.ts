@@ -1,4 +1,6 @@
+import { conversationTeamQuestionsEn } from "./conversationTeamQuestions";
 import { conversationTeamRecoveryEn } from "./conversationTeamRecovery";
+import { conversationRunHistoryEn } from "./conversationRunHistory";
 import { conversationTeamActionsEn } from "./conversationTeamActions";
 import { conversationTeamEn } from "./conversationTeam";
 import { deliveryWorkbenchEn } from "./deliveryWorkbench";
@@ -14,6 +16,8 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+  conversationTeamQuestions: conversationTeamQuestionsEn,
+conversationRunHistory: conversationRunHistoryEn,
 conversationTeamRecovery: conversationTeamRecoveryEn,
 conversationTeamActions: conversationTeamActionsEn,
 conversationTeam: conversationTeamEn,
@@ -1426,6 +1430,7 @@ ai: {
     "absent": "No matching record was found yet. The original request is kept; check again or retry while the permission is active.",
     "viewRecorded": "View saved note",
     "kinds": {
+      "human-question": "Question for you",
       "note": "Note",
       "challenge": "Challenge",
       "rejection": "Objection",

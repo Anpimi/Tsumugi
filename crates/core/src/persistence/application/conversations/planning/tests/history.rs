@@ -410,6 +410,7 @@ fn planning_history_migration_preserves_all_supported_rows_and_backfills_every_a
                         references: vec![],
                         reply_to: None,
                         supersedes: None,
+                        question: None,
                     },
                 )
                 .unwrap();

@@ -1,0 +1,10 @@
+.panel { display: grid; gap: var(--space-3); min-width: 0; }
+.panel > div:not([hidden]), .form, .question { display: grid; gap: var(--space-3); min-width: 0; }
+.panel [hidden] { display: none; }
+.question { padding-block: var(--space-3); border-block-start: var(--border-width) solid var(--color-border-subtle); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.options { display: grid; gap: var(--space-2); border: 0; padding: 0; margin: 0; }
+.choice { display: flex; align-items: flex-start; gap: var(--space-2); }
+.choice input { flex: 0 0 auto; }
+
+.checkbox { inline-size: 1rem; block-size: 1rem; min-block-size: 1rem; flex: none; }

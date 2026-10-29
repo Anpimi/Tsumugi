@@ -29,11 +29,11 @@ use tsumugi_core::{
         provider::{MemberProviderSession, ProviderService},
     },
     application::{
-        AgentToolRequest, CapturedTeamAuthor, CapturedTeamDiscussionView,
+        AgentToolRequest, AskHumanQuestion, CapturedTeamAuthor, CapturedTeamDiscussionView,
         CapturedTeamWorkView, PublishTeamDiscussion, ReadTeamArtifact, ReadTeamDiscussion,
-        RequestTeamWork, SendTeamMessage, TeamDiscussionPolicy, ToolGuidancePolicy,
+        RequestTeamWork, SendTeamMessage, TeamDiscussionPolicy, TeamQuestionPolicy, ToolGuidancePolicy,
         WorkPlanAgentExecutionBinding, WorkPlanToolSpec,
-        team_discussion_tools, team_execution_tools,
+        team_discussion_tools, team_execution_tools, team_question_tool,
     },
 };
 use tsumugi_plugin_host::{
@@ -172,6 +172,7 @@ impl Owner {
             tool_revision: revisions.into_iter().next(),
             team_author,
             team_policy,
+            team_questions: plan.options.team_questions,
             tool_guidance: plan.options.tool_guidance,
             team_work: false,
             mcp,
@@ -247,6 +248,7 @@ struct CapturedScope {
     tool_revision: Option<UnsignedDecimal>,
     team_author: Option<CapturedTeamAuthor>,
     team_policy: Option<TeamDiscussionPolicy>,
+    team_questions: Option<TeamQuestionPolicy>,
     tool_guidance: Option<ToolGuidancePolicy>,
     team_work: bool,
     mcp: Option<mcp::Query>,
@@ -407,6 +409,10 @@ impl MemberFactory {
             roster.extend(team_execution_tools().into_iter().map(|tool| MemberTool {
                 name: tool.name, description: tool.description, parameters: tool.input_schema,
             }));
+        }
+        if captured.team_work && captured.team_questions.is_some() {
+            let tool = team_question_tool();
+            roster.push(MemberTool { name: tool.name, description: tool.description, parameters: tool.input_schema });
         }
         if let Some(query) = &captured.mcp {
             roster.push(query.tool());
@@ -614,11 +620,37 @@ impl ToolReplyProbe {
 }
 #[derive(Clone)]
 enum TeamToolRequest {
+    AskHuman(AskHumanQuestion),
     Publish(PublishTeamDiscussion),
     Read(ReadTeamDiscussion),
     ReadArtifact(ReadTeamArtifact),
     RequestWork(RequestTeamWork),
     SendMessage(SendTeamMessage),
+}
+
+fn decode_team_tool(name: &str, arguments: &Value, has_author: bool,
+    policy: Option<TeamDiscussionPolicy>, work: bool, questions: Option<TeamQuestionPolicy>,
+) -> Result<Option<TeamToolRequest>, ExecutionError> {
+    let decode_error = |_| fail(ErrorCode::InvalidInput, "member-discussion-arguments");
+    let tool = match name {
+        "ask_human" => TeamToolRequest::AskHuman(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+        "publish_team_discussion" => TeamToolRequest::Publish(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+        "read_team_discussion" => TeamToolRequest::Read(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+        "read_team_artifact" => TeamToolRequest::ReadArtifact(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+        "request_team_work" => TeamToolRequest::RequestWork(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+        "send_team_message" => TeamToolRequest::SendMessage(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
+        _ => return Ok(None),
+    };
+    if !has_author || policy.is_none() {
+        return Err(fail(ErrorCode::Unauthorized, "member-discussions-disabled"));
+    }
+    let discussion = policy.is_some_and(|policy| team_discussion_tools(policy).iter().any(|tool| tool.name == name));
+    let coordination = work && team_execution_tools().iter().any(|tool| tool.name == name);
+    let question = work && questions.is_some() && name == "ask_human";
+    if !discussion && !coordination && !question {
+        return Err(fail(ErrorCode::Unauthorized, "member-discussion-tool-policy"));
+    }
+    Ok(Some(tool))
 }
 
 enum RequestView {
@@ -788,27 +820,8 @@ impl Handler {
             .ok_or_else(|| fail(ErrorCode::Unauthorized, "member-tool-handle"))
     }
     fn team_tool(&self, name: &str, arguments: &Value) -> Result<Option<TeamToolRequest>, ExecutionError> {
-        let decode_error = |_| fail(ErrorCode::InvalidInput, "member-discussion-arguments");
-        let tool = match name {
-            "publish_team_discussion" => TeamToolRequest::Publish(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
-            "read_team_discussion" => TeamToolRequest::Read(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
-            "read_team_artifact" => TeamToolRequest::ReadArtifact(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
-            "request_team_work" => TeamToolRequest::RequestWork(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
-            "send_team_message" => TeamToolRequest::SendMessage(serde_json::from_value(arguments.clone()).map_err(decode_error)?),
-            _ => return Ok(None),
-        };
-        if self.captured.team_author.is_none() {
-            return Err(fail(ErrorCode::Unauthorized, "member-discussions-disabled"));
-        }
-        let discussion = self.captured.team_policy.is_some_and(|policy| {
-            team_discussion_tools(policy).iter().any(|tool| tool.name == name)
-        });
-        let coordination = self.captured.team_work
-            && team_execution_tools().iter().any(|tool| tool.name == name);
-        if !discussion && !coordination {
-            return Err(fail(ErrorCode::Unauthorized, "member-discussion-tool-policy"));
-        }
-        Ok(Some(tool))
+        decode_team_tool(name, arguments, self.captured.team_author.is_some(), self.captured.team_policy,
+            self.captured.team_work, self.captured.team_questions)
     }
     fn guidance_tool(
         &self,
@@ -832,6 +845,7 @@ impl Handler {
         let request = self.request.clone();
         let admission = self.environment_admission()?;
         let details = match &tool {
+            TeamToolRequest::AskHuman(question) => json!({"postId":question.post_id}),
             TeamToolRequest::Publish(publication) => json!({"postId":publication.post_id}),
             TeamToolRequest::Read(read) => json!({"postId":read.post_id}),
             TeamToolRequest::ReadArtifact(read) => json!({"postId":read.post_id}),
@@ -856,6 +870,7 @@ impl Handler {
                         request.check_service_dispatch().map_err(map_recover)?;
                         let (host, store) = owner.original(sessions)?;
                         Ok(match tool {
+                            TeamToolRequest::AskHuman(question) => store.ask_human_question(&author, &question).map(serde_json::to_value),
                             TeamToolRequest::Publish(publication) => store.publish_team_discussion(&author, &publication).map(serde_json::to_value),
                             TeamToolRequest::Read(read) => store.read_team_discussion(&captured.scope, read.post_id).map(serde_json::to_value),
                             TeamToolRequest::ReadArtifact(read) => store.read_team_artifact(&author, &read).map(serde_json::to_value),
@@ -1494,6 +1509,25 @@ impl MemberHandler for Handler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn member_question_tool_requires_the_captured_opt_in_and_rejects_author_overrides() {
+        let arguments = json!({"postId":ExecutionId::new(),"target":{"unitId":ExecutionId::new(),"locale":"zh-CN",
+            "sourceSnapshotId":ExecutionId::new(),"sourceRevisionId":ExecutionId::new()},"body":"Which voice?","options":[],"references":[]});
+        let discussion = Some(TeamDiscussionPolicy::CurrentPlanV1 {});
+        let questions = Some(TeamQuestionPolicy::CurrentPlanV1 {});
+        assert_eq!(team_question_tool().name, "ask_human");
+        assert!(matches!(decode_team_tool("ask_human", &arguments, true, discussion, true, questions).unwrap(), Some(TeamToolRequest::AskHuman(_))));
+        for (author, policy, work, question_policy) in [(false, discussion, true, questions), (true, None, true, questions),
+            (true, discussion, false, questions), (true, discussion, true, None)] {
+            assert_eq!(decode_team_tool("ask_human", &arguments, author, policy, work, question_policy).err().unwrap().code, ErrorCode::Unauthorized);
+        }
+        for field in ["author", "actor", "human", "binding", "lease", "callerId", "response"] {
+            let mut invalid = arguments.clone(); invalid[field] = Value::Null;
+            assert_eq!(decode_team_tool("ask_human", &invalid, true, discussion, true, questions).err().unwrap().code, ErrorCode::InvalidInput);
+        }
+        assert!(decode_team_tool("answer_human_question", &arguments, true, discussion, true, questions).unwrap().is_none());
+    }
 
     #[test]
     fn member_usage_totals_preserve_reported_zero_and_per_dimension_unknown() {

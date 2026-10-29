@@ -22,15 +22,19 @@ import { runMatchesLink, type ConversationPlanLink } from "./conversationRun";
 import { emptyExecutionConsent, workPlanMinutesValid } from "./proposalWorkPlan";
 import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import { ConversationRunProgress } from "./ConversationRunProgress";
+import { ConversationRunHistory } from "./ConversationRunHistory";
 import { ConversationTeamActions } from "./ConversationTeamActions";
 import { ConversationTeamRecovery } from "./ConversationTeamRecovery";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
+import type { ConversationTeamQuestionTarget } from "./conversationNavigation";
+import { ConversationTeamQuestions } from "./ConversationTeamQuestions";
 import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
   owner: ConversationSession; input: ConversationInput; link: ConversationPlanLink;
   visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate;
+  questionTarget?: ConversationTeamQuestionTarget | null;
 }
 
 const stateKeys = { active: "runStateActive", paused: "runStatePaused", stopped: "runStateStopped", "taken-over": "runStateTakenOver" } as const;
@@ -68,7 +72,9 @@ function RunPlanDetails({ status }: { status: WorkPlanStatusView }) {
 /** The local expansion owns observation only; closing it never cancels execution. */
 export function ConversationRunPanel(props: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
-  const [expanded, setExpanded] = useState(false), id = useId();
+  const [opened, setExpanded] = useState(false), [closedTarget, setClosedTarget] = useState<ConversationTeamQuestionTarget | null>(null), id = useId();
+  const questionTarget = props.questionTarget?.planId === props.link.planId && props.questionTarget.conversationId === props.link.conversationId ? props.questionTarget : null;
+  const expanded = opened || questionTarget !== null && questionTarget !== closedTarget;
   const body = useRef<HTMLDivElement>(null), toggle = useRef<HTMLButtonElement>(null);
   const canToggle = () => props.visible && !props.owner.getSnapshot().retired
     && props.gate.canDispatch({ viewId: props.viewId, source: "button", dialogId: props.parentDialogId });
@@ -76,7 +82,7 @@ export function ConversationRunPanel(props: Props) {
     <div><Button ref={toggle} size="sm" aria-expanded={expanded} aria-controls={id} disabled={!expanded && props.disabled} onClick={() => {
       if (!canToggle()) return;
       if (expanded && body.current?.contains(document.activeElement)) toggle.current?.focus();
-      setExpanded(value => !value);
+      setExpanded(!expanded); if (expanded) setClosedTarget(questionTarget);
     }}>{t(expanded ? "runHide" : "runShow")}</Button></div>
     <div id={id} ref={body} hidden={!expanded}>
       {expanded && props.visible ? <RunObservation {...props}/> : null}
@@ -84,7 +90,7 @@ export function ConversationRunPanel(props: Props) {
   </section>;
 }
 
-function RunObservation({ owner, input, link, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenTeamCandidate }: Props) {
+function RunObservation({ owner, input, link, visible, disabled, gate, viewId, parentDialogId, onOpenCandidate, onOpenTeamCandidate, questionTarget }: Props) {
   const { t, i18n } = useTranslation(undefined, { keyPrefix: "conversation" });
   const reads = useSessionReads(), facts = useConnectionFacts(), id = useId(), inputOwner = `conversation-run-${id}`;
   const statusRegion = useRef<HTMLDivElement>(null);
@@ -198,6 +204,9 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
       </> : <p>{t("runStoppedHelp")}</p>}
       {plan?.options.teamExecution ? <ConversationTeamRecovery owner={owner} input={input} link={link} status={status} visible={visible}
         disabled={disabled} current={() => canRead() && statusCurrent(status)} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/> : null}
+      {plan?.options.teamQuestions ? <ConversationTeamQuestions owner={owner} input={input} link={link} status={status} visible={visible} disabled={disabled}
+        current={() => canRead() && statusCurrent(status)} gate={gate} viewId={viewId} parentDialogId={parentDialogId}
+        target={questionTarget?.planId === link.planId && questionTarget.conversationId === link.conversationId ? questionTarget : null}/> : null}
       {mayContinue && plan?.options.mcpTermQuery ? <Banner tone="info">{t("runMcpRecovery")}</Banner> : null}
       {genericContinue ? <>
         <div><Button size="sm" aria-expanded={continueOpen} aria-controls={`${id}-continue`} disabled={!continueOpen && (blocked || !fresh)} onClick={() => {
@@ -209,6 +218,8 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
       </> : null}
     </> : null}
     <ConversationRunRevocations owner={owner} input={input} link={link} canRead={canRead} onFinished={finishAction}/>
+    <ConversationRunHistory context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
+      onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate}/>
     <ConversationRunProgress onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
       teamActions={status ? (view, current) => <ConversationTeamActions owner={owner} input={input} link={link} status={status} view={view} current={() => canRead() && statusCurrent(status) && current()}
         visible={visible} disabled={disabled} gate={gate} viewId={viewId} refresh={() => { if (canRead()) reads.invalidate(["execution"]); }}/> : undefined}

@@ -10,6 +10,7 @@ mod recovery;
 mod local;
 mod delivery;
 mod questions;
+mod team_questions;
 mod source_pending;
 pub use local::*;
 #[cfg(test)]
@@ -51,6 +52,7 @@ pub enum DecisionTarget {
 #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DecisionAction {
+    AnswerTeamQuestion { plan_id: ExecutionId, question_post_id: ExecutionId },
     CompareCandidate { unit_id: ExecutionId, revision_id: ExecutionId,
         source_snapshot_id: ExecutionId, source_revision_id: ExecutionId },
     ReviewTranslation { unit_id: ExecutionId, selection_id: ExecutionId, revision_id: ExecutionId },
@@ -76,6 +78,7 @@ pub enum DecisionState { Pending, Stale, AwaitingRecheck }
 #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum DecisionEvidence {
+    TeamQuestion { member_id: ExecutionId, role_version_id: ExecutionId },
     Delivery { blocker_count: u32, reasons: Vec<super::EligibilityReason>, reasons_complete: bool },
     LocalRequest { outcome: DecisionLocalOutcome, error_code: Option<ErrorCode> },
     DeliveryOutcome { state: super::DeliveryState, locales: Vec<String>, file_count: u32, unknown_file_count: u32 },
@@ -229,13 +232,8 @@ impl ProjectStore {
                 let projections = match source {
                     DecisionSource::SourceMapping => vec![recovery::project(self, c, project, query.locale.as_deref(), source, &observe),
                         source_pending::project(self, c, project)],
-                    DecisionSource::AgentQuestion => {
-                        // Proposal questions are observable today. Member-to-human
-                        // questions still need an explicit fact in their owner.
-                        let projection = questions::project(self, c, project);
-                        if projection.is_ok() { local_reason = Some(DecisionCoverageReason::SourceNotImplemented); }
-                        vec![projection]
-                    }
+                    DecisionSource::AgentQuestion => vec![questions::project(self, c, project),
+                        team_questions::project(self, c, project, query.locale.as_deref())],
                     DecisionSource::DeliveryUnknown => vec![delivery::project(self, c, project, query.locale.as_deref(), &delivery_activity)],
                     DecisionSource::LocalActionRecovery => match local.take().expect("one local source")(self) {
                         Ok(Some(projection)) => {
@@ -259,7 +257,7 @@ impl ProjectStore {
                     _ => vec![recovery::project(self, c, project, query.locale.as_deref(), source, &observe)],
                 };
                 let mut rows = Vec::new();
-                let mut complete = source != DecisionSource::AgentQuestion;
+                let mut complete = true;
                 let mut available = false;
                 let mut error_code = local_error;
                 for projection in projections {

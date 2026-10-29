@@ -124,6 +124,7 @@ fn reference(
             ConversationDraftPending::TeamMessage { .. } => DecisionLocalRequestKind::TeamMessage,
             ConversationDraftPending::TeamPublication { .. } => DecisionLocalRequestKind::TeamPublication,
             ConversationDraftPending::TeamRecovery { .. } => DecisionLocalRequestKind::TeamRecovery,
+            ConversationDraftPending::TeamQuestionResponse { .. } => DecisionLocalRequestKind::TeamQuestionResponse,
         },
         PendingJournalSlot::Revocation(_) => DecisionLocalRequestKind::WorkPlanControl,
         PendingJournalSlot::Resource(p)=>match p {
@@ -270,6 +271,7 @@ fn targets(row: &PendingActionRef) -> Vec<DecisionTarget> {
             ..
         }) => Some(request.plan_id),
         PendingJournalSlot::Revocation(slot) => Some(slot.request.plan_id),
+        PendingJournalSlot::Conversation(ConversationDraftPending::TeamQuestionResponse { request, .. }) => Some(request.plan_id),
         PendingJournalSlot::Conversation(ConversationDraftPending::TeamMessage { request, .. }) => Some(request.lease.plan_id),
         PendingJournalSlot::Conversation(ConversationDraftPending::TeamPublication { request, .. }) => Some(request.lease.plan_id),
         PendingJournalSlot::Conversation(ConversationDraftPending::TeamRecovery { request, .. }) => Some(request.recovery.plan_id),

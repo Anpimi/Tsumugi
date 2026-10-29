@@ -22,6 +22,7 @@ function fixture() {
   status.lease.generation = "1"; page.effectiveVersion.lease = structuredClone(status.lease);
   for (const role of [...page.members, ...page.roleVersions]) role.generation = "1";
   for (const message of page.messages) {
+    if (message.sender.kind === "local-human") throw new Error("Bound synthetic message author required");
     const binding = message.sender.kind === "member" ? message.sender.author.binding : message.sender.binding;
     binding.lease = structuredClone(status.lease);
   }
@@ -33,6 +34,7 @@ function fixture() {
     actionId: page.effectiveVersion.actionId, proposalId: id(61002), revisionId: id(61003), ordinal: "1" }, validateResponseProposalWorkPlanLink);
   const post = teamPostFixture(), rawHistory = teamHistoryFixture();
   post.planId = status.plan.planId; post.publication.target = structuredClone(page.works[0].target);
+  if (post.author.kind === "local-human") throw new Error("Bound synthetic post author required");
   const postBinding = post.author.kind === "member" ? post.author.author.binding : post.author.binding;
   postBinding.lease = structuredClone(status.lease);
   const history = checked({ ...rawHistory, planId: status.plan.planId, posts: [post], nextAfter: null,

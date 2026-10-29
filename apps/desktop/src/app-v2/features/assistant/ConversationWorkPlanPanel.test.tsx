@@ -29,7 +29,7 @@ function expectNoExecution() {
   const allowed = ["list_project_conversations", "read_project_conversation_messages", "read_conversation_planning_attempts", "read_conversation_planning",
     "read_conversation_proposal_revisions", "read_conversation_proposal", "validate_conversation_proposal", "read_conversation_proposal_work_plans",
     "list_local_conversation_drafts", "read_local_conversation_draft", "write_local_conversation_draft", "resolve_local_conversation_draft",
-    "read_model_connections", "prepare_conversation_proposal_work_plan", "authorize_conversation_proposal_work_plan", "recover_conversation_proposal_work_plan"];
+    "read_model_connections", "read_context_strategy_default", "prepare_conversation_proposal_work_plan", "authorize_conversation_proposal_work_plan", "recover_conversation_proposal_work_plan"];
   expect(invoke.mock.calls.map(([command]) => command).filter(command => !allowed.includes(command))).toEqual([]);
 }
 function harness({ questions = false, unknown = false } = {}) {
@@ -77,6 +77,7 @@ function harness({ questions = false, unknown = false } = {}) {
       return structuredClone(state.head);
     }
     if (command === "read_model_connections") return structuredClone(connections);
+    if (command === "read_context_strategy_default") return null;
     if (command === "prepare_conversation_proposal_work_plan") return conversationWorkPlanFixture(key, request.config).prepared;
     if (command === "authorize_conversation_proposal_work_plan") {
       expect(state.head.value?.pending).toMatchObject({ kind: "proposal-work-plan", request: request.authorization });

@@ -3,6 +3,8 @@ import { conversationCommands, isConversationMessageText, type ConversationPlann
 import { defaultAiConfig, editedAiConfig, validAiLimits, type AiConfig } from "../../../aiCommands";
 import { conversationDraftCommands, canonicalConversationDraft, conversationPendingActionId, isConversationTeamPending, locallyReplayableConversationRequest, type ConversationDraftHead, type ConversationDraftKey, type ConversationDraftPending, type ConversationDraftSummary, type ConversationDraftValue, type ConversationProposalDraft, type ConversationDraftRevocation, type ConversationDraftResolveTarget, type ConversationDraftDisposition, type ConversationTeamDraft, type ConversationTeamGuidanceDraft, type ConversationTeamPublicationDraft } from "../../../conversationDraftCommands";
 import type { SessionRequest } from "../../../executionCommands";
+import type { SessionReads } from "../../../sessionReads";
+import { strategyCommands, strategyKeys } from "../../../strategyCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
 import { DraftKernel, nextEditSeq } from "../../workspace/draftKernel";
@@ -27,6 +29,10 @@ import type { WorkPlanTeamRecoveryAuthorizeRequest } from "../../../generated/ai
 import type { WorkPlanTeamRecoveryStateView, TeamRecoveryReceipt } from "../../../generated/ai.responses";
 import { initialConversationRecoveryState, initialConversationRecoveryDraft, newConversationRecoveryMember, unchangedConversationRecoveryMember, conversationRecoveryProblem, recoveryBasisMatches,
   type ConversationRecoveryState, type ConversationRecoveryDraft, type ConversationRecoveryMember } from "./conversationRecovery";
+import { teamQuestionCommands, type TeamQuestionView } from "../../../teamQuestionCommands";
+import type { RespondTeamQuestion } from "../../../generated/ai.requests";
+import type { ConversationTeamQuestionDraft } from "../../../generated/draft.responses";
+type ConversationQuestionPending = Extract<ConversationDraftPending, { kind: "team-question-response" }>;
 type ConversationRecoveryPending = Extract<ConversationDraftPending, { kind: "team-recovery" }>;
 
 type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "prepareProposalWorkPlan" | "authorizeProposalWorkPlan" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & {
@@ -37,9 +43,12 @@ type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands
   readTeamExecution: typeof workPlanCommands.teamExecution; sendTeamMessage: typeof workPlanCommands.sendTeamMessage;
   publishTeam: typeof workPlanCommands.publishTeam; teamMessageSettlement: typeof workPlanCommands.teamMessageSettlement;
   teamPublicationSettlement: typeof workPlanCommands.teamPublicationSettlement;
+  readTeamQuestion: typeof teamQuestionCommands.question; respondTeamQuestion: typeof teamQuestionCommands.respond;
+  teamQuestionSettlement: typeof teamQuestionCommands.settlement;
   teamRecoveryState: typeof workPlanCommands.teamRecoveryState; prepareTeamRecovery: typeof workPlanCommands.prepareTeamRecovery;
   authorizeTeamRecovery: typeof workPlanCommands.authorizeTeamRecovery; readTeamRecoveryPreparation: typeof workPlanCommands.readTeamRecoveryPreparation;
   closeTeamRecoveryPreparation: typeof workPlanCommands.closeTeamRecoveryPreparation; teamRecoverySettlement: typeof workPlanCommands.teamRecoverySettlement;
+  readStrategyDefault: typeof strategyCommands.default; readStrategyCandidate: typeof strategyCommands.candidate;
 };
 type JournalWrite = Parameters<Ports["write"]>[0]["write"];
 type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
@@ -53,7 +62,7 @@ export interface ConversationInput {
   revocationStates: ReadonlyMap<string, ConversationRevocationState>;
   busy: "submit" | "check" | null;
   outcome: "recorded" | "unknown" | "absent" | "blocked" | "mismatch" | null;
-  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | "runStarted" | "runPaused" | "runStopped" | "runTakenOver" | "runContinued" | "runNotApplied" | "teamMessageSaved" | "teamPublicationSaved" | "teamRecoveryRecorded" | null;
+  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | "runStarted" | "runPaused" | "runStopped" | "runTakenOver" | "runContinued" | "runNotApplied" | "teamMessageSaved" | "teamPublicationSaved" | "teamRecoveryRecorded" | "teamQuestionResponded" | "teamQuestionClosed" | null;
   failure: { kind: "journal" | "action"; cause: CommandFailure } | null;
   planning: ConversationPlanningInput;
   proposalEditorId: string | null;
@@ -108,6 +117,7 @@ export class ConversationSession {
   private readonly listeners = new Set<() => void>();
   private opening = new Map<string, Promise<boolean>>();
   private loading: Promise<boolean> | null = null;
+  private readonly strategyDefaultLoads = new Map<string, object>();
   private changed = 0;
   private state: ConversationSessionSnapshot = { hydration: "idle", failure: null, inputFailure: null, activeId: null, inputs: new Map(), summaries: [], next: null, retired: false };
   constructor(readonly context: SessionRequest, private readonly onRecorded: () => void, private readonly onReveal: () => void, ports: Partial<Ports> = {}) {
@@ -124,9 +134,11 @@ export class ConversationSession {
       readProposalWorkPlan: conversationCommands.readProposalWorkPlan, readTeamExecution: workPlanCommands.teamExecution,
       sendTeamMessage: workPlanCommands.sendTeamMessage, publishTeam: workPlanCommands.publishTeam,
       teamMessageSettlement: workPlanCommands.teamMessageSettlement, teamPublicationSettlement: workPlanCommands.teamPublicationSettlement,
+      readTeamQuestion: teamQuestionCommands.question, respondTeamQuestion: teamQuestionCommands.respond, teamQuestionSettlement: teamQuestionCommands.settlement,
       teamRecoveryState: workPlanCommands.teamRecoveryState, prepareTeamRecovery: workPlanCommands.prepareTeamRecovery,
       authorizeTeamRecovery: workPlanCommands.authorizeTeamRecovery, readTeamRecoveryPreparation: workPlanCommands.readTeamRecoveryPreparation,
       closeTeamRecoveryPreparation: workPlanCommands.closeTeamRecoveryPreparation, teamRecoverySettlement: workPlanCommands.teamRecoverySettlement,
+      readStrategyDefault: strategyCommands.default, readStrategyCandidate: strategyCommands.candidate,
       captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
@@ -168,6 +180,7 @@ export class ConversationSession {
   }
   async open(conversationId: string): Promise<boolean> {
     if (!this.kernel.live) return false;
+    if (this.state.activeId && this.state.activeId !== conversationId) this.cancelWorkPlanStrategyDefault(this.state.activeId);
     this.publish({ activeId: conversationId, inputFailure: null });
     if (this.records.has(conversationId)) return true;
     const existing = this.opening.get(conversationId); if (existing) return existing;
@@ -197,7 +210,7 @@ export class ConversationSession {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live || text === record.input.value.text) return;
     const editSeq = nextEditSeq(record.input.value.editSeq), value = { ...record.input.value, text, editSeq, messageEditSeq: editSeq };
     this.changed++; this.update(record, { value, dirty: true, notice: null });
-    if (!record.input.failure && !record.action || (isConversationTeamPending(value.pending) || value.pending?.kind === "team-recovery") && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
+    if (!record.input.failure && !record.action || (isConversationTeamPending(value.pending) || value.pending?.kind === "team-recovery" || value.pending?.kind === "team-question-response") && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
   }
   async append(conversationId: string) {
     const record = this.records.get(conversationId);
@@ -287,10 +300,81 @@ export class ConversationSession {
     if (!record || !this.kernel.live || record.action || revision.projectId !== this.context.projectId || revision.content.kind !== "proposal") return;
     const before = record.input.workPlan;
     this.update(record, { workPlan: before.revision?.revisionId === revision.revisionId ? { ...before, open: true, consent: false, executionConsent: emptyExecutionConsent() }
-      : { ...workPlanInput(), open: true, sequence: before.sequence + 1, revision: structuredClone(revision), config: { ...structuredClone(defaultAiConfig), maxItems: revision.content.unitIds.length } } });
+      : { ...workPlanInput(), open: true, sequence: before.sequence + 1, strategyDefaultSequence: before.sequence + 1,
+        revision: structuredClone(revision), config: { ...structuredClone(defaultAiConfig), maxItems: revision.content.unitIds.length } } });
+  }
+  cancelWorkPlanStrategyDefault(conversationId: string) {
+    const record = this.records.get(conversationId);
+    if (!record || !this.kernel.live || record.input.workPlan.strategyDefault !== "loading") return;
+    this.strategyDefaultLoads.delete(conversationId);
+    this.update(record, { workPlan: { ...record.input.workPlan, strategyDefault: "failed",
+      strategyDefaultFailure: commandFailure(new Error("Default context reading was interrupted")) } });
+  }
+  async loadWorkPlanStrategyDefault(conversationId: string, reads: SessionReads, current: () => boolean = () => true) {
+    const record = this.records.get(conversationId), before = record?.input.workPlan, revision = before?.revision;
+    if (!record || !before || !revision || !this.kernel.live || reads.retired || record.action || record.input.busy || record.input.value.pending
+      || record.input.failure || !before.open || before.busy || this.state.activeId !== conversationId || !current()
+      || (before.strategyDefault !== "idle" && before.strategyDefault !== "failed")) return;
+    const ticket = {};
+    this.strategyDefaultLoads.set(conversationId, ticket);
+    this.update(record, { workPlan: { ...before, strategyDefault: "loading", strategyDefaultFailure: null } });
+    const retained = () => this.kernel.live && this.strategyDefaultLoads.get(conversationId) === ticket
+      && record.input.workPlan.revision?.revisionId === revision.revisionId;
+    const unchanged = () => retained() && !reads.retired && record.input.workPlan.sequence === before.sequence
+      && record.input.workPlan.open && this.state.activeId === conversationId && !record.action && !record.input.busy
+      && !record.input.value.pending && !record.input.failure && current();
+    try {
+      if (reads.context.projectId !== this.context.projectId || reads.context.sessionToken !== this.context.sessionToken)
+        throw new Error("Default context reading belongs to another session");
+      // The proposal's original material supplies the target language. Interface
+      // language and the currently selected table entries cannot change it.
+      const run = await reads.client.fetchQuery({ queryKey: reads.key(["conversation", conversationId, "planning", revision.origin.attemptId]),
+        meta: { scopes: ["project", "execution"] }, queryFn: () => this.ports.readPlanning({ ...this.context, conversationId, attemptId: revision.origin.attemptId }) });
+      if (!unchanged()) return;
+      if (!run || run.preview.projectId !== this.context.projectId || run.preview.conversationId !== conversationId
+        || run.receipt.consent.attemptId !== revision.origin.attemptId || run.receipt.inputDigest !== revision.origin.inputDigest || run.resultId !== revision.origin.resultId
+        || run.preview.scope.kind !== "units" || !validProposalContent(revision.content, run)) throw new Error("The proposal's original target language is not available");
+      const locale = run.preview.scope.locale, key = reads.key(strategyKeys.default(locale));
+      await reads.client.fetchQuery({ queryKey: key, staleTime: 0, meta: { scopes: ["arena", "project"] },
+        queryFn: () => this.ports.readStrategyDefault({ ...this.context, locale }) });
+      if (!unchanged()) return;
+      const snapshot = reads.client.getQueryState<Awaited<ReturnType<Ports["readStrategyDefault"]>>>(key);
+      if (!snapshot || snapshot.status !== "success" || snapshot.fetchStatus !== "idle" || snapshot.isInvalidated || snapshot.error !== null)
+        throw new Error("The default context is not current");
+      const adopted = snapshot.data, reference = adopted?.reference;
+      if (adopted && (adopted.projectId !== this.context.projectId || adopted.locale !== locale)
+        || reference && (reference.projectId !== this.context.projectId || reference.revisionId !== adopted?.revisionId))
+        throw new Error("The default context does not match this plan");
+      const candidate = reference ? await reads.client.fetchQuery({ queryKey: reads.key(["context-strategy-candidate", reference.candidateId]),
+        staleTime: 0, meta: { scopes: ["arena", "source", "translation"] },
+        queryFn: () => this.ports.readStrategyCandidate({ ...this.context, candidateId: reference.candidateId }) }) : null;
+      if (!unchanged()) return;
+      const latest = reads.client.getQueryState(key);
+      if (!latest || latest !== snapshot || latest.isInvalidated || latest.fetchStatus !== "idle" || latest.error !== null)
+        throw new Error("The default context changed while reading");
+      if (candidate && (candidate.projectId !== this.context.projectId || candidate.locale !== locale || candidate.candidateId !== reference?.candidateId))
+        throw new Error("The saved context does not match this plan");
+      // Capturing a future default only changes source context and provenance.
+      // Even a later explicit retry must preserve every newer configuration edit.
+      const config = candidate && reference && before.sequence === before.strategyDefaultSequence
+        ? { ...record.input.workPlan.config, sourceContext: structuredClone(candidate.sourceContext), contextStrategy: structuredClone(reference) }
+        : record.input.workPlan.config;
+      this.update(record, { workPlan: { ...record.input.workPlan, config, strategyDefault: "ready", strategyDefaultFailure: null } });
+    } catch (error) {
+      if (retained())
+        this.update(record, { workPlan: { ...record.input.workPlan, strategyDefault: "failed", strategyDefaultFailure: commandFailure(error) } });
+    } finally {
+      if (retained()) {
+        this.strategyDefaultLoads.delete(conversationId);
+        if (record.input.workPlan.strategyDefault === "loading") this.update(record, { workPlan: { ...record.input.workPlan,
+          strategyDefault: record.input.workPlan.sequence === before.sequence ? "failed" : "ready",
+          strategyDefaultFailure: record.input.workPlan.sequence === before.sequence ? commandFailure(new Error("Default context reading was interrupted")) : null } });
+      }
+    }
   }
   setWorkPlanOpen(conversationId: string, open: boolean) {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;
+    if (!open) this.cancelWorkPlanStrategyDefault(conversationId);
     this.update(record, { workPlan: { ...record.input.workPlan, open, ...(!open ? { sequence: record.input.workPlan.sequence + 1, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } : {}) } });
   }
   private editWorkPlan(record: RecordState, patch: Partial<ConversationWorkPlanInput>) {
@@ -326,7 +410,7 @@ export class ConversationSession {
   async prepareWorkPlan(conversationId: string, selectedTools: ProposalWorkPlanTools = null, current: () => boolean = () => true) {
     const record = this.records.get(conversationId), before = record?.input.workPlan, revision = before?.revision;
     if (!record || !before || !revision || !this.kernel.live || record.action || record.input.busy || record.input.value.pending || record.input.failure
-      || [...this.records.values()].some(other => other.input.workPlan.busy)
+      || [...this.records.values()].some(other => other.input.workPlan.busy) || before.strategyDefault !== "ready"
       || revision.content.kind !== "proposal" || revision.content.questions.length || record.input.value.proposalEdits?.some(edit => edit.proposalId === revision.proposalId)
       || !validAiLimits(before.config) || !before.config.endpoint.trim() || !before.config.model.trim() || revision.content.unitIds.length > before.config.maxItems
       || !!before.toolDraft !== !!selectedTools || !current()) return;
@@ -671,7 +755,7 @@ export class ConversationSession {
     const record = this.records.get(link.conversationId), pending = record?.input.value.pending;
     if (!record || record.action || isConversationTeamPending(pending) && pending.request.lease.planId === link.planId) return false;
     return this.changeTeamDraft(link, before => {
-      const draft = { ...before, [kind]: null }; return draft.guidance || draft.publication || draft.recovery || draft.recoveryRecorded ? draft : null;
+      const draft = { ...before, [kind]: null }; return draft.guidance || draft.publication || draft.recovery || draft.recoveryRecorded || (draft.questions?.length ?? 0) > 0 ? draft : null;
     });
   }
   canSendTeam(conversationId: string) {
@@ -769,6 +853,80 @@ export class ConversationSession {
     const outcome = proof.settlement.outcome;
     return { outcome: outcome.kind === "pending" ? { kind: "pending" as const, replay: "explicit-same-request" as const } : outcome };
   }
+  editTeamQuestion(link: ConversationPlanLink, questionPostId: string, patch: Partial<Omit<ConversationTeamQuestionDraft, "questionPostId" | "editSeq">>) {
+    return this.changeTeamDraft(link, (before, editSeq) => {
+      const drafts = before.questions ?? [], original = drafts.find(draft => draft.questionPostId === questionPostId);
+      if (!original && drafts.length >= 32) return before;
+      const changed: ConversationTeamQuestionDraft = { questionPostId, editSeq, mode: "text", optionId: null, body: "", dismissReason: "", ...original, ...structuredClone(patch) };
+      changed.editSeq = editSeq;
+      return { ...before, questions: original ? drafts.map(draft => draft === original ? changed : draft) : [...drafts, changed] };
+    });
+  }
+  discardTeamQuestion(link: ConversationPlanLink, questionPostId: string) {
+    const record = this.records.get(link.conversationId), pending = record?.input.value.pending;
+    if (!record || record.action || pending?.kind === "team-question-response" && pending.request.response.questionPostId === questionPostId) return false;
+    return this.changeTeamDraft(link, before => ({ ...before, questions: before.questions?.filter(draft => draft.questionPostId !== questionPostId) }));
+  }
+  async respondTeamQuestion(originalLink: ConversationPlanLink, originalQuestion: TeamQuestionView, expectedSeq: string,
+    dismiss: boolean, current: () => boolean) {
+    const link = structuredClone(originalLink), question = structuredClone(originalQuestion), record = this.records.get(link.conversationId);
+    const draft = structuredClone(this.teamDraft(link.conversationId, link.planId)?.questions?.find(draft => draft.questionPostId === question.question.publication.postId) ?? null);
+    if (!record || !draft || draft.editSeq !== expectedSeq || !this.canSendTeam(link.conversationId) || question.state !== "open"
+      || question.question.planId !== link.planId || !current()) return;
+    record.action = true; this.update(record, { busy: "submit", failure: null, notice: null });
+    try {
+      const stored = await this.ports.readProposalWorkPlan({ ...this.context, conversationId: link.conversationId, planId: link.planId });
+      if (!this.kernel.live || !current()) return;
+      if (!same(stored, link)) throw new Error("The original conversation plan changed");
+      const latest = await this.ports.readTeamQuestion({ ...this.context, planId: link.planId, questionPostId: draft.questionPostId });
+      if (!this.kernel.live || !current()) return;
+      if (latest.state !== "open" || !same(latest.question, question.question)) throw new Error("The original question changed or already has a response");
+      const response: RespondTeamQuestion["response"] = dismiss ? { kind: "dismiss", reason: draft.dismissReason }
+        : draft.mode === "choice" && draft.optionId ? { kind: "choice", optionId: draft.optionId } : { kind: "text", body: draft.body };
+      if (!dismiss && (draft.mode === "choice" ? !draft.optionId : !draft.body.trim())) return;
+      const request = { projectId: link.projectId, planId: link.planId, response: { postId: this.ports.identity(), questionPostId: draft.questionPostId, response } };
+      const pending: ConversationQuestionPending = { kind: "team-question-response", conversationId: link.conversationId,
+        submittedSeq: draft.editSeq, request, question: question.question };
+      this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq,
+        editSeq: nextEditSeq(record.input.value.editSeq), pending }, dirty: true, outcome: "unknown" });
+      record.submitting = pending; this.publish();
+      if (!await this.persist(record) || !this.kernel.live || !current() || !same(record.input.value.pending, pending)
+        || this.teamDraft(link.conversationId, link.planId)?.questions?.find(value => value.questionPostId === draft.questionPostId)?.editSeq !== expectedSeq) return;
+      await this.dispatchQuestionResponse(record, pending);
+    } catch (error) { if (this.kernel.live) this.update(record, { failure: { kind: "action", cause: commandFailure(error) }, outcome: record.input.value.pending ? "unknown" : null }); }
+    finally { record.action = false; record.submitting = null; if (this.kernel.live) { this.update(record, { busy: null });
+      if (record.input.dirty && !record.job && record.input.failure?.kind !== "journal") void this.persist(record); } }
+  }
+  private async dispatchQuestionResponse(record: RecordState, pending: ConversationQuestionPending) {
+    await this.ports.respondTeamQuestion({ ...this.context, ...pending.request }, pending.question);
+    if (!this.kernel.live) return;
+    this.onRecorded(); this.update(record, { outcome: "recorded", failure: null }); await this.resolve(record, pending);
+  }
+  private async recoverQuestionResponse(pending: ConversationQuestionPending) {
+    const proof = await this.ports.teamQuestionSettlement({ ...this.context, ...pending.request }, pending.question);
+    const outcome = proof.outcome;
+    return { outcome: outcome.kind === "recorded" ? outcome : outcome.kind === "closed-by-other"
+      ? { kind: "fenced-not-applied" as const } : { kind: "pending" as const, replay: "explicit-same-request" as const } };
+  }
+  canRetryQuestion(conversationId: string) {
+    const input = this.records.get(conversationId)?.input;
+    return input?.value.pending?.kind === "team-question-response" && input.outcome === "absent";
+  }
+  private async retryQuestionResponse(record: RecordState, pending: ConversationQuestionPending, current: () => boolean) {
+    if (!this.kernel.live || !this.canRetryQuestion(record.input.key.conversationId) || record.action || record.job || record.input.busy || !current()) return;
+    record.action = true; this.update(record, { busy: "check", failure: null });
+    try {
+      const proof = await this.recoverQuestionResponse(pending); if (!this.kernel.live) return;
+      if (proof.outcome.kind === "recorded") { this.onRecorded(); await this.resolve(record, pending); return; }
+      if (proof.outcome.kind === "fenced-not-applied") { await this.resolve(record, pending, "fenced-not-applied"); return; }
+      if (!current()) return;
+      record.submitting = pending; this.publish();
+      if (await this.persist(record) && this.kernel.live && current()) await this.dispatchQuestionResponse(record, pending);
+    } catch (error) { if (this.kernel.live) this.update(record, { failure: { kind: "action", cause: commandFailure(error) }, outcome: "unknown" }); }
+    finally { record.action = false; record.submitting = null; if (this.kernel.live) { this.update(record, { busy: null });
+      if (record.input.dirty && !record.job && record.input.failure?.kind !== "journal") void this.persist(record); } }
+  }
+
   private recoveryState(record: RecordState, planId: string) {
     return record.input.recoveryStates.get(planId) ?? initialConversationRecoveryState();
   }
@@ -1093,6 +1251,8 @@ export class ConversationSession {
       return edit.editSeq === pending.submittedSeq && same(edit.content, pending.request.content) ? [] : [{ ...edit, editSeq, expectedRevisionId: pending.request.revisionId }];
     });
     let teamDrafts = current.teamDrafts;
+    if (disposition === "recorded" && pending.kind === "team-question-response") teamDrafts = teamDrafts?.map(draft => draft.planId !== pending.request.planId ? draft : { ...draft,
+      questions: draft.questions?.filter(value => value.questionPostId !== pending.request.response.questionPostId || value.editSeq !== pending.submittedSeq) });
     if (disposition === "recorded" && isConversationTeamPending(pending)) {
       const kind = pending.kind === "team-message" ? "guidance" : "publication";
       teamDrafts = teamDrafts?.map(draft => {
@@ -1116,7 +1276,7 @@ export class ConversationSession {
       if (job.kind === "resolve") {
         const { target, disposition } = job.request.resolve;
         value = value.editSeq === submitted.editSeq ? head.value : this.settledValue(value, target, value.editSeq, disposition);
-        patch.notice = disposition === "fenced-not-applied" ? "runNotApplied" : target.kind === "pending" ? this.recordedNotice(target.pending)
+        patch.notice = disposition === "fenced-not-applied" ? target.kind === "pending" && target.pending.kind === "team-question-response" ? "teamQuestionClosed" : "runNotApplied" : target.kind === "pending" ? this.recordedNotice(target.pending)
           : ({ pause: "runPaused", stop: "runStopped", "take-over": "runTakenOver" } as const)[target.revocation.request.command];
         if (target.kind === "pending") { patch.outcome = disposition === "recorded" ? "recorded" : null; patch.failure = null; }
         else { const states = new Map(record.input.revocationStates); states.delete(target.revocation.request.actionId); patch.revocationStates = states; }
@@ -1225,6 +1385,7 @@ export class ConversationSession {
   }
   async retry(conversationId: string, current: () => boolean = () => true) {
     const record = this.records.get(conversationId);
+    if (record?.input.value.pending?.kind === "team-question-response") { await this.retryQuestionResponse(record, record.input.value.pending, current); return; }
     if (record && isConversationTeamPending(record.input.value.pending)) { await this.retryTeam(record, record.input.value.pending, current); return; }
     if (record && isRunPending(record.input.value.pending)) { await this.retryRun(record, record.input.value.pending, current); return; }
     if (record?.input.outcome === "absent" && !record.job && locallyReplayableConversationRequest(record.input.value.pending)) await this.submit(record);
@@ -1252,6 +1413,7 @@ export class ConversationSession {
         const notices: Record<WorkPlanCommand, NonNullable<ConversationInput["notice"]>> = { pause: "runPaused", stop: "runStopped", "take-over": "runTakenOver", continue: "runContinued" };
         return notices[pending.request.command];
       }
+      case "team-question-response": return "teamQuestionResponded";
       case "team-recovery": return "teamRecoveryRecorded";
       case "team-message": return "teamMessageSaved";
       case "team-publication": return "teamPublicationSaved";
@@ -1266,6 +1428,7 @@ export class ConversationSession {
       case "proposal-capture": return this.ports.recoverProposalCapture({ sessionToken, ...pending.request });
       case "proposal-revision": return this.ports.recoverProposalRevision({ sessionToken, ...pending.request });
       case "proposal-work-plan": return this.ports.recoverProposalWorkPlan({ sessionToken, projectId: this.context.projectId, authorization: pending.request });
+      case "team-question-response": return this.recoverQuestionResponse(pending);
       case "team-message": case "team-publication": return this.recoverTeam(pending);
 
       case "work-plan-start": case "work-plan-control": {

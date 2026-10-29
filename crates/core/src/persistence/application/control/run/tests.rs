@@ -2,6 +2,80 @@ use super::*;
 use crate::execution::RecoveryPolicy;
 use crate::persistence::application::tests::{config, consent, fixture};
 
+#[test]
+fn action_history_pages_keep_original_grants_and_fence_appends_and_late_starts() {
+    let (_directory, mut store, units) = fixture();
+    let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+    let authorization = consent(&plan);
+    let receipt = store.authorize_work_plan(&plan, &authorization).unwrap();
+    let input = FixedInput::capture(receipt.input.unwrap()).unwrap();
+    let zero = Revision::new(0).unwrap();
+    let read = |store: &ProjectStore, after, baseline: Option<&WorkPlanHistoryBaseline>, limit| {
+        pure_settlement(store, || store.read_work_plan_history(plan.project_id, plan.plan_id, after, baseline, limit))
+    };
+    let unstarted = read(&store, zero, None, 1).unwrap();
+    assert_eq!(unstarted.scope, plan.selection_basis);
+    assert_eq!(unstarted.locale, plan.locale);
+    assert_eq!(unstarted.rows.len(), 1);
+    assert_eq!(unstarted.rows[0].action_id, authorization.action_id);
+    assert!(matches!(unstarted.rows[0].action, WorkPlanHistoryAction::Authorize { .. }));
+    assert!(unstarted.rows[0].input.is_some() && unstarted.rows[0].start.is_none());
+    store.enqueue_execution(&input).unwrap();
+    assert_eq!(read(&store, zero, Some(&unstarted.baseline), 1).unwrap_err().code, ErrorCode::DependencyConflict);
+    let started = read(&store, zero, None, 1).unwrap();
+    assert_eq!(started.baseline.lease, unstarted.baseline.lease);
+    assert_eq!(started.rows[0].start.as_ref().unwrap().attempt_id, input.envelope().attempt_id);
+    store.dispatch_execution_item(input.envelope().attempt_id, input.envelope().items[0].item_id).unwrap();
+    let pause = control(&plan, 1, WorkPlanCommand::Pause);
+    store.control_work_plan(&pause).unwrap();
+    let continuing = control(&plan, 2, WorkPlanCommand::Continue);
+    let continued = store.control_work_plan(&continuing).unwrap();
+    let child = FixedInput::capture(continued.input.unwrap()).unwrap();
+    assert_ne!(child.envelope().task_id, input.envelope().task_id);
+    assert_eq!(read(&store, zero, Some(&started.baseline), 1).unwrap_err().code, ErrorCode::DependencyConflict);
+    let first = read(&store, zero, None, 1).unwrap();
+    assert_eq!(first.next_after.unwrap().get(), 1);
+    let second = read(&store, first.next_after.unwrap(), Some(&first.baseline), 1).unwrap();
+    assert_eq!(second.rows[0].action_id, pause.action_id);
+    assert!(second.rows[0].input.is_none() && second.rows[0].start.is_none());
+    let third = read(&store, second.next_after.unwrap(), Some(&first.baseline), 1).unwrap();
+    assert_eq!(third.rows[0].action_id, continuing.action_id);
+    assert_eq!(third.rows[0].input.as_ref().unwrap().parent_task, Some(input.envelope().task_id));
+    assert!(third.rows[0].start.is_none() && third.next_after.is_none());
+    store.enqueue_execution_with_policy(&child, RecoveryPolicy::ExternalUnknown, Some(input.envelope().task_id)).unwrap();
+    assert_eq!(read(&store, second.next_after.unwrap(), Some(&first.baseline), 1).unwrap_err().code, ErrorCode::DependencyConflict);
+    store.execution_unknown.store(true, std::sync::atomic::Ordering::Release);
+    let final_page = read(&store, zero, None, 16).unwrap();
+    assert_eq!(final_page.rows.len(), 3);
+    assert_eq!(final_page.rows[2].start.as_ref().unwrap().task_id, child.envelope().task_id);
+    assert!(store.is_reconciling());
+    store.execution_unknown.store(false, std::sync::atomic::Ordering::Release);
+    let path = store.directory().to_path_buf();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(path).unwrap();
+    assert_eq!(read(&reopened, zero, None, 16).unwrap(), final_page);
+}
+
+#[test]
+fn action_history_rejects_invalid_cursors_foreign_projects_and_corruption_outside_the_page() {
+    let (_directory, mut store, units) = fixture();
+    let plan = store.prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default()).unwrap();
+    let authorization = consent(&plan);
+    store.authorize_work_plan(&plan, &authorization).unwrap();
+    let zero = Revision::new(0).unwrap();
+    for limit in [0, 17] {
+        assert_eq!(store.read_work_plan_history(plan.project_id, plan.plan_id, zero, None, limit).unwrap_err().code, ErrorCode::LimitExceeded);
+    }
+    let first = store.read_work_plan_history(plan.project_id, plan.plan_id, zero, None, 16).unwrap();
+    assert!(store.read_work_plan_history(plan.project_id, plan.plan_id, Revision::new(1).unwrap(), None, 16).is_err());
+    assert!(store.read_work_plan_history(plan.project_id, plan.plan_id, Revision::new(2).unwrap(), Some(&first.baseline), 16).is_err());
+    assert_eq!(store.read_work_plan_history(ExecutionId::new(), plan.plan_id, zero, None, 16).unwrap_err().code, ErrorCode::Unauthorized);
+    let pause = store.control_work_plan(&control(&plan, 1, WorkPlanCommand::Pause)).unwrap();
+    store.connection().unwrap().execute("UPDATE application_actions SET receipt_digest=?2 WHERE action_id=?1", params![pause.action_id.to_string(), "0".repeat(64)]).unwrap();
+    let error = pure_settlement(&store, || store.read_work_plan_history(plan.project_id, plan.plan_id, zero, None, 1)).unwrap_err();
+    assert_eq!(error.code, ErrorCode::CorruptLedger);
+}
+
 fn control(plan: &WorkPlan, generation: u64, command: WorkPlanCommand) -> ControlWorkPlan {
     ControlWorkPlan {
         action_id: ExecutionId::new(),

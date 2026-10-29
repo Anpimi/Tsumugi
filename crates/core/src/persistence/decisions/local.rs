@@ -43,7 +43,7 @@ pub struct DecisionClientActivity {
 pub enum DecisionLocalRequestKind {
     SourceLineageCorrection,
     Save, Selection, Merge, Create, Append, Planning, ProposalCapture,
-    ProposalRevision, ProposalWorkPlan, WorkPlanStart, WorkPlanControl, TeamMessage, TeamPublication, TeamRecovery,
+    ProposalRevision, ProposalWorkPlan, WorkPlanStart, WorkPlanControl, TeamMessage, TeamPublication, TeamRecovery, TeamQuestionResponse,
     ResourceTypedContextSave, ResourceTypedContextWithdraw, ResourceKnowledgeDecision,
     ResourceCorrection, ResourceTerm, ResourceContext, ResourceDecision, ResourceCapture, ResourceFact,
     SourceCapture, SourceStart, SourcePrepareCheck, SourceStartCheck, SourceFinishCheck, SourceAdopt, SourceHookStop,

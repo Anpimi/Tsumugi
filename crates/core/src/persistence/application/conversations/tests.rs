@@ -513,6 +513,7 @@ fn migration_interruptions_preserve_all_original_plan_team_and_receipt_rows() {
             references: vec![],
             reply_to: None,
             supersedes: None,
+            question: None,
         };
         let saved = store
             .publish_human_team_discussion(&scope, "local-user", &post)

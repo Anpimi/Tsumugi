@@ -1487,6 +1487,17 @@
               }
             ]
           },
+          "teamQuestions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamQuestionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit questions and later human answers under the captured sharing boundary."
+          },
           "toolGuidance": {
             "anyOf": [
               {
@@ -2514,6 +2525,23 @@
               "initialUnitId",
               "members",
               "limits"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamQuestionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
             ],
             "type": "object"
           }
@@ -6892,6 +6920,17 @@
               }
             ]
           },
+          "teamQuestions": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TeamQuestionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit questions and later human answers under the captured sharing boundary."
+          },
           "toolGuidance": {
             "anyOf": [
               {
@@ -8789,6 +8828,23 @@
           "preview"
         ],
         "type": "object"
+      },
+      "TeamQuestionPolicy": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "profile": {
+                "const": "current-plan-1",
+                "type": "string"
+              }
+            },
+            "required": [
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TeamWorkKind": {
         "enum": [

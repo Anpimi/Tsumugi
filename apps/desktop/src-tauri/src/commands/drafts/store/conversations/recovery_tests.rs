@@ -55,7 +55,7 @@ fn fixture() -> (tempfile::TempDir, DraftStore, ConversationDraftWrite) {
         key, expected_revision: rev(0), writer_id: ExecutionId::new(),
         value: ConversationDraftValue { text: "Other unsent message".into(), edit_seq: rev(1), message_edit_seq: None,
             pending: Some(pending), revocations: vec![], proposal_edits: vec![],
-            team_drafts: vec![ConversationTeamDraft { plan_id: lease.plan_id, plan_digest: "a".repeat(64),
+            team_drafts: vec![ConversationTeamDraft { questions: vec![], plan_id: lease.plan_id, plan_digest: "a".repeat(64),
                 guidance: None, publication: None, recovery: Some(input), recovery_recorded: None }],
         },
     };
@@ -221,7 +221,7 @@ fn formats_one_through_thirteen_upgrade_only_with_successful_write() {
         assert!(store.write_conversation(&wrong).is_err());
         assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), format);
         assert_eq!(store.write_conversation(&write).unwrap().value, Some(write.value));
-        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), TEAM_RECOVERY_FORMAT);
+        assert_eq!(connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), FORMAT);
         if format >= CONVERSATION_FORMAT { assert_eq!(before, first); }
     }
 }

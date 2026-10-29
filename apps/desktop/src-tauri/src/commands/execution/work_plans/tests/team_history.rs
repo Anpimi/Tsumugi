@@ -279,6 +279,7 @@ fn registered_team_history_retains_author_roles_and_human_publications_are_advis
                                 references: vec![],
                                 reply_to: None,
                                 supersedes: None,
+                                question: None,
                             },
                         )
                         .unwrap(),

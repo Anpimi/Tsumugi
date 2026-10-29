@@ -155,6 +155,12 @@ pub struct ConversationDraftKey {
 )]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum ConversationDraftPending {
+    TeamQuestionResponse {
+        conversation_id: ExecutionId,
+        request: crate::commands::execution::work_plans::questions::TeamQuestionResponseOriginal,
+        question: tsumugi_core::application::TeamDiscussionPost,
+        submitted_seq: Revision,
+    },
     Create {
         request: CreateProjectConversation,
         submitted_seq: Revision,
@@ -335,6 +341,9 @@ pub struct ConversationDraftValue {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ConversationTeamDraft {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+    pub questions: Vec<ConversationTeamQuestionDraft>,
     pub plan_id: ExecutionId,
     pub plan_digest: String,
     pub guidance: Option<ConversationTeamGuidanceDraft>,
@@ -344,6 +353,24 @@ pub struct ConversationTeamDraft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_recorded: Option<ConversationTeamRecoveryRecorded>,
 }
+
+/// Local answer input may be incomplete and carries no execution authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamQuestionDraft {
+    pub question_post_id: ExecutionId,
+    pub edit_seq: Revision,
+    pub mode: ConversationTeamQuestionMode,
+    pub option_id: Option<ExecutionId>,
+    pub body: String,
+    pub dismiss_reason: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConversationTeamQuestionMode { Text, Choice }
 
 /// Original request and descriptive receipt only; a reopened record is no permit.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

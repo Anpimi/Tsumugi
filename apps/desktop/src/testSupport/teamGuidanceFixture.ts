@@ -13,6 +13,7 @@ export function teamGuidanceFixture() {
 /** A synthetic trusted local author; it does not establish a Core grant. */
 export function humanTeamMessageFixture(request: WorkPlanTeamMessageRequest): TeamMessage {
   const post = teamPostFixture();
+  if (post.author.kind === "local-human") throw new Error("Bound synthetic author required");
   const binding = post.author.kind === "member" ? post.author.author.binding : post.author.binding;
   const value: unknown = { messageId: request.message.messageId, sequence: "2", planId: request.lease.planId,
     sender: { kind: "human", actor: "local-user", binding: { ...structuredClone(binding), lease: structuredClone(request.lease), delegation: null } },
