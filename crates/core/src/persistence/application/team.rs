@@ -41,6 +41,64 @@ fn conflict() -> ExecutionError {
     fail(ErrorCode::DependencyConflict, "team-basis")
 }
 
+pub(super) fn human_request_settlement<R>(
+    run: WorkPlanRunView,
+    expected: Revision,
+    receipt: Option<R>,
+) -> WorkPlanRequestSettlement<R> {
+    let outcome = match receipt {
+        Some(receipt) => WorkPlanRequestOutcome::Recorded { receipt },
+        None if run.lease.generation > expected => WorkPlanRequestOutcome::FencedNotApplied,
+        None => WorkPlanRequestOutcome::Pending,
+    };
+    WorkPlanRequestSettlement {
+        project_id: run.project_id,
+        plan_id: run.plan_id,
+        lease: run.lease,
+        state: run.state,
+        outcome,
+    }
+}
+
+fn validate_human_publication_action(
+    lease: &AutomationLease,
+    actor: &str,
+) -> Result<(), ExecutionError> {
+    if actor.trim().is_empty() || actor.len() > 128 || lease.generation.get() == 0 {
+        return Err(fail(ErrorCode::InvalidInput, "team-human-action"));
+    }
+    Ok(())
+}
+
+fn human_publication_action_in(
+    c: &Connection,
+    project: ExecutionId,
+    lease: &AutomationLease,
+    actor: &str,
+    publication: &PublishTeamDiscussion,
+) -> Result<Option<TeamDiscussionPost>, ExecutionError> {
+    validate_human_publication_action(lease, actor)?;
+    let plan = historical_plan(c, project, lease.plan_id)?;
+    let history = history_in(c, &plan)?;
+    let Some(post) = post(c, publication.post_id)? else {
+        return Ok(None);
+    };
+    let matches = match &post.author {
+        TeamDiscussionAuthor::Human {
+            actor: saved,
+            binding,
+        } => saved == actor && binding.lease == *lease && binding.delegation.is_none(),
+        TeamDiscussionAuthor::Member { .. } => false,
+    };
+    if post.plan_id != plan.plan_id || post.publication != *publication || !matches {
+        return Err(fail(ErrorCode::ResultMismatch, "team-human-action"));
+    }
+    if !history.posts.contains(&post) {
+        return Err(corrupt());
+    }
+    Ok(Some(post))
+}
+
 pub(super) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     for (_, statement) in TABLES {
         c.execute_batch(statement)?;
@@ -894,37 +952,39 @@ impl ProjectStore {
         actor: &str,
         publication: &PublishTeamDiscussion,
     ) -> Result<Option<TeamDiscussionPost>, ExecutionError> {
-        if actor.trim().is_empty() || actor.len() > 128 || lease.generation.get() == 0 {
-            return Err(fail(ErrorCode::InvalidInput, "team-human-action"));
-        }
+        validate_human_publication_action(lease, actor)?;
         let c = self
             .connection()
             .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
         let found = super::super::review::read_snapshot(c, |c| {
-            let plan = historical_plan(c, project, lease.plan_id)?;
-            let history = history_in(c, &plan)?;
-            let Some(post) = post(c, publication.post_id)? else {
-                return Ok(None);
-            };
-            let matches = match &post.author {
-                TeamDiscussionAuthor::Human {
-                    actor: saved,
-                    binding,
-                } => saved == actor && binding.lease == *lease && binding.delegation.is_none(),
-                TeamDiscussionAuthor::Member { .. } => false,
-            };
-            if post.plan_id != plan.plan_id || post.publication != *publication || !matches {
-                return Err(fail(ErrorCode::ResultMismatch, "team-human-action"));
-            }
-            if !history.posts.contains(&post) {
-                return Err(corrupt());
-            }
-            Ok(Some(post))
+            human_publication_action_in(c, project, lease, actor, publication)
         })?;
         if self.is_reconciling() {
             self.reconcile_execution()?;
         }
         Ok(found)
+    }
+
+    /// Observe the exact original publication without reconciling execution.
+    /// Only a later durable generation fences a missing old submission.
+    pub fn human_team_publication_settlement(
+        &self,
+        project: ExecutionId,
+        lease: &AutomationLease,
+        actor: &str,
+        publication: &PublishTeamDiscussion,
+    ) -> Result<WorkPlanRequestSettlement<TeamDiscussionPost>, ExecutionError> {
+        validate_human_publication_action(lease, actor)?;
+        let c = self
+            .connection()
+            .map_err(|_| sql(rusqlite::Error::InvalidQuery))?;
+        super::super::review::read_snapshot(c, |c| {
+            let receipt = human_publication_action_in(c, project, lease, actor, publication)?;
+            // The existing run reader audits the durable control history. Its
+            // nested read remains inside this same SQLite snapshot.
+            let run = self.read_work_plan_run(project, lease.plan_id)?;
+            Ok(human_request_settlement(run, lease.generation, receipt))
+        })
     }
     pub fn read_team_discussion(
         &self,
@@ -1425,6 +1485,8 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
 mod tests {
     use super::*;
     use crate::persistence::application::tests::{config, consent, fixture};
+
+    mod settlement;
 
     fn setup() -> (
         tempfile::TempDir,

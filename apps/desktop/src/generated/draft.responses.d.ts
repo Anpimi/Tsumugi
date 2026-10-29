@@ -70,6 +70,21 @@ export type ConversationDraftPending =
       kind: "work-plan-control";
       request: WorkPlanControlOriginal;
       submittedSeq: Revision;
+    }
+  | {
+      conversationId: ExecutionId;
+      destination: ConversationTeamDestination;
+      kind: "team-message";
+      request: TeamMessageOriginal;
+      submittedSeq: Revision;
+      targetName: string;
+    }
+  | {
+      conversationId: ExecutionId;
+      kind: "team-publication";
+      request: TeamPublicationOriginal;
+      submittedSeq: Revision;
+      targetName: string;
     };
 export type UnsignedDecimal = string;
 export type ConversationPlanningModelOutput =
@@ -201,6 +216,18 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
+export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
+export type TeamArtifactReference =
+  | {
+      kind: "translation-revision";
+      revisionId: ExecutionId;
+    }
+  | {
+      attemptId: ExecutionId;
+      kind: "source-result";
+      resultId: ExecutionId;
+      snapshotId: ExecutionId;
+    };
 export type WorkPlanRevocationCommand = "pause" | "stop" | "take-over";
 export type CommandErrorCode =
   | "invalid-input"
@@ -719,6 +746,10 @@ export interface ConversationDraftValue {
    * @maxItems 32
    */
   revocations?: ConversationDraftRevocation[];
+  /**
+   * @maxItems 32
+   */
+  teamDrafts?: ConversationTeamDraft[];
   text: string;
 }
 export interface CreateProjectConversation {
@@ -1121,6 +1152,61 @@ export interface WorkPlanControlOriginal {
   toolExecution: boolean;
 }
 /**
+ * Captured display facts for the original recipient, never restored authority.
+ */
+export interface ConversationTeamDestination {
+  endpoint: string;
+  model: string;
+  name: string;
+  role: string;
+}
+export interface TeamMessageOriginal {
+  lease: AutomationLease;
+  message: SendHumanTeamMessage;
+  projectId: ExecutionId;
+}
+/**
+ * A reference to durable authority. Possessing or editing this reference does
+ * not grant permission; Core checks the stored generation at every boundary.
+ */
+export interface AutomationLease {
+  generation: Revision;
+  planId: ExecutionId;
+}
+/**
+ * A trusted human action. The original command captures its lease separately.
+ */
+export interface SendHumanTeamMessage {
+  body: string;
+  expectedRecipientRoleVersionId: ExecutionId;
+  messageId: ExecutionId;
+  recipientMemberId: ExecutionId;
+  target: TeamDiscussionTarget;
+}
+export interface TeamDiscussionTarget {
+  locale: string;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface TeamPublicationOriginal {
+  lease: AutomationLease;
+  projectId: ExecutionId;
+  publication: PublishTeamDiscussion;
+}
+/**
+ * Model arguments contain content and relationships, never an author override.
+ */
+export interface PublishTeamDiscussion {
+  body: string;
+  kind: TeamDiscussionKind;
+  postId: ExecutionId;
+  references: TeamArtifactReference[];
+  replyTo: ExecutionId | null;
+  supersedes: ExecutionId | null;
+  target: TeamDiscussionTarget;
+}
+/**
  * Local unfinished input, separate from immutable project proposal revisions.
  */
 export interface ConversationProposalDraft {
@@ -1142,6 +1228,27 @@ export interface WorkPlanRevocationOriginal {
   expectedGeneration: Revision;
   planId: ExecutionId;
   projectId: ExecutionId;
+}
+/**
+ * Unfinished local team input does not restore sharing or execution permission.
+ */
+export interface ConversationTeamDraft {
+  guidance: ConversationTeamGuidanceDraft | null;
+  planDigest: string;
+  planId: ExecutionId;
+  publication: ConversationTeamPublicationDraft | null;
+}
+export interface ConversationTeamGuidanceDraft {
+  body: string;
+  editSeq: Revision;
+  memberId: ExecutionId | null;
+  unitId: ExecutionId | null;
+}
+export interface ConversationTeamPublicationDraft {
+  body: string;
+  editSeq: Revision;
+  replyTo: ExecutionId | null;
+  unitId: ExecutionId | null;
 }
 export interface ConversationDraftPage {
   items: ConversationDraftSummary[];

@@ -125,6 +125,11 @@ fn pi_team_human_guidance_is_frozen_consumed_once_and_reconciles_without_a_host(
             .unwrap()
             .is_null()
     );
+    let pending = fixture.call("read_work_plan_team_message_settlement", send.clone()).unwrap();
+    assert_eq!(pending["settlement"]["outcome"]["kind"], "pending", "no receipt is not a fence");
+    assert_eq!(pending["request"]["message"], send["message"]);
+    assert_eq!(pending["request"]["lease"], send["lease"]);
+    assert!(pending["request"].get("sessionToken").is_none());
     let before = execution(&fixture, &plan);
     let before_sequence = sequence(&fixture);
     // Treat this returned receipt as lost, then recover the same stable action.
@@ -165,6 +170,7 @@ fn pi_team_human_guidance_is_frozen_consumed_once_and_reconciles_without_a_host(
     for command in [
         "send_work_plan_team_message",
         "read_work_plan_team_message_action",
+        "read_work_plan_team_message_settlement",
     ] {
         assert_eq!(
             fixture.call(command, collision.clone()).unwrap_err()["code"],
@@ -262,6 +268,15 @@ fn pi_team_human_guidance_is_frozen_consumed_once_and_reconciles_without_a_host(
     }
     let mut absent = send.clone();
     absent["message"]["messageId"] = json!(ExecutionId::new());
+    let bytes = fixture.bytes();
+    let proof = fixture.call("read_work_plan_team_message_settlement", send.clone()).unwrap();
+    assert_eq!(proof["settlement"]["outcome"]["kind"], "recorded");
+    assert_eq!(proof["settlement"]["outcome"]["receipt"], recorded);
+    assert_eq!(proof["request"], json!({"projectId":fixture.context["projectId"],"lease":send["lease"],"message":send["message"]}));
+    let missing = fixture.call("read_work_plan_team_message_settlement", absent.clone()).unwrap();
+    assert_eq!(missing["settlement"]["outcome"]["kind"], "fenced-not-applied");
+    assert_eq!(fixture.bytes(), bytes, "settlement reads do not reconcile or mutate the journal");
+    assert!(!has_host(&fixture));
     assert!(
         fixture
             .call("read_work_plan_team_message_action", absent.clone())
@@ -279,6 +294,7 @@ fn pi_team_human_guidance_is_frozen_consumed_once_and_reconciles_without_a_host(
     assert!(!has_host(&fixture));
     let mut future = absent;
     future["lease"]["generation"] = json!("999");
+    assert_eq!(fixture.call("read_work_plan_team_message_settlement", future.clone()).unwrap()["settlement"]["outcome"]["kind"], "pending");
     let future = fixture
         .call("send_work_plan_team_message", future)
         .unwrap_err();

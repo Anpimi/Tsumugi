@@ -1,5 +1,7 @@
 use super::*;
 
+mod settlement;
+
 fn guidance(author: &CapturedTeamAuthor, recipient: &TeamExecutionMember) -> SendHumanTeamMessage {
     SendHumanTeamMessage {
         message_id: ExecutionId::new(),

@@ -22,6 +22,7 @@ import { runMatchesLink, type ConversationPlanLink } from "./conversationRun";
 import { emptyExecutionConsent, workPlanMinutesValid } from "./proposalWorkPlan";
 import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import { ConversationRunProgress } from "./ConversationRunProgress";
+import { ConversationTeamActions } from "./ConversationTeamActions";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
 import styles from "./ConversationRunPanel.module.css";
@@ -206,7 +207,13 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
       </> : null}
     </> : null}
     <ConversationRunRevocations owner={owner} input={input} link={link} canRead={canRead} onFinished={finishAction}/>
-    <ConversationRunProgress onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}/>
+    <ConversationRunProgress onOpenCandidate={onOpenCandidate} onOpenTeamCandidate={onOpenTeamCandidate} context={owner.context} link={link} status={status} visible={visible} canRead={canRead}
+      teamActions={status ? (view, current) => <ConversationTeamActions owner={owner} input={input} link={link} status={status} view={view} current={() => canRead() && statusCurrent(status) && current()}
+        visible={visible} disabled={disabled} gate={gate} viewId={viewId} refresh={() => { if (canRead()) reads.invalidate(["execution"]); }}/> : undefined}
+      onTeamReply={post => {
+        if (status && canRead() && statusCurrent(status) && post.planId === link.planId)
+          owner.editTeamPublication(link, { unitId: post.publication.target.unitId, replyTo: post.publication.postId });
+      }}/>
   </div>;
 }
 

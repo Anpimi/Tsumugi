@@ -435,6 +435,9 @@ fn registered_team_publication_lookup_is_historical_and_never_revives_old_author
             .fixture
             .call("publish_work_plan_team_discussion", publication.clone())
             .unwrap();
+        let mut not_submitted = publication.clone(); not_submitted["publication"]["postId"] = json!(ExecutionId::new());
+        let pending = scenario.fixture.call("read_work_plan_team_publication_settlement", not_submitted).unwrap();
+        assert_eq!(pending["settlement"]["outcome"]["kind"], "pending", "an absent receipt is not a fence");
         let scope = scenario
             .fixture
             .call(
@@ -500,9 +503,10 @@ fn registered_team_publication_lookup_is_historical_and_never_revives_old_author
         assert!(
             scenario
                 .fixture
-                .call("read_work_plan_team_publication_action", collision)
+                .call("read_work_plan_team_publication_action", collision.clone())
                 .is_err()
         );
+        assert!(scenario.fixture.call("read_work_plan_team_publication_settlement", collision).is_err());
         let mut forged = publication.clone();
         forged["actor"] = json!("another-user");
         assert!(
@@ -578,6 +582,15 @@ fn registered_team_publication_lookup_is_historical_and_never_revives_old_author
         );
         let mut absent = publication.clone();
         absent["publication"]["postId"] = json!(ExecutionId::new());
+        let bytes = scenario.fixture.bytes();
+        let proof = scenario.fixture.call("read_work_plan_team_publication_settlement", publication.clone()).unwrap();
+        assert_eq!(proof["request"], json!({"projectId":scenario.plan.project_id,"lease":publication["lease"],"publication":publication["publication"]}));
+        assert!(proof["request"].get("sessionToken").is_none());
+        assert_eq!(proof["settlement"]["outcome"]["kind"], "recorded");
+        assert_eq!(proof["settlement"]["outcome"]["receipt"], post);
+        let missing = scenario.fixture.call("read_work_plan_team_publication_settlement", absent.clone()).unwrap();
+        assert_eq!(missing["settlement"]["outcome"]["kind"], if change_source { "pending" } else { "fenced-not-applied" });
+        assert_eq!(scenario.fixture.bytes(), bytes, "pure settlement cannot reconcile execution");
         assert!(
             scenario
                 .fixture

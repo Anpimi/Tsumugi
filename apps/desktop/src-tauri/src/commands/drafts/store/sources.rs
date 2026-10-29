@@ -65,7 +65,7 @@ fn read(connection: &Connection, key: &SourceDraftKey, format: i64) -> Result<So
         params![key.project_id.to_string(), MAX_RECORD as i64], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
         .optional().map_err(sql)?;
     let head = row.map(|row| decode(key, row)).transpose()?.unwrap_or_else(|| empty(key));
-    if format < FORMAT && head.value.as_ref().is_some_and(|value| value.correction.is_some()
+    if format < SOURCE_ACTION_FORMAT && head.value.as_ref().is_some_and(|value| value.correction.is_some()
         || matches!(value.pending, Some(SourceDraftPending::CorrectLineage { .. }))) {
         return Err(fail(ErrorCode::CorruptLedger, "source-drafts-format"));
     }

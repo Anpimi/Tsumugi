@@ -5,39 +5,67 @@ import type { Requests } from "./generated/draft.requests";
 import type { Responses } from "./generated/draft.responses";
 import { validateResponseConversationRead, validateResponseConversationWritten, validateResponseConversationResolved, validateResponseConversationCleared, validateResponseConversationPage } from "./generated/draft.validators";
 
-export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary, ConversationProposalDraft, ConversationDraftRevocation } from "./generated/draft.responses";
+export type { ConversationDraftKey, ConversationDraftHead, ConversationDraftPending, ConversationDraftValue, ConversationDraftSummary, ConversationProposalDraft, ConversationDraftRevocation, ConversationTeamDraft, ConversationTeamGuidanceDraft, ConversationTeamPublicationDraft } from "./generated/draft.responses";
 export type { ConversationDraftDisposition } from "./generated/draft.requests";
 type WireResolveTarget = Requests["conversationResolve"]["resolve"]["target"];
 // Local resolutions name a decoded head, with its defaulted fields complete.
 export type ConversationDraftResolveTarget =
   | (Omit<Extract<WireResolveTarget, { kind: "pending" }>, "pending"> & { pending: ConversationDraftPending })
   | Extract<WireResolveTarget, { kind: "revocation" }>;
-import type { ConversationDraftPending } from "./generated/draft.responses";
+import type { ConversationDraftPending, ConversationDraftValue } from "./generated/draft.responses";
 type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
 const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
+export function conversationPendingActionId(pending: ConversationDraftPending): string {
+  if (pending.kind === "planning") return pending.request.consent.actionId;
+  if (pending.kind === "team-message") return pending.request.message.messageId;
+  if (pending.kind === "team-publication") return pending.request.publication.postId;
+  return pending.request.actionId;
+}
+export function isConversationTeamPending(pending: ConversationDraftPending | null | undefined): pending is Extract<ConversationDraftPending, { kind: "team-message" | "team-publication" }> {
+  return pending?.kind === "team-message" || pending?.kind === "team-publication";
+}
 export function conversationPendingTarget(pending: ConversationDraftPending) {
   return pending.kind === "proposal-work-plan" ? pending.request.proposal
-    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" ? { projectId: pending.request.projectId, conversationId: pending.conversationId } : pending.request;
+    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" || pending.kind === "team-message" || pending.kind === "team-publication"
+      ? { projectId: pending.request.projectId, conversationId: pending.conversationId } : pending.request;
 }
 export function locallyReplayableConversationRequest(pending: ConversationDraftPending | null | undefined) {
   return pending?.kind === "create" || pending?.kind === "append" || pending?.kind === "proposal-capture" || pending?.kind === "proposal-revision";
 }
 export function canonicalConversationDraft(value: Requests["conversationWrite"]["write"]["value"]) {
-  const { proposalEdits, messageEditSeq, revocations, ...rest } = value;
-  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}), ...(revocations?.length ? { revocations } : {}) };
+  const { proposalEdits, messageEditSeq, revocations, teamDrafts, ...rest } = value;
+  return { ...rest, pending: rest.pending ?? null, ...(proposalEdits?.length ? { proposalEdits } : {}), ...(messageEditSeq != null ? { messageEditSeq } : {}), ...(revocations?.length ? { revocations } : {}), ...(teamDrafts?.length ? { teamDrafts } : {}) };
+}
+function teamDraftsMatch(value: ConversationDraftValue) {
+  const drafts = value.teamDrafts ?? [], pending = value.pending;
+  if (drafts.length > 32 || new Set(drafts.map(draft => draft.planId)).size !== drafts.length
+    || drafts.some(draft => !/^[a-f0-9]{64}$/.test(draft.planDigest)
+      || draft.guidance && BigInt(draft.guidance.editSeq) > BigInt(value.editSeq)
+      || draft.publication && BigInt(draft.publication.editSeq) > BigInt(value.editSeq))) return false;
+  if (!isConversationTeamPending(pending)) return true;
+  const draft = drafts.find(draft => draft.planId === pending.request.lease.planId);
+  if (BigInt(pending.request.lease.generation) === 0n) return false;
+  if (pending.kind === "team-message") {
+    const part = draft?.guidance, message = pending.request.message;
+    return !!part && BigInt(part.editSeq) >= BigInt(pending.submittedSeq)
+      && (part.editSeq !== pending.submittedSeq || part.body === message.body && part.memberId === message.recipientMemberId && part.unitId === message.target.unitId);
+  }
+  const part = draft?.publication, publication = pending.request.publication;
+  return !!part && BigInt(part.editSeq) >= BigInt(pending.submittedSeq)
+    && (part.editSeq !== pending.submittedSeq || part.body === publication.body && part.unitId === publication.target.unitId && part.replyTo === publication.replyTo);
 }
 function head(value: Head, key: Head["key"]) {
   const draft = value.value, pending = draft?.pending;
   const target = pending ? conversationPendingTarget(pending) : null;
   const edits = draft?.proposalEdits ?? [], revocations = draft?.revocations ?? [];
-  const primaryAction = pending?.kind === "planning" ? pending.request.consent.actionId : pending ? pending.request.actionId : null;
+  const primaryAction = pending ? conversationPendingActionId(pending) : null;
   const messageSeq = draft ? draft.messageEditSeq ?? draft.editSeq : "0";
   return same(value.key, key) && (draft === null ? value.writerId === null : value.writerId !== null && BigInt(value.revision) > 0n
     && revocations.length <= 32 && new Set(revocations.map(slot => slot.request.actionId)).size === revocations.length
     && revocations.every(slot => slot.request.projectId === key.projectId && slot.request.actionId !== primaryAction
       && BigInt(slot.request.expectedGeneration) > 0n && BigInt(slot.submittedSeq) <= BigInt(draft.editSeq))
-    && BigInt(messageSeq) <= BigInt(draft.editSeq)
+    && BigInt(messageSeq) <= BigInt(draft.editSeq) && teamDraftsMatch(draft)
     && new Set(edits.map(edit => edit.proposalId)).size === edits.length && edits.every(edit => BigInt(edit.editSeq) <= BigInt(draft.editSeq) && (edit.content.kind === "proposal" || edit.content.kind === "knowledge-proposal")
       && (pending?.kind !== "proposal-revision" || pending.request.proposalId !== edit.proposalId || pending.submittedSeq !== edit.editSeq
         || edit.expectedRevisionId === pending.request.expectedRevisionId && same(edit.content, pending.request.content)))

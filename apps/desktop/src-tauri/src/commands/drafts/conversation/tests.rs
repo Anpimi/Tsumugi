@@ -96,6 +96,7 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
             pending: Some(pending.clone()),
             revocations: vec![],
             proposal_edits: vec![],
+            team_drafts: vec![],
         },
     };
     let written = call(
@@ -219,4 +220,28 @@ fn conversation_journal_ipc_keeps_create_append_and_newer_input_without_dispatch
     let mut injected = serde_json::to_value(&resolve).unwrap();
     injected["target"]["pending"]["request"]["sessionToken"] = json!("not-allowed");
     assert!(serde_json::from_value::<ConversationDraftResolve>(injected).is_err());
+
+    let plan_id = ExecutionId::new(); let member_id = ExecutionId::new(); let unit_id = ExecutionId::new();
+    let pending: ConversationDraftPending = serde_json::from_value(json!({"kind":"team-message","conversationId":key.conversation_id,
+        "targetName":"Saved entry name", "destination":{"name":"Saved member","role":"Read original reasons", "endpoint":"http://127.0.0.1:9/v1/chat/completions","model":"synthetic-model"},
+        "request":{"projectId":project,"lease":{"planId":plan_id,"generation":"1"},"message":{"messageId":ExecutionId::new(),
+            "recipientMemberId":member_id,"expectedRecipientRoleVersionId":ExecutionId::new(),"target":{"unitId":unit_id,"locale":"zh-CN",
+                "sourceSnapshotId":ExecutionId::new(),"sourceRevisionId":ExecutionId::new()},"body":"Original team A"}},"submittedSeq":"6"})).unwrap();
+    write.expected_revision = serde_json::from_value(settled["revision"].clone()).unwrap();
+    write.value.edit_seq = Revision::new(6).unwrap(); write.value.pending = Some(pending.clone());
+    write.value.team_drafts = vec![ConversationTeamDraft { plan_id, plan_digest: "a".repeat(64),
+        guidance: Some(ConversationTeamGuidanceDraft { edit_seq: Revision::new(6).unwrap(), member_id: Some(member_id), unit_id: Some(unit_id), body: "Original team A".into() }), publication: None }];
+    let retained = call(&window, "write_local_conversation_draft", json!({"sessionToken":new_token,"write":write})).unwrap();
+    for disposition in [ConversationDraftDisposition::Recorded, ConversationDraftDisposition::FencedNotApplied] {
+        let mut next = write.clone(); next.expected_revision = serde_json::from_value(retained["revision"].clone()).unwrap();
+        next.value.edit_seq = Revision::new(7).unwrap(); next.value.pending = None;
+        if disposition == ConversationDraftDisposition::Recorded {
+            let input = next.value.team_drafts[0].guidance.as_mut().unwrap(); input.body.clear(); input.edit_seq = Revision::new(7).unwrap();
+        }
+        let resolve = ConversationDraftResolve { write: next, target: ConversationDraftResolveTarget::Pending { pending: pending.clone() }, disposition };
+        assert!(call(&window, "resolve_local_conversation_draft", json!({"sessionToken":new_token,"resolve":resolve})).is_err(),
+            "a plan without the original conversation link cannot settle this input");
+        assert_eq!(call(&window, "read_local_conversation_draft", json!({"sessionToken":new_token,"key":key})).unwrap(), retained);
+    }
+    assert!(app.state::<AppState>().sessions.with(|sessions| sessions.active.as_ref().unwrap().execution.is_none()));
 }

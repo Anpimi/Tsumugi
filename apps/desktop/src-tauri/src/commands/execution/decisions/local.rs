@@ -121,6 +121,8 @@ fn reference(
             ConversationDraftPending::WorkPlanControl { .. } => {
                 DecisionLocalRequestKind::WorkPlanControl
             }
+            ConversationDraftPending::TeamMessage { .. } => DecisionLocalRequestKind::TeamMessage,
+            ConversationDraftPending::TeamPublication { .. } => DecisionLocalRequestKind::TeamPublication,
         },
         PendingJournalSlot::Revocation(_) => DecisionLocalRequestKind::WorkPlanControl,
         PendingJournalSlot::Resource(p)=>match p {
@@ -267,6 +269,8 @@ fn targets(row: &PendingActionRef) -> Vec<DecisionTarget> {
             ..
         }) => Some(request.plan_id),
         PendingJournalSlot::Revocation(slot) => Some(slot.request.plan_id),
+        PendingJournalSlot::Conversation(ConversationDraftPending::TeamMessage { request, .. }) => Some(request.lease.plan_id),
+        PendingJournalSlot::Conversation(ConversationDraftPending::TeamPublication { request, .. }) => Some(request.lease.plan_id),
         _ => None,
     };
     if let Some(plan_id) = plan {

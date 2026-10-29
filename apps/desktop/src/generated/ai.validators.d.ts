@@ -42,8 +42,10 @@ export declare function validateRequestWorkPlanTeamExecution(value: unknown): va
 export declare function validateRequestWorkPlanTeamHistory(value: unknown): value is Requests["workPlanTeamHistory"];
 export declare function validateRequestWorkPlanTeamMessage(value: unknown): value is Requests["workPlanTeamMessage"];
 export declare function validateRequestWorkPlanTeamMessageAction(value: unknown): value is Requests["workPlanTeamMessageAction"];
+export declare function validateRequestWorkPlanTeamMessageSettlement(value: unknown): value is Requests["workPlanTeamMessageSettlement"];
 export declare function validateRequestWorkPlanTeamPost(value: unknown): value is Requests["workPlanTeamPost"];
 export declare function validateRequestWorkPlanTeamPublicationAction(value: unknown): value is Requests["workPlanTeamPublicationAction"];
+export declare function validateRequestWorkPlanTeamPublicationSettlement(value: unknown): value is Requests["workPlanTeamPublicationSettlement"];
 export declare function validateRequestWorkPlanTeamPublish(value: unknown): value is Requests["workPlanTeamPublish"];
 export declare function validateRequestWorkPlanTeamRecoveryAction(value: unknown): value is Requests["workPlanTeamRecoveryAction"];
 export declare function validateRequestWorkPlanTeamRecoveryAuthorize(value: unknown): value is Requests["workPlanTeamRecoveryAuthorize"];
@@ -87,8 +89,10 @@ export declare function validateResponseWorkPlanTeamExecution(value: unknown): v
 export declare function validateResponseWorkPlanTeamHistory(value: unknown): value is Responses["workPlanTeamHistory"];
 export declare function validateResponseWorkPlanTeamMessage(value: unknown): value is Responses["workPlanTeamMessage"];
 export declare function validateResponseWorkPlanTeamMessageAction(value: unknown): value is Responses["workPlanTeamMessageAction"];
+export declare function validateResponseWorkPlanTeamMessageSettlement(value: unknown): value is Responses["workPlanTeamMessageSettlement"];
 export declare function validateResponseWorkPlanTeamPost(value: unknown): value is Responses["workPlanTeamPost"];
 export declare function validateResponseWorkPlanTeamPublicationAction(value: unknown): value is Responses["workPlanTeamPublicationAction"];
+export declare function validateResponseWorkPlanTeamPublicationSettlement(value: unknown): value is Responses["workPlanTeamPublicationSettlement"];
 export declare function validateResponseWorkPlanTeamRecoveryAction(value: unknown): value is Responses["workPlanTeamRecoveryAction"];
 export declare function validateResponseWorkPlanTeamRecoveryEnd(value: unknown): value is Responses["workPlanTeamRecoveryEnd"];
 export declare function validateResponseWorkPlanTeamRecoveryPreview(value: unknown): value is Responses["workPlanTeamRecoveryPreview"];

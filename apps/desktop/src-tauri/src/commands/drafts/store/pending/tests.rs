@@ -24,7 +24,7 @@ fn conversation(project: ExecutionId) -> ConversationDraftWrite {
             pending: Some(ConversationDraftPending::Append { request: AppendProjectConversationMessage {
                 project_id: project, conversation_id: key.conversation_id, action_id: ExecutionId::new(),
                 message_id: ExecutionId::new(), body: "Original message A".into() }, submitted_seq: rev(1) }),
-            revocations: vec![], proposal_edits: vec![] } }
+            revocations: vec![], proposal_edits: vec![], team_drafts: vec![] } }
 }
 
 fn disk_format(store: &DraftStore) -> i64 {

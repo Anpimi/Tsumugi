@@ -1,4 +1,4 @@
-import { conversationDraftCommands, conversationPendingTarget } from "../../../conversationDraftCommands";
+import { conversationDraftCommands, conversationPendingTarget, conversationPendingActionId } from "../../../conversationDraftCommands";
 import { conversationCommands, type ConversationProposalRef } from "../../../conversationCommands";
 import { draftCommands, sameDraftKey, type DraftKey } from "../../../draftCommands";
 import type { SessionRequest } from "../../../executionCommands";
@@ -230,9 +230,9 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
         const pending = head.value?.pending;
         match(!!pending && pending.kind === reference.requestKind && pending.submittedSeq === original.submittedSeq);
         const target = conversationPendingTarget(pending);
-        const actionId = pending.kind === "planning" ? pending.request.consent.actionId : pending.request.actionId;
+        const actionId = conversationPendingActionId(pending);
         const planId = pending.kind === "proposal-work-plan" || pending.kind === "work-plan-start" || pending.kind === "work-plan-control"
-          ? pending.request.planId : null;
+          ? pending.request.planId : pending.kind === "team-message" || pending.kind === "team-publication" ? pending.request.lease.planId : null;
         match(target.projectId === ctx.projectId && target.conversationId === conversationId && actionId === original.actionId && planMatches(planId));
       }
       return { kind: "conversation-request", conversationId, slot: original.slot, actionId: original.actionId };

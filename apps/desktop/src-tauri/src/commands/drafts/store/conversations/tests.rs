@@ -21,6 +21,7 @@ fn setup() -> (tempfile::TempDir, DraftStore, ConversationDraftWrite) {
             pending: None,
             revocations: vec![],
             proposal_edits: vec![],
+            team_drafts: vec![],
         },
     };
     (directory, store, write)
@@ -371,7 +372,7 @@ fn format_three(store: &DraftStore) {
     let c = Connection::open(store.directory.join(DATABASE)).unwrap();
     c.execute_batch("BEGIN IMMEDIATE; ALTER TABLE conversation_draft_heads RENAME TO conversation_draft_fixture_new").unwrap();
     c.execute_batch(LEGACY_HEAD_SQL).unwrap();
-    c.execute_batch("DROP TABLE IF EXISTS resource_draft_heads; INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
+    c.execute_batch("DROP TABLE IF EXISTS source_draft_heads; DROP TABLE IF EXISTS resource_draft_heads; INSERT INTO conversation_draft_heads SELECT * FROM conversation_draft_fixture_new; DROP TABLE conversation_draft_fixture_new; PRAGMA user_version=3; COMMIT").unwrap();
 }
 
 fn format_four(store: &DraftStore) {
@@ -708,7 +709,10 @@ fn formats_four_to_six_read_without_writes_and_upgrade_without_rewriting_heads()
         assert_eq!(fs::read(&path).unwrap(), bytes);
         assert_eq!(store.write_conversation(&write).unwrap(), first);
         assert_eq!(payloads(), original);
-        assert_eq!(roots(), root_pages);
+        let upgraded_roots = roots();
+        assert_eq!(upgraded_roots.iter().filter(|(name, _)| root_pages.iter().any(|(original, _)| original == name)).cloned().collect::<Vec<_>>(), root_pages);
+        assert_eq!(upgraded_roots.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+            ["conversation_draft_heads", "draft_heads", "resource_draft_heads", "source_draft_heads"]);
         assert_eq!(
             c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
@@ -1527,4 +1531,222 @@ fn format_three_rejects_new_action_payloads_without_rewriting_either_domain() {
         ErrorCode::CorruptLedger
     );
     assert_eq!(fs::read(&path).unwrap(), bytes);
+}
+
+fn team_pending_fixture(write: &mut ConversationDraftWrite, publication: bool) -> ConversationDraftPending {
+    use tsumugi_core::application::{AutomationLease, PublishTeamDiscussion, SendHumanTeamMessage, TeamDiscussionKind, TeamDiscussionTarget};
+    let plan_id = ExecutionId::new();
+    let member_id = ExecutionId::new();
+    let target = TeamDiscussionTarget { unit_id: ExecutionId::new(), locale: "zh-CN".into(),
+        source_snapshot_id: ExecutionId::new(), source_revision_id: ExecutionId::new() };
+    let body = "  Original A e\u{301} 👩🏽‍💻 {{name}}  ".to_string();
+    let reply_to = Some(ExecutionId::new());
+    write.value.team_drafts.push(ConversationTeamDraft { plan_id, plan_digest: "a".repeat(64),
+        guidance: Some(ConversationTeamGuidanceDraft { edit_seq: rev(1), member_id: Some(member_id), unit_id: Some(target.unit_id),
+            body: if publication { "Other unsent guidance".into() } else { body.clone() } }),
+        publication: Some(ConversationTeamPublicationDraft { edit_seq: rev(1), unit_id: Some(target.unit_id), reply_to,
+            body: if publication { body.clone() } else { "Other unsent discussion".into() } }) });
+    let lease = AutomationLease { plan_id, generation: rev(2) };
+    if publication {
+        ConversationDraftPending::TeamPublication { conversation_id: write.key.conversation_id, target_name: "Captured entry {{name}} 中文".into(),
+            request: TeamPublicationOriginal { project_id: write.key.project_id, lease,
+                publication: PublishTeamDiscussion { post_id: ExecutionId::new(), target, kind: TeamDiscussionKind::Note,
+                    body, references: vec![], reply_to, supersedes: None } }, submitted_seq: rev(1) }
+    } else {
+        ConversationDraftPending::TeamMessage { conversation_id: write.key.conversation_id, target_name: "Captured entry {{name}} 中文".into(),
+            request: TeamMessageOriginal { project_id: write.key.project_id, lease,
+                message: SendHumanTeamMessage { message_id: ExecutionId::new(), recipient_member_id: member_id,
+                    expected_recipient_role_version_id: ExecutionId::new(), target, body } },
+            destination: ConversationTeamDestination { name: "Captured member".into(), role: "Read the saved source".into(),
+                endpoint: "http://127.0.0.1:9/v1/chat/completions".into(), model: "synthetic-destination".into() }, submitted_seq: rev(1) }
+    }
+}
+
+#[test]
+fn team_drafts_keep_incomplete_input_with_bounded_unique_plans_and_shared_quotas() {
+    let (_directory, mut store, mut write) = setup();
+    let _ = team_pending_fixture(&mut write, false);
+    let draft = &mut write.value.team_drafts[0];
+    draft.guidance.as_mut().unwrap().member_id = None;
+    draft.guidance.as_mut().unwrap().unit_id = None;
+    draft.guidance.as_mut().unwrap().body.clear();
+    draft.publication.as_mut().unwrap().unit_id = None;
+    draft.publication.as_mut().unwrap().body = "  ".into();
+    let mut wrong = write.clone(); wrong.value.team_drafts.push(wrong.value.team_drafts[0].clone());
+    assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::InvalidInput);
+    wrong = write.clone(); wrong.value.team_drafts[0].guidance.as_mut().unwrap().edit_seq = rev(2);
+    assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::InvalidInput);
+    wrong = write.clone(); wrong.value.team_drafts[0].publication.as_mut().unwrap().edit_seq = rev(2);
+    assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::InvalidInput);
+    wrong = write.clone(); wrong.value.team_drafts[0].plan_digest = "invalid".into();
+    assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::InvalidInput);
+    wrong = write.clone(); wrong.value.team_drafts[0].guidance.as_mut().unwrap().body = "x".repeat(MAX_CONVERSATION_DRAFT_RECORD_BYTES);
+    assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::LimitExceeded);
+    let template = write.value.team_drafts[0].clone();
+    write.value.team_drafts = (0..32).map(|_| ConversationTeamDraft { plan_id: ExecutionId::new(), ..template.clone() }).collect();
+    write.value.team_drafts[0].publication.as_mut().unwrap().body = "x".repeat(8193);
+    wrong = write.clone(); wrong.value.team_drafts.push(ConversationTeamDraft { plan_id: ExecutionId::new(), ..template });
+    assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::LimitExceeded);
+    let head = store.write_conversation(&write).unwrap();
+    assert_eq!(head.value.as_ref().unwrap().team_drafts[0].publication.as_ref().unwrap().body.len(), 8193,
+        "unfinished input may exceed the send limit and must remain editable");
+    assert_eq!(DraftStore::at(store.directory.clone()).unwrap().read_conversation(&write.key).unwrap(), head);
+    store.limits.project_bytes = 1;
+    write.expected_revision = head.revision; write.value.edit_seq = rev(2); write.value.text.push('B');
+    assert_eq!(store.write_conversation(&write).unwrap_err().code, ErrorCode::LimitExceeded);
+    assert_eq!(store.read_conversation(&write.key).unwrap(), head);
+}
+
+#[test]
+fn team_pending_rejects_wrong_scope_same_sequence_input_and_restored_authority() {
+    for publication in [false, true] {
+        let (_directory, store, mut write) = setup();
+        let original = team_pending_fixture(&mut write, publication); write.value.pending = Some(original.clone());
+        let nested = if publication { "publication" } else { "message" };
+        for field in ["body", "unit", "scope", "plan", "lease", "conversation", "recipient-or-reply"] {
+            let mut encoded = serde_json::to_value(&write).unwrap();
+            let pending = &mut encoded["value"]["pending"];
+            match field {
+                "body" => pending["request"][nested]["body"] = serde_json::json!("Different body at the same sequence"),
+                "unit" => pending["request"][nested]["target"]["unitId"] = serde_json::json!(ExecutionId::new()),
+                "scope" => pending["request"]["projectId"] = serde_json::json!(ExecutionId::new()),
+                "plan" => pending["request"]["lease"]["planId"] = serde_json::json!(ExecutionId::new()),
+                "lease" => pending["request"]["lease"]["generation"] = serde_json::json!("0"),
+                "conversation" => pending["conversationId"] = serde_json::json!(ExecutionId::new()),
+                _ if publication => pending["request"][nested]["replyTo"] = serde_json::json!(ExecutionId::new()),
+                _ => pending["request"][nested]["recipientMemberId"] = serde_json::json!(ExecutionId::new()),
+            }
+            let wrong: ConversationDraftWrite = serde_json::from_value(encoded).unwrap();
+            assert!(store.write_conversation(&wrong).is_err(), "{field}");
+        }
+        for field in ["sessionToken", "actor", "confirmed", "consent", "retryAllowed", "permit"] {
+            let mut encoded = serde_json::to_value(&write).unwrap();
+            encoded["value"]["pending"]["request"][field] = serde_json::json!(true);
+            assert!(serde_json::from_value::<ConversationDraftWrite>(encoded).is_err(), "{field}");
+            let mut encoded = serde_json::to_value(&write).unwrap();
+            encoded["value"]["teamDrafts"][0][if publication { "publication" } else { "guidance" }][field] = serde_json::json!(true);
+            assert!(serde_json::from_value::<ConversationDraftWrite>(encoded).is_err(), "{field}");
+            if !publication {
+                let mut encoded = serde_json::to_value(&write).unwrap(); encoded["value"]["pending"]["destination"][field] = serde_json::json!(true);
+                assert!(serde_json::from_value::<ConversationDraftWrite>(encoded).is_err(), "{field}");
+            }
+        }
+        if !publication {
+            for (field, limit) in [("name", 128), ("endpoint", 2048), ("model", 128), ("role", 8192)] {
+                let mut encoded = serde_json::to_value(&write).unwrap(); encoded["value"]["pending"]["destination"][field] = serde_json::json!("x".repeat(limit + 1));
+                let wrong: ConversationDraftWrite = serde_json::from_value(encoded).unwrap();
+                assert_eq!(store.write_conversation(&wrong).unwrap_err().code, ErrorCode::InvalidInput, "{field}");
+            }
+        }
+        let mut wrong = write.clone(); wrong.value.team_drafts.clear();
+        assert!(store.write_conversation(&wrong).is_err());
+        let mut overlapping = revocation(&write, ExecutionId::new()); overlapping.request.action_id = pending_action(&original);
+        wrong = write.clone(); wrong.value.revocations.push(overlapping);
+        assert_eq!(store.write_conversation(&wrong).unwrap_err().stage, "conversation-drafts-revocations");
+        let head = store.write_conversation(&write).unwrap();
+        assert!(store.list_conversations(write.key.project_id, None, 10).unwrap().items[0].has_pending);
+        let snapshot = store.pending_snapshot(write.key.project_id, None).unwrap();
+        assert_eq!(snapshot.rows[0].slot.action_id(), pending_action(&original));
+        assert_eq!(snapshot.rows[0].slot.submitted_seq(), rev(1));
+        assert_eq!(DraftStore::at(store.directory.clone()).unwrap().read_conversation(&write.key).unwrap(), head);
+    }
+}
+
+#[test]
+fn team_settlement_clears_only_recorded_a_and_retains_b_other_drafts_and_revocations() {
+    for publication in [false, true] {
+        for newer in [false, true] {
+            for disposition in [ConversationDraftDisposition::Recorded, ConversationDraftDisposition::FencedNotApplied] {
+                let (_directory, store, mut write) = setup();
+                let original = team_pending_fixture(&mut write, publication); write.value.pending = Some(original.clone());
+                write.value.message_edit_seq = Some(rev(1)); write.value.proposal_edits.push(proposal_draft(1));
+                write.value.revocations.push(revocation(&write, ExecutionId::new()));
+                let mut other = write.value.team_drafts[0].clone(); other.plan_id = ExecutionId::new(); write.value.team_drafts.push(other);
+                let first = store.write_conversation(&write).unwrap();
+                write.expected_revision = first.revision;
+                if newer {
+                    write.value.edit_seq = rev(2);
+                    if publication { let input = write.value.team_drafts[0].publication.as_mut().unwrap(); input.body = "Newer discussion B".into(); input.edit_seq = rev(2); }
+                    else { let input = write.value.team_drafts[0].guidance.as_mut().unwrap(); input.body = "Newer guidance B".into(); input.edit_seq = rev(2); }
+                    write.expected_revision = store.write_conversation(&write).unwrap().revision;
+                }
+                let retained = write.value.clone();
+                let mut resolved = write.clone(); resolved.value.pending = None; resolved.value.edit_seq = rev(3);
+                if disposition == ConversationDraftDisposition::Recorded && !newer {
+                    if publication { let input = resolved.value.team_drafts[0].publication.as_mut().unwrap(); input.body.clear(); input.edit_seq = rev(3); }
+                    else { let input = resolved.value.team_drafts[0].guidance.as_mut().unwrap(); input.body.clear(); input.edit_seq = rev(3); }
+                }
+                let resolve = ConversationDraftResolve { write: resolved, target: ConversationDraftResolveTarget::Pending { pending: original }, disposition };
+                let mut wrong = resolve.clone(); wrong.write.value.text = "Must not overwrite the other composer".into();
+                assert_eq!(store.resolve_conversation(&wrong).unwrap_err().stage, "drafts-pending");
+                if newer || disposition == ConversationDraftDisposition::FencedNotApplied {
+                    let mut wrong = resolve.clone();
+                    if publication { let input = wrong.write.value.team_drafts[0].publication.as_mut().unwrap(); input.body.clear(); input.edit_seq = rev(3); }
+                    else { let input = wrong.write.value.team_drafts[0].guidance.as_mut().unwrap(); input.body.clear(); input.edit_seq = rev(3); }
+                    assert_eq!(store.resolve_conversation(&wrong).unwrap_err().stage, "drafts-pending");
+                }
+                let settled = store.resolve_conversation(&resolve).unwrap();
+                assert_eq!(settled.value, Some(resolve.write.value.clone()));
+                assert_eq!(settled.value.as_ref().unwrap().revocations, retained.revocations);
+                assert_eq!(store.resolve_conversation(&resolve).unwrap(), settled, "lost settlement ACK is idempotent");
+                assert_eq!(DraftStore::at(store.directory.clone()).unwrap().read_conversation(&write.key).unwrap(), settled);
+            }
+        }
+    }
+}
+
+#[test]
+fn team_settlement_preserves_the_implicit_composer_sequence() {
+    for publication in [false, true] {
+        for disposition in [ConversationDraftDisposition::Recorded, ConversationDraftDisposition::FencedNotApplied] {
+            let (_directory, store, mut write) = setup();
+            let pending = team_pending_fixture(&mut write, publication);
+            write.value.pending = Some(pending.clone());
+            write.value.message_edit_seq = None;
+            let previous = write.value.edit_seq;
+            write.expected_revision = store.write_conversation(&write).unwrap().revision;
+            write.value.pending = None;
+            write.value.edit_seq = rev(2);
+            write.value.message_edit_seq = Some(previous);
+            if disposition == ConversationDraftDisposition::Recorded {
+                if publication {
+                    let draft = write.value.team_drafts[0].publication.as_mut().unwrap();
+                    draft.body.clear(); draft.edit_seq = rev(2);
+                } else {
+                    let draft = write.value.team_drafts[0].guidance.as_mut().unwrap();
+                    draft.body.clear(); draft.edit_seq = rev(2);
+                }
+            }
+            let resolve = ConversationDraftResolve { write, target: ConversationDraftResolveTarget::Pending { pending }, disposition };
+            let mut changed = resolve.clone(); changed.write.value.message_edit_seq = Some(rev(2));
+            assert_eq!(store.resolve_conversation(&changed).unwrap_err().stage, "drafts-pending");
+            assert_eq!(store.resolve_conversation(&resolve).unwrap().value, Some(resolve.write.value));
+        }
+    }
+}
+
+#[test]
+fn formats_eleven_and_twelve_upgrade_atomically_and_reject_team_data_under_old_headers() {
+    for format in [SOURCE_FORMAT, SOURCE_ACTION_FORMAT] {
+        let (_directory, store, mut write) = setup();
+        let first = store.write_conversation(&write).unwrap();
+        let saved_translation = translation(write.key.project_id); let translation_head = store.write(&saved_translation).unwrap();
+        let path = store.directory.join(DATABASE); let c = Connection::open(&path).unwrap(); set_legacy_format(&c, format).unwrap();
+        assert_eq!(store.read_conversation(&write.key).unwrap(), first);
+        assert_eq!(c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), format);
+        let mut wrong = write.clone(); wrong.expected_revision = rev(99); assert!(store.write_conversation(&wrong).is_err());
+        assert_eq!(c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), format);
+        assert_eq!(store.write_conversation(&write).unwrap(), first, "same-value ACK retry upgrades in the transaction");
+        assert_eq!(c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), FORMAT);
+        assert_eq!(store.read(&saved_translation.key).unwrap(), translation_head);
+        write.expected_revision = first.revision; write.value.edit_seq = rev(2); let _ = team_pending_fixture(&mut write, false);
+        store.write_conversation(&write).unwrap();
+        set_legacy_format(&c, format).unwrap();
+        let before = fs::read(&path).unwrap();
+        assert_eq!(store.read_conversation(&write.key).unwrap_err().code, ErrorCode::CorruptLedger);
+        let mut later = saved_translation.clone(); later.expected_revision = translation_head.revision; later.value.edit_seq = rev(2); later.value.text.push('B');
+        assert_eq!(store.write(&later).unwrap_err().code, ErrorCode::CorruptLedger);
+        assert_eq!(c.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)).unwrap(), format);
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
 }

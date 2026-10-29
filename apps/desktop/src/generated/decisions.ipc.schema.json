@@ -1675,6 +1675,8 @@
           "proposal-work-plan",
           "work-plan-start",
           "work-plan-control",
+          "team-message",
+          "team-publication",
           "resource-typed-context-save",
           "resource-typed-context-withdraw",
           "resource-knowledge-decision",

@@ -3769,10 +3769,16 @@
       "workPlanTeamMessageAction": {
         "$ref": "#/definitions/WorkPlanTeamMessageRequest"
       },
+      "workPlanTeamMessageSettlement": {
+        "$ref": "#/definitions/WorkPlanTeamMessageRequest"
+      },
       "workPlanTeamPost": {
         "$ref": "#/definitions/WorkPlanTeamPostRequest"
       },
       "workPlanTeamPublicationAction": {
+        "$ref": "#/definitions/WorkPlanTeamPublicationActionRequest"
+      },
+      "workPlanTeamPublicationSettlement": {
         "$ref": "#/definitions/WorkPlanTeamPublicationActionRequest"
       },
       "workPlanTeamPublish": {
@@ -3837,6 +3843,8 @@
       "workPlanTeamPublicationAction",
       "workPlanTeamMessage",
       "workPlanTeamMessageAction",
+      "workPlanTeamMessageSettlement",
+      "workPlanTeamPublicationSettlement",
       "workPlanAgentDelegate",
       "workPlanAgentReconcile",
       "workPlanAgentGenerationAttempt",
@@ -8855,6 +8863,37 @@
         ],
         "type": "string"
       },
+      "SendHumanTeamMessage": {
+        "additionalProperties": false,
+        "description": "A trusted human action. The original command captures its lease separately.",
+        "properties": {
+          "body": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRecipientRoleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recipientMemberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "messageId",
+          "recipientMemberId",
+          "expectedRecipientRoleVersionId",
+          "target",
+          "body"
+        ],
+        "type": "object"
+      },
       "SharedTerm": {
         "additionalProperties": false,
         "properties": {
@@ -10345,6 +10384,46 @@
           "maxBodyBytes",
           "maxRequestMessages",
           "maxRequestBytes"
+        ],
+        "type": "object"
+      },
+      "TeamMessageOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "message": {
+            "$ref": "#/definitions/SendHumanTeamMessage"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "lease",
+          "message"
+        ],
+        "type": "object"
+      },
+      "TeamPublicationOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "$ref": "#/definitions/PublishTeamDiscussion"
+          }
+        },
+        "required": [
+          "projectId",
+          "lease",
+          "publication"
         ],
         "type": "object"
       },
@@ -12118,7 +12197,7 @@
             "$ref": "#/definitions/WorkPlanControlSettlementOriginal"
           },
           "settlement": {
-            "$ref": "#/definitions/WorkPlanRequestSettlement2"
+            "$ref": "#/definitions/WorkPlanRequestSettlement4"
           }
         },
         "required": [
@@ -12406,7 +12485,7 @@
                 "type": "string"
               },
               "receipt": {
-                "$ref": "#/definitions/WorkPlanStartReceipt"
+                "$ref": "#/definitions/TeamMessage"
               }
             },
             "required": [
@@ -12444,6 +12523,100 @@
         ]
       },
       "WorkPlanRequestOutcome2": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/TeamDiscussionPost"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "fenced-not-applied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkPlanRequestOutcome3": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/WorkPlanStartReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "fenced-not-applied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkPlanRequestOutcome4": {
         "oneOf": [
           {
             "additionalProperties": false,
@@ -12528,6 +12701,64 @@
           },
           "outcome": {
             "$ref": "#/definitions/WorkPlanRequestOutcome2"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "lease",
+          "state",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "WorkPlanRequestSettlement3": {
+        "additionalProperties": false,
+        "description": "A historical observation of one exact request, without restoring authority.",
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "outcome": {
+            "$ref": "#/definitions/WorkPlanRequestOutcome3"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "lease",
+          "state",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "WorkPlanRequestSettlement4": {
+        "additionalProperties": false,
+        "description": "A historical observation of one exact request, without restoring authority.",
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "outcome": {
+            "$ref": "#/definitions/WorkPlanRequestOutcome4"
           },
           "planId": {
             "$ref": "#/definitions/ExecutionId"
@@ -12679,7 +12910,7 @@
             "$ref": "#/definitions/WorkPlanStartSettlementOriginal"
           },
           "settlement": {
-            "$ref": "#/definitions/WorkPlanRequestSettlement"
+            "$ref": "#/definitions/WorkPlanRequestSettlement3"
           }
         },
         "required": [
@@ -12736,6 +12967,38 @@
           "effects",
           "expiresAt",
           "toolInvocations"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamMessageSettlementView": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/TeamMessageOriginal"
+          },
+          "settlement": {
+            "$ref": "#/definitions/WorkPlanRequestSettlement"
+          }
+        },
+        "required": [
+          "request",
+          "settlement"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamPublicationSettlementView": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/TeamPublicationOriginal"
+          },
+          "settlement": {
+            "$ref": "#/definitions/WorkPlanRequestSettlement2"
+          }
+        },
+        "required": [
+          "request",
+          "settlement"
         ],
         "type": "object"
       },
@@ -13296,6 +13559,9 @@
           }
         ]
       },
+      "workPlanTeamMessageSettlement": {
+        "$ref": "#/definitions/WorkPlanTeamMessageSettlementView"
+      },
       "workPlanTeamPost": {
         "$ref": "#/definitions/TeamDiscussionPost"
       },
@@ -13308,6 +13574,9 @@
             "type": "null"
           }
         ]
+      },
+      "workPlanTeamPublicationSettlement": {
+        "$ref": "#/definitions/WorkPlanTeamPublicationSettlementView"
       },
       "workPlanTeamRecoveryAction": {
         "anyOf": [
@@ -13362,6 +13631,8 @@
       "workPlanTeamPublicationAction",
       "workPlanTeamMessage",
       "workPlanTeamMessageAction",
+      "workPlanTeamMessageSettlement",
+      "workPlanTeamPublicationSettlement",
       "workPlanAgentReconcile",
       "workPlanAgentGeneration",
       "workPlanAgentGenerationAttempt",

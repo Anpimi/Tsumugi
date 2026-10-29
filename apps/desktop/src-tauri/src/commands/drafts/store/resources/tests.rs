@@ -175,7 +175,7 @@ fn all_supported_journals_stay_read_only_until_any_successful_writer_creates_res
             0=>{store.write(&original).unwrap();}
             1=>{store.write_conversation(&ConversationDraftWrite{key:ConversationDraftKey{project_id:project,conversation_id:ExecutionId::new()},
                 expected_revision:rev(0),writer_id:ExecutionId::new(),value:ConversationDraftValue{text:String::new(),edit_seq:rev(1),
-                    message_edit_seq:None,pending:None,revocations:vec![],proposal_edits:vec![]}}).unwrap();}
+                    message_edit_seq:None,pending:None,revocations:vec![],proposal_edits:vec![],team_drafts:vec![]}}).unwrap();}
             _=>{resource.expected_revision=rev(0);store.write_resource(&resource).unwrap();}
         }
         let c=Connection::open(store.directory.join(DATABASE)).unwrap();

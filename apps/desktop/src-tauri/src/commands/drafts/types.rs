@@ -5,7 +5,8 @@ use tsumugi_core::{
     application::{
         AppendProjectConversationMessage, AuthorizeConversationProposalWorkPlan,
         CaptureConversationProposal, CreateProjectConversation, ReadConversationPlanningAction,
-        ReviseConversationProposal, WorkPlanCommand,
+        ReviseConversationProposal, WorkPlanCommand, AutomationLease,
+        PublishTeamDiscussion, SendHumanTeamMessage,
     },
     execution::{ApplicationScopeBasis, ExecutionId, Revision, UnsignedDecimal},
 };
@@ -186,6 +187,52 @@ pub enum ConversationDraftPending {
         request: WorkPlanControlOriginal,
         submitted_seq: Revision,
     },
+    TeamMessage {
+        conversation_id: ExecutionId,
+        request: TeamMessageOriginal,
+        destination: ConversationTeamDestination,
+        target_name: String,
+        submitted_seq: Revision,
+    },
+    TeamPublication {
+        conversation_id: ExecutionId,
+        request: TeamPublicationOriginal,
+        target_name: String,
+        submitted_seq: Revision,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TeamMessageOriginal {
+    pub project_id: ExecutionId,
+    pub lease: AutomationLease,
+    pub message: SendHumanTeamMessage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct TeamPublicationOriginal {
+    pub project_id: ExecutionId,
+    pub lease: AutomationLease,
+    pub publication: PublishTeamDiscussion,
+}
+
+/// Captured display facts for the original recipient, never restored authority.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamDestination {
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 128)))]
+    pub name: String,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 8192)))]
+    pub role: String,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 2048)))]
+    pub endpoint: String,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 128)))]
+    pub model: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -268,6 +315,40 @@ pub struct ConversationDraftValue {
     pub revocations: Vec<ConversationDraftRevocation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proposal_edits: Vec<ConversationProposalDraft>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+    pub team_drafts: Vec<ConversationTeamDraft>,
+}
+
+/// Unfinished local team input does not restore sharing or execution permission.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamDraft {
+    pub plan_id: ExecutionId,
+    pub plan_digest: String,
+    pub guidance: Option<ConversationTeamGuidanceDraft>,
+    pub publication: Option<ConversationTeamPublicationDraft>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamGuidanceDraft {
+    pub edit_seq: Revision,
+    pub member_id: Option<ExecutionId>,
+    pub unit_id: Option<ExecutionId>,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamPublicationDraft {
+    pub edit_seq: Revision,
+    pub unit_id: Option<ExecutionId>,
+    pub body: String,
+    pub reply_to: Option<ExecutionId>,
 }
 
 /// Local unfinished input, separate from immutable project proposal revisions.

@@ -40,6 +40,8 @@ impl PendingJournalSlot {
             Self::Conversation(ConversationDraftPending::ProposalWorkPlan { request, .. }) => request.action_id,
             Self::Conversation(ConversationDraftPending::WorkPlanStart { request, .. }) => request.action_id,
             Self::Conversation(ConversationDraftPending::WorkPlanControl { request, .. }) => request.action_id,
+            Self::Conversation(ConversationDraftPending::TeamMessage { request, .. }) => request.message.message_id,
+            Self::Conversation(ConversationDraftPending::TeamPublication { request, .. }) => request.publication.post_id,
             Self::Revocation(slot) => slot.request.action_id,
             Self::Resource(slot) => slot.action_id(),
             Self::ResourceFact(slot) => slot.request.action_id,
@@ -60,7 +62,9 @@ impl PendingJournalSlot {
                 | ConversationDraftPending::ProposalRevision { submitted_seq, .. }
                 | ConversationDraftPending::ProposalWorkPlan { submitted_seq, .. }
                 | ConversationDraftPending::WorkPlanStart { submitted_seq, .. }
-                | ConversationDraftPending::WorkPlanControl { submitted_seq, .. }) => *submitted_seq,
+                | ConversationDraftPending::WorkPlanControl { submitted_seq, .. }
+                | ConversationDraftPending::TeamMessage { submitted_seq, .. }
+                | ConversationDraftPending::TeamPublication { submitted_seq, .. }) => *submitted_seq,
             Self::Revocation(slot) => slot.submitted_seq,
             Self::Resource(slot) => slot.submitted_seq(),
             Self::ResourceFact(slot) => slot.submitted_seq,

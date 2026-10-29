@@ -135,10 +135,12 @@ describe("ConversationSession", () => {
     const unsubscribe = h.owner.subscribe(() => {
       const input = h.current();
       if (!input.journalBusy && input.head.value?.pending && h.ports.append.mock.calls.length === 0) {
+        const pending = input.head.value.pending;
+        if (pending.kind !== "append") throw new Error("Expected the frozen append request before dispatch");
         acknowledgedBeforeDispatch = true;
         expect(h.owner.getDecisionActivity().actions).toEqual([{ key: { kind: "conversation", conversationId: id },
-          slot: "primary", actionId: input.head.value.pending.kind === "planning" ? input.head.value.pending.request.consent.actionId : input.head.value.pending.request.actionId,
-          submittedSeq: input.head.value.pending.submittedSeq }]);
+          slot: "primary", actionId: pending.request.actionId,
+          submittedSeq: pending.submittedSeq }]);
       }
     });
     const saving = h.owner.append(id); await vi.waitFor(() => expect(h.ports.append).toHaveBeenCalledOnce());

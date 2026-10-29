@@ -269,6 +269,23 @@
         ],
         "type": "string"
       },
+      "AutomationLease": {
+        "additionalProperties": false,
+        "description": "A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "planId",
+          "generation"
+        ],
+        "type": "object"
+      },
       "CapabilityBinding": {
         "additionalProperties": false,
         "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
@@ -1206,6 +1223,68 @@
               "submittedSeq"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "destination": {
+                "$ref": "#/definitions/ConversationTeamDestination"
+              },
+              "kind": {
+                "const": "team-message",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/TeamMessageOriginal"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "targetName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId",
+              "request",
+              "destination",
+              "targetName",
+              "submittedSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "team-publication",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/TeamPublicationOriginal"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "targetName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId",
+              "request",
+              "targetName",
+              "submittedSeq"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1350,6 +1429,13 @@
           "revocations": {
             "items": {
               "$ref": "#/definitions/ConversationDraftRevocation"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "teamDrafts": {
+            "items": {
+              "$ref": "#/definitions/ConversationTeamDraft"
             },
             "maxItems": 32,
             "type": "array"
@@ -1747,6 +1833,144 @@
           "conversationId",
           "proposalId",
           "revisionId"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamDestination": {
+        "additionalProperties": false,
+        "description": "Captured display facts for the original recipient, never restored authority.",
+        "properties": {
+          "endpoint": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 8192,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "role",
+          "endpoint",
+          "model"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamDraft": {
+        "additionalProperties": false,
+        "description": "Unfinished local team input does not restore sharing or execution permission.",
+        "properties": {
+          "guidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationTeamGuidanceDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planDigest": {
+            "type": "string"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationTeamPublicationDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "planId",
+          "planDigest"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamGuidanceDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "memberId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "editSeq",
+          "body"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamPublicationDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "editSeq",
+          "body"
         ],
         "type": "object"
       },
@@ -3099,6 +3323,58 @@
           "componentId",
           "contributionId",
           "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PublishTeamDiscussion": {
+        "additionalProperties": false,
+        "description": "Model arguments contain content and relationships, never an author override.",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamDiscussionKind"
+          },
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/definitions/TeamArtifactReference"
+            },
+            "type": "array"
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "postId",
+          "target",
+          "kind",
+          "body",
+          "references"
         ],
         "type": "object"
       },
@@ -4582,6 +4858,37 @@
           "replace-captured-selection"
         ],
         "type": "string"
+      },
+      "SendHumanTeamMessage": {
+        "additionalProperties": false,
+        "description": "A trusted human action. The original command captures its lease separately.",
+        "properties": {
+          "body": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRecipientRoleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recipientMemberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "messageId",
+          "recipientMemberId",
+          "expectedRecipientRoleVersionId",
+          "target",
+          "body"
+        ],
+        "type": "object"
       },
       "SourceConfirmation": {
         "additionalProperties": false,
@@ -6260,6 +6567,61 @@
         ],
         "type": "object"
       },
+      "TeamArtifactReference": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation-revision",
+                "type": "string"
+              },
+              "revisionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-result",
+                "type": "string"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "snapshotId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshotId",
+              "attemptId",
+              "resultId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamDiscussionKind": {
+        "enum": [
+          "note",
+          "challenge",
+          "rejection",
+          "resolution"
+        ],
+        "type": "string"
+      },
       "TeamDiscussionPolicy": {
         "oneOf": [
           {
@@ -6289,6 +6651,30 @@
             "type": "object"
           }
         ]
+      },
+      "TeamDiscussionTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
       },
       "TeamExecutionLimits": {
         "additionalProperties": false,
@@ -6403,6 +6789,46 @@
             "type": "object"
           }
         ]
+      },
+      "TeamMessageOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "message": {
+            "$ref": "#/definitions/SendHumanTeamMessage"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "lease",
+          "message"
+        ],
+        "type": "object"
+      },
+      "TeamPublicationOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "$ref": "#/definitions/PublishTeamDiscussion"
+          }
+        },
+        "required": [
+          "projectId",
+          "lease",
+          "publication"
+        ],
+        "type": "object"
       },
       "TeamWorkKind": {
         "enum": [
@@ -7366,6 +7792,23 @@
           "send-team-message"
         ],
         "type": "string"
+      },
+      "AutomationLease": {
+        "additionalProperties": false,
+        "description": "A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "planId",
+          "generation"
+        ],
+        "type": "object"
       },
       "CapabilityBinding": {
         "additionalProperties": false,
@@ -8838,6 +9281,68 @@
               "submittedSeq"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "destination": {
+                "$ref": "#/definitions/ConversationTeamDestination"
+              },
+              "kind": {
+                "const": "team-message",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/TeamMessageOriginal"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "targetName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId",
+              "request",
+              "destination",
+              "targetName",
+              "submittedSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "conversationId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "team-publication",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/TeamPublicationOriginal"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "targetName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "conversationId",
+              "request",
+              "targetName",
+              "submittedSeq"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -8916,6 +9421,13 @@
           "revocations": {
             "items": {
               "$ref": "#/definitions/ConversationDraftRevocation"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "teamDrafts": {
+            "items": {
+              "$ref": "#/definitions/ConversationTeamDraft"
             },
             "maxItems": 32,
             "type": "array"
@@ -9277,6 +9789,150 @@
           "conversationId",
           "proposalId",
           "revisionId"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamDestination": {
+        "additionalProperties": false,
+        "description": "Captured display facts for the original recipient, never restored authority.",
+        "properties": {
+          "endpoint": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 8192,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "role",
+          "endpoint",
+          "model"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamDraft": {
+        "additionalProperties": false,
+        "description": "Unfinished local team input does not restore sharing or execution permission.",
+        "properties": {
+          "guidance": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationTeamGuidanceDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planDigest": {
+            "type": "string"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ConversationTeamPublicationDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "planId",
+          "planDigest",
+          "guidance",
+          "publication"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamGuidanceDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "memberId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "editSeq",
+          "memberId",
+          "unitId",
+          "body"
+        ],
+        "type": "object"
+      },
+      "ConversationTeamPublicationDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "editSeq",
+          "unitId",
+          "body",
+          "replyTo"
         ],
         "type": "object"
       },
@@ -10848,6 +11504,60 @@
         ],
         "type": "object"
       },
+      "PublishTeamDiscussion": {
+        "additionalProperties": false,
+        "description": "Model arguments contain content and relationships, never an author override.",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/definitions/TeamDiscussionKind"
+          },
+          "postId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/definitions/TeamArtifactReference"
+            },
+            "type": "array"
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersedes": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "postId",
+          "target",
+          "kind",
+          "body",
+          "references",
+          "replyTo",
+          "supersedes"
+        ],
+        "type": "object"
+      },
       "ReadConversationPlanningAction": {
         "additionalProperties": false,
         "properties": {
@@ -12304,6 +13014,37 @@
           "replace-captured-selection"
         ],
         "type": "string"
+      },
+      "SendHumanTeamMessage": {
+        "additionalProperties": false,
+        "description": "A trusted human action. The original command captures its lease separately.",
+        "properties": {
+          "body": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expectedRecipientRoleVersionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "messageId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recipientMemberId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "target": {
+            "$ref": "#/definitions/TeamDiscussionTarget"
+          }
+        },
+        "required": [
+          "messageId",
+          "recipientMemberId",
+          "expectedRecipientRoleVersionId",
+          "target",
+          "body"
+        ],
+        "type": "object"
       },
       "SourceCheckReview": {
         "additionalProperties": false,
@@ -14268,6 +15009,61 @@
         ],
         "type": "object"
       },
+      "TeamArtifactReference": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "translation-revision",
+                "type": "string"
+              },
+              "revisionId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "revisionId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attemptId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "kind": {
+                "const": "source-result",
+                "type": "string"
+              },
+              "resultId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "snapshotId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshotId",
+              "attemptId",
+              "resultId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TeamDiscussionKind": {
+        "enum": [
+          "note",
+          "challenge",
+          "rejection",
+          "resolution"
+        ],
+        "type": "string"
+      },
       "TeamDiscussionPolicy": {
         "oneOf": [
           {
@@ -14297,6 +15093,30 @@
             "type": "object"
           }
         ]
+      },
+      "TeamDiscussionTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceSnapshotId",
+          "sourceRevisionId"
+        ],
+        "type": "object"
       },
       "TeamExecutionLimits": {
         "additionalProperties": false,
@@ -14411,6 +15231,46 @@
             "type": "object"
           }
         ]
+      },
+      "TeamMessageOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "message": {
+            "$ref": "#/definitions/SendHumanTeamMessage"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "lease",
+          "message"
+        ],
+        "type": "object"
+      },
+      "TeamPublicationOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "publication": {
+            "$ref": "#/definitions/PublishTeamDiscussion"
+          }
+        },
+        "required": [
+          "projectId",
+          "lease",
+          "publication"
+        ],
+        "type": "object"
       },
       "TeamWorkKind": {
         "enum": [

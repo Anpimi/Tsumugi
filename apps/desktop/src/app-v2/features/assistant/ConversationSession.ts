@@ -1,7 +1,7 @@
 import { commandFailure, type CommandFailure } from "../../../CommandFailure";
 import { conversationCommands, isConversationMessageText, type ConversationPlanningRun, type ConversationProposalRevision, type PreparedConversationPlanning } from "../../../conversationCommands";
 import { defaultAiConfig, editedAiConfig, validAiLimits, type AiConfig } from "../../../aiCommands";
-import { conversationDraftCommands, canonicalConversationDraft, locallyReplayableConversationRequest, type ConversationDraftHead, type ConversationDraftKey, type ConversationDraftPending, type ConversationDraftSummary, type ConversationDraftValue, type ConversationProposalDraft, type ConversationDraftRevocation, type ConversationDraftResolveTarget, type ConversationDraftDisposition } from "../../../conversationDraftCommands";
+import { conversationDraftCommands, canonicalConversationDraft, conversationPendingActionId, isConversationTeamPending, locallyReplayableConversationRequest, type ConversationDraftHead, type ConversationDraftKey, type ConversationDraftPending, type ConversationDraftSummary, type ConversationDraftValue, type ConversationProposalDraft, type ConversationDraftRevocation, type ConversationDraftResolveTarget, type ConversationDraftDisposition, type ConversationTeamDraft, type ConversationTeamGuidanceDraft, type ConversationTeamPublicationDraft } from "../../../conversationDraftCommands";
 import type { SessionRequest } from "../../../executionCommands";
 import { jsonIdentity } from "../../../pluginToolChoices";
 import type { LifecycleParticipant } from "../../platform/projectLifecycle";
@@ -16,13 +16,19 @@ import { emptyExecutionConsent, workPlanInput, workPlanMinutesValid, type Conver
 import type { WorkPlanExecutionConsent } from "../../../WorkPlanExecutionReview";
 import type { PlanToolDraft } from "../../../WorkPlanToolChoice";
 import type { PluginTextReviewSelection } from "../../../pluginCommands";
-import { workPlanCommands, type WorkPlanCommand, type WorkPlanReceiptView, type WorkPlanStatusView, type WorkPlanView } from "../../../workPlanCommands";
+import { workPlanCommands, type WorkPlanCommand, type WorkPlanReceiptView, type WorkPlanStatusView, type WorkPlanView, type TeamExecutionView } from "../../../workPlanCommands";
+import { teamGuidanceActive } from "../../../TeamGuidanceSession";
+import { teamPublicationActive } from "../../../TeamDiscussionSession";
 import { isRunPending, runMatchesLink, runReadyCurrent, type ConversationPlanLink, type ConversationRunReady, type ConversationRunFailure, type ConversationRunConfirmation, type ConversationRunPending, revocationAllowed, revocationControlRequest, type ConversationRevocationState, type ConversationRevocationCommand } from "./conversationRun";
 
 type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "prepareProposalWorkPlan" | "authorizeProposalWorkPlan" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & {
   identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope;
   planStatus: typeof workPlanCommands.status; startPlan: typeof workPlanCommands.start; readPlanStartSettlement: typeof workPlanCommands.startSettlement;
   controlPlan: typeof workPlanCommands.control; readPlanControlSettlement: typeof workPlanCommands.controlSettlement;
+  readProposalWorkPlan: typeof conversationCommands.readProposalWorkPlan;
+  readTeamExecution: typeof workPlanCommands.teamExecution; sendTeamMessage: typeof workPlanCommands.sendTeamMessage;
+  publishTeam: typeof workPlanCommands.publishTeam; teamMessageSettlement: typeof workPlanCommands.teamMessageSettlement;
+  teamPublicationSettlement: typeof workPlanCommands.teamPublicationSettlement;
 };
 type JournalWrite = Parameters<Ports["write"]>[0]["write"];
 type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
@@ -36,7 +42,7 @@ export interface ConversationInput {
   revocationStates: ReadonlyMap<string, ConversationRevocationState>;
   busy: "submit" | "check" | null;
   outcome: "recorded" | "unknown" | "absent" | "blocked" | "mismatch" | null;
-  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | "runStarted" | "runPaused" | "runStopped" | "runTakenOver" | "runContinued" | "runNotApplied" | null;
+  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | "runStarted" | "runPaused" | "runStopped" | "runTakenOver" | "runContinued" | "runNotApplied" | "teamMessageSaved" | "teamPublicationSaved" | null;
   failure: { kind: "journal" | "action"; cause: CommandFailure } | null;
   planning: ConversationPlanningInput;
   proposalEditorId: string | null;
@@ -103,6 +109,9 @@ export class ConversationSession {
       prepareProposalWorkPlan: conversationCommands.prepareProposalWorkPlan, authorizeProposalWorkPlan: conversationCommands.authorizeProposalWorkPlan,
       planStatus: workPlanCommands.status, startPlan: workPlanCommands.start, readPlanStartSettlement: workPlanCommands.startSettlement,
       controlPlan: workPlanCommands.control, readPlanControlSettlement: workPlanCommands.controlSettlement,
+      readProposalWorkPlan: conversationCommands.readProposalWorkPlan, readTeamExecution: workPlanCommands.teamExecution,
+      sendTeamMessage: workPlanCommands.sendTeamMessage, publishTeam: workPlanCommands.publishTeam,
+      teamMessageSettlement: workPlanCommands.teamMessageSettlement, teamPublicationSettlement: workPlanCommands.teamPublicationSettlement,
       captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
@@ -115,7 +124,7 @@ export class ConversationSession {
     const actions: DecisionClientAction[] = [];
     if (this.kernel.live) for (const record of this.records.values()) {
       const key = { kind: "conversation" as const, conversationId: record.input.key.conversationId }, pending = record.submitting;
-      if (pending) actions.push({ key, slot: "primary", actionId: pending.kind === "planning" ? pending.request.consent.actionId : pending.request.actionId,
+      if (pending) actions.push({ key, slot: "primary", actionId: conversationPendingActionId(pending),
         submittedSeq: pending.submittedSeq });
       for (const slot of record.input.value.revocations ?? []) if (record.revoking.has(slot.request.actionId)
         && record.input.revocationStates.get(slot.request.actionId)?.busy === "submit")
@@ -173,7 +182,7 @@ export class ConversationSession {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live || text === record.input.value.text) return;
     const editSeq = nextEditSeq(record.input.value.editSeq), value = { ...record.input.value, text, editSeq, messageEditSeq: editSeq };
     this.changed++; this.update(record, { value, dirty: true, notice: null });
-    if (!record.input.failure && !record.action) void this.persist(record);
+    if (!record.input.failure && !record.action || isConversationTeamPending(value.pending) && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
   }
   async append(conversationId: string) {
     const record = this.records.get(conversationId);
@@ -614,6 +623,131 @@ export class ConversationSession {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live) return;
     this.update(record, { planning: { ...record.input.planning, consent: consent && !!record.input.planning.prepared } });
   }
+  teamDraft(conversationId: string, planId: string) {
+    return this.records.get(conversationId)?.input.value.teamDrafts?.find(draft => draft.planId === planId) ?? null;
+  }
+  private changeTeamDraft(link: ConversationPlanLink, change: (before: ConversationTeamDraft, editSeq: string) => ConversationTeamDraft | null) {
+    const record = this.records.get(link.conversationId);
+    if (!record || !this.kernel.live || link.projectId !== this.context.projectId) return false;
+    const drafts = record.input.value.teamDrafts ?? [], original = drafts.find(draft => draft.planId === link.planId);
+    if (original && original.planDigest !== link.planDigest || !original && drafts.length >= 32) return false;
+    const editSeq = nextEditSeq(record.input.value.editSeq), before = original ?? { planId: link.planId, planDigest: link.planDigest, guidance: null, publication: null };
+    const changed = change(before, editSeq), teamDrafts = original ? drafts.flatMap(value => value === original ? changed ? [changed] : [] : [value]) : changed ? [...drafts, changed] : drafts;
+    this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, teamDrafts: teamDrafts.length ? teamDrafts : undefined }, dirty: true, notice: null,
+      failure: record.input.value.pending ? record.input.failure : null });
+    // Journal writes remain independent of a business acknowledgement: newer
+    // team input must reach disk even while the original request is waiting.
+    if (!record.job && record.input.failure?.kind !== "journal") void this.persist(record);
+    return true;
+  }
+  editTeamGuidance(link: ConversationPlanLink, change: Partial<Omit<ConversationTeamGuidanceDraft, "editSeq">>) {
+    return this.changeTeamDraft(link, (before, editSeq) => ({ ...before, guidance: { memberId: null, unitId: null, body: "", ...before.guidance, ...change, editSeq } }));
+  }
+  editTeamPublication(link: ConversationPlanLink, change: Partial<Omit<ConversationTeamPublicationDraft, "editSeq">>) {
+    return this.changeTeamDraft(link, (before, editSeq) => ({ ...before, publication: { unitId: null, body: "", replyTo: null, ...before.publication, ...change, editSeq } }));
+  }
+  discardTeamDraft(link: ConversationPlanLink, kind: "guidance" | "publication") {
+    const record = this.records.get(link.conversationId), pending = record?.input.value.pending;
+    if (!record || record.action || isConversationTeamPending(pending) && pending.request.lease.planId === link.planId) return false;
+    return this.changeTeamDraft(link, before => {
+      const draft = { ...before, [kind]: null }; return draft.guidance || draft.publication ? draft : null;
+    });
+  }
+  canSendTeam(conversationId: string) {
+    const record = this.records.get(conversationId);
+    return this.kernel.live && !!record && ![...this.records.values()].some(value => value.action || value.job || value.input.busy
+      || value.input.journalBusy || value.input.value.pending || value.input.failure || value.input.planning.busy || value.input.workPlan.busy
+      || (value.input.value.revocations?.length ?? 0) > 0);
+  }
+  clearTeamPreparationFailure(conversationId: string) {
+    const record = this.records.get(conversationId);
+    if (!record || !this.kernel.live || record.action || record.job || record.input.value.pending || record.input.failure?.kind !== "action") return false;
+    this.update(record, { failure: null }); return true;
+  }
+  async sendTeamGuidance(link: ConversationPlanLink, status: WorkPlanStatusView, view: TeamExecutionView, expectedSeq: string, current: () => boolean) {
+    await this.submitTeam(link, status, view, "team-message", expectedSeq, current);
+  }
+  async publishTeamDiscussion(link: ConversationPlanLink, status: WorkPlanStatusView, expectedSeq: string, current: () => boolean) {
+    await this.submitTeam(link, status, null, "team-publication", expectedSeq, current);
+  }
+  private async submitTeam(originalLink: ConversationPlanLink, originalStatus: WorkPlanStatusView, originalView: TeamExecutionView | null,
+    kind: "team-message" | "team-publication", expectedSeq: string, current: () => boolean) {
+    const link = structuredClone(originalLink), expected = structuredClone(originalStatus);
+    const expectedView = originalView ? structuredClone({ effectiveVersion: originalView.effectiveVersion, roster: originalView.roster }) : null;
+    const record = this.records.get(link.conversationId), saved = this.teamDraft(link.conversationId, link.planId);
+    const guidance = saved?.guidance ? structuredClone(saved.guidance) : null, publication = saved?.publication ? structuredClone(saved.publication) : null;
+    const draft = kind === "team-message" ? guidance : publication;
+    if (!record || saved?.planDigest !== link.planDigest || !this.canSendTeam(link.conversationId) || !current()
+      || !draft || draft.editSeq !== expectedSeq || !draft.body.trim() || !runMatchesLink(expected, link)) return;
+    record.action = true; this.update(record, { busy: "submit", failure: null, notice: null });
+    try {
+      const stored = await this.ports.readProposalWorkPlan({ ...this.context, conversationId: link.conversationId, planId: link.planId });
+      if (!this.kernel.live || !current()) return;
+      if (!same(stored, link)) throw new Error("The original conversation plan changed");
+      const status = await this.currentRun(record, link, expected, true, current);
+      if (!status || !this.kernel.live || !current()) return;
+      const unit = status.plan.scope.find(value => value.unitId === draft.unitId);
+      if (!unit) throw new Error("Choose an entry from the original plan");
+      const target = { unitId: unit.unitId, locale: status.plan.locale, sourceSnapshotId: unit.sourceSnapshotId, sourceRevisionId: unit.sourceRevisionId };
+      let pending: Extract<ConversationDraftPending, { kind: "team-message" | "team-publication" }>;
+      if (kind === "team-message") {
+        if (!guidance || !expectedView) return;
+        const view = await this.ports.readTeamExecution({ ...this.context, planId: link.planId, afterWork: null, afterMessage: null, limit: 16 });
+        if (!this.kernel.live || !current()) return;
+        const member = view.roster.find(value => value.memberId === guidance.memberId && value.unitIds.includes(unit.unitId));
+        if (!teamGuidanceActive(status, view) || !same(view.effectiveVersion, expectedView.effectiveVersion) || !same(view.roster, expectedView.roster)
+          || !member || new TextEncoder().encode(guidance.body).length > view.messageLimits.maxBodyBytes) throw new Error("The team or recipient changed. Read the records again");
+        pending = { kind, conversationId: link.conversationId, submittedSeq: guidance.editSeq, targetName: unit.nativeKey,
+          destination: { name: member.displayName, role: member.role, endpoint: member.config.endpoint, model: member.config.model },
+          request: { projectId: this.context.projectId, lease: structuredClone(status.lease), message: { messageId: this.ports.identity(), recipientMemberId: member.memberId,
+            expectedRecipientRoleVersionId: member.roleVersionId, target, body: guidance.body } } };
+      } else {
+        if (!publication || !teamPublicationActive(status) || !status.plan.teamDiscussionLimits
+          || new TextEncoder().encode(publication.body).length > status.plan.teamDiscussionLimits.maxPostBytes) throw new Error("The discussion cannot accept this post. Read the records again");
+        pending = { kind, conversationId: link.conversationId, submittedSeq: publication.editSeq, targetName: unit.nativeKey,
+          request: { projectId: this.context.projectId, lease: structuredClone(status.lease), publication: { postId: this.ports.identity(), target,
+            kind: "note", body: publication.body, references: [], replyTo: publication.replyTo, supersedes: null } } };
+      }
+      const editSeq = nextEditSeq(record.input.value.editSeq);
+      this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, pending }, dirty: true, outcome: "unknown" });
+      record.submitting = pending; this.publish();
+      if (!await this.persist(record) || !this.kernel.live || !current() || !same(record.input.value.pending, pending)) return;
+      await this.dispatchTeam(record, pending);
+    } catch (error) { if (this.kernel.live) this.update(record, { outcome: record.input.value.pending ? "unknown" : null, failure: { kind: "action", cause: commandFailure(error) } }); }
+    finally {
+      record.action = false; record.submitting = null;
+      if (this.kernel.live) { this.update(record, { busy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+    }
+  }
+  private async dispatchTeam(record: RecordState, pending: Extract<ConversationDraftPending, { kind: "team-message" | "team-publication" }>) {
+    if (pending.kind === "team-message") await this.ports.sendTeamMessage({ ...pending.request, sessionToken: this.context.sessionToken });
+    else await this.ports.publishTeam({ ...pending.request, sessionToken: this.context.sessionToken });
+    if (!this.kernel.live) return;
+    this.onRecorded(); this.update(record, { outcome: "recorded" });
+    await this.resolve(record, pending);
+  }
+  canRetryTeam(conversationId: string) {
+    const record = this.records.get(conversationId);
+    return !!record && this.kernel.live && isConversationTeamPending(record.input.value.pending) && record.input.outcome === "absent"
+      && !record.action && !record.job && !record.input.busy && !record.input.journalBusy && !record.input.failure
+      && ![...this.records.values()].some(value => value !== record && (value.action || value.input.value.pending));
+  }
+  private async retryTeam(record: RecordState, pending: Extract<ConversationDraftPending, { kind: "team-message" | "team-publication" }>, current: () => boolean) {
+    if (!this.canRetryTeam(record.input.key.conversationId) || !current()) return;
+    record.action = true; record.submitting = pending; this.update(record, { busy: "submit", failure: null });
+    try { if (await this.persist(record) && this.kernel.live && current()) await this.dispatchTeam(record, pending); }
+    catch (error) { if (this.kernel.live) this.update(record, { outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } }); }
+    finally {
+      record.action = false; record.submitting = null;
+      if (this.kernel.live) { this.update(record, { busy: null }); if (record.input.dirty && !record.input.failure && !record.job) void this.persist(record); }
+    }
+  }
+  private async recoverTeam(pending: Extract<ConversationDraftPending, { kind: "team-message" | "team-publication" }>) {
+    const proof = pending.kind === "team-message" ? await this.ports.teamMessageSettlement({ ...pending.request, sessionToken: this.context.sessionToken })
+      : await this.ports.teamPublicationSettlement({ ...pending.request, sessionToken: this.context.sessionToken });
+    const outcome = proof.settlement.outcome;
+    return { outcome: outcome.kind === "pending" ? { kind: "pending" as const, replay: "explicit-same-request" as const } : outcome };
+  }
   private canPrepare(record: RecordState) {
     const { planning, value, busy, failure } = record.input;
     return this.kernel.live && !record.action && !busy && !value.pending && !failure
@@ -694,7 +828,7 @@ export class ConversationSession {
     return { kind: "write", request: { sessionToken: this.context.sessionToken, write: {
       key: record.input.key, expectedRevision: record.input.head.revision, writerId: this.writerId, value: structuredClone(canonicalConversationDraft(record.input.value)) } } };
   }
-  private settledValue(current: ConversationDraftValue, target: ConversationDraftResolveTarget, editSeq: string): ConversationDraftValue {
+  private settledValue(current: ConversationDraftValue, target: ConversationDraftResolveTarget, editSeq: string, disposition: ConversationDraftDisposition = "recorded"): ConversationDraftValue {
     if (target.kind === "revocation") return { ...current, editSeq,
       revocations: current.revocations?.filter(slot => !same(slot, target.revocation)) };
     const pending = target.pending;
@@ -704,9 +838,18 @@ export class ConversationSession {
       if (edit.proposalId !== pending.request.proposalId || edit.expectedRevisionId !== pending.request.expectedRevisionId) return [edit];
       return edit.editSeq === pending.submittedSeq && same(edit.content, pending.request.content) ? [] : [{ ...edit, editSeq, expectedRevisionId: pending.request.revisionId }];
     });
+    let teamDrafts = current.teamDrafts;
+    if (disposition === "recorded" && isConversationTeamPending(pending)) {
+      const kind = pending.kind === "team-message" ? "guidance" : "publication";
+      teamDrafts = teamDrafts?.map(draft => {
+        const part = draft[kind];
+        return draft.planId === pending.request.lease.planId && part?.editSeq === pending.submittedSeq
+          ? { ...draft, [kind]: { ...part, body: "", editSeq } } : draft;
+      });
+    }
     return { ...current, editSeq, text: cleared ? "" : current.text,
       messageEditSeq: cleared ? editSeq : current.messageEditSeq ?? current.editSeq,
-      pending: same(current.pending, pending) ? null : current.pending, proposalEdits: edits?.length ? edits : undefined };
+      pending: same(current.pending, pending) ? null : current.pending, proposalEdits: edits?.length ? edits : undefined, teamDrafts };
   }
   private async executeJob(record: RecordState, job: JournalJob): Promise<boolean> {
     this.update(record, { journalBusy: true });
@@ -718,7 +861,7 @@ export class ConversationSession {
       const patch: Partial<ConversationInput> = {};
       if (job.kind === "resolve") {
         const { target, disposition } = job.request.resolve;
-        value = value.editSeq === submitted.editSeq ? head.value : this.settledValue(value, target, value.editSeq);
+        value = value.editSeq === submitted.editSeq ? head.value : this.settledValue(value, target, value.editSeq, disposition);
         patch.notice = disposition === "fenced-not-applied" ? "runNotApplied" : target.kind === "pending" ? this.recordedNotice(target.pending)
           : ({ pause: "runPaused", stop: "runStopped", "take-over": "runTakenOver" } as const)[target.revocation.request.command];
         if (target.kind === "pending") { patch.outcome = disposition === "recorded" ? "recorded" : null; patch.failure = null; }
@@ -764,7 +907,7 @@ export class ConversationSession {
       const current = record.input.value;
       if (target.kind === "pending" ? !same(current.pending, target.pending)
         : !(current.revocations ?? []).some(slot => same(slot, target.revocation))) return false;
-      const editSeq = nextEditSeq(current.editSeq), value = canonicalConversationDraft(this.settledValue(current, target, editSeq));
+      const editSeq = nextEditSeq(current.editSeq), value = canonicalConversationDraft(this.settledValue(current, target, editSeq, disposition));
       // Keep the unresolved slot in memory until this exact local clear is acknowledged.
       this.changed++; this.update(record, { value: { ...current, editSeq }, dirty: true });
       const job: JournalJob = { kind: "resolve", request: { sessionToken: this.context.sessionToken,
@@ -815,6 +958,7 @@ export class ConversationSession {
   }
   async retry(conversationId: string, current: () => boolean = () => true) {
     const record = this.records.get(conversationId);
+    if (record && isConversationTeamPending(record.input.value.pending)) { await this.retryTeam(record, record.input.value.pending, current); return; }
     if (record && isRunPending(record.input.value.pending)) { await this.retryRun(record, record.input.value.pending, current); return; }
     if (record?.input.outcome === "absent" && !record.job && locallyReplayableConversationRequest(record.input.value.pending)) await this.submit(record);
   }
@@ -835,6 +979,8 @@ export class ConversationSession {
         const notices: Record<WorkPlanCommand, NonNullable<ConversationInput["notice"]>> = { pause: "runPaused", stop: "runStopped", "take-over": "runTakenOver", continue: "runContinued" };
         return notices[pending.request.command];
       }
+      case "team-message": return "teamMessageSaved";
+      case "team-publication": return "teamPublicationSaved";
     }
   }
   private recover(pending: ConversationDraftPending) {
@@ -846,6 +992,7 @@ export class ConversationSession {
       case "proposal-capture": return this.ports.recoverProposalCapture({ sessionToken, ...pending.request });
       case "proposal-revision": return this.ports.recoverProposalRevision({ sessionToken, ...pending.request });
       case "proposal-work-plan": return this.ports.recoverProposalWorkPlan({ sessionToken, projectId: this.context.projectId, authorization: pending.request });
+      case "team-message": case "team-publication": return this.recoverTeam(pending);
       case "work-plan-start": case "work-plan-control": {
         const record = this.records.get(pending.conversationId);
         if (!record) return Promise.reject(new Error("The conversation input is not open"));

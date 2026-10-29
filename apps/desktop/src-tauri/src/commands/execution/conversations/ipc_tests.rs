@@ -1305,6 +1305,7 @@ fn conversation_proposal_ipc_versions_authorization_and_candidate_history_use_or
         "session-invalid"
     );
     let current = proposal_work_plan_flow(&app, &window, &reopened, &latest, unit, &destination);
+    let current = team_journal_flow(&app, &window, &current, &latest, unit, &destination);
     call(
         &window,
         "close_project",
@@ -1580,5 +1581,139 @@ fn proposal_work_plan_flow(
     assert!(!reject(window, "authorize_work_plan", generic).is_null());
     assert!(runtime_absent(app, &reopened));
     assert_eq!(provider.count(), 1);
+    reopened
+}
+
+/// Compose the real proposal link, original team authority and local journal.
+/// The root is revoked in the same actor turn in which it is queued, so this
+/// receipt-boundary test never starts a member producer or contacts a provider.
+fn team_journal_flow(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    project: &Value,
+    proposal: &Value,
+    unit: ExecutionId,
+    destination: &std::path::Path,
+) -> Value {
+    use tsumugi_core::application::{AutomationLease, ControlWorkPlan, PublishTeamDiscussion, SendHumanTeamMessage, WorkPlanCommand};
+    let key = json!({"projectId":project["metadata"]["projectId"],"conversationId":proposal["conversationId"]});
+    let config = tsumugi_core::ai::AiConfig { endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+        model: "synthetic-undispatched-team".into(), credential_env: String::new(), max_requests: 4,
+        max_retries: 0, concurrency: 1, ..Default::default() };
+    let mut retained = Value::Null;
+    let mut original_team_requests = Vec::new();
+    for publication in [false, true] {
+        let current = call(window, "read_conversation_proposal", in_session(project,
+            json!({"conversationId":proposal["conversationId"],"proposalId":proposal["proposalId"],"revisionId":null})));
+        let member = identity(); let role = identity();
+        let mut options = serde_json::to_value(tsumugi_core::application::PlanOptions::default()).unwrap();
+        options["teamDiscussions"] = json!({"profile":"current-plan-2"});
+        options["teamExecution"] = json!({"profile":"bounded-team-1","initialMemberId":member,"initialUnitId":unit,
+            "members":[{"memberId":member,"roleVersionId":role,"displayName":"Captured translator","role":"Translate the captured entry only.",
+                "config":config,"unitIds":[unit],"toolHandles":[],"kinds":["translation"]}],
+            "limits":{"maxActivations":4,"maxConcurrency":1,"maxNoProgress":4}});
+        let mut content = current["content"].clone(); content["options"] = options;
+        let revised = call(window, "revise_conversation_proposal", in_session(project,
+            json!({"actionId":identity(),"conversationId":current["conversationId"],"proposalId":current["proposalId"],
+                "revisionId":identity(),"expectedRevisionId":current["revisionId"],"content":content})));
+        let reference = json!({"projectId":key["projectId"],"conversationId":key["conversationId"],
+            "proposalId":revised["proposalId"],"revisionId":revised["revisionId"]});
+        let prepared = call(window, "prepare_conversation_proposal_work_plan", in_session(project,
+            json!({"proposal":reference,"config":config,"advisoryChecks":[],"toolSelection":null})));
+        assert_eq!(prepared["plan"]["memberPreviews"].as_array().unwrap().len(), 1);
+        let expiry = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 300;
+        let authorization = json!({"actionId":identity(),"proposal":reference,"planId":prepared["plan"]["planId"],
+            "planDigest":prepared["plan"]["digest"],"confirmed":true,
+            "effects":["save-candidate","publish-discussion","dispatch-team-work","send-team-message"],
+            "expiresAt":expiry.to_string(),"checkerExecutions":[],"toolExecution":false,"applicationToolExecutions":[]});
+        let accepted = call(window, "authorize_conversation_proposal_work_plan", in_session(project, json!({"authorization":authorization})));
+        let link = call(window, "read_conversation_proposal_work_plan", in_session(project,
+            json!({"conversationId":key["conversationId"],"planId":prepared["plan"]["planId"]})));
+        assert_eq!(link, accepted["link"]);
+        assert_eq!(link["revisionId"], revised["revisionId"]);
+        let basis = &prepared["plan"]["scope"][0];
+        let target = json!({"unitId":unit,"locale":"zh-CN","sourceSnapshotId":basis["sourceSnapshotId"],"sourceRevisionId":basis["sourceRevisionId"]});
+        let tuple = if publication {
+            json!({"projectId":key["projectId"],"lease":accepted["receipt"]["lease"],"publication":{"postId":identity(),
+                "target":target,"kind":"note","body":"Original discussion A 👩🏽‍💻","references":[],"replyTo":null,"supersedes":null}})
+        } else {
+            json!({"projectId":key["projectId"],"lease":accepted["receipt"]["lease"],"message":{"messageId":identity(),
+                "recipientMemberId":member,"expectedRecipientRoleVersionId":role,"target":target,"body":"Original guidance A {{name}}"}})
+        };
+        let before = call(window, "read_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"key":key}));
+        assert!(before["value"]["pending"].is_null());
+        let seq = before["value"]["editSeq"].as_str().unwrap().parse::<u64>().unwrap() + 1;
+        let field = if publication { "publication" } else { "guidance" };
+        let mut pending = json!({"kind":if publication {"team-publication"} else {"team-message"},"conversationId":key["conversationId"],
+            "request":tuple,"targetName":basis["nativeKey"],"submittedSeq":seq.to_string()});
+        if !publication { pending["destination"] = json!({"name":"Captured translator","role":"Translate the captured entry only.","endpoint":config.endpoint,"model":config.model}); }
+        let mut value = before["value"].clone(); value["editSeq"] = json!(seq.to_string()); value["pending"] = pending.clone();
+        let row = json!({"planId":prepared["plan"]["planId"],"planDigest":prepared["plan"]["digest"],
+            "guidance":{"editSeq":seq.to_string(),"memberId":member,"unitId":unit,"body":if publication {json!("Other unsent guidance")} else {tuple["message"]["body"].clone()}},
+            "publication":{"editSeq":seq.to_string(),"unitId":unit,"replyTo":null,"body":if publication {tuple["publication"]["body"].clone()} else {json!("Other unsent discussion")}}});
+        if value.get("teamDrafts").is_none() { value["teamDrafts"] = json!([]); }
+        let rows = value["teamDrafts"].as_array_mut().unwrap(); rows.push(row); let index = rows.len() - 1;
+        let mut write = json!({"key":key,"expectedRevision":before["revision"],"writerId":identity(),"value":value});
+        let saved = call(window, "write_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"write":write}));
+        write["expectedRevision"] = saved["revision"].clone(); write["value"]["editSeq"] = json!((seq + 1).to_string());
+        write["value"]["teamDrafts"][index][field]["editSeq"] = json!((seq + 1).to_string());
+        write["value"]["teamDrafts"][index][field]["body"] = json!("Newer B retained while A is pending");
+        let saved_b = call(window, "write_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"write":write}));
+        let token = project["sessionToken"].as_str().unwrap().to_owned();
+        let project_id = serde_json::from_value(key["projectId"].clone()).unwrap();
+        let lease: AutomationLease = serde_json::from_value(tuple["lease"].clone()).unwrap();
+        let action = serde_json::from_value(authorization["actionId"].clone()).unwrap();
+        let sent = tuple.clone();
+        let receipt = app.state::<AppState>().sessions.with(move |sessions| {
+            let active = authorized(sessions, &token, project_id, CommandStage::ExecutionRecover).unwrap();
+            let (host, store) = active.execution_parts().unwrap();
+            let root = store.prepare_team_start(lease, action).unwrap();
+            host.runtime.submit_team_work(store, &root).unwrap();
+            let scope = store.work_plan_agent_scope(lease).unwrap();
+            let receipt = if publication {
+                let request: PublishTeamDiscussion = serde_json::from_value(sent["publication"].clone()).unwrap();
+                json!(store.publish_human_team_discussion(&scope, crate::commands::execution::work_plans::team::LOCAL_ACTOR, &request).unwrap())
+            } else {
+                let request: SendHumanTeamMessage = serde_json::from_value(sent["message"].clone()).unwrap();
+                json!(store.send_human_team_message(&scope, crate::commands::execution::work_plans::team::LOCAL_ACTOR, &request).unwrap())
+            };
+            store.control_work_plan(&ControlWorkPlan { action_id: ExecutionId::new(), plan_id: lease.plan_id,
+                expected_generation: lease.generation, command: WorkPlanCommand::Stop, confirmed: false, expires_at: None }).unwrap();
+            host.runtime.tick(store).unwrap();
+            assert!(!host.active(store).unwrap());
+            assert_eq!(store.provider_budget(root.receipt().task_id).unwrap().unwrap().dispatched, 0);
+            receipt
+        });
+        let command = if publication { "read_work_plan_team_publication_settlement" } else { "read_work_plan_team_message_settlement" };
+        let proof = call(window, command, in_session(project, tuple.clone()));
+        assert_eq!(proof["request"], tuple); assert_eq!(proof["settlement"]["outcome"], json!({"kind":"recorded","receipt":receipt}));
+        write["expectedRevision"] = saved_b["revision"].clone(); write["value"]["editSeq"] = json!((seq + 2).to_string()); write["value"]["pending"] = Value::Null;
+        let resolved = call(window, "resolve_local_conversation_draft", json!({"sessionToken":project["sessionToken"],
+            "resolve":{"write":write,"target":{"kind":"pending","pending":pending},"disposition":"recorded"}}));
+        assert_eq!(resolved["value"], write["value"], "recorded A cannot clear newer B or another plan's draft");
+        let mut missing = tuple.clone(); missing[if publication { "publication" } else { "message" }][if publication { "postId" } else { "messageId" }] = json!(identity());
+        missing[if publication { "publication" } else { "message" }]["body"] = write["value"]["teamDrafts"][index][field]["body"].clone();
+        let mut absent_pending = pending.clone(); absent_pending["request"] = missing.clone(); absent_pending["submittedSeq"] = json!((seq + 1).to_string());
+        write["expectedRevision"] = resolved["revision"].clone(); write["value"]["editSeq"] = json!((seq + 3).to_string()); write["value"]["pending"] = absent_pending.clone();
+        let absent = call(window, "write_local_conversation_draft", json!({"sessionToken":project["sessionToken"],"write":write}));
+        assert_eq!(call(window, command, in_session(project, missing))["settlement"]["outcome"]["kind"], "fenced-not-applied");
+        write["expectedRevision"] = absent["revision"].clone(); write["value"]["editSeq"] = json!((seq + 4).to_string()); write["value"]["pending"] = Value::Null;
+        retained = call(window, "resolve_local_conversation_draft", json!({"sessionToken":project["sessionToken"],
+            "resolve":{"write":write,"target":{"kind":"pending","pending":absent_pending},"disposition":"fenced-not-applied"}}));
+        assert_eq!(retained["value"], write["value"], "a fence preserves all input for review");
+        original_team_requests.push((publication, tuple));
+    }
+    call(window, "close_project", json!({"sessionToken":project["sessionToken"]}));
+    let reopened = call(window, "open_project", json!({"locator":destination}));
+    assert_eq!(call(window, "read_local_conversation_draft", json!({"sessionToken":reopened["sessionToken"],"key":key})), retained);
+    assert!(runtime_absent(app, &reopened), "reopening input does not restore team authority");
+    for (publication, tuple) in original_team_requests {
+        let command = if publication { "read_work_plan_team_publication_settlement" } else { "read_work_plan_team_message_settlement" };
+        let proof = call(window, command, in_session(&reopened, tuple.clone()));
+        assert_eq!(proof["request"], tuple);
+        assert_eq!(proof["settlement"]["outcome"]["kind"], "recorded");
+        assert!(runtime_absent(app, &reopened), "checking the original team receipt cannot create a Host");
+    }
+    assert_eq!(call(window, "read_local_conversation_draft", json!({"sessionToken":reopened["sessionToken"],"key":key})), retained);
     reopened
 }

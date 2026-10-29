@@ -205,6 +205,18 @@ export const workPlanCommands = {
     if (value && !humanMessageMatches(value, request)) invalidAcknowledgement();
     return value;
   },
+  teamMessageSettlement: async (input: WorkPlanTeamMessageRequest) => {
+    const request = structuredClone(input), { sessionToken: _token, ...original } = request;
+    if (!validators.validateRequestWorkPlanTeamMessageAction(request) || BigInt(request.lease.generation) === 0n) throw new Error("Invalid team message settlement lookup");
+    const value = await checkedInvoke("read_work_plan_team_message_settlement", request, validators.validateResponseWorkPlanTeamMessageSettlement);
+    const proof = value.settlement, outcome = proof.outcome;
+    if (jsonIdentity(value.request) !== jsonIdentity(original) || proof.projectId !== request.projectId || proof.planId !== request.lease.planId
+      || proof.lease.planId !== request.lease.planId || BigInt(proof.lease.generation) === 0n
+      || outcome.kind === "pending" && BigInt(proof.lease.generation) > BigInt(request.lease.generation)
+      || outcome.kind === "fenced-not-applied" && BigInt(proof.lease.generation) <= BigInt(request.lease.generation)
+      || outcome.kind === "recorded" && (BigInt(proof.lease.generation) < BigInt(request.lease.generation) || !humanMessageMatches(outcome.receipt, request))) invalidAcknowledgement();
+    return value;
+  },
   teamWorkTools: async (input: WorkPlanTeamWorkToolsRequest) => {
     const request = structuredClone(input);
     if (!validators.validateRequestWorkPlanTeamWorkTools(request)) throw new Error("Invalid team tool history read");
@@ -356,6 +368,18 @@ export const workPlanCommands = {
     if (!validators.validateRequestWorkPlanTeamPublicationAction(request)) throw new Error("Invalid team publication lookup");
     const value = await checkedInvoke("read_work_plan_team_publication_action", request, validators.validateResponseWorkPlanTeamPublicationAction);
     if (value && !publicationMatches(value, request)) invalidAcknowledgement();
+    return value;
+  },
+  teamPublicationSettlement: async (input: WorkPlanTeamPublicationActionRequest) => {
+    const request = structuredClone(input), { sessionToken: _token, ...original } = request;
+    if (!validators.validateRequestWorkPlanTeamPublicationAction(request) || BigInt(request.lease.generation) === 0n) throw new Error("Invalid team publication settlement lookup");
+    const value = await checkedInvoke("read_work_plan_team_publication_settlement", request, validators.validateResponseWorkPlanTeamPublicationSettlement);
+    const proof = value.settlement, outcome = proof.outcome;
+    if (jsonIdentity(value.request) !== jsonIdentity(original) || proof.projectId !== request.projectId || proof.planId !== request.lease.planId
+      || proof.lease.planId !== request.lease.planId || BigInt(proof.lease.generation) === 0n
+      || outcome.kind === "pending" && BigInt(proof.lease.generation) > BigInt(request.lease.generation)
+      || outcome.kind === "fenced-not-applied" && BigInt(proof.lease.generation) <= BigInt(request.lease.generation)
+      || outcome.kind === "recorded" && (BigInt(proof.lease.generation) < BigInt(request.lease.generation) || !publicationMatches(outcome.receipt, request))) invalidAcknowledgement();
     return value;
   },
   reconcileAgent: async (input: WorkPlanAgentReconcileRequest) => {

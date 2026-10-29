@@ -16,7 +16,7 @@ import { ConversationProposals } from "./ConversationProposals";
 import { ConversationKnowledgeEntries } from "./ConversationKnowledgeEntries";
 import type { OpenKnowledgeProposal } from "./conversationNavigation";
 import { ConversationWorkPlanPanel } from "./ConversationWorkPlanPanel";
-import { locallyReplayableConversationRequest, type ConversationDraftPending } from "../../../conversationDraftCommands";
+import { locallyReplayableConversationRequest, conversationPendingActionId, isConversationTeamPending, type ConversationDraftPending } from "../../../conversationDraftCommands";
 import { isRunPending } from "./conversationRun";
 import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
@@ -28,7 +28,7 @@ import local from "./ConversationPanel.module.css";
 export type ConversationRecoveryTarget = { conversationId: string; slot: "primary" | "revocation"; actionId: string; focus: boolean };
 interface Props { owner: ConversationSession; visible: boolean; disabled: boolean; gate: InteractionGate; viewId: string | null; parentDialogId?: string; selection?: WorkspaceSelection | null; onOpenCandidate?: OpenConversationRunCandidate; onOpenTeamCandidate?: OpenConversationTeamCandidate; onOpenKnowledgeProposal?: OpenKnowledgeProposal; decisionTray?: ReactNode; maintenanceBrief?: ReactNode; recoveryTarget?: ConversationRecoveryTarget | null; proposalTarget?: ConversationProposalTarget | null }
 const noNext = (last: { nextAfter: string | null }) => last.nextAfter ?? undefined;
-const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending?.kind === "planning" ? pending.request.consent.actionId : pending?.request.actionId;
+const pendingAction = (pending: ConversationDraftPending | null | undefined) => pending ? conversationPendingActionId(pending) : undefined;
 
 function PlanningResult({ owner, input, attemptId, visible, disabled, gate, viewId, parentDialogId, savedResultIds }: Omit<Props, "selection"> & { input: ConversationInput; attemptId: string; savedResultIds: ReadonlySet<string> }) {
   const context = owner.context, conversationId = input.key.conversationId;
@@ -122,7 +122,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
   const byteLength = new TextEncoder().encode(input?.value.text ?? "").length;
   const pending = input?.value.pending;
   const runPending = isRunPending(pending);
-  const replayable = locallyReplayableConversationRequest(pending) || !!activeId && owner.canRetryRun(activeId);
+  const replayable = locallyReplayableConversationRequest(pending) || !!activeId && (owner.canRetryRun(activeId) || owner.canRetryTeam(activeId));
   const exists = pending?.kind !== "create" || input?.outcome === "recorded";
   const primaryRecovery = !!recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "primary" && pendingAction(pending) === recoveryTarget.actionId;
   const revocationRecovery = recoveryTarget && recoveryTarget.conversationId === activeId && recoveryTarget.slot === "revocation"
@@ -161,6 +161,8 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       case "proposal-revision": return t("proposalSaveVersion");
       case "proposal-work-plan": return t("planConfirm");
       case "work-plan-start": return t("runStart");
+      case "team-message": return t("teamMessageRequest");
+      case "team-publication": return t("teamPublicationRequest");
       case "work-plan-control": return t(value.request.command === "pause" ? "runPause" : value.request.command === "stop" ? "runStop" : value.request.command === "take-over" ? "runTakeOver" : "runReviewContinue");
     }
   }
@@ -210,6 +212,11 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
         className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
         aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
         {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
+      {isConversationTeamPending(pending) ? <><p>{t("teamPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
+        <p>{t("teamOriginalTarget", { entry: pending.targetName, locale: pending.kind === "team-message" ? pending.request.message.target.locale : pending.request.publication.target.locale })}</p>
+        {pending.kind === "team-message" ? <><p>{t("teamOriginalRecipient", { ...pending.destination })}</p><p>{pending.destination.role}</p></> : null}
+        <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.kind === "team-message" ? pending.request.message.body : pending.request.publication.body}/></Field>
+      </details></> : null}
       {!input.busy && input.failure?.kind !== "journal" ? <Banner tone={input.outcome === "mismatch" ? "error" : "warning"}>
         <p>{t(input.outcome === "blocked" ? runPending ? "runBlocked" : "absentBlocked" : input.outcome === "absent" ? replayable ? runPending ? "runAbsent" : "absent" : "absentBlocked" : input.outcome === "mismatch" ? "mismatch" : input.outcome === "recorded" ? "finishing" : runPending ? "runPending" : "pending")}</p>
         <CommandFailureDetails failure={input.failure?.cause ?? null}/>

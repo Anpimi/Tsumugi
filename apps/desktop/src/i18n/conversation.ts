@@ -4,6 +4,10 @@ import { conversationRunsEn, conversationRunsZh } from "./conversationRuns";
 import { conversationKnowledgeEn, conversationKnowledgeZh } from "./conversationKnowledge";
 
 export const conversationEn = {
+  teamMessageRequest: "Send guidance to a team member", teamPublicationRequest: "Post in the team discussion",
+  teamMessageSaved: "Your guidance is saved. This does not mean the member has read it.", teamPublicationSaved: "Your discussion post is saved.",
+  teamOriginal: "View the original team request", teamOriginalBody: "Text from the original request", teamOriginalTarget: "Entry: {{entry}} → {{locale}}",
+  teamOriginalRecipient: "Recipient: {{name}} · {{endpoint}} · {{model}}", teamPendingHelp: "Check this original request before retrying. Pausing, stopping or taking over closes its old permission; check again afterward. Your newer input is kept.",
   ...conversationKnowledgeEn,
   ...conversationWorkPlansEn,
   ...conversationRunsEn,
@@ -82,6 +86,10 @@ export const conversationEn = {
 };
 
 export const conversationZh: typeof conversationEn = {
+  teamMessageRequest: "向成员发送指导", teamPublicationRequest: "发表团队讨论",
+  teamMessageSaved: "指导已保存，这不代表成员已经读到。", teamPublicationSaved: "讨论已保存。",
+  teamOriginal: "查看这次团队请求的原内容", teamOriginalBody: "原来准备发送的内容", teamOriginalTarget: "条目：{{entry}} → {{locale}}",
+  teamOriginalRecipient: "收件成员：{{name}} · {{endpoint}} · {{model}}", teamPendingHelp: "重试前请核对原请求。暂停、停止或接管会关闭旧许可，之后可再次核对结果。新输入会保留。",
   ...conversationKnowledgeZh,
   ...conversationWorkPlansZh,
   ...conversationRunsZh,

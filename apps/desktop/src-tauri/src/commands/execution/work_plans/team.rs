@@ -1,12 +1,29 @@
 //! Trusted local history and publication reuse the original project session.
 //! Reading retained reasons never reopens a member scope or model permission.
 use super::*;
+use crate::commands::drafts::{TeamMessageOriginal, TeamPublicationOriginal};
 use tsumugi_core::application::{
     PublishTeamDiscussion, ReadTeamHistory, SendHumanTeamMessage, TeamDiscussionPost,
     TeamHistoryPage, TeamMessage,
 };
 
-const LOCAL_ACTOR: &str = "local-user";
+pub(in crate::commands) const LOCAL_ACTOR: &str = "local-user";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTeamMessageSettlementView {
+    pub request: TeamMessageOriginal,
+    pub settlement: WorkPlanRequestSettlement<TeamMessage>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTeamPublicationSettlementView {
+    pub request: TeamPublicationOriginal,
+    pub settlement: WorkPlanRequestSettlement<TeamDiscussionPost>,
+}
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -139,6 +156,23 @@ pub async fn read_work_plan_team_message_action(
 }
 
 #[tauri::command]
+pub async fn read_work_plan_team_message_settlement(
+    state: State<'_, AppState>,
+    request: WorkPlanTeamMessageRequest,
+) -> Result<WorkPlanTeamMessageSettlementView, CommandError> {
+    state.sessions.run("read_work_plan_team_message_settlement", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let settlement = active.store.human_team_message_settlement(
+            request.project_id, &request.lease, LOCAL_ACTOR, &request.message,
+        ).map_err(map_read)?;
+        Ok(WorkPlanTeamMessageSettlementView {
+            request: TeamMessageOriginal { project_id: request.project_id, lease: request.lease, message: request.message },
+            settlement,
+        })
+    }).await
+}
+
+#[tauri::command]
 pub async fn read_work_plan_team_history(
     state: State<'_, AppState>,
     request: WorkPlanTeamHistoryRequest,
@@ -251,4 +285,21 @@ pub async fn read_work_plan_team_publication_action(
             },
         )
         .await
+}
+
+#[tauri::command]
+pub async fn read_work_plan_team_publication_settlement(
+    state: State<'_, AppState>,
+    request: WorkPlanTeamPublicationActionRequest,
+) -> Result<WorkPlanTeamPublicationSettlementView, CommandError> {
+    state.sessions.run("read_work_plan_team_publication_settlement", CommandStage::ExecutionRead, move |sessions| {
+        let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionRead)?;
+        let settlement = active.store.human_team_publication_settlement(
+            request.project_id, &request.lease, LOCAL_ACTOR, &request.publication,
+        ).map_err(map_read)?;
+        Ok(WorkPlanTeamPublicationSettlementView {
+            request: TeamPublicationOriginal { project_id: request.project_id, lease: request.lease, publication: request.publication },
+            settlement,
+        })
+    }).await
 }

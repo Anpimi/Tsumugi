@@ -21,6 +21,7 @@ export const SelectionPolicyValues = ["candidates-only","missing-only","replace-
 export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const SourceLineageCorrectionDecisionValues = ["continue","reject","unresolved"] as const;
 export const StageModeValues = ["manual","assisted","skipped"] as const;
+export const TeamDiscussionKindValues = ["note","challenge","rejection","resolution"] as const;
 export const TeamWorkKindValues = ["translation","review","evidence"] as const;
 export const TermOriginValues = ["manual","external"] as const;
 export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;

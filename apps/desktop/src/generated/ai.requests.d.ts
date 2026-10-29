@@ -168,8 +168,10 @@ export interface Requests {
   workPlanTeamHistory: WorkPlanTeamHistoryRequest;
   workPlanTeamMessage: WorkPlanTeamMessageRequest;
   workPlanTeamMessageAction: WorkPlanTeamMessageRequest;
+  workPlanTeamMessageSettlement: WorkPlanTeamMessageRequest;
   workPlanTeamPost: WorkPlanTeamPostRequest;
   workPlanTeamPublicationAction: WorkPlanTeamPublicationActionRequest;
+  workPlanTeamPublicationSettlement: WorkPlanTeamPublicationActionRequest;
   workPlanTeamPublish: WorkPlanTeamPublishRequest;
   workPlanTeamRecoveryAction: WorkPlanTeamRecoveryAuthorizeRequest;
   workPlanTeamRecoveryAuthorize: WorkPlanTeamRecoveryAuthorizeRequest;

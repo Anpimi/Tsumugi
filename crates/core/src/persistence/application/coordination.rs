@@ -1065,6 +1065,23 @@ impl ProjectStore {
         })
     }
 
+    /// Observe an original message without admission, reconciliation or replay.
+    /// Missing records remain uncertain until a later generation fences them.
+    pub fn human_team_message_settlement(
+        &self,
+        project: ExecutionId,
+        lease: &AutomationLease,
+        actor: &str,
+        write: &SendHumanTeamMessage,
+    ) -> Result<WorkPlanRequestSettlement<TeamMessage>, ExecutionError> {
+        let c = self.connection().map_err(|_| denied())?;
+        super::super::review::read_snapshot(c, |c| {
+            let receipt = human_message_action_in(c, project, lease, actor, write)?;
+            let run = self.read_work_plan_run(project, lease.plan_id)?;
+            Ok(team::human_request_settlement(run, lease.generation, receipt))
+        })
+    }
+
     /// Trusted human entry point; member tool arguments cannot select this author.
     pub fn send_human_team_message(
         &mut self,

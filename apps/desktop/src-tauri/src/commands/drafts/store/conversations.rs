@@ -32,6 +32,7 @@ fn validate_pending(
     seq: Revision,
     message_seq: Revision,
     text: &str,
+    team_drafts: &[ConversationTeamDraft],
 ) -> Result<()> {
     let (project, thread, submitted) = match pending {
         ConversationDraftPending::Create {
@@ -101,6 +102,42 @@ fn validate_pending(
             request,
             submitted_seq,
         } => (request.project_id, *conversation_id, *submitted_seq),
+        ConversationDraftPending::TeamMessage { conversation_id, request, destination, submitted_seq, .. } => {
+            let draft = team_drafts.iter().find(|draft| draft.plan_id == request.lease.plan_id)
+                .and_then(|draft| draft.guidance.as_ref())
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "conversation-drafts-team-message"))?;
+            if request.lease.generation.get() == 0
+                || destination.name.len() > 128 || destination.endpoint.len() > 2048 || destination.model.len() > 128
+                || destination.role.len() > tsumugi_core::application::TeamDiscussionLimits::current_plan().max_post_bytes as usize
+                || request.message.body.trim().is_empty()
+                || request.message.body.len() > tsumugi_core::application::TeamMessageLimits::current_team().max_body_bytes as usize
+                || *submitted_seq > draft.edit_seq
+                || *submitted_seq == draft.edit_seq && (draft.body != request.message.body
+                    || draft.member_id != Some(request.message.recipient_member_id)
+                    || draft.unit_id != Some(request.message.target.unit_id))
+            {
+                return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team-message"));
+            }
+            super::encode_bounded(request, tsumugi_core::execution::MAX_INPUT_BYTES)?;
+            (request.project_id, *conversation_id, *submitted_seq)
+        }
+        ConversationDraftPending::TeamPublication { conversation_id, request, submitted_seq, .. } => {
+            let draft = team_drafts.iter().find(|draft| draft.plan_id == request.lease.plan_id)
+                .and_then(|draft| draft.publication.as_ref())
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "conversation-drafts-team-publication"))?;
+            if request.lease.generation.get() == 0
+                || request.publication.body.trim().is_empty()
+                || request.publication.body.len() > tsumugi_core::application::TeamDiscussionLimits::current_plan().max_post_bytes as usize
+                || *submitted_seq > draft.edit_seq
+                || *submitted_seq == draft.edit_seq && (draft.body != request.publication.body
+                    || draft.unit_id != Some(request.publication.target.unit_id)
+                    || draft.reply_to != request.publication.reply_to)
+            {
+                return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team-publication"));
+            }
+            super::encode_bounded(request, tsumugi_core::execution::MAX_INPUT_BYTES)?;
+            (request.project_id, *conversation_id, *submitted_seq)
+        }
     };
     if project != key.project_id || thread != key.conversation_id || submitted > seq {
         return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-pending"));
@@ -114,6 +151,20 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
             ErrorCode::InvalidInput,
             "conversation-drafts-message-sequence",
         ));
+    }
+    if value.team_drafts.len() > 32 {
+        return Err(fail(ErrorCode::LimitExceeded, "conversation-drafts-team-limit"));
+    }
+    let mut plans = BTreeSet::new();
+    for draft in &value.team_drafts {
+        if !plans.insert(draft.plan_id)
+            || draft.plan_digest.len() != 64
+            || !draft.plan_digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || draft.guidance.as_ref().is_some_and(|input| input.edit_seq > value.edit_seq)
+            || draft.publication.as_ref().is_some_and(|input| input.edit_seq > value.edit_seq)
+        {
+            return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team"));
+        }
     }
     let mut proposals = BTreeSet::new();
     for draft in &value.proposal_edits {
@@ -146,7 +197,7 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
         }
     }
     if let Some(pending) = &value.pending {
-        validate_pending(key, pending, value.edit_seq, message_seq, &value.text)?;
+        validate_pending(key, pending, value.edit_seq, message_seq, &value.text, &value.team_drafts)?;
     }
     if value.revocations.len() > 32 {
         return Err(fail(ErrorCode::LimitExceeded, "conversation-drafts-revocations"));
@@ -174,6 +225,8 @@ fn pending_action(pending: &ConversationDraftPending) -> ExecutionId {
         ConversationDraftPending::ProposalWorkPlan { request, .. } => request.action_id,
         ConversationDraftPending::WorkPlanStart { request, .. } => request.action_id,
         ConversationDraftPending::WorkPlanControl { request, .. } => request.action_id,
+        ConversationDraftPending::TeamMessage { request, .. } => request.message.message_id,
+        ConversationDraftPending::TeamPublication { request, .. } => request.publication.post_id,
     }
 }
 fn validate_revocation(
@@ -200,7 +253,7 @@ fn same_write(before: &ConversationDraftHead, r: &ConversationDraftWrite) -> boo
 fn apply_write(
     before: &ConversationDraftHead,
     r: &ConversationDraftWrite,
-    resolve: Option<&ConversationDraftResolveTarget>,
+    resolve: Option<(&ConversationDraftResolveTarget, ConversationDraftDisposition)>,
 ) -> Result<ConversationDraftHead> {
     if same_write(before, r) {
         return Ok(before.clone());
@@ -217,14 +270,44 @@ fn apply_write(
     }
     let old = before.value.as_ref();
     match resolve {
-        Some(ConversationDraftResolveTarget::Pending { pending })
+        Some((ConversationDraftResolveTarget::Pending { pending }, disposition))
             if r.value.pending.is_none()
                 && old.and_then(|value| value.pending.as_ref()) == Some(pending)
                 && old.is_some_and(|value| value.revocations == r.value.revocations) =>
         {
-            ()
+            let previous = old.ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
+            if matches!(pending, ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }) {
+                let mut expected = previous.clone();
+                expected.pending = None;
+                expected.edit_seq = r.value.edit_seq;
+                // Making the implicit composer sequence explicit preserves its
+                // original meaning while this resolution advances the total.
+                if previous.message_edit_seq.is_none() && r.value.message_edit_seq == Some(previous.edit_seq) {
+                    expected.message_edit_seq = Some(previous.edit_seq);
+                }
+                if disposition == ConversationDraftDisposition::Recorded {
+                    match pending {
+                        ConversationDraftPending::TeamMessage { request, submitted_seq, .. } => {
+                            let draft = expected.team_drafts.iter_mut().find(|draft| draft.plan_id == request.lease.plan_id)
+                                .and_then(|draft| draft.guidance.as_mut())
+                                .ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
+                            if draft.edit_seq == *submitted_seq { draft.body.clear(); draft.edit_seq = r.value.edit_seq; }
+                        }
+                        ConversationDraftPending::TeamPublication { request, submitted_seq, .. } => {
+                            let draft = expected.team_drafts.iter_mut().find(|draft| draft.plan_id == request.lease.plan_id)
+                                .and_then(|draft| draft.publication.as_mut())
+                                .ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
+                            if draft.edit_seq == *submitted_seq { draft.body.clear(); draft.edit_seq = r.value.edit_seq; }
+                        }
+                        _ => unreachable!("team pending selected above"),
+                    }
+                }
+                if expected != r.value { return Err(fail(ErrorCode::DependencyConflict, "drafts-pending")); }
+            } else if previous.team_drafts != r.value.team_drafts {
+                return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
+            }
         }
-        Some(ConversationDraftResolveTarget::Revocation { revocation }) => {
+        Some((ConversationDraftResolveTarget::Revocation { revocation }, _)) => {
             let old = old.ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
             let Some(index) = old.revocations.iter().position(|slot| {
                 slot.request.plan_id == revocation.request.plan_id
@@ -298,6 +381,8 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
                     )
                 })
         || format < REVOCATION_FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
+        || format < TEAM_DRAFT_FORMAT && value.is_some_and(|value| !value.team_drafts.is_empty()
+            || matches!(value.pending, Some(ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. })))
         || format < KNOWLEDGE_PROPOSAL_FORMAT && value.is_some_and(|value| {
             value.proposal_edits.iter().any(|draft| matches!(draft.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))
                 || matches!(&value.pending, Some(ConversationDraftPending::ProposalRevision { request, .. })
@@ -472,11 +557,14 @@ impl DraftStore {
                     &r.write.key, pending, r.write.value.edit_seq,
                     r.write.value.message_edit_seq.unwrap_or(r.write.value.edit_seq),
                     &r.write.value.text,
+                    &r.write.value.team_drafts,
                 )?;
                 if r.write.value.pending.is_some()
                     || r.disposition == ConversationDraftDisposition::FencedNotApplied
                         && !matches!(pending, ConversationDraftPending::WorkPlanStart { .. }
-                            | ConversationDraftPending::WorkPlanControl { .. })
+                            | ConversationDraftPending::WorkPlanControl { .. }
+                            | ConversationDraftPending::TeamMessage { .. }
+                            | ConversationDraftPending::TeamPublication { .. })
                 {
                     return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
                 }
@@ -492,7 +580,7 @@ impl DraftStore {
             }
         }
         self.mutate_conversation(&r.write.key, |before| {
-            apply_write(before, &r.write, Some(&r.target))
+            apply_write(before, &r.write, Some((&r.target, r.disposition)))
         })
     }
     pub fn clear_conversation(&self, r: &ConversationDraftClear) -> Result<ConversationDraftHead> {

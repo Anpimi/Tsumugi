@@ -157,7 +157,8 @@ pub async fn resolve_local_conversation_draft(
                 )?;
                 if original.resolve.disposition == ConversationDraftDisposition::FencedNotApplied
                     && matches!(&original.resolve.target, ConversationDraftResolveTarget::Pending { pending }
-                        if !matches!(pending, ConversationDraftPending::WorkPlanStart { .. } | ConversationDraftPending::WorkPlanControl { .. }))
+                        if !matches!(pending, ConversationDraftPending::WorkPlanStart { .. } | ConversationDraftPending::WorkPlanControl { .. }
+                            | ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }))
                 {
                     return Err(map_error(ExecutionError::new(ErrorCode::InvalidInput, "conversation-drafts-disposition")));
                 }

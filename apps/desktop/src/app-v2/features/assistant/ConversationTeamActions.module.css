@@ -1,0 +1,7 @@
+.panel, .body { display: grid; gap: var(--space-3); min-inline-size: 0; }
+.panel[hidden], .body[hidden] { display: none; }
+.panel p { margin: 0; overflow-wrap: anywhere; }
+.body { margin: 0; padding: var(--space-3); border: var(--border-width) solid var(--color-border-subtle); border-radius: var(--radius-md); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.preview { display: grid; gap: var(--space-2); color: var(--color-text-secondary); }
+.text { white-space: pre-wrap; }

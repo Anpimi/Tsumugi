@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { AiOutputUsage } from "../../../AiUsage";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "../../../CommandFailure";
@@ -15,6 +15,8 @@ import styles from "./ConversationTeamProgress.module.css";
 export interface ConversationTeamProgressProps {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView;
   visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationTeamCandidate;
+  actions?: (view: TeamExecutionView, current: () => boolean) => ReactNode;
+  onReply?: (post: TeamDiscussionPost) => void;
 }
 type Work = TeamExecutionView["works"][number];
 type Cursor = { frame: string; value: string | null };
@@ -23,9 +25,10 @@ const cursorFor = (cursor: Cursor | null, frame: string) => cursor?.frame === fr
 function ReadFailure({ label, error }: { label: string; error: unknown }) {
   return <Banner tone="warning" role="alert"><p>{label}</p><CommandFailureDetails failure={commandFailure(error)}/></Banner>;
 }
-function PostCard({ post, roles, status, allowed, openPost }: {
+function PostCard({ post, roles, status, allowed, openPost, onReply }: {
   post: TeamDiscussionPost; roles: readonly TeamMemberRole[]; status: WorkPlanStatusView; allowed: boolean;
   openPost: (postId: string, origin: HTMLButtonElement) => void;
+  onReply?: (post: TeamDiscussionPost) => void;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationTeam" });
   const author = post.author;
@@ -35,6 +38,7 @@ function PostCard({ post, roles, status, allowed, openPost }: {
     <h5>{author.kind === "human" ? t("localUser") : role?.request.displayName ?? t("memberUnknown")} · {t(`postKind.${post.publication.kind}`)}</h5>
     <p className={styles.meta}>{t("target", { entry, locale: target.locale })}</p><p className={styles.text}>{post.publication.body}</p>
     <div className={styles.actions}>
+      {onReply ? <Button size="sm" disabled={!allowed} onClick={() => { if (allowed) onReply(post); }}>{t("reply")}</Button> : null}
       {post.publication.replyTo ? <Button size="sm" disabled={!allowed} onClick={event => { if (allowed && post.publication.replyTo) openPost(post.publication.replyTo, event.currentTarget); }}>{t("readReply")}</Button> : null}
       {post.publication.supersedes ? <Button size="sm" disabled={!allowed} onClick={event => { if (allowed && post.publication.supersedes) openPost(post.publication.supersedes, event.currentTarget); }}>{t("readSuperseded")}</Button> : null}
     </div>
@@ -94,7 +98,7 @@ export function ConversationTeamProgress(props: ConversationTeamProgressProps) {
   </section>;
 }
 
-function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate }: ConversationTeamProgressProps) {
+function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate, actions, onReply }: ConversationTeamProgressProps) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversationTeam" }), { t: global } = useTranslation(), reads = useSessionReads();
   const frame = useMemo(() => JSON.stringify([context, link, status]), [context.projectId, context.sessionToken, link, status]);
   const live = useRef({ frame, visible, canRead, onOpenCandidate }), alive = useRef(true);
@@ -180,6 +184,7 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate 
     {changed ? <Banner tone="warning"><p>{t("changed")}</p><Button size="sm" disabled={!present() || read.isFetching} onClick={returnToFirstPages}>{t("firstPages")}</Button></Banner> : page && !fresh && !read.isFetching ? <p role="status">{t("stale")}</p> : null}
     <div className={styles.actions}><Button size="sm" pending={read.isFetching} disabled={!present() || !!busyWork} onClick={() => { if (present() && !navigation.current) { setFeedback(null); void read.refetch(); } }}>{t("refresh")}</Button></div>
     {page ? <>
+      {actions?.(page, () => currentPage(page))}
       <section aria-label={t("members")}><h5>{t("members")}</h5><ul className={styles.members}>{page.roster.map(member => <li key={`${member.memberId}:${member.roleVersionId}`}><strong>{member.displayName}</strong><details><summary>{t("memberRole")}</summary><p className={styles.text}>{member.role}</p><p>{t("model")}: {member.config.model}</p><p>{t("roleVersion")}: <code>{member.roleVersionId}</code></p></details></li>)}</ul>
         {page.retiredMemberIds.length ? <details><summary>{t("retired")}</summary><ul>{page.retiredMemberIds.map(memberId => <li key={memberId}>{page.roleVersions.find(role => role.request.memberId === memberId)?.request.displayName ?? t("memberUnknown")}</li>)}</ul></details> : null}
       </section>
@@ -217,14 +222,16 @@ function TeamRecords({ context, link, status, visible, canRead, onOpenCandidate 
     </> : null}
     <Button size="sm" aria-expanded={historyOpen} disabled={!present()} onClick={() => { if (present()) setHistoryOpen(value => !value); }}>{t(historyOpen ? "hideHistory" : "showHistory")}</Button>
     {historyOpen ? <section aria-label={t("history")}><h5>{t("history")}</h5>{history.isPending || history.isFetching ? <p role="status">{t("historyLoading")}</p> : null}{history.error ? <ReadFailure label={t("historyFailed")} error={history.error}/> : null}
-      {posts?.posts.map(post => <PostCard key={post.publication.postId} post={post} roles={posts.authorRoles} status={status} allowed={historyCurrent()} openPost={openPost}/>)}
+      {posts?.posts.map(post => <PostCard key={post.publication.postId} post={post} roles={posts.authorRoles} status={status} allowed={historyCurrent()} openPost={openPost}
+        onReply={onReply ? original => { if (historyCurrent()) onReply(original); } : undefined}/>)}
       {historyCurrent() && posts?.posts.length === 0 ? <p>{t("noPosts")}</p> : null}
       <div className={styles.actions}><Button size="sm" disabled={!present() || history.isFetching} onClick={() => { if (present()) void history.refetch(); }}>{t("refreshHistory")}</Button><Button size="sm" disabled={!historyCurrent() || afterHistory === null} onClick={() => { if (historyCurrent()) setHistoryCursor({ frame, value: null }); }}>{t("firstHistory")}</Button><Button size="sm" disabled={!historyCurrent() || !posts?.nextAfter} onClick={() => { if (historyCurrent() && posts?.nextAfter) setHistoryCursor({ frame, value: posts.nextAfter }); }}>{t("nextHistory")}</Button></div>
     </section> : null}
     {postId ? <section className={styles.original} aria-label={t("originalPost")}><h5 tabIndex={-1} ref={postHeading}>{t("originalPost")}</h5><Button size="sm" disabled={!present()} onClick={() => { if (present()) { setPostId(null); postOrigin.current = null; const origin = postReturn.current; postReturn.current = null; if (origin?.isConnected) origin.focus(); } }}>{t("closePost")}</Button>
-      {focused.isPending || focused.isFetching ? <p role="status">{t("historyLoading")}</p> : null}{focused.error ? <ReadFailure label={t("historyFailed")} error={focused.error}/> : focused.data ? <PostCard post={focused.data.post} roles={focused.data.roles} status={status} allowed={present()} openPost={openPost}/> : null}
+      {focused.isPending || focused.isFetching ? <p role="status">{t("historyLoading")}</p> : null}{focused.error ? <ReadFailure label={t("historyFailed")} error={focused.error}/> : focused.data ? <PostCard post={focused.data.post} roles={focused.data.roles} status={status} allowed={present()} openPost={openPost}
+        onReply={onReply ? original => { if (present() && !focused.isFetching && !focused.error) onReply(original); } : undefined}/> : null}
       <Button size="sm" disabled={!present() || focused.isFetching} onClick={() => { if (present()) void focused.refetch(); }}>{t("refreshPost")}</Button>
     </section> : null}
-    <p className={styles.meta}>{t("readOnly")}</p>
+    {!actions ? <p className={styles.meta}>{t("readOnly")}</p> : null}
   </div>;
 }

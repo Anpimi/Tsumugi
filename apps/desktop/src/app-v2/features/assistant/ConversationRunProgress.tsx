@@ -11,12 +11,15 @@ import type { OpenConversationRunCandidate } from "./conversationRunResultReads"
 import { ConversationRunResults } from "./ConversationRunResults";
 import { ConversationTeamProgress } from "./ConversationTeamProgress";
 import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
+import type { ConversationTeamProgressProps } from "./ConversationTeamProgress";
 import styles from "./ConversationRunPanel.module.css";
 
 interface Props {
   context: SessionRequest; link: ConversationPlanLink; status: WorkPlanStatusView | null;
   visible: boolean; canRead: () => boolean; onOpenCandidate?: OpenConversationRunCandidate;
   onOpenTeamCandidate?: OpenConversationTeamCandidate;
+  teamActions?: ConversationTeamProgressProps["actions"];
+  onTeamReply?: ConversationTeamProgressProps["onReply"];
 }
 
 function RunAttempt({ context, run, visible, canRead }: Pick<Props, "context" | "visible" | "canRead"> & { run: WorkPlanRunView }) {
@@ -48,7 +51,7 @@ function RunAttempt({ context, run, visible, canRead }: Pick<Props, "context" | 
 }
 
 /** Read the original plan's start proof before asking the execution ledger for progress. */
-export function ConversationRunProgress({ context, link, status, visible, canRead, onOpenCandidate, onOpenTeamCandidate }: Props) {
+export function ConversationRunProgress({ context, link, status, visible, canRead, onOpenCandidate, onOpenTeamCandidate, teamActions, onTeamReply }: Props) {
   const { t } = useTranslation(undefined, { keyPrefix: "conversation" });
   const read = useSessionQuery({ key: ["work-plan-run", link.planId], scopes: ["project", "execution"], enabled: visible,
     read: async () => {
@@ -68,7 +71,7 @@ export function ConversationRunProgress({ context, link, status, visible, canRea
     {run ? <>
       {!sameStatus ? <p role="status">{t("runRecordChanged")}</p>
         : status?.plan.options.teamExecution ? <ConversationTeamProgress context={context} link={link} status={status}
-          visible={visible} canRead={canRead} onOpenCandidate={onOpenTeamCandidate}/>
+          visible={visible} canRead={canRead} onOpenCandidate={onOpenTeamCandidate} actions={teamActions} onReply={onTeamReply}/>
           : <RunAttempt key={`${run.lastStart?.attemptId ?? "none"}`} context={context} run={run} visible={visible} canRead={canRead}/>}
       <section className={styles.material} aria-label={t("runBudgetTitle")}><h5>{t("runBudgetTitle")}</h5>
         {run.budget ? <AiProviderBudget budget={run.budget}/> : <p>{t(run.budgetRootTaskId ? "runBudgetMissing" : "runNoModelBudget")}</p>}

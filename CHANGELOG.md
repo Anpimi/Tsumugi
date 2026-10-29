@@ -12,6 +12,8 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
+- Team plans in the opt-in workspace can send guidance to a selected member and publish or reply to a discussion after reviewing the recipient, entry and text. Guidance and discussion drafts and uncertain original requests are kept locally; newer input is preserved while a result is checked. Reopening does not restore permission or resend a request. Saving a message does not mean a member has read it and does not start new work. The local draft journal upgrades to format 13 on the first successful write; older clients cannot open the upgraded journal.
+
 - Team plans in the opt-in workspace can show recorded members, work results, messages and original discussion posts. Saved translation candidates open their exact versions in the existing entry workflow. Reading team history does not restart work or restore expired permissions; incomplete pages and uncertain results remain explicit.
 
 - Delivery in the opt-in workspace presents readiness, build, artifact checks, export and history as one checklist. Build settings stay with the project when a view is closed. Saved releases remain available for export without a model connection; failed or uncertain exports keep their original release and request for checking. Delivery issues use the same decision records as the shared inbox and open the relevant entry or original record.
@@ -48,7 +50,7 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
   The panel can show a linked plan’s status, the most recently started work and accumulated model usage, and explicitly start, pause, stop, or take over the plan. Progress belongs to that recorded start; a later continuation confirmation alone does not replace it.
 
-  For an ordinary started plan, expand **View generated results** to read its recorded translations and statuses, then open a saved candidate in the entry to handle it through the existing draft and review controls. Results are paged, pending or invalid entries do not hide other results, and reading again does not send another model request. Team member progress and results are not yet shown.
+  For an ordinary started plan, expand **View generated results** to read its recorded translations and statuses, then open a saved candidate in the entry to handle it through the existing draft and review controls. Results are paged, pending or invalid entries do not hide other results, and reading again does not send another model request.
 
   Ordinary paused or taken-over plans can be continued after a fresh review; team and MCP plans use their dedicated recovery flow or a new plan. Start requires the direct confirmation receipt retained in the current session.
 

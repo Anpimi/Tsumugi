@@ -138,6 +138,26 @@ pub(in crate::commands) fn observe_conversation_target(
             )?;
             return Ok(without_receipt(proof.outcome));
         }
+        ConversationDraftPending::TeamMessage { conversation_id, request, .. }
+            if request.project_id == key.project_id && *conversation_id == key.conversation_id =>
+        {
+            store.read_conversation_proposal_work_plan(key.project_id, key.conversation_id, request.lease.plan_id)?;
+            let proof = store.human_team_message_settlement(
+                request.project_id, &request.lease,
+                crate::commands::execution::work_plans::team::LOCAL_ACTOR, &request.message,
+            )?;
+            return Ok(without_receipt(proof.outcome));
+        }
+        ConversationDraftPending::TeamPublication { conversation_id, request, .. }
+            if request.project_id == key.project_id && *conversation_id == key.conversation_id =>
+        {
+            store.read_conversation_proposal_work_plan(key.project_id, key.conversation_id, request.lease.plan_id)?;
+            let proof = store.human_team_publication_settlement(
+                request.project_id, &request.lease,
+                crate::commands::execution::work_plans::team::LOCAL_ACTOR, &request.publication,
+            )?;
+            return Ok(without_receipt(proof.outcome));
+        }
         _ => {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
