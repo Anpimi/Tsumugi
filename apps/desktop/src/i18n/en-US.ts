@@ -1,3 +1,4 @@
+import { conversationTeamRecoveryEn } from "./conversationTeamRecovery";
 import { conversationTeamActionsEn } from "./conversationTeamActions";
 import { conversationTeamEn } from "./conversationTeam";
 import { deliveryWorkbenchEn } from "./deliveryWorkbench";
@@ -13,6 +14,7 @@ import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
+conversationTeamRecovery: conversationTeamRecoveryEn,
 conversationTeamActions: conversationTeamActionsEn,
 conversationTeam: conversationTeamEn,
 deliveryWorkbench: deliveryWorkbenchEn,

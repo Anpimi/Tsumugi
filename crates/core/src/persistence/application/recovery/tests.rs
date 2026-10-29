@@ -3,6 +3,196 @@ use crate::persistence::application::tests::{config, consent, fixture};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
+fn pure_recovery_read<T>(store: &ProjectStore, read: impl FnOnce() -> T) -> T {
+    let files = || -> std::collections::BTreeMap<std::ffi::OsString, Vec<u8>> {
+        std::fs::read_dir(store.directory())
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .filter(|entry| entry.file_type().unwrap().is_file())
+            .map(|entry| (entry.file_name(), std::fs::read(entry.path()).unwrap()))
+            .collect()
+    };
+    let before = files();
+    let changes = store.connection().unwrap().total_changes();
+    let unknown = store.is_reconciling();
+    let authority = store
+        .planning_authority_revision
+        .load(std::sync::atomic::Ordering::Acquire);
+    let value = read();
+    assert_eq!(files(), before);
+    assert_eq!(store.connection().unwrap().total_changes(), changes);
+    assert_eq!(store.is_reconciling(), unknown);
+    assert_eq!(
+        store
+            .planning_authority_revision
+            .load(std::sync::atomic::Ordering::Acquire),
+        authority
+    );
+    value
+}
+
+fn settlement_preparation(f: &Fixture) -> PrepareTeamRecovery {
+    let basis = &f.plan.selection_basis[0];
+    recovery(
+        f,
+        vec![f.members[1].clone()],
+        TeamDiscussionTarget {
+            unit_id: basis.unit_id,
+            locale: f.plan.locale.clone(),
+            source_snapshot_id: basis.source_snapshot_id,
+            source_revision_id: basis.source_revision_id,
+        },
+    )
+}
+
+#[test]
+fn recovery_settlement_missing_authorization_needs_a_permanent_generation_fence() {
+    let mut f = setup();
+    control(&mut f, WorkPlanCommand::Pause);
+    let request = settlement_preparation(&f);
+    let prepared = f.runtime.prepare_team_recovery(&f.store, &request).unwrap();
+    let authorization = authorization(&prepared);
+    let read =
+        |store: &ProjectStore| store.team_recovery_preparation_settlement(&request, &authorization);
+    assert!(matches!(
+        pure_recovery_read(&f.store, || read(&f.store))
+            .unwrap()
+            .outcome,
+        WorkPlanRequestOutcome::Pending
+    ));
+    control(&mut f, WorkPlanCommand::TakeOver);
+    f.store
+        .execution_unknown
+        .store(true, std::sync::atomic::Ordering::Release);
+    let proof = pure_recovery_read(&f.store, || read(&f.store)).unwrap();
+    assert!(proof.lease.generation > request.expected_lease.generation);
+    assert_eq!(proof.outcome, WorkPlanRequestOutcome::FencedNotApplied);
+    f.store
+        .execution_unknown
+        .store(false, std::sync::atomic::Ordering::Release);
+    assert!(
+        f.runtime
+            .authorize_team_recovery(&mut f.store, &prepared, &authorization)
+            .is_err()
+    );
+    assert_eq!(
+        f.store
+            .read_team_recovery_action(f.plan.project_id, &authorization)
+            .unwrap(),
+        None
+    );
+    let mut current = request.clone();
+    current.expected_lease = proof.lease;
+    assert!(
+        matches!(
+            pure_recovery_read(&f.store, || f
+                .store
+                .team_recovery_preparation_settlement(&current, &authorization))
+            .unwrap()
+            .outcome,
+            WorkPlanRequestOutcome::Pending
+        ),
+        "taken-over state alone is not a fence at the current generation"
+    );
+}
+
+#[test]
+fn recovery_settlement_preserves_exact_receipts_and_rejects_spliced_preparations() {
+    let mut f = setup();
+    control(&mut f, WorkPlanCommand::Pause);
+    let request = settlement_preparation(&f);
+    let prepared = f.runtime.prepare_team_recovery(&f.store, &request).unwrap();
+    let authorization = authorization(&prepared);
+    let receipt = f
+        .runtime
+        .authorize_team_recovery(&mut f.store, &prepared, &authorization)
+        .unwrap();
+    control(&mut f, WorkPlanCommand::Stop);
+    f.store
+        .execution_unknown
+        .store(true, std::sync::atomic::Ordering::Release);
+    let proof = pure_recovery_read(&f.store, || {
+        f.store
+            .team_recovery_preparation_settlement(&request, &authorization)
+    })
+    .unwrap();
+    assert_eq!(
+        proof.outcome,
+        WorkPlanRequestOutcome::Recorded {
+            receipt: receipt.clone()
+        }
+    );
+    assert!(proof.lease.generation > receipt.effective_version.lease.generation);
+    let mut changed = request.clone();
+    changed
+        .work
+        .instructions
+        .push_str(" A different original preparation.");
+    assert_eq!(
+        pure_recovery_read(&f.store, || f
+            .store
+            .team_recovery_preparation_settlement(&changed, &authorization))
+        .unwrap_err()
+        .code,
+        ErrorCode::ResultMismatch
+    );
+    changed = request.clone();
+    changed.expected_lease.generation = changed.expected_lease.generation.next().unwrap();
+    assert_eq!(
+        pure_recovery_read(&f.store, || f
+            .store
+            .team_recovery_preparation_settlement(&changed, &authorization))
+        .unwrap_err()
+        .code,
+        ErrorCode::ResultMismatch
+    );
+    let mut changed_authorization = authorization.clone();
+    changed_authorization.digest = "0".repeat(64);
+    assert_eq!(
+        pure_recovery_read(&f.store, || f
+            .store
+            .team_recovery_preparation_settlement(&request, &changed_authorization))
+        .unwrap_err()
+        .code,
+        ErrorCode::ResultMismatch
+    );
+    assert_eq!(
+        pure_recovery_read(&f.store, || f.store.team_recovery_settlement(
+            ExecutionId::new(),
+            &request.expected_lease,
+            &authorization
+        ))
+        .unwrap_err()
+        .code,
+        ErrorCode::Unauthorized
+    );
+}
+
+#[test]
+fn recovery_settlement_rejects_a_generation_row_without_its_original_control_history() {
+    let mut f = setup();
+    control(&mut f, WorkPlanCommand::Pause);
+    let request = settlement_preparation(&f);
+    let prepared = f.runtime.prepare_team_recovery(&f.store, &request).unwrap();
+    let authorization = authorization(&prepared);
+    f.store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE application_plans SET generation=generation+1 WHERE plan_id=?1",
+            [f.plan.plan_id.to_string()],
+        )
+        .unwrap();
+    assert_eq!(
+        pure_recovery_read(&f.store, || f
+            .store
+            .team_recovery_preparation_settlement(&request, &authorization))
+        .unwrap_err()
+        .code,
+        ErrorCode::CorruptLedger
+    );
+}
+
 struct Dormant;
 impl Runner for Dormant {
     fn capability_id(&self) -> &str {

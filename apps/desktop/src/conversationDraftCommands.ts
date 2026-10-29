@@ -17,6 +17,7 @@ type Head = Responses["conversationRead"];
 const bytes = new TextEncoder();
 const same = (a: unknown, b: unknown) => jsonIdentity(a) === jsonIdentity(b);
 export function conversationPendingActionId(pending: ConversationDraftPending): string {
+  if (pending.kind === "team-recovery") return pending.authorization?.recovery.actionId ?? pending.request.preparationId;
   if (pending.kind === "planning") return pending.request.consent.actionId;
   if (pending.kind === "team-message") return pending.request.message.messageId;
   if (pending.kind === "team-publication") return pending.request.publication.postId;
@@ -27,7 +28,7 @@ export function isConversationTeamPending(pending: ConversationDraftPending | nu
 }
 export function conversationPendingTarget(pending: ConversationDraftPending) {
   return pending.kind === "proposal-work-plan" ? pending.request.proposal
-    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" || pending.kind === "team-message" || pending.kind === "team-publication"
+    : pending.kind === "work-plan-start" || pending.kind === "work-plan-control" || pending.kind === "team-message" || pending.kind === "team-publication" || pending.kind === "team-recovery"
       ? { projectId: pending.request.projectId, conversationId: pending.conversationId } : pending.request;
 }
 export function locallyReplayableConversationRequest(pending: ConversationDraftPending | null | undefined) {
@@ -42,7 +43,17 @@ function teamDraftsMatch(value: ConversationDraftValue) {
   if (drafts.length > 32 || new Set(drafts.map(draft => draft.planId)).size !== drafts.length
     || drafts.some(draft => !/^[a-f0-9]{64}$/.test(draft.planDigest)
       || draft.guidance && BigInt(draft.guidance.editSeq) > BigInt(value.editSeq)
-      || draft.publication && BigInt(draft.publication.editSeq) > BigInt(value.editSeq))) return false;
+      || draft.publication && BigInt(draft.publication.editSeq) > BigInt(value.editSeq)
+      || draft.recovery && BigInt(draft.recovery.editSeq) > BigInt(value.editSeq))) return false;
+  if (pending?.kind === "team-recovery") {
+    const part = drafts.find(draft => draft.planId === pending.request.recovery.planId)?.recovery;
+    const original = pending.request, authorization = pending.authorization;
+    return !!part && BigInt(part.editSeq) >= BigInt(pending.submittedSeq)
+      && original.projectId === original.recovery.projectId && original.recovery.expectedLease.planId === original.recovery.planId
+      && BigInt(original.recovery.expectedLease.generation) > 0n && (!authorization || authorization.projectId === original.projectId
+        && authorization.planId === original.recovery.planId && authorization.preparationId === original.preparationId
+        && same(authorization.baseLease, original.recovery.expectedLease));
+  }
   if (!isConversationTeamPending(pending)) return true;
   const draft = drafts.find(draft => draft.planId === pending.request.lease.planId);
   if (BigInt(pending.request.lease.generation) === 0n) return false;

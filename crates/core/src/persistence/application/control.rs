@@ -1263,20 +1263,21 @@ pub(super) fn validate_receipt(
     }
     Ok(())
 }
-fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), ExecutionError> {
+pub(super) fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), ExecutionError> {
     let mut statement = c
-        .prepare("SELECT request,receipt FROM application_actions WHERE plan_id=?1")
+        .prepare("SELECT action_id FROM application_actions WHERE plan_id=?1")
         .map_err(sql)?;
     let mut history = std::collections::BTreeMap::new();
     for row in statement
-        .query_map([stored.plan.plan_id.to_string()], |r| {
-            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })
+        .query_map([stored.plan.plan_id.to_string()], |r| r.get::<_, String>(0))
         .map_err(sql)?
     {
-        let (request, receipt) = row.map_err(sql)?;
-        let request: Request = codec::decode(&request, MAX_INPUT_BYTES)?;
-        let receipt: WorkPlanReceipt = codec::decode(&receipt, MAX_INPUT_BYTES)?;
+        let id = ExecutionId::parse(&row.map_err(sql)?)?;
+        let (request, receipt) = super::recovery::action(c, id)?
+            .ok_or_else(|| err(ErrorCode::CorruptLedger, "work-plan-action"))?;
+        if request.plan() != stored.plan.plan_id {
+            return Err(err(ErrorCode::CorruptLedger, "work-plan-action"));
+        }
         validate_receipt(&request, &receipt, stored)?;
         if let Request::TeamRecovery { capture, .. } = &request {
             super::recovery::validate_history_in(c, capture, &receipt)?;

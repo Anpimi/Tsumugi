@@ -10,7 +10,7 @@ import type {
   WorkPlanAgentReconcileRequest,
   MaintenanceAssessmentRequest,
   WorkPlanTeamHistoryRequest, WorkPlanTeamPostRequest, WorkPlanTeamPublishRequest, WorkPlanTeamPublicationActionRequest,
-  WorkPlanTeamExecutionRequest, WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanTeamRecoveryStateRequest,
+  WorkPlanTeamExecutionRequest, WorkPlanTeamRecoveryPrepareRequest, WorkPlanTeamRecoveryAuthorizeRequest, WorkPlanTeamRecoveryStateRequest, WorkPlanTeamRecoverySettlementRequest,
   WorkPlanTeamWorkToolsRequest,
   WorkPlanTeamMessageRequest,
 } from "./generated/ai.requests";
@@ -189,6 +189,17 @@ function recoveryActionMatches(value: WorkPlanTeamRecoveryActionView, request: W
     && validRecoveryReceipt(value.receipt, request, capture);
 }
 
+async function recoveryPreparation(input: WorkPlanTeamRecoveryPrepareRequest, close: boolean) {
+  const request = structuredClone(input), { sessionToken: _token, ...original } = request;
+  const validate = close ? validators.validateRequestWorkPlanTeamRecoveryPreparationClose : validators.validateRequestWorkPlanTeamRecoveryPreparationRead;
+  if (!validate(request) || BigInt(request.recovery.expectedLease.generation) === 0n) throw new Error("Invalid original team recovery preparation");
+  const value = await checkedInvoke(close ? "close_work_plan_team_recovery_preparation" : "read_work_plan_team_recovery_preparation", request, validators.validateResponseWorkPlanTeamRecoveryPreparation);
+  if (jsonIdentity(value.request) !== jsonIdentity(original) || value.lease.planId !== request.recovery.planId || BigInt(value.lease.generation) === 0n
+    || value.outcome.kind === "closed" && !value.hostCallbacksDrained
+    || value.outcome.kind === "fenced-not-applied" && (!value.hostCallbacksDrained || BigInt(value.lease.generation) <= BigInt(request.recovery.expectedLease.generation))) invalidAcknowledgement();
+  return value;
+}
+
 /** Receipts report an action's historical result. Read status for current authority. */
 export const workPlanCommands = {
   sendTeamMessage: async (input: WorkPlanTeamMessageRequest) => {
@@ -242,7 +253,8 @@ export const workPlanCommands = {
       || state.effectiveVersion.lease.planId !== request.planId) invalidAcknowledgement();
     return value;
   },
-  prepareTeamRecovery: async (request: WorkPlanTeamRecoveryPrepareRequest, plan: WorkPlanView, observation: WorkPlanTeamRecoveryStateView) => {
+  prepareTeamRecovery: async (input: WorkPlanTeamRecoveryPrepareRequest, originalPlan: WorkPlanView, originalObservation: WorkPlanTeamRecoveryStateView) => {
+    const request = structuredClone(input), plan = structuredClone(originalPlan), observation = structuredClone(originalObservation);
     if (!validators.validateRequestWorkPlanTeamRecoveryPrepare(request)) throw new Error("Invalid team recovery preparation");
     const value = await checkedInvoke("prepare_work_plan_team_recovery", request, validators.validateResponseWorkPlanTeamRecoveryPreview);
     const preview = value.preview, recovery = request.recovery, members = preview.members;
@@ -278,10 +290,31 @@ export const workPlanCommands = {
           || !view.posts.some(post => post.publication.postId === artifact.postId && post.publication.references[artifact.referenceIndex])))) invalidAcknowledgement();
     return value;
   },
-  authorizeTeamRecovery: async (request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView) => {
+  authorizeTeamRecovery: async (input: WorkPlanTeamRecoveryAuthorizeRequest, originalCapture: WorkPlanTeamRecoveryPreviewView) => {
+    const request = structuredClone(input), capture = structuredClone(originalCapture);
     if (!validators.validateRequestWorkPlanTeamRecoveryAuthorize(request)) throw new Error("Invalid team recovery authorization");
     const value = await checkedInvoke("authorize_work_plan_team_recovery", request, validators.validateResponseWorkPlanTeamRecoveryReceipt);
     if (!validRecoveryReceipt(value, request, capture)) invalidAcknowledgement();
+    return value;
+  },
+  readTeamRecoveryPreparation: (request: WorkPlanTeamRecoveryPrepareRequest) => recoveryPreparation(request, false),
+  closeTeamRecoveryPreparation: (request: WorkPlanTeamRecoveryPrepareRequest) => recoveryPreparation(request, true),
+  teamRecoverySettlement: async (input: WorkPlanTeamRecoverySettlementRequest) => {
+    const request = structuredClone(input), { sessionToken: _token, ...original } = request;
+    if (!validators.validateRequestWorkPlanTeamRecoverySettlement(request) || request.baseLease.planId !== request.planId || BigInt(request.baseLease.generation) === 0n) throw new Error("Invalid original team recovery settlement");
+    const value = await checkedInvoke("read_work_plan_team_recovery_settlement", request, validators.validateResponseWorkPlanTeamRecoverySettlement);
+    const proof = value.settlement, outcome = proof.outcome;
+    if (jsonIdentity(value.request) !== jsonIdentity(original) || proof.projectId !== request.projectId || proof.planId !== request.planId
+      || proof.lease.planId !== request.planId || BigInt(proof.lease.generation) === 0n
+      || outcome.kind === "pending" && BigInt(proof.lease.generation) > BigInt(request.baseLease.generation)
+      || outcome.kind === "fenced-not-applied" && BigInt(proof.lease.generation) <= BigInt(request.baseLease.generation)) invalidAcknowledgement();
+    if (outcome.kind === "recorded") {
+      const receipt = outcome.receipt, version = receipt.effectiveVersion;
+      if (receipt.actionId !== request.recovery.actionId || version.actionId !== receipt.actionId || version.digest !== request.recovery.digest
+        || jsonIdentity(receipt.baseLease) !== jsonIdentity(request.baseLease) || version.lease.planId !== request.planId
+        || BigInt(version.lease.generation) !== BigInt(request.baseLease.generation) + 1n || receipt.state !== "active"
+        || BigInt(proof.lease.generation) < BigInt(version.lease.generation)) invalidAcknowledgement();
+    }
     return value;
   },
   teamRecoveryAction: async (request: WorkPlanTeamRecoveryAuthorizeRequest, capture: WorkPlanTeamRecoveryPreviewView) => {

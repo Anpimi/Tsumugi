@@ -85,6 +85,13 @@ export type ConversationDraftPending =
       request: TeamPublicationOriginal;
       submittedSeq: Revision;
       targetName: string;
+    }
+  | {
+      authorization: WorkPlanTeamRecoverySettlementOriginal | null;
+      conversationId: ExecutionId;
+      kind: "team-recovery";
+      request: WorkPlanTeamRecoveryPrepareOriginal;
+      submittedSeq: Revision;
     };
 export type UnsignedDecimal = string;
 export type ConversationPlanningModelOutput =
@@ -229,6 +236,7 @@ export type TeamArtifactReference =
       snapshotId: ExecutionId;
     };
 export type WorkPlanRevocationCommand = "pause" | "stop" | "take-over";
+export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 export type CommandErrorCode =
   | "invalid-input"
   | "destination-conflict"
@@ -1206,6 +1214,363 @@ export interface PublishTeamDiscussion {
   supersedes: ExecutionId | null;
   target: TeamDiscussionTarget;
 }
+export interface WorkPlanTeamRecoverySettlementOriginal {
+  applicationToolExecutions: ApplicationScopeBasis[];
+  baseLease: AutomationLease;
+  checkerExecutions: ReviewCheckerKey[];
+  planId: ExecutionId;
+  preparationId: ExecutionId;
+  projectId: ExecutionId;
+  recovery: AuthorizeTeamRecovery;
+  toolExecution: boolean;
+}
+export interface AuthorizeTeamRecovery {
+  actionId: ExecutionId;
+  confirmed: boolean;
+  digest: string;
+  effects: AutomationEffect[];
+}
+export interface WorkPlanTeamRecoveryPrepareOriginal {
+  preparationId: ExecutionId;
+  projectId: ExecutionId;
+  recovery: PrepareTeamRecovery;
+}
+export interface PrepareTeamRecovery {
+  expectedEffectiveVersion: TeamEffectiveVersion;
+  expectedLease: AutomationLease;
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  members:
+    | [TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember, TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember, TeamExecutionMember, TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember, TeamExecutionMember, TeamExecutionMember, TeamExecutionMember]
+    | [
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember
+      ]
+    | [
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember
+      ]
+    | [
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember
+      ];
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  work: TeamHumanWork;
+}
+export interface TeamEffectiveVersion {
+  actionId: ExecutionId;
+  digest: string;
+  lease: AutomationLease;
+}
+export interface TeamHumanWork {
+  instructions: string;
+  kind: TeamWorkKind;
+  memberId: ExecutionId;
+  /**
+   * @maxItems 16
+   */
+  postIds:
+    | []
+    | [ExecutionId]
+    | [ExecutionId, ExecutionId]
+    | [ExecutionId, ExecutionId, ExecutionId]
+    | [ExecutionId, ExecutionId, ExecutionId, ExecutionId]
+    | [ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId]
+    | [ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId]
+    | [ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId]
+    | [ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId, ExecutionId]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ]
+    | [
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId,
+        ExecutionId
+      ];
+  /**
+   * @maxItems 16
+   */
+  priorWork:
+    | []
+    | [TeamWorkReference]
+    | [TeamWorkReference, TeamWorkReference]
+    | [TeamWorkReference, TeamWorkReference, TeamWorkReference]
+    | [TeamWorkReference, TeamWorkReference, TeamWorkReference, TeamWorkReference]
+    | [TeamWorkReference, TeamWorkReference, TeamWorkReference, TeamWorkReference, TeamWorkReference]
+    | [TeamWorkReference, TeamWorkReference, TeamWorkReference, TeamWorkReference, TeamWorkReference, TeamWorkReference]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ]
+    | [
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference,
+        TeamWorkReference
+      ];
+  target: TeamDiscussionTarget;
+  workId: ExecutionId;
+}
+export interface TeamWorkReference {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  taskId: ExecutionId;
+}
 /**
  * Local unfinished input, separate from immutable project proposal revisions.
  */
@@ -1237,6 +1602,8 @@ export interface ConversationTeamDraft {
   planDigest: string;
   planId: ExecutionId;
   publication: ConversationTeamPublicationDraft | null;
+  recovery?: ConversationTeamRecoveryDraft | null;
+  recoveryRecorded?: ConversationTeamRecoveryRecorded | null;
 }
 export interface ConversationTeamGuidanceDraft {
   body: string;
@@ -1249,6 +1616,49 @@ export interface ConversationTeamPublicationDraft {
   editSeq: Revision;
   replyTo: ExecutionId | null;
   unitId: ExecutionId | null;
+}
+/**
+ * Incomplete recovery input, with stable tool identities and no live permit.
+ */
+export interface ConversationTeamRecoveryDraft {
+  editSeq: Revision;
+  instructions: string;
+  kind: TeamWorkKind;
+  members: ConversationTeamRecoveryMemberDraft[];
+  nextKey: number;
+  postIds: ExecutionId[];
+  priorWork: TeamWorkReference[];
+  recipientKey: number | null;
+  unitId: ExecutionId | null;
+}
+export interface ConversationTeamRecoveryMemberDraft {
+  config: AiConfig;
+  displayName: string;
+  key: number;
+  kinds: TeamWorkKind[];
+  original: TeamExecutionMember | null;
+  role: string;
+  toolHandles: string[];
+  unitIds: ExecutionId[];
+}
+/**
+ * Original request and descriptive receipt only; a reopened record is no permit.
+ */
+export interface ConversationTeamRecoveryRecorded {
+  authorization: WorkPlanTeamRecoverySettlementOriginal;
+  receipt: TeamRecoveryReceipt;
+  request: WorkPlanTeamRecoveryPrepareOriginal;
+}
+export interface TeamRecoveryReceipt {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  baseLease: AutomationLease;
+  cancellationRevision: Revision;
+  effectiveVersion: TeamEffectiveVersion;
+  inputDigest: string;
+  state: WorkPlanState;
+  taskId: ExecutionId;
+  workId: ExecutionId;
 }
 export interface ConversationDraftPage {
   items: ConversationDraftSummary[];

@@ -244,6 +244,7 @@ export type DecisionLocalRequestKind =
   | "work-plan-control"
   | "team-message"
   | "team-publication"
+  | "team-recovery"
   | "resource-typed-context-save"
   | "resource-typed-context-withdraw"
   | "resource-knowledge-decision"

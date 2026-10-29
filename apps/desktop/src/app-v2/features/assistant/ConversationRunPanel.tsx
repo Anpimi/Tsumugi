@@ -23,6 +23,7 @@ import { emptyExecutionConsent, workPlanMinutesValid } from "./proposalWorkPlan"
 import { ConversationRunRevocations } from "./ConversationRunRevocations";
 import { ConversationRunProgress } from "./ConversationRunProgress";
 import { ConversationTeamActions } from "./ConversationTeamActions";
+import { ConversationTeamRecovery } from "./ConversationTeamRecovery";
 import type { OpenConversationRunCandidate } from "./conversationRunResultReads";
 import type { OpenConversationTeamCandidate } from "./conversationTeamReads";
 import styles from "./ConversationRunPanel.module.css";
@@ -195,7 +196,8 @@ function RunObservation({ owner, input, link, visible, disabled, gate, viewId, p
           <Button variant="danger" size="sm" disabled={!fresh || !owner.canRevokeRun(link.conversationId, status, "stop")} onClick={event => void control("stop", event.currentTarget)}>{t("runStop")}</Button>
         </div><p>{t("runControlHelp")}</p>
       </> : <p>{t("runStoppedHelp")}</p>}
-      {mayContinue && plan?.options.teamExecution ? <Banner tone="info">{t("runTeamRecovery")}</Banner> : null}
+      {plan?.options.teamExecution ? <ConversationTeamRecovery owner={owner} input={input} link={link} status={status} visible={visible}
+        disabled={disabled} current={() => canRead() && statusCurrent(status)} gate={gate} viewId={viewId} parentDialogId={parentDialogId}/> : null}
       {mayContinue && plan?.options.mcpTermQuery ? <Banner tone="info">{t("runMcpRecovery")}</Banner> : null}
       {genericContinue ? <>
         <div><Button size="sm" aria-expanded={continueOpen} aria-controls={`${id}-continue`} disabled={!continueOpen && (blocked || !fresh)} onClick={() => {

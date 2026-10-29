@@ -21,6 +21,14 @@ import { teamGuidanceActive } from "../../../TeamGuidanceSession";
 import { teamPublicationActive } from "../../../TeamDiscussionSession";
 import { isRunPending, runMatchesLink, runReadyCurrent, type ConversationPlanLink, type ConversationRunReady, type ConversationRunFailure, type ConversationRunConfirmation, type ConversationRunPending, revocationAllowed, revocationControlRequest, type ConversationRevocationState, type ConversationRevocationCommand } from "./conversationRun";
 
+import { teamRecoveryAvailable } from "../../../TeamRecoverySession";
+import { validateRequestWorkPlanTeamRecoveryPrepare } from "../../../generated/ai.validators";
+import type { WorkPlanTeamRecoveryAuthorizeRequest } from "../../../generated/ai.requests";
+import type { WorkPlanTeamRecoveryStateView, TeamRecoveryReceipt } from "../../../generated/ai.responses";
+import { initialConversationRecoveryState, initialConversationRecoveryDraft, newConversationRecoveryMember, unchangedConversationRecoveryMember, conversationRecoveryProblem, recoveryBasisMatches,
+  type ConversationRecoveryState, type ConversationRecoveryDraft, type ConversationRecoveryMember } from "./conversationRecovery";
+type ConversationRecoveryPending = Extract<ConversationDraftPending, { kind: "team-recovery" }>;
+
 type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands, "create" | "append" | "recoverCreate" | "recoverMessage" | "preparePlanning" | "validatePlanning" | "startPlanning" | "readPlanning" | "captureProposal" | "reviseProposal" | "validateProposal" | "prepareProposalWorkPlan" | "authorizeProposalWorkPlan" | "recoverPlanning" | "recoverProposalCapture" | "recoverProposalRevision" | "recoverProposalWorkPlan"> & {
   identity: () => string; now: () => number; captureSelection: typeof reviewCommands.captureScope;
   planStatus: typeof workPlanCommands.status; startPlan: typeof workPlanCommands.start; readPlanStartSettlement: typeof workPlanCommands.startSettlement;
@@ -29,6 +37,9 @@ type Ports = typeof conversationDraftCommands & Pick<typeof conversationCommands
   readTeamExecution: typeof workPlanCommands.teamExecution; sendTeamMessage: typeof workPlanCommands.sendTeamMessage;
   publishTeam: typeof workPlanCommands.publishTeam; teamMessageSettlement: typeof workPlanCommands.teamMessageSettlement;
   teamPublicationSettlement: typeof workPlanCommands.teamPublicationSettlement;
+  teamRecoveryState: typeof workPlanCommands.teamRecoveryState; prepareTeamRecovery: typeof workPlanCommands.prepareTeamRecovery;
+  authorizeTeamRecovery: typeof workPlanCommands.authorizeTeamRecovery; readTeamRecoveryPreparation: typeof workPlanCommands.readTeamRecoveryPreparation;
+  closeTeamRecoveryPreparation: typeof workPlanCommands.closeTeamRecoveryPreparation; teamRecoverySettlement: typeof workPlanCommands.teamRecoverySettlement;
 };
 type JournalWrite = Parameters<Ports["write"]>[0]["write"];
 type JournalJob = { kind: "write"; request: { sessionToken: string; write: JournalWrite } }
@@ -42,7 +53,7 @@ export interface ConversationInput {
   revocationStates: ReadonlyMap<string, ConversationRevocationState>;
   busy: "submit" | "check" | null;
   outcome: "recorded" | "unknown" | "absent" | "blocked" | "mismatch" | null;
-  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | "runStarted" | "runPaused" | "runStopped" | "runTakenOver" | "runContinued" | "runNotApplied" | "teamMessageSaved" | "teamPublicationSaved" | null;
+  notice: "threadCreated" | "messageSaved" | "planningRecorded" | "proposalRecorded" | "workPlanRecorded" | "runStarted" | "runPaused" | "runStopped" | "runTakenOver" | "runContinued" | "runNotApplied" | "teamMessageSaved" | "teamPublicationSaved" | "teamRecoveryRecorded" | null;
   failure: { kind: "journal" | "action"; cause: CommandFailure } | null;
   planning: ConversationPlanningInput;
   proposalEditorId: string | null;
@@ -50,6 +61,7 @@ export interface ConversationInput {
   capturedResultIds: readonly string[];
   workPlan: ConversationWorkPlanInput;
   readyRuns: ReadonlyMap<string, ConversationRunReady>;
+  recoveryStates: ReadonlyMap<string, ConversationRecoveryState>;
   runFailure: ConversationRunFailure | null;
   runBusy: { planId: string; kind: "start" | "control" | "check" } | null;
 }
@@ -112,6 +124,9 @@ export class ConversationSession {
       readProposalWorkPlan: conversationCommands.readProposalWorkPlan, readTeamExecution: workPlanCommands.teamExecution,
       sendTeamMessage: workPlanCommands.sendTeamMessage, publishTeam: workPlanCommands.publishTeam,
       teamMessageSettlement: workPlanCommands.teamMessageSettlement, teamPublicationSettlement: workPlanCommands.teamPublicationSettlement,
+      teamRecoveryState: workPlanCommands.teamRecoveryState, prepareTeamRecovery: workPlanCommands.prepareTeamRecovery,
+      authorizeTeamRecovery: workPlanCommands.authorizeTeamRecovery, readTeamRecoveryPreparation: workPlanCommands.readTeamRecoveryPreparation,
+      closeTeamRecoveryPreparation: workPlanCommands.closeTeamRecoveryPreparation, teamRecoverySettlement: workPlanCommands.teamRecoverySettlement,
       captureSelection: request => reviewCommands.captureScope(request),
       identity: () => crypto.randomUUID(), now: () => Date.now(), ...ports };
     this.writerId = this.ports.identity();
@@ -162,7 +177,7 @@ export class ConversationSession {
       const value = head.value ?? { text: "", editSeq: "0", pending: null };
       this.records.set(conversationId, { input: { key, head, value, dirty: false, journalBusy: false, revocationStates: new Map((value.revocations ?? []).map(slot => [slot.request.actionId, { busy: null, outcome: "unknown", failure: null }])), busy: null, outcome: value.pending ? "unknown" : null, notice: null, failure: null, planning: planningInput(),
         proposalEditorId: value.proposalEdits?.[0]?.proposalId ?? null, proposalFailure: null, capturedResultIds: [], workPlan: workPlanInput(),
-        readyRuns: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, submitting: null, revoking: new Set(), revocationEpoch: new Map() });
+        readyRuns: new Map(), recoveryStates: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, submitting: null, revoking: new Set(), revocationEpoch: new Map() });
       this.publish(this.state.activeId === conversationId ? { inputFailure: null } : {}); return true;
     }).catch(error => { if (this.kernel.live && this.state.activeId === conversationId) this.publish({ inputFailure: { conversationId, cause: commandFailure(error) } }); return false;
     }).finally(() => { this.opening.delete(conversationId); });
@@ -174,7 +189,7 @@ export class ConversationSession {
     const pending: ConversationDraftPending = { kind: "create", submittedSeq: "1", request: { ...key, actionId: this.ports.identity(), title: null } };
     const record: RecordState = { input: { key, head: { key, revision: "0", writerId: null, value: null }, value: { text: "", editSeq: "1", pending },
       dirty: true, journalBusy: false, revocationStates: new Map(), busy: null, outcome: null, notice: null, failure: null, planning: planningInput(), proposalEditorId: null, proposalFailure: null, capturedResultIds: [], workPlan: workPlanInput(),
-      readyRuns: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, submitting: null, revoking: new Set(), revocationEpoch: new Map() };
+      readyRuns: new Map(), recoveryStates: new Map(), runFailure: null, runBusy: null }, job: null, writing: null, action: false, submitting: null, revoking: new Set(), revocationEpoch: new Map() };
     this.records.set(conversationId, record); this.changed++; this.publish({ activeId: conversationId });
     await this.submit(record);
   }
@@ -182,7 +197,7 @@ export class ConversationSession {
     const record = this.records.get(conversationId); if (!record || !this.kernel.live || text === record.input.value.text) return;
     const editSeq = nextEditSeq(record.input.value.editSeq), value = { ...record.input.value, text, editSeq, messageEditSeq: editSeq };
     this.changed++; this.update(record, { value, dirty: true, notice: null });
-    if (!record.input.failure && !record.action || isConversationTeamPending(value.pending) && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
+    if (!record.input.failure && !record.action || (isConversationTeamPending(value.pending) || value.pending?.kind === "team-recovery") && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
   }
   async append(conversationId: string) {
     const record = this.records.get(conversationId);
@@ -465,7 +480,9 @@ export class ConversationSession {
       const editSeq = nextEditSeq(record.input.value.editSeq), slot: ConversationDraftRevocation = { submittedSeq: editSeq,
         request: { projectId: link.projectId, planId: link.planId, actionId, expectedGeneration: expected.lease.generation, command } };
       record.revocationEpoch.set(link.planId, (record.revocationEpoch.get(link.planId) ?? 0) + 1);
-      this.forgetReadyRun(record, link.planId); this.changed++;
+      this.forgetReadyRun(record, link.planId);
+      const recovery = this.recoveryState(record, link.planId);
+      this.updateRecovery(record, link.planId, { prepared: null, consent: false, receipt: null, epoch: recovery.epoch + 1 }); this.changed++;
       this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq,
         editSeq, revocations: [...(record.input.value.revocations ?? []), slot] }, dirty: true, notice: null, runFailure: null });
       this.updateRevocation(record, actionId, { busy: "submit", outcome: null, failure: null });
@@ -534,6 +551,8 @@ export class ConversationSession {
       await this.ports.startPlan({ ...this.context, ...pending.request }, pending.expectedAttemptId);
       if (!this.kernel.live) return;
       this.forgetReadyRun(record, pending.request.planId);
+      const recovery = this.recoveryState(record, pending.request.planId);
+      if (recovery.receipt?.actionId === pending.request.actionId) this.updateRecovery(record, pending.request.planId, { receipt: null, consent: false });
     } else {
       const receipt = await this.ports.controlPlan({ ...this.context, ...pending.request });
       if (!this.kernel.live) return;
@@ -554,7 +573,7 @@ export class ConversationSession {
   canRetryRun(conversationId: string) {
     const record = this.records.get(conversationId), pending = record?.input.value.pending;
     if (!record || record.input.outcome !== "absent" || !isRunPending(pending)) return false;
-    return pending.kind === "work-plan-control" ? pending.request.command !== "continue" : !!record.input.readyRuns.get(pending.request.planId);
+    return pending.kind === "work-plan-control" ? pending.request.command !== "continue" : !!record.input.readyRuns.get(pending.request.planId) || this.recoveryState(record, pending.request.planId).receipt?.actionId === pending.request.actionId;
   }
   private async recoverRun(record: RecordState, pending: ConversationRunPending) {
     const found = pending.kind === "work-plan-control"
@@ -562,11 +581,13 @@ export class ConversationSession {
       : await this.ports.readPlanStartSettlement({ ...this.context, ...pending.request, expectedAttemptId: pending.expectedAttemptId });
     if (found.settlement.outcome.kind !== "pending") return { outcome: found.settlement.outcome };
     if (pending.kind === "work-plan-control" && pending.request.command === "continue"
-      || pending.kind === "work-plan-start" && !record.input.readyRuns.has(pending.request.planId))
+      || pending.kind === "work-plan-start" && !record.input.readyRuns.has(pending.request.planId)
+        && this.recoveryState(record, pending.request.planId).receipt?.actionId !== pending.request.actionId)
       return { outcome: { kind: "pending" as const, replay: "blocked" as const } };
     const status = await this.ports.planStatus({ ...this.context, planId: pending.request.planId });
     const allowed = status.lease.generation === pending.request.expectedGeneration && status.state !== "stopped"
-      && (pending.kind === "work-plan-control" || runReadyCurrent(record.input.readyRuns.get(pending.request.planId), status, this.ports.now()));
+      && (pending.kind === "work-plan-control" || runReadyCurrent(record.input.readyRuns.get(pending.request.planId), status, this.ports.now())
+        || this.recoveryStartCurrent(record, status, pending.request.actionId));
     return { outcome: { kind: "pending" as const, replay: allowed ? "explicit-same-request" as const : "blocked" as const } };
   }
   private async retryRun(record: RecordState, pending: ConversationRunPending, current: () => boolean) {
@@ -650,7 +671,7 @@ export class ConversationSession {
     const record = this.records.get(link.conversationId), pending = record?.input.value.pending;
     if (!record || record.action || isConversationTeamPending(pending) && pending.request.lease.planId === link.planId) return false;
     return this.changeTeamDraft(link, before => {
-      const draft = { ...before, [kind]: null }; return draft.guidance || draft.publication ? draft : null;
+      const draft = { ...before, [kind]: null }; return draft.guidance || draft.publication || draft.recovery || draft.recoveryRecorded ? draft : null;
     });
   }
   canSendTeam(conversationId: string) {
@@ -748,6 +769,239 @@ export class ConversationSession {
     const outcome = proof.settlement.outcome;
     return { outcome: outcome.kind === "pending" ? { kind: "pending" as const, replay: "explicit-same-request" as const } : outcome };
   }
+  private recoveryState(record: RecordState, planId: string) {
+    return record.input.recoveryStates.get(planId) ?? initialConversationRecoveryState();
+  }
+  private updateRecovery(record: RecordState, planId: string, change: Partial<ConversationRecoveryState>) {
+    const states = new Map(record.input.recoveryStates);
+    states.set(planId, { ...this.recoveryState(record, planId), ...change });
+    this.update(record, { recoveryStates: states });
+  }
+  setTeamRecoveryOpen(link: ConversationPlanLink, open: boolean) {
+    const record = this.records.get(link.conversationId);
+    if (record && this.kernel.live) this.updateRecovery(record, link.planId, { open });
+  }
+  invalidateTeamRecovery(link: ConversationPlanLink) {
+    const record = this.records.get(link.conversationId); if (!record || !this.kernel.live) return;
+    const previous = this.recoveryState(record, link.planId);
+    this.updateRecovery(record, link.planId, { prepared: null, consent: false, epoch: previous.epoch + 1 });
+  }
+  beginTeamRecovery(link: ConversationPlanLink, status: WorkPlanStatusView, team: TeamExecutionView) {
+    const record = this.records.get(link.conversationId);
+    if (!record || !this.kernel.live || !runMatchesLink(status, link) || team.planId !== link.planId || !status.plan.options.teamExecution) return;
+    if (!this.teamDraft(link.conversationId, link.planId)?.recovery)
+      this.changeTeamDraft(link, (before, editSeq) => ({ ...before, recovery: initialConversationRecoveryDraft(status.plan, team, editSeq) }));
+    this.updateRecovery(record, link.planId, { open: true, preparedPlan: structuredClone(status.plan) });
+  }
+  editTeamRecovery(link: ConversationPlanLink, patch: Partial<Omit<ConversationRecoveryDraft, "editSeq">>) {
+    const before = this.teamDraft(link.conversationId, link.planId)?.recovery;
+    if (!before) return false;
+    this.invalidateTeamRecovery(link);
+    const record = this.records.get(link.conversationId); if (record) this.updateRecovery(record, link.planId, { receipt: null, readyEpoch: null });
+    return this.changeTeamDraft(link, (value, editSeq) => ({ ...value, recovery: { ...before, ...structuredClone(patch), editSeq } }));
+  }
+  editTeamRecoveryMember(link: ConversationPlanLink, key: number, patch: Partial<Omit<ConversationRecoveryMember, "key" | "original">>) {
+    const draft = this.teamDraft(link.conversationId, link.planId)?.recovery;
+    if (!draft?.members.some(member => member.key === key)) return false;
+    return this.editTeamRecovery(link, { members: draft.members.map(member => member.key === key
+      ? { ...member, ...structuredClone(patch), ...(patch.config ? { config: editedAiConfig(member.config, patch.config) } : {}) } : member) });
+  }
+  addTeamRecoveryMember(link: ConversationPlanLink, plan: WorkPlanView) {
+    const draft = this.teamDraft(link.conversationId, link.planId)?.recovery;
+    if (!draft || plan.planId !== link.planId || plan.digest !== link.planDigest || draft.members.length >= 8 || draft.nextKey >= 0xffffffff) return false;
+    const member = newConversationRecoveryMember(draft.nextKey, plan);
+    return !!member && this.editTeamRecovery(link, { members: [...draft.members, member], nextKey: draft.nextKey + 1 });
+  }
+  removeTeamRecoveryMember(link: ConversationPlanLink, key: number) {
+    const draft = this.teamDraft(link.conversationId, link.planId)?.recovery;
+    if (!draft) return false;
+    return this.editTeamRecovery(link, { members: draft.members.filter(member => member.key !== key),
+      ...(draft.recipientKey === key ? { recipientKey: null } : {}) });
+  }
+  discardTeamRecovery(link: ConversationPlanLink) {
+    const record = this.records.get(link.conversationId);
+    if (!record || record.action || record.input.value.pending) return false;
+    this.updateRecovery(record, link.planId, initialConversationRecoveryState());
+    return this.changeTeamDraft(link, before => ({ ...before, recovery: null }));
+  }
+  setTeamRecoveryConsent(link: ConversationPlanLink, consent: boolean) {
+    const record = this.records.get(link.conversationId); if (!record || !this.kernel.live) return;
+    const state = this.recoveryState(record, link.planId), draft = this.teamDraft(link.conversationId, link.planId)?.recovery;
+    if (!consent || state.prepared && draft?.editSeq === state.preparedSeq && !state.busy)
+      this.updateRecovery(record, link.planId, { consent });
+  }
+  private finishRecovery(record: RecordState, planId: string) {
+    record.action = false; record.submitting = null;
+    if (!this.kernel.live) return;
+    this.update(record, { busy: null }); this.updateRecovery(record, planId, { busy: null });
+    if (record.input.dirty && !record.job && record.input.failure?.kind !== "journal") void this.persist(record);
+  }
+  private failRecovery(record: RecordState, planId: string, error: unknown) {
+    if (!this.kernel.live) return;
+    const cause = commandFailure(error);
+    this.updateRecovery(record, planId, { failure: cause, consent: false });
+    this.update(record, { outcome: record.input.value.pending ? "unknown" : null, failure: { kind: "action", cause } });
+  }
+  async prepareTeamRecovery(originalLink: ConversationPlanLink, originalStatus: WorkPlanStatusView, originalTeam: TeamExecutionView,
+    originalObservation: WorkPlanTeamRecoveryStateView, current: () => boolean) {
+    const link = structuredClone(originalLink), expected = structuredClone(originalStatus), expectedTeam = structuredClone(originalTeam), expectedObservation = structuredClone(originalObservation);
+    const record = this.records.get(link.conversationId), draft = structuredClone(this.teamDraft(link.conversationId, link.planId)?.recovery ?? null);
+    if (!record || !draft || !current() || !this.canSendTeam(link.conversationId) || !runMatchesLink(expected, link)
+      || !expected.plan.options.teamExecution || !teamRecoveryAvailable(expectedObservation, expected.plan.options.teamExecution.limits)
+      || conversationRecoveryProblem(draft, expected.plan, expectedTeam, expectedObservation)) return;
+    const epoch = record.revocationEpoch.get(link.planId) ?? 0;
+    record.action = true; this.update(record, { busy: "submit", failure: null, notice: null });
+    this.updateRecovery(record, link.planId, { busy: "prepare", prepared: null, consent: false, failure: null, receipt: null });
+    try {
+      const stored = await this.ports.readProposalWorkPlan({ ...this.context, conversationId: link.conversationId, planId: link.planId });
+      if (!this.kernel.live || !current()) return;
+      if (!same(stored, link)) throw new Error("The original conversation plan changed");
+      const status = await this.currentRun(record, link, expected, true, current); if (!status) return;
+      const [team, observation] = await Promise.all([
+        this.ports.readTeamExecution({ ...this.context, planId: link.planId, afterWork: null, afterMessage: null, limit: 16 }),
+        this.ports.teamRecoveryState({ ...this.context, planId: link.planId }),
+      ]);
+      if (!this.kernel.live || !current()) return;
+      if (BigInt(team.effectiveVersion.lease.generation) > BigInt(observation.state.lease.generation)
+        || !same(team.effectiveVersion, observation.state.effectiveVersion) || !same(team.roster, expectedTeam.roster) || !same(team.effectiveVersion, expectedTeam.effectiveVersion)
+        || !same(observation.state.lease, expectedObservation.state.lease) || !same(observation.state.effectiveVersion, expectedObservation.state.effectiveVersion)
+        || !status.plan.options.teamExecution || !teamRecoveryAvailable(observation, status.plan.options.teamExecution.limits)
+        || conversationRecoveryProblem(draft, status.plan, team, observation)) throw new Error("The recovery basis changed. Read the team records again");
+      const members = draft.members.map(member => ({ memberId: member.original?.memberId ?? this.ports.identity(),
+        roleVersionId: unchangedConversationRecoveryMember(member) ? member.original!.roleVersionId : this.ports.identity(),
+        displayName: member.displayName, role: member.role, config: member.config, unitIds: member.unitIds, toolHandles: member.toolHandles, kinds: member.kinds }));
+      const recipient = members[draft.members.findIndex(member => member.key === draft.recipientKey)], unit = status.plan.scope.find(unit => unit.unitId === draft.unitId);
+      if (!recipient || !unit || (record.revocationEpoch.get(link.planId) ?? 0) !== epoch || this.teamDraft(link.conversationId, link.planId)?.recovery?.editSeq !== draft.editSeq) return;
+      const wire = { ...this.context, projectId: link.projectId, preparationId: this.ports.identity(), recovery: {
+        projectId: link.projectId, planId: link.planId, expectedLease: structuredClone(observation.state.lease), expectedEffectiveVersion: structuredClone(observation.state.effectiveVersion), members,
+        work: { workId: this.ports.identity(), memberId: recipient.memberId, kind: draft.kind, instructions: draft.instructions, postIds: draft.postIds,
+          priorWork: draft.priorWork, target: { unitId: unit.unitId, locale: status.plan.locale, sourceSnapshotId: unit.sourceSnapshotId, sourceRevisionId: unit.sourceRevisionId } } } };
+      if (!validateRequestWorkPlanTeamRecoveryPrepare(wire)) throw new Error("Invalid original team recovery input");
+      const { sessionToken: _token, ...request } = wire;
+      const pending: ConversationRecoveryPending = { kind: "team-recovery", conversationId: link.conversationId, submittedSeq: draft.editSeq, request, authorization: null };
+      this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq,
+        editSeq: nextEditSeq(record.input.value.editSeq), pending }, dirty: true, outcome: "unknown" });
+      record.submitting = pending; this.publish();
+      if (!await this.persist(record) || !this.kernel.live || !current() || !same(record.input.value.pending, pending)
+        || this.teamDraft(link.conversationId, link.planId)?.recovery?.editSeq !== draft.editSeq || (record.revocationEpoch.get(link.planId) ?? 0) !== epoch) return;
+      const value = await this.ports.prepareTeamRecovery({ ...this.context, ...request }, status.plan, observation);
+      // The owner retains a dispatched preparation even after its view is hidden or newer input arrives.
+      if (!this.kernel.live) return;
+      this.updateRecovery(record, link.planId, { prepared: value, preparedRequest: request, preparedSeq: draft.editSeq, preparedPlan: status.plan,
+        preparedEffects: [...status.effects], memberKeys: draft.members.map(member => member.key), unresolvedWork: observation.state.unresolvedWork, epoch, consent: false });
+    } catch (error) { this.failRecovery(record, link.planId, error); }
+    finally { this.finishRecovery(record, link.planId); }
+  }
+  async authorizeTeamRecovery(link: ConversationPlanLink, expected: WorkPlanStatusView, sequence: string, current: () => boolean,
+    permission: Pick<WorkPlanTeamRecoveryAuthorizeRequest, "checkerExecutions" | "toolExecution" | "applicationToolExecutions">) {
+    const record = this.records.get(link.conversationId), state = record && this.recoveryState(record, link.planId), pending = record?.input.value.pending;
+    if (!record || !state?.prepared || !state.preparedPlan || !state.preparedRequest || !state.consent || state.busy || record.action || record.job || !current()
+      || pending?.kind !== "team-recovery" || pending.authorization || !same(pending.request, state.preparedRequest) || sequence !== state.preparedSeq
+      || this.teamDraft(link.conversationId, link.planId)?.recovery?.editSeq !== sequence || state.epoch !== (record.revocationEpoch.get(link.planId) ?? 0)) return;
+    const capture = structuredClone(state), permissions = structuredClone(permission), originalLink = structuredClone(link), originalStatus = structuredClone(expected);
+    record.action = true; this.update(record, { busy: "submit", failure: null }); this.updateRecovery(record, link.planId, { busy: "authorize", failure: null });
+    try {
+      const status = await this.currentRun(record, originalLink, originalStatus, true, current); if (!status) return;
+      const [team, observation] = await Promise.all([
+        this.ports.readTeamExecution({ ...this.context, planId: link.planId, afterWork: null, afterMessage: null, limit: 16 }),
+        this.ports.teamRecoveryState({ ...this.context, planId: link.planId }),
+      ]);
+      if (!this.kernel.live || !current() || !recoveryBasisMatches(capture.prepared!, observation, team) || !status.plan.options.teamExecution
+        || !teamRecoveryAvailable(observation, status.plan.options.teamExecution.limits) || !same(status.effects, capture.preparedEffects)
+        || state.epoch !== (record.revocationEpoch.get(link.planId) ?? 0) || !this.recoveryState(record, link.planId).consent
+        || this.teamDraft(link.conversationId, link.planId)?.recovery?.editSeq !== sequence) return;
+      const authorization = { projectId: link.projectId, planId: link.planId, preparationId: capture.preparedRequest!.preparationId,
+        baseLease: structuredClone(capture.prepared!.preview.baseLease), recovery: { actionId: this.ports.identity(), digest: capture.prepared!.preview.digest,
+          confirmed: true, effects: [...capture.preparedEffects] }, ...permissions };
+      const submitted: ConversationRecoveryPending = { ...pending, authorization };
+      this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq: nextEditSeq(record.input.value.editSeq), pending: submitted }, dirty: true, outcome: "unknown" });
+      record.submitting = submitted; this.publish();
+      if (!await this.persist(record) || !this.kernel.live || !current() || !same(record.input.value.pending, submitted)
+        || state.epoch !== (record.revocationEpoch.get(link.planId) ?? 0) || !this.recoveryState(record, link.planId).consent
+        || this.teamDraft(link.conversationId, link.planId)?.recovery?.editSeq !== sequence) return;
+      const { baseLease: _base, ...request } = authorization;
+      const receipt = await this.ports.authorizeTeamRecovery({ ...this.context, ...request }, capture.prepared!);
+      if (!this.kernel.live) return;
+      const sameInput = this.teamDraft(link.conversationId, link.planId)?.recovery?.editSeq === sequence;
+      this.retainRecoveryReceipt(record, submitted, receipt);
+      if (state.epoch === (record.revocationEpoch.get(link.planId) ?? 0)
+        && sameInput) this.updateRecovery(record, link.planId, { receipt, readyEpoch: record.revocationEpoch.get(link.planId) ?? 0, consent: false, prepared: null });
+      this.onRecorded(); this.update(record, { outcome: "recorded", failure: null }); await this.resolve(record, submitted);
+    } catch (error) { this.failRecovery(record, link.planId, error); }
+    finally { this.finishRecovery(record, link.planId); }
+  }
+  private retainRecoveryReceipt(record: RecordState, pending: ConversationRecoveryPending, receipt: TeamRecoveryReceipt) {
+    if (!pending.authorization || receipt.workId !== pending.request.recovery.work.workId) throw new Error("The recovery receipt does not match the original work");
+    const link = { projectId: record.input.key.projectId, conversationId: record.input.key.conversationId, planId: pending.request.recovery.planId };
+    const editSeq = nextEditSeq(record.input.value.editSeq), state = this.recoveryState(record, link.planId);
+    const drafts = record.input.value.teamDrafts?.map(draft => {
+      if (draft.planId !== link.planId) return draft;
+      const recovery = draft.recovery;
+      const members = recovery?.members.map((member, index) => {
+        const capturedIndex = member.original ? pending.request.recovery.members.findIndex(value => value.memberId === member.original?.memberId)
+          : recovery.editSeq === pending.submittedSeq ? index : same(state.preparedRequest, pending.request) ? state.memberKeys.indexOf(member.key) : -1;
+        const original = pending.request.recovery.members[capturedIndex];
+        return original ? { ...member, original: structuredClone(original) } : member;
+      });
+      return { ...draft, ...(recovery && members && !same(recovery.members, members) ? { recovery: { ...recovery, members, editSeq } } : {}),
+        recoveryRecorded: { request: pending.request, authorization: pending.authorization!, receipt: structuredClone(receipt) } };
+    });
+    this.changed++; this.update(record, { value: { ...record.input.value, messageEditSeq: record.input.value.messageEditSeq ?? record.input.value.editSeq, editSeq, teamDrafts: drafts }, dirty: true });
+  }
+
+  private recoveryStartCurrent(record: RecordState, status: WorkPlanStatusView, actionId?: string) {
+    const state = this.recoveryState(record, status.plan.planId), receipt = state.receipt;
+    return !!receipt && (!actionId || receipt.actionId === actionId) && status.state === "active"
+      && same(receipt.effectiveVersion.lease, status.lease) && state.readyEpoch === (record.revocationEpoch.get(status.plan.planId) ?? 0)
+      && BigInt(status.expiresAt) > BigInt(Math.floor(this.ports.now() / 1000));
+  }
+  canStartTeamRecovery(conversationId: string, status: WorkPlanStatusView) {
+    const record = this.records.get(conversationId);
+    return !!record && this.runAvailable(record, status.plan.planId) && this.recoveryStartCurrent(record, status);
+  }
+  async startTeamRecovery(link: ConversationPlanLink, originalStatus: WorkPlanStatusView, current: () => boolean = () => true) {
+    const record = this.records.get(link.conversationId), receipt = record && this.recoveryState(record, link.planId).receipt;
+    if (!record || !receipt || !current() || !this.canStartTeamRecovery(link.conversationId, originalStatus)) return;
+    record.action = true; this.update(record, { busy: "check", runBusy: { planId: link.planId, kind: "start" }, runFailure: null });
+    try {
+      const status = await this.currentRun(record, structuredClone(link), structuredClone(originalStatus), true, current); if (!status) return;
+      if (this.recoveryState(record, link.planId).receipt !== receipt || (record.revocationEpoch.get(link.planId) ?? 0) !== this.recoveryState(record, link.planId).readyEpoch) return;
+      const editSeq = nextEditSeq(record.input.value.editSeq), pending: ConversationRunPending = { kind: "work-plan-start", conversationId: link.conversationId,
+        submittedSeq: editSeq, expectedAttemptId: receipt.attemptId, request: { projectId: link.projectId, planId: link.planId,
+          actionId: receipt.actionId, expectedGeneration: receipt.effectiveVersion.lease.generation } };
+      this.queueRun(record, pending, editSeq);
+      await this.performRun(record, pending, current);
+    } catch (error) { this.runFailed(record, link.planId, error); }
+    finally { this.finishRun(record); }
+  }
+  async closeTeamRecovery(link: ConversationPlanLink) {
+    const record = this.records.get(link.conversationId), pending = record?.input.value.pending;
+    if (!record || !this.kernel.live || record.action || record.job || pending?.kind !== "team-recovery" || pending.request.recovery.planId !== link.planId) return;
+    record.action = true; this.update(record, { busy: "check", failure: null });
+    this.updateRecovery(record, link.planId, { busy: "close", consent: false, prepared: null, receipt: null, failure: null });
+    try {
+      await this.ports.closeTeamRecoveryPreparation({ ...this.context, ...pending.request });
+      if (!this.kernel.live) return;
+      const recovery = await this.recoverTeamRecovery(pending);
+      if (!this.kernel.live) return;
+      if (recovery.outcome.kind === "recorded") { this.retainRecoveryReceipt(record, pending, recovery.outcome.receipt); this.onRecorded(); await this.resolve(record, pending); }
+      else if (recovery.outcome.kind === "fenced-not-applied") await this.resolve(record, pending, "fenced-not-applied");
+      this.update(record, { outcome: recovery.outcome.kind === "pending" ? "blocked" : recovery.outcome.kind === "recorded" ? "recorded" : "blocked" });
+    } catch (error) { this.failRecovery(record, link.planId, error); }
+    finally { this.finishRecovery(record, link.planId); }
+  }
+  private async recoverTeamRecovery(pending: ConversationRecoveryPending) {
+    if (pending.authorization) {
+      const result = await this.ports.teamRecoverySettlement({ ...this.context, ...pending.authorization });
+      if (result.settlement.outcome.kind === "recorded" && result.settlement.outcome.receipt.workId !== pending.request.recovery.work.workId)
+        throw new Error("The recovery receipt belongs to different original work");
+      return { outcome: result.settlement.outcome.kind === "pending" ? { kind: "pending" as const, replay: "blocked" as const } : result.settlement.outcome };
+    }
+    const result = await this.ports.readTeamRecoveryPreparation({ ...this.context, ...pending.request });
+    return { outcome: BigInt(result.lease.generation) > BigInt(pending.request.recovery.expectedLease.generation) && result.hostCallbacksDrained
+      ? { kind: "fenced-not-applied" as const } : { kind: "pending" as const, replay: "blocked" as const } };
+  }
+
   private canPrepare(record: RecordState) {
     const { planning, value, busy, failure } = record.input;
     return this.kernel.live && !record.action && !busy && !value.pending && !failure
@@ -946,15 +1200,28 @@ export class ConversationSession {
     if (!record || !pending || !this.kernel.live || record.action || record.input.busy || record.job) return;
     record.action = true; this.update(record, { busy: "check", failure: null });
     try {
+      if (pending.kind === "team-recovery") {
+        const recovery = await this.recoverTeamRecovery(pending);
+        if (!this.kernel.live) return;
+        if (recovery.outcome.kind === "recorded") {
+          this.retainRecoveryReceipt(record, pending, recovery.outcome.receipt); this.onRecorded();
+          this.update(record, { outcome: "recorded" }); await this.resolve(record, pending);
+        } else if (recovery.outcome.kind === "fenced-not-applied") {
+          this.update(record, { outcome: "blocked" }); await this.resolve(record, pending, "fenced-not-applied");
+        } else this.update(record, { outcome: "blocked" });
+        return;
+      }
       const recovery = await this.recover(pending);
       if (!this.kernel.live) return;
       const outcome = recovery.outcome;
       this.update(record, { busy: null, outcome: outcome.kind === "recorded" ? "recorded" : outcome.kind === "mismatch" ? "mismatch"
         : outcome.kind === "pending" && outcome.replay === "explicit-same-request" ? "absent" : "blocked" });
-      if (outcome.kind === "recorded") { this.recordCaptureAcknowledgement(record, pending); this.onRecorded(); await this.resolve(record, pending); }
+      if (outcome.kind === "recorded") {
+        this.recordCaptureAcknowledgement(record, pending); this.onRecorded(); await this.resolve(record, pending);
+      }
       else if (outcome.kind === "fenced-not-applied") { if (isRunPending(pending)) this.forgetReadyRun(record, pending.request.planId); await this.resolve(record, pending, "fenced-not-applied"); }
     } catch (error) { this.update(record, { busy: null, outcome: "unknown", failure: { kind: "action", cause: commandFailure(error) } });
-    } finally { record.action = false; }
+    } finally { record.action = false; if (this.kernel.live) this.update(record, { busy: null }); }
   }
   async retry(conversationId: string, current: () => boolean = () => true) {
     const record = this.records.get(conversationId);
@@ -965,7 +1232,13 @@ export class ConversationSession {
   private recordCaptureAcknowledgement(record: RecordState, pending: ConversationDraftPending) {
     if (pending.kind === "proposal-capture" && !record.input.capturedResultIds.includes(pending.request.resultId)) this.update(record, { capturedResultIds: [...record.input.capturedResultIds, pending.request.resultId] });
     if (pending.kind === "proposal-work-plan") this.update(record, { workPlan: { ...record.input.workPlan, prepared: null, consent: false, executionConsent: emptyExecutionConsent() } });
-    if (isRunPending(pending)) this.forgetReadyRun(record, pending.request.planId);
+    if (isRunPending(pending)) {
+      this.forgetReadyRun(record, pending.request.planId);
+      if (pending.kind === "work-plan-start") {
+        const recovery = this.recoveryState(record, pending.request.planId);
+        if (recovery.receipt?.actionId === pending.request.actionId) this.updateRecovery(record, pending.request.planId, { receipt: null, consent: false });
+      }
+    }
   }
   private recordedNotice(pending: ConversationDraftPending): NonNullable<ConversationInput["notice"]> {
     switch (pending.kind) {
@@ -979,11 +1252,12 @@ export class ConversationSession {
         const notices: Record<WorkPlanCommand, NonNullable<ConversationInput["notice"]>> = { pause: "runPaused", stop: "runStopped", "take-over": "runTakenOver", continue: "runContinued" };
         return notices[pending.request.command];
       }
+      case "team-recovery": return "teamRecoveryRecorded";
       case "team-message": return "teamMessageSaved";
       case "team-publication": return "teamPublicationSaved";
     }
   }
-  private recover(pending: ConversationDraftPending) {
+  private recover(pending: Exclude<ConversationDraftPending, { kind: "team-recovery" }>) {
     const sessionToken = this.context.sessionToken;
     switch (pending.kind) {
       case "create": return this.ports.recoverCreate({ sessionToken, ...pending.request });
@@ -993,6 +1267,7 @@ export class ConversationSession {
       case "proposal-revision": return this.ports.recoverProposalRevision({ sessionToken, ...pending.request });
       case "proposal-work-plan": return this.ports.recoverProposalWorkPlan({ sessionToken, projectId: this.context.projectId, authorization: pending.request });
       case "team-message": case "team-publication": return this.recoverTeam(pending);
+
       case "work-plan-start": case "work-plan-control": {
         const record = this.records.get(pending.conversationId);
         if (!record) return Promise.reject(new Error("The conversation input is not open"));

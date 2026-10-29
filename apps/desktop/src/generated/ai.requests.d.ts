@@ -176,7 +176,10 @@ export interface Requests {
   workPlanTeamRecoveryAction: WorkPlanTeamRecoveryAuthorizeRequest;
   workPlanTeamRecoveryAuthorize: WorkPlanTeamRecoveryAuthorizeRequest;
   workPlanTeamRecoveryEnd: WorkPlanTeamRecoveryAuthorizeRequest;
+  workPlanTeamRecoveryPreparationClose: WorkPlanTeamRecoveryPrepareRequest;
+  workPlanTeamRecoveryPreparationRead: WorkPlanTeamRecoveryPrepareRequest;
   workPlanTeamRecoveryPrepare: WorkPlanTeamRecoveryPrepareRequest;
+  workPlanTeamRecoverySettlement: WorkPlanTeamRecoverySettlementRequest;
   workPlanTeamRecoveryState: WorkPlanTeamRecoveryStateRequest;
   workPlanTeamWorkTools: WorkPlanTeamWorkToolsRequest;
   workProtectionRead: WorkProtectionReadRequest;
@@ -1413,6 +1416,20 @@ export interface TeamWorkReference {
   attemptId: ExecutionId;
   inputDigest: string;
   taskId: ExecutionId;
+}
+export interface WorkPlanTeamRecoverySettlementRequest {
+  /**
+   * @maxItems 32
+   */
+  applicationToolExecutions: ApplicationScopeBasis[];
+  baseLease: AutomationLease;
+  checkerExecutions: ReviewCheckerKey[];
+  planId: ExecutionId;
+  preparationId: ExecutionId;
+  projectId: ExecutionId;
+  recovery: AuthorizeTeamRecovery;
+  sessionToken: string;
+  toolExecution: boolean;
 }
 export interface WorkPlanTeamRecoveryStateRequest {
   planId: ExecutionId;

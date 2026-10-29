@@ -16,6 +16,18 @@ pub(super) struct RecoveryPreparation {
     authorized_action: Option<ExecutionId>,
     pub(super) stop: Cancellation,
 }
+impl RecoveryPreparation {
+    pub(super) fn new(id: ExecutionId, request: PrepareTeamRecovery, stop: Cancellation) -> Self {
+        Self {
+            id,
+            request,
+            prepared: None,
+            settings_revision: None,
+            authorized_action: None,
+            stop,
+        }
+    }
+}
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -42,6 +54,80 @@ request!(
         plan_id: ExecutionId
     }
 );
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WorkPlanTeamRecoverySettlementRequest {
+        preparation_id: ExecutionId,
+        plan_id: ExecutionId,
+        base_lease: AutomationLease,
+        recovery: AuthorizeTeamRecovery,
+        checker_executions: Vec<ReviewCheckerKey>,
+        tool_execution: bool,
+        #[cfg_attr(feature = "wire-schema", schemars(length(max = 32)))]
+        application_tool_executions: Vec<tsumugi_core::execution::ApplicationScopeBasis>
+    }
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTeamRecoverySettlementOriginal {
+    pub project_id: ExecutionId,
+    pub preparation_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub base_lease: AutomationLease,
+    pub recovery: AuthorizeTeamRecovery,
+    pub checker_executions: Vec<ReviewCheckerKey>,
+    pub tool_execution: bool,
+    pub application_tool_executions: Vec<tsumugi_core::execution::ApplicationScopeBasis>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTeamRecoverySettlementView {
+    pub request: WorkPlanTeamRecoverySettlementOriginal,
+    pub settlement: WorkPlanRequestSettlement<TeamRecoveryReceipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTeamRecoveryPrepareOriginal {
+    pub project_id: ExecutionId,
+    pub preparation_id: ExecutionId,
+    pub recovery: PrepareTeamRecovery,
+}
+impl From<&WorkPlanTeamRecoveryPrepareRequest> for WorkPlanTeamRecoveryPrepareOriginal {
+    fn from(request: &WorkPlanTeamRecoveryPrepareRequest) -> Self {
+        Self {
+            project_id: request.project_id,
+            preparation_id: request.preparation_id,
+            recovery: request.recovery.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum WorkPlanTeamRecoveryPreparationOutcome {
+    Pending,
+    Draining,
+    /// Only the original Host slot is closed. Releasing a durable pending
+    /// request additionally requires a later Core lease generation.
+    Closed,
+    FencedNotApplied,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTeamRecoveryPreparationView {
+    pub request: WorkPlanTeamRecoveryPrepareOriginal,
+    pub lease: AutomationLease,
+    pub state: WorkPlanState,
+    pub host_callbacks_drained: bool,
+    pub outcome: WorkPlanTeamRecoveryPreparationOutcome,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -217,6 +303,120 @@ fn callbacks(host: &ExecutionHost, plan: ExecutionId) -> Result<(), CommandError
     } else {
         Ok(())
     }
+}
+
+/// Descriptive only: a missing slot never proves that an accepted preparation
+/// did not run. The Core generation is the durable fence against later replay.
+pub(in crate::commands) fn observe_prepare(
+    store: &ProjectStore,
+    host: Option<&ExecutionHost>,
+    request: &WorkPlanTeamRecoveryPrepareOriginal,
+) -> Result<WorkPlanTeamRecoveryPreparationView, CommandError> {
+    let recovery = &request.recovery;
+    if request.project_id != recovery.project_id
+        || recovery.expected_lease.plan_id != recovery.plan_id
+        || recovery.expected_lease.generation.get() == 0
+    {
+        return Err(fail(
+            ErrorCode::ResultMismatch,
+            "team-recovery-preparation-request",
+        ));
+    }
+    let state = store
+        .read_team_recovery_state(request.project_id, recovery.plan_id)
+        .map_err(map_read)?;
+    let drained = host.is_none_or(|host| !host.plan_callbacks_active(recovery.plan_id));
+    let stopped = host
+        .and_then(|host| host.work_plans.recovery.as_ref())
+        .is_some_and(|slot| {
+            slot.id == request.preparation_id
+                && slot.request == *recovery
+                && slot.stop.is_requested()
+        });
+    let outcome = if stopped {
+        if drained {
+            WorkPlanTeamRecoveryPreparationOutcome::Closed
+        } else {
+            WorkPlanTeamRecoveryPreparationOutcome::Draining
+        }
+    } else if host.is_none()
+        && drained
+        && state.lease.generation > recovery.expected_lease.generation
+    {
+        WorkPlanTeamRecoveryPreparationOutcome::FencedNotApplied
+    } else {
+        WorkPlanTeamRecoveryPreparationOutcome::Pending
+    };
+    Ok(WorkPlanTeamRecoveryPreparationView {
+        request: request.clone(),
+        lease: state.lease,
+        state: state.state,
+        host_callbacks_drained: drained,
+        outcome,
+    })
+}
+
+fn check_settlement_choices(
+    store: &ProjectStore,
+    request: &WorkPlanTeamRecoverySettlementOriginal,
+) -> Result<(), ExecutionError> {
+    if request.plan_id != request.base_lease.plan_id {
+        return Err(ExecutionError::new(
+            ErrorCode::ResultMismatch,
+            "team-recovery-base-lease",
+        ));
+    }
+    let plan = store.work_plan(request.plan_id)?;
+    let keys: Vec<_> = store
+        .work_plan_review_checkers(&plan)?
+        .into_iter()
+        .map(|checker| checker.key)
+        .collect();
+    if plan.project_id != request.project_id
+        || request.checker_executions != keys
+        || request.tool_execution != plan.tools.is_some()
+        || !request.recovery.confirmed
+        || request.recovery.effects != plan.authorization_effects()?
+    {
+        return Err(ExecutionError::new(
+            ErrorCode::ResultMismatch,
+            "team-recovery-consent",
+        ));
+    }
+    broker::require_consent(
+        &plan,
+        request.tool_execution,
+        Some(&request.recovery.effects),
+        &request.application_tool_executions,
+    )
+    .map_err(|_| {
+        ExecutionError::new(
+            ErrorCode::ResultMismatch,
+            "team-recovery-application-consent",
+        )
+    })
+}
+
+/// A pure journal observation binds both the complete preparation and the
+/// authorization, including every deterministic Host consent choice.
+pub(crate) fn observe_settlement(
+    store: &ProjectStore,
+    preparation: &WorkPlanTeamRecoveryPrepareOriginal,
+    request: &WorkPlanTeamRecoverySettlementOriginal,
+) -> Result<WorkPlanRequestSettlement<TeamRecoveryReceipt>, ExecutionError> {
+    if preparation.project_id != request.project_id
+        || preparation.preparation_id != request.preparation_id
+        || preparation.recovery.project_id != request.project_id
+        || preparation.recovery.plan_id != request.plan_id
+        || preparation.recovery.expected_lease != request.base_lease
+    {
+        return Err(ExecutionError::new(
+            ErrorCode::ResultMismatch,
+            "team-recovery-preparation-request",
+        ));
+    }
+    check_settlement_choices(store, request)?;
+    store.team_recovery_preparation_settlement(&preparation.recovery, &request.recovery)
 }
 fn connections(
     store: Option<&tsumugi_core::model_connections::ModelConnectionStore>,
@@ -394,6 +594,113 @@ pub async fn read_work_plan_team_recovery_action(
 }
 
 #[tauri::command]
+pub async fn read_work_plan_team_recovery_settlement(
+    state: State<'_, AppState>,
+    request: WorkPlanTeamRecoverySettlementRequest,
+) -> Result<WorkPlanTeamRecoverySettlementView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_team_recovery_settlement",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                // Host choices are deterministic parts of the original plan consent;
+                // observing them never reinstalls a local checker or tool permission.
+                let original = WorkPlanTeamRecoverySettlementOriginal {
+                    project_id: request.project_id,
+                    preparation_id: request.preparation_id,
+                    plan_id: request.plan_id,
+                    base_lease: request.base_lease,
+                    recovery: request.recovery,
+                    checker_executions: request.checker_executions,
+                    tool_execution: request.tool_execution,
+                    application_tool_executions: request.application_tool_executions,
+                };
+                check_settlement_choices(&active.store, &original).map_err(map_read)?;
+                let settlement = active
+                    .store
+                    .team_recovery_settlement(
+                        original.project_id,
+                        &original.base_lease,
+                        &original.recovery,
+                    )
+                    .map_err(map_read)?;
+                Ok(WorkPlanTeamRecoverySettlementView {
+                    request: original,
+                    settlement,
+                })
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_work_plan_team_recovery_preparation(
+    state: State<'_, AppState>,
+    request: WorkPlanTeamRecoveryPrepareRequest,
+) -> Result<WorkPlanTeamRecoveryPreparationView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_work_plan_team_recovery_preparation",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                observe_prepare(&active.store, active.execution.as_ref(), &(&request).into())
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn close_work_plan_team_recovery_preparation(
+    state: State<'_, AppState>,
+    request: WorkPlanTeamRecoveryPrepareRequest,
+) -> Result<WorkPlanTeamRecoveryPreparationView, CommandError> {
+    state
+        .sessions
+        .run(
+            "close_work_plan_team_recovery_preparation",
+            CommandStage::ExecutionCancel,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionCancel,
+                )?;
+                let original = (&request).into();
+                // Validate the project and basis before touching any Host state.
+                observe_prepare(&active.store, active.execution.as_ref(), &original)?;
+                if let Some(slot) = active
+                    .execution
+                    .as_mut()
+                    .and_then(|host| host.work_plans.recovery.as_mut())
+                {
+                    if slot.id == request.preparation_id && slot.request == request.recovery {
+                        slot.stop.request();
+                    }
+                }
+                // Keep the stopped slot while accepted IO drains. Repeating this exact
+                // close can then observe closure without mistaking not-found for proof.
+                observe_prepare(&active.store, active.execution.as_ref(), &original)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
 pub async fn end_work_plan_team_recovery(
     state: State<'_, AppState>,
     request: WorkPlanTeamRecoveryAuthorizeRequest,
@@ -486,6 +793,14 @@ pub async fn prepare_work_plan_team_recovery(
                     return Err(fail(ErrorCode::ResultMismatch, "team-recovery-project"));
                 }
                 let (host, store) = host(active)?;
+                if host.work_plans.recovery.as_ref().is_some_and(|slot| {
+                    slot.id == initial.preparation_id && slot.request == initial.recovery
+                }) {
+                    return Err(fail(
+                        ErrorCode::DependencyConflict,
+                        "team-recovery-preparation-replay",
+                    ));
+                }
                 host.work_plans.clear_recovery();
                 host.work_plans.prepared = None;
                 callbacks(host, initial.recovery.plan_id)?;
@@ -502,14 +817,11 @@ pub async fn prepare_work_plan_team_recovery(
                     .collect();
                 let work = host.begin_plan_work(initial.recovery.plan_id, packages)?;
                 let stop = Cancellation::default();
-                host.work_plans.recovery = Some(RecoveryPreparation {
-                    id: initial.preparation_id,
-                    request: initial.recovery,
-                    prepared: None,
-                    settings_revision: None,
-                    authorized_action: None,
-                    stop: stop.clone(),
-                });
+                host.work_plans.recovery = Some(RecoveryPreparation::new(
+                    initial.preparation_id,
+                    initial.recovery,
+                    stop.clone(),
+                ));
                 let source = store
                     .work_plan_review_binding(prepared.plan())
                     .map_err(map_read)?;

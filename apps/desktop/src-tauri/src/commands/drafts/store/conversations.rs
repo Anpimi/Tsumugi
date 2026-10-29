@@ -26,6 +26,87 @@ fn empty(key: &ConversationDraftKey) -> ConversationDraftHead {
         value: None,
     }
 }
+
+fn same_recovery_member(
+    draft: &ConversationTeamRecoveryMemberDraft,
+    member: &tsumugi_core::application::TeamExecutionMember,
+) -> bool {
+    draft.display_name == member.display_name
+        && draft.role == member.role
+        && draft.config == member.config
+        && draft.unit_ids == member.unit_ids
+        && draft.tool_handles == member.tool_handles.iter().map(ToString::to_string).collect::<Vec<_>>()
+        && draft.kinds == member.kinds
+}
+
+fn same_recovery_input(
+    draft: &ConversationTeamRecoveryDraft,
+    request: &crate::commands::execution::work_plans::recovery::WorkPlanTeamRecoveryPrepareOriginal,
+) -> bool {
+    let recovery = &request.recovery;
+    draft.members.len() == recovery.members.len()
+        && draft.members.iter().zip(&recovery.members).all(|(input, member)| {
+            same_recovery_member(input, member)
+                && input.original.as_ref().is_none_or(|original| {
+                    member.member_id == original.member_id
+                        && (member.role_version_id == original.role_version_id)
+                            == same_recovery_member(input, original)
+                })
+        })
+        && draft.recipient_key.and_then(|key| draft.members.iter().position(|member| member.key == key))
+            .and_then(|index| recovery.members.get(index))
+            .is_some_and(|member| member.member_id == recovery.work.member_id)
+        && draft.unit_id == Some(recovery.work.target.unit_id)
+        && draft.kind == recovery.work.kind
+        && draft.instructions == recovery.work.instructions
+        && draft.post_ids == recovery.work.post_ids
+        && draft.prior_work == recovery.work.prior_work
+}
+
+fn recovery_authorization_append(old: &ConversationDraftPending, new: &ConversationDraftPending) -> bool {
+    matches!((old, new), (
+        ConversationDraftPending::TeamRecovery { conversation_id, request, authorization: None, submitted_seq },
+        ConversationDraftPending::TeamRecovery { conversation_id: next_conversation, request: next_request,
+            authorization: Some(_), submitted_seq: next_seq },
+    ) if conversation_id == next_conversation && request == next_request && submitted_seq == next_seq)
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn recovery_authorization_matches(
+    request: &crate::commands::execution::work_plans::recovery::WorkPlanTeamRecoveryPrepareOriginal,
+    authorization: &crate::commands::execution::work_plans::recovery::WorkPlanTeamRecoverySettlementOriginal,
+) -> bool {
+    authorization.project_id == request.project_id
+        && authorization.preparation_id == request.preparation_id
+        && authorization.plan_id == request.recovery.plan_id
+        && authorization.base_lease == request.recovery.expected_lease
+        && authorization.recovery.confirmed
+        && valid_digest(&authorization.recovery.digest)
+}
+
+fn valid_recovery_record(key: &ConversationDraftKey, plan: ExecutionId, record: &ConversationTeamRecoveryRecorded) -> bool {
+    let request = &record.request;
+    let receipt = &record.receipt;
+    recovery_authorization_matches(request, &record.authorization)
+        && request.project_id == key.project_id
+        && request.recovery.project_id == key.project_id
+        && request.recovery.plan_id == plan
+        && request.recovery.expected_lease.plan_id == plan
+        && request.recovery.expected_lease.generation.get() > 0
+        && request.recovery.expected_effective_version.lease.plan_id == plan
+        && receipt.base_lease == record.authorization.base_lease
+        && receipt.action_id == record.authorization.recovery.action_id
+        && receipt.effective_version.action_id == receipt.action_id
+        && receipt.effective_version.digest == record.authorization.recovery.digest
+        && receipt.effective_version.lease.plan_id == plan
+        && receipt.base_lease.generation.get().checked_add(1) == Some(receipt.effective_version.lease.generation.get())
+        && receipt.work_id == request.recovery.work.work_id
+        && valid_digest(&receipt.input_digest)
+}
+
 fn validate_pending(
     key: &ConversationDraftKey,
     pending: &ConversationDraftPending,
@@ -138,6 +219,24 @@ fn validate_pending(
             super::encode_bounded(request, tsumugi_core::execution::MAX_INPUT_BYTES)?;
             (request.project_id, *conversation_id, *submitted_seq)
         }
+        ConversationDraftPending::TeamRecovery { conversation_id, request, authorization, submitted_seq } => {
+            let recovery = &request.recovery;
+            let draft = team_drafts.iter().find(|draft| draft.plan_id == recovery.plan_id)
+                .and_then(|draft| draft.recovery.as_ref())
+                .ok_or_else(|| fail(ErrorCode::InvalidInput, "conversation-drafts-team-recovery"))?;
+            if request.project_id != recovery.project_id
+                || recovery.expected_lease.plan_id != recovery.plan_id
+                || recovery.expected_lease.generation.get() == 0
+                || recovery.expected_effective_version.lease.plan_id != recovery.plan_id
+                || *submitted_seq > draft.edit_seq
+                || *submitted_seq == draft.edit_seq && !same_recovery_input(draft, request)
+                || authorization.as_ref().is_some_and(|authorization| !recovery_authorization_matches(request, authorization))
+            {
+                return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team-recovery"));
+            }
+            super::encode_bounded(request, tsumugi_core::execution::MAX_INPUT_BYTES)?;
+            (request.project_id, *conversation_id, *submitted_seq)
+        }
     };
     if project != key.project_id || thread != key.conversation_id || submitted > seq {
         return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-pending"));
@@ -158,10 +257,15 @@ fn validate_value(key: &ConversationDraftKey, value: &ConversationDraftValue) ->
     let mut plans = BTreeSet::new();
     for draft in &value.team_drafts {
         if !plans.insert(draft.plan_id)
-            || draft.plan_digest.len() != 64
-            || !draft.plan_digest.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || !valid_digest(&draft.plan_digest)
             || draft.guidance.as_ref().is_some_and(|input| input.edit_seq > value.edit_seq)
             || draft.publication.as_ref().is_some_and(|input| input.edit_seq > value.edit_seq)
+            || draft.recovery.as_ref().is_some_and(|input| {
+                let mut keys = BTreeSet::new();
+                input.edit_seq > value.edit_seq
+                    || input.members.iter().any(|member| member.key >= input.next_key || !keys.insert(member.key))
+            })
+            || draft.recovery_recorded.as_ref().is_some_and(|record| !valid_recovery_record(key, draft.plan_id, record))
         {
             return Err(fail(ErrorCode::InvalidInput, "conversation-drafts-team"));
         }
@@ -227,6 +331,8 @@ fn pending_action(pending: &ConversationDraftPending) -> ExecutionId {
         ConversationDraftPending::WorkPlanControl { request, .. } => request.action_id,
         ConversationDraftPending::TeamMessage { request, .. } => request.message.message_id,
         ConversationDraftPending::TeamPublication { request, .. } => request.publication.post_id,
+        ConversationDraftPending::TeamRecovery { request, authorization, .. } => authorization.as_ref()
+            .map_or(request.preparation_id, |authorization| authorization.recovery.action_id),
     }
 }
 fn validate_revocation(
@@ -276,7 +382,8 @@ fn apply_write(
                 && old.is_some_and(|value| value.revocations == r.value.revocations) =>
         {
             let previous = old.ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
-            if matches!(pending, ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }) {
+            if matches!(pending, ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }
+                | ConversationDraftPending::TeamRecovery { .. }) {
                 let mut expected = previous.clone();
                 expected.pending = None;
                 expected.edit_seq = r.value.edit_seq;
@@ -299,6 +406,7 @@ fn apply_write(
                                 .ok_or_else(|| fail(ErrorCode::DependencyConflict, "drafts-pending"))?;
                             if draft.edit_seq == *submitted_seq { draft.body.clear(); draft.edit_seq = r.value.edit_seq; }
                         }
+                        ConversationDraftPending::TeamRecovery { .. } => (),
                         _ => unreachable!("team pending selected above"),
                     }
                 }
@@ -326,11 +434,17 @@ fn apply_write(
         }
         Some(_) => return Err(fail(ErrorCode::DependencyConflict, "drafts-pending")),
         None if old.and_then(|value| value.pending.as_ref())
-            .is_some_and(|pending| r.value.pending.as_ref() != Some(pending)) =>
+            .is_some_and(|pending| r.value.pending.as_ref().is_none_or(|next| {
+                next != pending && !recovery_authorization_append(pending, next)
+            })) =>
         {
             return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
         }
         None if old.is_some_and(|value| !r.value.revocations.starts_with(&value.revocations)) => {
+            return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
+        }
+        None if old.and_then(|value| value.pending.as_ref()).is_none()
+            && matches!(r.value.pending, Some(ConversationDraftPending::TeamRecovery { authorization: Some(_), .. })) => {
             return Err(fail(ErrorCode::DependencyConflict, "drafts-pending"));
         }
         None => (),
@@ -383,6 +497,8 @@ pub(super) fn decode(key: &ConversationDraftKey, row: Stored, format: i64) -> Re
         || format < REVOCATION_FORMAT && value.is_some_and(|value| !value.revocations.is_empty())
         || format < TEAM_DRAFT_FORMAT && value.is_some_and(|value| !value.team_drafts.is_empty()
             || matches!(value.pending, Some(ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. })))
+        || format < TEAM_RECOVERY_FORMAT && value.is_some_and(|value| value.team_drafts.iter().any(|draft| draft.recovery.is_some() || draft.recovery_recorded.is_some())
+            || matches!(value.pending, Some(ConversationDraftPending::TeamRecovery { .. })))
         || format < KNOWLEDGE_PROPOSAL_FORMAT && value.is_some_and(|value| {
             value.proposal_edits.iter().any(|draft| matches!(draft.content, ConversationPlanningModelOutput::KnowledgeProposal { .. }))
                 || matches!(&value.pending, Some(ConversationDraftPending::ProposalRevision { request, .. })
@@ -564,7 +680,8 @@ impl DraftStore {
                         && !matches!(pending, ConversationDraftPending::WorkPlanStart { .. }
                             | ConversationDraftPending::WorkPlanControl { .. }
                             | ConversationDraftPending::TeamMessage { .. }
-                            | ConversationDraftPending::TeamPublication { .. })
+                            | ConversationDraftPending::TeamPublication { .. }
+                            | ConversationDraftPending::TeamRecovery { .. })
                 {
                     return Err(fail(ErrorCode::InvalidInput, "drafts-pending"));
                 }
@@ -678,3 +795,5 @@ impl DraftStore {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod recovery_tests;

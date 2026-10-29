@@ -1883,6 +1883,7 @@ mod tests {
     mod guidance_tests;
     mod model_connection_admission;
     mod proposal_preparation;
+    mod recovery_lifecycle;
     mod semantic_review;
     mod settings;
     mod tool_result_reads;

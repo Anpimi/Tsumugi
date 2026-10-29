@@ -3420,6 +3420,57 @@
         ],
         "type": "object"
       },
+      "WorkPlanTeamRecoverySettlementRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationToolExecutions": {
+            "items": {
+              "$ref": "#/definitions/ApplicationScopeBasis"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "baseLease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "checkerExecutions": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckerKey"
+            },
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recovery": {
+            "$ref": "#/definitions/AuthorizeTeamRecovery"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "toolExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "preparationId",
+          "planId",
+          "baseLease",
+          "recovery",
+          "checkerExecutions",
+          "toolExecution",
+          "applicationToolExecutions"
+        ],
+        "type": "object"
+      },
       "WorkPlanTeamRecoveryStateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3793,8 +3844,17 @@
       "workPlanTeamRecoveryEnd": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryAuthorizeRequest"
       },
+      "workPlanTeamRecoveryPreparationClose": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryPrepareRequest"
+      },
+      "workPlanTeamRecoveryPreparationRead": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryPrepareRequest"
+      },
       "workPlanTeamRecoveryPrepare": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryPrepareRequest"
+      },
+      "workPlanTeamRecoverySettlement": {
+        "$ref": "#/definitions/WorkPlanTeamRecoverySettlementRequest"
       },
       "workPlanTeamRecoveryState": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryStateRequest"
@@ -3836,6 +3896,9 @@
       "workPlanTeamRecoveryPrepare",
       "workPlanTeamRecoveryAuthorize",
       "workPlanTeamRecoveryAction",
+      "workPlanTeamRecoverySettlement",
+      "workPlanTeamRecoveryPreparationRead",
+      "workPlanTeamRecoveryPreparationClose",
       "workPlanTeamRecoveryState",
       "workPlanTeamRecoveryEnd",
       "workPlanTeamPost",
@@ -7883,6 +7946,43 @@
           "environment",
           "environmentDigest",
           "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PrepareTeamRecovery": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedEffectiveVersion": {
+            "$ref": "#/definitions/TeamEffectiveVersion"
+          },
+          "expectedLease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/definitions/TeamExecutionMember"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "work": {
+            "$ref": "#/definitions/TeamHumanWork"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "expectedLease",
+          "expectedEffectiveVersion",
+          "members",
+          "work"
         ],
         "type": "object"
       },
@@ -12197,7 +12297,7 @@
             "$ref": "#/definitions/WorkPlanControlSettlementOriginal"
           },
           "settlement": {
-            "$ref": "#/definitions/WorkPlanRequestSettlement4"
+            "$ref": "#/definitions/WorkPlanRequestSettlement5"
           }
         },
         "required": [
@@ -12485,7 +12585,7 @@
                 "type": "string"
               },
               "receipt": {
-                "$ref": "#/definitions/TeamMessage"
+                "$ref": "#/definitions/TeamRecoveryReceipt"
               }
             },
             "required": [
@@ -12532,7 +12632,7 @@
                 "type": "string"
               },
               "receipt": {
-                "$ref": "#/definitions/TeamDiscussionPost"
+                "$ref": "#/definitions/TeamMessage"
               }
             },
             "required": [
@@ -12579,7 +12679,7 @@
                 "type": "string"
               },
               "receipt": {
-                "$ref": "#/definitions/WorkPlanStartReceipt"
+                "$ref": "#/definitions/TeamDiscussionPost"
               }
             },
             "required": [
@@ -12617,6 +12717,53 @@
         ]
       },
       "WorkPlanRequestOutcome4": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "recorded",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/WorkPlanStartReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "fenced-not-applied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkPlanRequestOutcome5": {
         "oneOf": [
           {
             "additionalProperties": false,
@@ -12779,6 +12926,35 @@
         ],
         "type": "object"
       },
+      "WorkPlanRequestSettlement5": {
+        "additionalProperties": false,
+        "description": "A historical observation of one exact request, without restoring authority.",
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "outcome": {
+            "$ref": "#/definitions/WorkPlanRequestOutcome5"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "projectId",
+          "planId",
+          "lease",
+          "state",
+          "outcome"
+        ],
+        "type": "object"
+      },
       "WorkPlanRunView": {
         "additionalProperties": false,
         "description": "Historical execution location and root budget; this grants no authority.",
@@ -12910,7 +13086,7 @@
             "$ref": "#/definitions/WorkPlanStartSettlementOriginal"
           },
           "settlement": {
-            "$ref": "#/definitions/WorkPlanRequestSettlement3"
+            "$ref": "#/definitions/WorkPlanRequestSettlement4"
           }
         },
         "required": [
@@ -12977,7 +13153,7 @@
             "$ref": "#/definitions/TeamMessageOriginal"
           },
           "settlement": {
-            "$ref": "#/definitions/WorkPlanRequestSettlement"
+            "$ref": "#/definitions/WorkPlanRequestSettlement2"
           }
         },
         "required": [
@@ -12993,7 +13169,7 @@
             "$ref": "#/definitions/TeamPublicationOriginal"
           },
           "settlement": {
-            "$ref": "#/definitions/WorkPlanRequestSettlement2"
+            "$ref": "#/definitions/WorkPlanRequestSettlement3"
           }
         },
         "required": [
@@ -13068,6 +13244,111 @@
           }
         ]
       },
+      "WorkPlanTeamRecoveryPreparationOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "draining",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Only the original Host slot is closed. Releasing a durable pending\nrequest additionally requires a later Core lease generation.",
+            "properties": {
+              "kind": {
+                "const": "closed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "fenced-not-applied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "WorkPlanTeamRecoveryPreparationView": {
+        "additionalProperties": false,
+        "properties": {
+          "hostCallbacksDrained": {
+            "type": "boolean"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "outcome": {
+            "$ref": "#/definitions/WorkPlanTeamRecoveryPreparationOutcome"
+          },
+          "request": {
+            "$ref": "#/definitions/WorkPlanTeamRecoveryPrepareOriginal"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "request",
+          "lease",
+          "state",
+          "hostCallbacksDrained",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoveryPrepareOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recovery": {
+            "$ref": "#/definitions/PrepareTeamRecovery"
+          }
+        },
+        "required": [
+          "projectId",
+          "preparationId",
+          "recovery"
+        ],
+        "type": "object"
+      },
       "WorkPlanTeamRecoveryPreviewView": {
         "additionalProperties": false,
         "properties": {
@@ -13133,6 +13414,68 @@
           "checkerExecutions",
           "toolExecution",
           "applicationToolExecutions"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoverySettlementOriginal": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationToolExecutions": {
+            "items": {
+              "$ref": "#/definitions/ApplicationScopeBasis"
+            },
+            "type": "array"
+          },
+          "baseLease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "checkerExecutions": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckerKey"
+            },
+            "type": "array"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preparationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "recovery": {
+            "$ref": "#/definitions/AuthorizeTeamRecovery"
+          },
+          "toolExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "projectId",
+          "preparationId",
+          "planId",
+          "baseLease",
+          "recovery",
+          "checkerExecutions",
+          "toolExecution",
+          "applicationToolExecutions"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTeamRecoverySettlementView": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/WorkPlanTeamRecoverySettlementOriginal"
+          },
+          "settlement": {
+            "$ref": "#/definitions/WorkPlanRequestSettlement"
+          }
+        },
+        "required": [
+          "request",
+          "settlement"
         ],
         "type": "object"
       },
@@ -13591,11 +13934,17 @@
       "workPlanTeamRecoveryEnd": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryEndView"
       },
+      "workPlanTeamRecoveryPreparation": {
+        "$ref": "#/definitions/WorkPlanTeamRecoveryPreparationView"
+      },
       "workPlanTeamRecoveryPreview": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryPreviewView"
       },
       "workPlanTeamRecoveryReceipt": {
         "$ref": "#/definitions/TeamRecoveryReceipt"
+      },
+      "workPlanTeamRecoverySettlement": {
+        "$ref": "#/definitions/WorkPlanTeamRecoverySettlementView"
       },
       "workPlanTeamRecoveryState": {
         "$ref": "#/definitions/WorkPlanTeamRecoveryStateView"
@@ -13625,6 +13974,8 @@
       "workPlanTeamRecoveryPreview",
       "workPlanTeamRecoveryReceipt",
       "workPlanTeamRecoveryAction",
+      "workPlanTeamRecoverySettlement",
+      "workPlanTeamRecoveryPreparation",
       "workPlanTeamRecoveryState",
       "workPlanTeamRecoveryEnd",
       "workPlanTeamPost",

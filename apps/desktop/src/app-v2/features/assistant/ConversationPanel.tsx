@@ -161,6 +161,7 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
       case "proposal-revision": return t("proposalSaveVersion");
       case "proposal-work-plan": return t("planConfirm");
       case "work-plan-start": return t("runStart");
+      case "team-recovery": return t("teamRecoveryRequest");
       case "team-message": return t("teamMessageRequest");
       case "team-publication": return t("teamPublicationRequest");
       case "work-plan-control": return t(value.request.command === "pause" ? "runPause" : value.request.command === "stop" ? "runStop" : value.request.command === "take-over" ? "runTakeOver" : "runReviewContinue");
@@ -212,6 +213,10 @@ export default function ConversationPanel({ owner, visible, disabled, gate, view
         className={primaryRecovery ? local.recovery : undefined} data-conversation-recovery={primaryRecovery ? "primary" : undefined}
         aria-label={primaryRecovery ? t("recoveryPrimary") : undefined}>
         {primaryRecovery ? <><h3>{t("recoveryPrimary")}</h3><p>{t("recoveryRequest", { request: recoveryRequestName(pending) })}</p><p>{t("recoveryHelp")}</p></> : null}
+      {pending.kind === "team-recovery" ? <><p>{t("teamRecoveryPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
+        <Field label={t("teamOriginalBody")}><TextArea readOnly value={pending.request.recovery.work.instructions}/></Field>
+        {pending.request.recovery.members.map(member => <div key={member.memberId}><p>{t("teamOriginalRecipient", { name: member.displayName, endpoint: member.config.endpoint, model: member.config.model })}</p><p>{member.role}</p></div>)}
+      </details></> : null}
       {isConversationTeamPending(pending) ? <><p>{t("teamPendingHelp")}</p><details><summary>{t("teamOriginal")}</summary>
         <p>{t("teamOriginalTarget", { entry: pending.targetName, locale: pending.kind === "team-message" ? pending.request.message.target.locale : pending.request.publication.target.locale })}</p>
         {pending.kind === "team-message" ? <><p>{t("teamOriginalRecipient", { ...pending.destination })}</p><p>{pending.destination.role}</p></> : null}

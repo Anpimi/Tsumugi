@@ -28,4 +28,5 @@ export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TextReviewDispositionValues = ["advisory"] as const;
 export const WorkPlanCommandValues = ["pause","stop","take-over","continue"] as const;
 export const WorkPlanRevocationCommandValues = ["pause","stop","take-over"] as const;
+export const WorkPlanStateValues = ["active","paused","stopped","taken-over"] as const;
 export const WorkStageValues = ["understanding","resources","generation","checks","delivery"] as const;

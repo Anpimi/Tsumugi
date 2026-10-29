@@ -158,6 +158,21 @@ pub(in crate::commands) fn observe_conversation_target(
             )?;
             return Ok(without_receipt(proof.outcome));
         }
+        ConversationDraftPending::TeamRecovery { conversation_id, request, authorization, .. }
+            if request.project_id == key.project_id && *conversation_id == key.conversation_id =>
+        {
+            store.read_conversation_proposal_work_plan(key.project_id, key.conversation_id, request.recovery.plan_id)?;
+            if let Some(authorization) = authorization {
+                let proof = crate::commands::execution::work_plans::recovery::observe_settlement(store, request, authorization)?;
+                return Ok(without_receipt(proof.outcome));
+            }
+            let state = store.read_team_recovery_state(request.project_id, request.recovery.plan_id)?;
+            return Ok(if state.lease.generation > request.recovery.expected_lease.generation {
+                WorkPlanRequestOutcome::FencedNotApplied
+            } else {
+                WorkPlanRequestOutcome::Pending
+            });
+        }
         _ => {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,

@@ -1,0 +1,12 @@
+.panel, .body, .fields, .member, .reference { display: grid; gap: var(--space-3); min-inline-size: 0; }
+.panel[hidden], .body[hidden] { display: none; }
+.panel p { margin: 0; overflow-wrap: anywhere; }
+.body, .member { padding: var(--space-3); border: var(--border-width) solid var(--color-border-subtle); border-radius: var(--radius-md); }
+.fields { border: 0; padding: 0; margin: 0; }
+.member { margin: 0; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.check { display: flex; align-items: start; gap: var(--space-2); min-inline-size: 0; }
+.checkbox { inline-size: 1rem; block-size: 1rem; min-block-size: 1rem; flex: none; margin-block-start: .15rem; }
+.text { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-inline-size: 100%; }
+.feedback:focus-visible { outline: var(--focus-width) solid var(--color-accent-solid); outline-offset: var(--focus-offset); }

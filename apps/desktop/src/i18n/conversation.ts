@@ -5,6 +5,7 @@ import { conversationKnowledgeEn, conversationKnowledgeZh } from "./conversation
 
 export const conversationEn = {
   teamMessageRequest: "Send guidance to a team member", teamPublicationRequest: "Post in the team discussion",
+  teamRecoveryRequest: "Team recovery", teamRecoveryRecorded: "The original team recovery is recorded. Reopening does not restore permission to start.", teamRecoveryPendingHelp: "This preparation or confirmation still needs checking. Your newer input is kept. Closing a preparation does not prove that a confirmation was never recorded; take over or stop the plan, then check the original request again.",
   teamMessageSaved: "Your guidance is saved. This does not mean the member has read it.", teamPublicationSaved: "Your discussion post is saved.",
   teamOriginal: "View the original team request", teamOriginalBody: "Text from the original request", teamOriginalTarget: "Entry: {{entry}} → {{locale}}",
   teamOriginalRecipient: "Recipient: {{name}} · {{endpoint}} · {{model}}", teamPendingHelp: "Check this original request before retrying. Pausing, stopping or taking over closes its old permission; check again afterward. Your newer input is kept.",
@@ -87,6 +88,7 @@ export const conversationEn = {
 
 export const conversationZh: typeof conversationEn = {
   teamMessageRequest: "向成员发送指导", teamPublicationRequest: "发表团队讨论",
+  teamRecoveryRequest: "团队恢复", teamRecoveryRecorded: "原团队恢复已记录。重开不会恢复启动许可。", teamRecoveryPendingHelp: "这次准备或确认仍需核对，新输入会保留。关闭准备不代表确认从未记录；接管或停止计划后，可以再次核对原请求。",
   teamMessageSaved: "指导已保存，这不代表成员已经读到。", teamPublicationSaved: "讨论已保存。",
   teamOriginal: "查看这次团队请求的原内容", teamOriginalBody: "原来准备发送的内容", teamOriginalTarget: "条目：{{entry}} → {{locale}}",
   teamOriginalRecipient: "收件成员：{{name}} · {{endpoint}} · {{model}}", teamPendingHelp: "重试前请核对原请求。暂停、停止或接管会关闭旧许可，之后可再次核对结果。新输入会保留。",

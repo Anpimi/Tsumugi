@@ -16,6 +16,41 @@ fn sql(_: rusqlite::Error) -> ExecutionError {
     fail(ErrorCode::StorageFailed, "team-recovery-storage")
 }
 
+fn recovery_action_in(
+    c: &Connection,
+    project: ExecutionId,
+    request: &AuthorizeTeamRecovery,
+) -> Result<Option<TeamRecoveryReceipt>, ExecutionError> {
+    if super::super::read_metadata_from(c)
+        .map_err(|_| corrupt())?
+        .project_id()
+        .to_string()
+        != project.to_string()
+    {
+        return Err(denied());
+    }
+    let Some((record, receipt)) = action(c, request.action_id)? else {
+        return Ok(None);
+    };
+    let control::Request::TeamRecovery {
+        request: old,
+        capture,
+    } = record
+    else {
+        return Err(fail(ErrorCode::ResultMismatch, "team-recovery-action"));
+    };
+    if old != *request || capture.plan.project_id != project {
+        return Err(fail(ErrorCode::ResultMismatch, "team-recovery-action"));
+    }
+    validate_receipt(
+        &capture,
+        request,
+        &receipt,
+        &control::load(c, capture.plan.plan_id)?,
+    )?;
+    receipt_view(&capture, &receipt).map(Some)
+}
+
 pub(super) fn action(
     c: &Connection,
     id: ExecutionId,
@@ -580,40 +615,92 @@ impl ProjectStore {
         request: &AuthorizeTeamRecovery,
     ) -> Result<Option<TeamRecoveryReceipt>, ExecutionError> {
         let c = self.connection().map_err(|_| denied())?;
-        let value = super::super::review::read_snapshot(c, |c| {
-            if super::super::read_metadata_from(c)
-                .map_err(|_| corrupt())?
-                .project_id()
-                .to_string()
-                != project.to_string()
-            {
-                return Err(denied());
-            }
-            let Some((record, receipt)) = action(c, request.action_id)? else {
-                return Ok(None);
-            };
-            let control::Request::TeamRecovery {
-                request: old,
-                capture,
-            } = record
-            else {
-                return Err(fail(ErrorCode::ResultMismatch, "team-recovery-action"));
-            };
-            if old != *request || capture.plan.project_id != project {
-                return Err(fail(ErrorCode::ResultMismatch, "team-recovery-action"));
-            }
-            validate_receipt(
-                &capture,
-                request,
-                &receipt,
-                &control::load(c, capture.plan.plan_id)?,
-            )?;
-            receipt_view(&capture, &receipt).map(Some)
-        })?;
+        let value =
+            super::super::review::read_snapshot(c, |c| recovery_action_in(c, project, request))?;
         if self.is_reconciling() {
             self.reconcile_execution()?;
         }
         Ok(value)
+    }
+
+    /// Observe only the exact durable authorization. A missing receipt remains
+    /// pending until the original base generation is permanently fenced.
+    /// This never reconciles execution or restores Host-local consent.
+    pub fn team_recovery_settlement(
+        &self,
+        project: ExecutionId,
+        base_lease: &AutomationLease,
+        request: &AuthorizeTeamRecovery,
+    ) -> Result<WorkPlanRequestSettlement<TeamRecoveryReceipt>, ExecutionError> {
+        if base_lease.generation.get() == 0 {
+            return Err(fail(ErrorCode::InvalidInput, "team-recovery-generation"));
+        }
+        let c = self.connection().map_err(|_| denied())?;
+        super::super::review::read_snapshot(c, |c| {
+            let stored = control::load(c, base_lease.plan_id)?;
+            if stored.plan.project_id != project || stored.plan.options.team_execution.is_none() {
+                return Err(denied());
+            }
+            control::validate_history(c, &stored)?;
+            let receipt = recovery_action_in(c, project, request)?;
+            if receipt
+                .as_ref()
+                .is_some_and(|receipt| receipt.base_lease != *base_lease)
+            {
+                return Err(fail(ErrorCode::ResultMismatch, "team-recovery-base-lease"));
+            }
+            let outcome = match receipt {
+                Some(receipt) => WorkPlanRequestOutcome::Recorded { receipt },
+                None if stored.lease.generation > base_lease.generation => {
+                    WorkPlanRequestOutcome::FencedNotApplied
+                }
+                None => WorkPlanRequestOutcome::Pending,
+            };
+            Ok(WorkPlanRequestSettlement {
+                project_id: project,
+                plan_id: base_lease.plan_id,
+                lease: stored.lease,
+                state: stored.state,
+                outcome,
+            })
+        })
+    }
+
+    /// Journal settlement also binds the complete original preparation. A
+    /// receipt for another capture at the same base lease cannot settle it.
+    pub fn team_recovery_preparation_settlement(
+        &self,
+        preparation: &PrepareTeamRecovery,
+        request: &AuthorizeTeamRecovery,
+    ) -> Result<WorkPlanRequestSettlement<TeamRecoveryReceipt>, ExecutionError> {
+        if preparation.expected_lease.plan_id != preparation.plan_id {
+            return Err(fail(
+                ErrorCode::ResultMismatch,
+                "team-recovery-preparation-request",
+            ));
+        }
+        let c = self.connection().map_err(|_| denied())?;
+        super::super::review::read_snapshot(c, |c| {
+            let settlement = self.team_recovery_settlement(
+                preparation.project_id,
+                &preparation.expected_lease,
+                request,
+            )?;
+            if matches!(&settlement.outcome, WorkPlanRequestOutcome::Recorded { .. }) {
+                let Some((control::Request::TeamRecovery { capture, .. }, _)) =
+                    action(c, request.action_id)?
+                else {
+                    return Err(corrupt());
+                };
+                if capture.request != *preparation {
+                    return Err(fail(
+                        ErrorCode::ResultMismatch,
+                        "team-recovery-preparation-request",
+                    ));
+                }
+            }
+            Ok(settlement)
+        })
     }
     pub fn team_recovery_action_plan(
         &self,

@@ -158,11 +158,22 @@ pub async fn resolve_local_conversation_draft(
                 if original.resolve.disposition == ConversationDraftDisposition::FencedNotApplied
                     && matches!(&original.resolve.target, ConversationDraftResolveTarget::Pending { pending }
                         if !matches!(pending, ConversationDraftPending::WorkPlanStart { .. } | ConversationDraftPending::WorkPlanControl { .. }
-                            | ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }))
+                            | ConversationDraftPending::TeamMessage { .. } | ConversationDraftPending::TeamPublication { .. }
+                            | ConversationDraftPending::TeamRecovery { .. }))
                 {
                     return Err(map_error(ExecutionError::new(ErrorCode::InvalidInput, "conversation-drafts-disposition")));
                 }
                 let outcome = observe_conversation_target(&active.store, key, &original.resolve.target).map_err(map_error)?;
+                if let ConversationDraftResolveTarget::Pending {
+                    pending: ConversationDraftPending::TeamRecovery { request, authorization: None, .. },
+                } = &original.resolve.target {
+                    let view = super::super::execution::work_plans::recovery::observe_prepare(
+                        &active.store, active.execution.as_ref(), request,
+                    )?;
+                    if view.lease.generation <= request.recovery.expected_lease.generation || !view.host_callbacks_drained {
+                        return Err(map_error(ExecutionError::new(ErrorCode::OutcomeUnknown, "conversation-drafts-team-recovery-draining")));
+                    }
+                }
                 confirm_disposition(outcome, original.resolve.disposition)
             },
         )

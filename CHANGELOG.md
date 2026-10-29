@@ -12,7 +12,9 @@ Current workspace version metadata: **`0.2.0-alpha.1`**. Because the published `
 
 ### Added
 
-- Team plans in the opt-in workspace can send guidance to a selected member and publish or reply to a discussion after reviewing the recipient, entry and text. Guidance and discussion drafts and uncertain original requests are kept locally; newer input is preserved while a result is checked. Reopening does not restore permission or resend a request. Saving a message does not mean a member has read it and does not start new work. The local draft journal upgrades to format 13 on the first successful write; older clients cannot open the upgraded journal.
+- Paused or taken-over team plans in the opt-in workspace can review a new member roster and a specific follow-up task, confirm its actual request, then start it explicitly. Unfinished recovery settings, original preparation and confirmation requests, and recorded confirmations stay in the local journal. Newer input survives delayed results. Lost preparation responses can be stopped by their original request; missing records alone do not clear uncertain actions, and reopening does not restore execution permission.
+
+- Team plans in the opt-in workspace can send guidance to a selected member and publish or reply to a discussion after reviewing the recipient, entry and text. Guidance and discussion drafts and uncertain original requests are kept locally; newer input is preserved while a result is checked. Reopening does not restore permission or resend a request. Saving a message does not mean a member has read it and does not start new work. The local draft journal upgrades to format 14 on the first successful write; older clients cannot open the upgraded journal.
 
 - Team plans in the opt-in workspace can show recorded members, work results, messages and original discussion posts. Saved translation candidates open their exact versions in the existing entry workflow. Reading team history does not restart work or restore expired permissions; incomplete pages and uncertain results remain explicit.
 

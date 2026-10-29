@@ -1,3 +1,4 @@
+import { conversationTeamRecoveryZh } from "./conversationTeamRecovery";
 import { conversationTeamActionsZh } from "./conversationTeamActions";
 import { conversationTeamZh } from "./conversationTeam";
 import { deliveryWorkbenchZh } from "./deliveryWorkbench";
@@ -15,6 +16,7 @@ import { conversationZh } from "./conversation";
 
 import { strategyZh } from "./strategy";
 export const zhCN = {
+conversationTeamRecovery: conversationTeamRecoveryZh,
 conversationTeamActions: conversationTeamActionsZh,
 conversationTeam: conversationTeamZh,
 deliveryWorkbench: deliveryWorkbenchZh,

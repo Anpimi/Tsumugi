@@ -7,8 +7,12 @@ use tsumugi_core::{
         CaptureConversationProposal, CreateProjectConversation, ReadConversationPlanningAction,
         ReviseConversationProposal, WorkPlanCommand, AutomationLease,
         PublishTeamDiscussion, SendHumanTeamMessage,
+        TeamExecutionMember, TeamWorkKind, TeamWorkReference,
     },
     execution::{ApplicationScopeBasis, ExecutionId, Revision, UnsignedDecimal},
+};
+use crate::commands::execution::work_plans::recovery::{
+    WorkPlanTeamRecoveryPrepareOriginal, WorkPlanTeamRecoverySettlementOriginal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -200,6 +204,12 @@ pub enum ConversationDraftPending {
         target_name: String,
         submitted_seq: Revision,
     },
+    TeamRecovery {
+        conversation_id: ExecutionId,
+        request: WorkPlanTeamRecoveryPrepareOriginal,
+        authorization: Option<WorkPlanTeamRecoverySettlementOriginal>,
+        submitted_seq: Revision,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -329,6 +339,50 @@ pub struct ConversationTeamDraft {
     pub plan_digest: String,
     pub guidance: Option<ConversationTeamGuidanceDraft>,
     pub publication: Option<ConversationTeamPublicationDraft>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<ConversationTeamRecoveryDraft>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_recorded: Option<ConversationTeamRecoveryRecorded>,
+}
+
+/// Original request and descriptive receipt only; a reopened record is no permit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamRecoveryRecorded {
+    pub request: WorkPlanTeamRecoveryPrepareOriginal,
+    pub authorization: WorkPlanTeamRecoverySettlementOriginal,
+    pub receipt: tsumugi_core::application::TeamRecoveryReceipt,
+}
+
+/// Incomplete recovery input, with stable tool identities and no live permit.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamRecoveryDraft {
+    pub edit_seq: Revision,
+    pub next_key: u32,
+    pub members: Vec<ConversationTeamRecoveryMemberDraft>,
+    pub recipient_key: Option<u32>,
+    pub unit_id: Option<ExecutionId>,
+    pub kind: TeamWorkKind,
+    pub instructions: String,
+    pub post_ids: Vec<ExecutionId>,
+    pub prior_work: Vec<TeamWorkReference>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ConversationTeamRecoveryMemberDraft {
+    pub key: u32,
+    pub original: Option<TeamExecutionMember>,
+    pub display_name: String,
+    pub role: String,
+    pub config: tsumugi_core::ai::AiConfig,
+    pub unit_ids: Vec<ExecutionId>,
+    pub tool_handles: Vec<String>,
+    pub kinds: Vec<TeamWorkKind>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

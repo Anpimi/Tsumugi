@@ -492,7 +492,7 @@ export type AutomationEffect =
   | "dispatch-team-work"
   | "send-team-message";
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
-export type WorkPlanRequestOutcome4 =
+export type WorkPlanRequestOutcome5 =
   | {
       kind: "recorded";
       receipt: WorkPlanReceiptView;
@@ -503,7 +503,7 @@ export type WorkPlanRequestOutcome4 =
   | {
       kind: "fenced-not-applied";
     };
-export type WorkPlanRequestOutcome3 =
+export type WorkPlanRequestOutcome4 =
   | {
       kind: "recorded";
       receipt: WorkPlanStartReceipt;
@@ -582,7 +582,7 @@ export type TeamArtifactReference =
     };
 export type TeamReviewVerdict = "accept" | "revise" | "unresolved";
 export type TeamDiscussionKind = "note" | "challenge" | "rejection" | "resolution";
-export type WorkPlanRequestOutcome =
+export type WorkPlanRequestOutcome2 =
   | {
       kind: "recorded";
       receipt: TeamMessage;
@@ -593,7 +593,7 @@ export type WorkPlanRequestOutcome =
   | {
       kind: "fenced-not-applied";
     };
-export type WorkPlanRequestOutcome2 =
+export type WorkPlanRequestOutcome3 =
   | {
       kind: "recorded";
       receipt: TeamDiscussionPost;
@@ -615,6 +615,19 @@ export type WorkPlanTeamRecoveryEndView =
       projectId: ExecutionId;
       request: WorkPlanTeamRecoveryRecordedRequest;
     };
+export type WorkPlanTeamRecoveryPreparationOutcome =
+  | {
+      kind: "pending";
+    }
+  | {
+      kind: "draining";
+    }
+  | {
+      kind: "closed";
+    }
+  | {
+      kind: "fenced-not-applied";
+    };
 export type TeamArtifactBody =
   | {
       kind: "translation-revision";
@@ -631,6 +644,17 @@ export type TeamArtifactBody =
       text: string;
     };
 export type TeamArtifactReadKind = "untrusted-team-artifact";
+export type WorkPlanRequestOutcome =
+  | {
+      kind: "recorded";
+      receipt: TeamRecoveryReceipt;
+    }
+  | {
+      kind: "pending";
+    }
+  | {
+      kind: "fenced-not-applied";
+    };
 
 export interface Responses {
   candidateEffect: AiCandidateEffectView;
@@ -673,8 +697,10 @@ export interface Responses {
   workPlanTeamPublicationSettlement: WorkPlanTeamPublicationSettlementView;
   workPlanTeamRecoveryAction: WorkPlanTeamRecoveryActionView | null;
   workPlanTeamRecoveryEnd: WorkPlanTeamRecoveryEndView;
+  workPlanTeamRecoveryPreparation: WorkPlanTeamRecoveryPreparationView;
   workPlanTeamRecoveryPreview: WorkPlanTeamRecoveryPreviewView;
   workPlanTeamRecoveryReceipt: TeamRecoveryReceipt;
+  workPlanTeamRecoverySettlement: WorkPlanTeamRecoverySettlementView;
   workPlanTeamRecoveryState: WorkPlanTeamRecoveryStateView;
   workPlanTeamWorkTools: TeamWorkToolHistory;
   workProtection: WorkProtection;
@@ -1905,7 +1931,7 @@ export interface WorkPlanActionReadView {
 }
 export interface WorkPlanControlSettlementView {
   request: WorkPlanControlSettlementOriginal;
-  settlement: WorkPlanRequestSettlement4;
+  settlement: WorkPlanRequestSettlement5;
 }
 /**
  * Request correspondence includes Host choices, while the settlement proves
@@ -1929,9 +1955,9 @@ export interface WorkPlanControlSettlementOriginal {
 /**
  * A historical observation of one exact request, without restoring authority.
  */
-export interface WorkPlanRequestSettlement4 {
+export interface WorkPlanRequestSettlement5 {
   lease: AutomationLease;
-  outcome: WorkPlanRequestOutcome4;
+  outcome: WorkPlanRequestOutcome5;
   planId: ExecutionId;
   projectId: ExecutionId;
   state: WorkPlanState;
@@ -2030,7 +2056,7 @@ export interface WorkPlanStartReceipt {
 }
 export interface WorkPlanStartSettlementView {
   request: WorkPlanStartSettlementOriginal;
-  settlement: WorkPlanRequestSettlement3;
+  settlement: WorkPlanRequestSettlement4;
 }
 export interface WorkPlanStartSettlementOriginal {
   actionId: ExecutionId;
@@ -2042,9 +2068,9 @@ export interface WorkPlanStartSettlementOriginal {
 /**
  * A historical observation of one exact request, without restoring authority.
  */
-export interface WorkPlanRequestSettlement3 {
+export interface WorkPlanRequestSettlement4 {
   lease: AutomationLease;
-  outcome: WorkPlanRequestOutcome3;
+  outcome: WorkPlanRequestOutcome4;
   planId: ExecutionId;
   projectId: ExecutionId;
   state: WorkPlanState;
@@ -2818,7 +2844,7 @@ export interface PublishTeamDiscussion {
 }
 export interface WorkPlanTeamMessageSettlementView {
   request: TeamMessageOriginal;
-  settlement: WorkPlanRequestSettlement;
+  settlement: WorkPlanRequestSettlement2;
 }
 export interface TeamMessageOriginal {
   lease: AutomationLease;
@@ -2838,16 +2864,16 @@ export interface SendHumanTeamMessage {
 /**
  * A historical observation of one exact request, without restoring authority.
  */
-export interface WorkPlanRequestSettlement {
+export interface WorkPlanRequestSettlement2 {
   lease: AutomationLease;
-  outcome: WorkPlanRequestOutcome;
+  outcome: WorkPlanRequestOutcome2;
   planId: ExecutionId;
   projectId: ExecutionId;
   state: WorkPlanState;
 }
 export interface WorkPlanTeamPublicationSettlementView {
   request: TeamPublicationOriginal;
-  settlement: WorkPlanRequestSettlement2;
+  settlement: WorkPlanRequestSettlement3;
 }
 export interface TeamPublicationOriginal {
   lease: AutomationLease;
@@ -2857,9 +2883,9 @@ export interface TeamPublicationOriginal {
 /**
  * A historical observation of one exact request, without restoring authority.
  */
-export interface WorkPlanRequestSettlement2 {
+export interface WorkPlanRequestSettlement3 {
   lease: AutomationLease;
-  outcome: WorkPlanRequestOutcome2;
+  outcome: WorkPlanRequestOutcome3;
   planId: ExecutionId;
   projectId: ExecutionId;
   state: WorkPlanState;
@@ -2892,6 +2918,62 @@ export interface AuthorizeTeamRecovery {
   confirmed: boolean;
   digest: string;
   effects: AutomationEffect[];
+}
+export interface WorkPlanTeamRecoveryPreparationView {
+  hostCallbacksDrained: boolean;
+  lease: AutomationLease;
+  outcome: WorkPlanTeamRecoveryPreparationOutcome;
+  request: WorkPlanTeamRecoveryPrepareOriginal;
+  state: WorkPlanState;
+}
+export interface WorkPlanTeamRecoveryPrepareOriginal {
+  preparationId: ExecutionId;
+  projectId: ExecutionId;
+  recovery: PrepareTeamRecovery;
+}
+export interface PrepareTeamRecovery {
+  expectedEffectiveVersion: TeamEffectiveVersion;
+  expectedLease: AutomationLease;
+  /**
+   * @minItems 1
+   * @maxItems 8
+   */
+  members:
+    | [TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember, TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember, TeamExecutionMember, TeamExecutionMember]
+    | [TeamExecutionMember, TeamExecutionMember, TeamExecutionMember, TeamExecutionMember, TeamExecutionMember]
+    | [
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember
+      ]
+    | [
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember
+      ]
+    | [
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember,
+        TeamExecutionMember
+      ];
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  work: TeamHumanWork;
 }
 export interface WorkPlanTeamRecoveryPreviewView {
   checkers: WorkPlanCheckerView[];
@@ -2936,6 +3018,30 @@ export interface TeamArtifactRead {
   postId: ExecutionId;
   referenceIndex: number;
   target: TeamDiscussionTarget;
+}
+export interface WorkPlanTeamRecoverySettlementView {
+  request: WorkPlanTeamRecoverySettlementOriginal;
+  settlement: WorkPlanRequestSettlement;
+}
+export interface WorkPlanTeamRecoverySettlementOriginal {
+  applicationToolExecutions: ApplicationScopeBasis[];
+  baseLease: AutomationLease;
+  checkerExecutions: ReviewCheckerKey[];
+  planId: ExecutionId;
+  preparationId: ExecutionId;
+  projectId: ExecutionId;
+  recovery: AuthorizeTeamRecovery;
+  toolExecution: boolean;
+}
+/**
+ * A historical observation of one exact request, without restoring authority.
+ */
+export interface WorkPlanRequestSettlement {
+  lease: AutomationLease;
+  outcome: WorkPlanRequestOutcome;
+  planId: ExecutionId;
+  projectId: ExecutionId;
+  state: WorkPlanState;
 }
 export interface WorkPlanTeamRecoveryStateView {
   hostCallbacksDrained: boolean;

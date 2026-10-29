@@ -232,7 +232,8 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
         const target = conversationPendingTarget(pending);
         const actionId = conversationPendingActionId(pending);
         const planId = pending.kind === "proposal-work-plan" || pending.kind === "work-plan-start" || pending.kind === "work-plan-control"
-          ? pending.request.planId : pending.kind === "team-message" || pending.kind === "team-publication" ? pending.request.lease.planId : null;
+          ? pending.request.planId : pending.kind === "team-message" || pending.kind === "team-publication" ? pending.request.lease.planId
+            : pending.kind === "team-recovery" ? pending.request.recovery.planId : null;
         match(target.projectId === ctx.projectId && target.conversationId === conversationId && actionId === original.actionId && planMatches(planId));
       }
       return { kind: "conversation-request", conversationId, slot: original.slot, actionId: original.actionId };
