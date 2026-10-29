@@ -2950,6 +2950,19 @@ impl ProjectStore {
         operation: &str,
         digest: &str,
     ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
+        let found = self.plugin_start_input_observation(project, expected_task, attempt, operation, digest)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
+
+    fn plugin_start_input_observation(
+        &self,
+        project: ExecutionId,
+        expected_task: Option<ExecutionId>,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+    ) -> Result<Option<PluginStartActionRead>, ExecutionError> {
         let found = super::review::read_snapshot(self.execution_connection()?, |c| {
             if super::read_metadata_from(c)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "plugin-start-project"))?
@@ -2992,9 +3005,6 @@ impl ProjectStore {
                 input_digest: input.digest().into(),
             }))
         })?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
     }
     pub(crate) fn execution_input_cached(
@@ -3590,6 +3600,16 @@ impl ProjectStore {
         &mut self,
         prepared: PreparedSourceValidation,
     ) -> Result<(), ExecutionError> {
+        if let Some(valid) = self.source_check_finish_request_observation(
+            prepared.capture.source.input.envelope().project_id,
+            prepared.capture.check_input.envelope().attempt_id,
+            prepared.check_result.envelope().result_id,
+        )? {
+            if valid != prepared.proof.valid {
+                return Err(error(ErrorCode::ResultMismatch, "source-check-publication"));
+            }
+            return Ok(());
+        }
         self.commit_semantic_validation(
             prepared.capture.source,
             prepared.capture.check_input,
@@ -3644,14 +3664,36 @@ impl ProjectStore {
     ) -> Result<(), ExecutionError> {
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
-        let producer_input = load_input_cached(&tx, captured.input.envelope().attempt_id)?;
-        let producer_result =
-            load_result(&tx, &producer_input, captured.result.envelope().result_id)?;
-        let check_input = load_input_cached(&tx, captured_check.envelope().attempt_id)?;
-        let check_result = load_result(&tx, &check_input, expected_check.envelope().result_id)?;
+        let (producer_input, producer_result, check_input, check_result) =
+            Self::semantic_publication_frames_in(&tx, &captured, &captured_check, &expected_check, &proof)?;
+        if producer_input.envelope().operation == crate::content::OPERATION {
+            if let Some(valid) = super::content::validation_history::observe_in(&tx,
+                producer_input.envelope().project_id, check_input.envelope().attempt_id,
+                check_result.envelope().result_id)? {
+                if valid != proof.valid {
+                    return Err(error(ErrorCode::ResultMismatch, "source-check-publication"));
+                }
+                return Ok(());
+            }
+        }
         for input in [&producer_input, &check_input] {
             super::plugin_execution::check_input_in(&tx, input, &authority)?;
         }
+        Self::publish_semantic_frames_in(&tx, &producer_input, &producer_result, &check_input, &check_result, &proof)?;
+        commit(tx)
+    }
+
+    pub(super) fn semantic_publication_frames_in(
+        c: &Connection,
+        captured: &ResultValidationCapture,
+        captured_check: &FixedInput,
+        expected_check: &FixedResult,
+        proof: &ValidationProof,
+    ) -> Result<(FixedInput, FixedResult, FixedInput, FixedResult), ExecutionError> {
+        let producer_input = load_input_cached(c, captured.input.envelope().attempt_id)?;
+        let producer_result = load_result(c, &producer_input, captured.result.envelope().result_id)?;
+        let check_input = load_input_cached(c, captured_check.envelope().attempt_id)?;
+        let check_result = load_result(c, &check_input, expected_check.envelope().result_id)?;
         if !proof.matches(&producer_input, &producer_result)
             || producer_input.digest() != captured.input.digest()
             || check_input.digest() != captured_check.digest()
@@ -3662,6 +3704,17 @@ impl ProjectStore {
                 "semantic-validation-preparation",
             ));
         }
+        Ok((producer_input, producer_result, check_input, check_result))
+    }
+
+    pub(super) fn publish_semantic_frames_in(
+        tx: &ExecutionTransaction<'_>,
+        producer_input: &FixedInput,
+        producer_result: &FixedResult,
+        check_input: &FixedInput,
+        check_result: &FixedResult,
+        proof: &ValidationProof,
+    ) -> Result<(), ExecutionError> {
         let current_check: Option<String> = tx
             .query_row(
                 "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
@@ -3685,8 +3738,12 @@ impl ProjectStore {
                 "semantic-validation-current-result",
             ));
         }
+        if producer_input.envelope().operation == crate::content::OPERATION {
+            super::content::validation_history::record_in(&tx, producer_result.envelope().result_id,
+                check_input.envelope().attempt_id, check_result.envelope().result_id, proof.valid)?;
+        }
         tx.execute("INSERT INTO plugin_validation_links VALUES (?1,?2,?3) ON CONFLICT(producer_result_id) DO UPDATE SET checker_result_id=excluded.checker_result_id,valid=excluded.valid", params![producer_result.envelope().result_id.to_string(), check_result.envelope().result_id.to_string(), proof.valid]).map_err(sql_error)?;
-        commit(tx)
+        Ok(())
     }
     pub fn execution_result(
         &self,
@@ -3888,9 +3945,26 @@ impl ProjectStore {
         result: ExecutionId,
         confirmation: &crate::content::SourceConfirmation,
     ) -> Result<Option<AdoptionActionRead>, ExecutionError> {
+        let found = self.source_adoption_request_observation(project, attempt, action, unit, result, confirmation)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
+    pub fn source_adoption_request_observation(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        action: ExecutionId,
+        unit: ExecutionId,
+        result: ExecutionId,
+        confirmation: &crate::content::SourceConfirmation,
+    ) -> Result<Option<AdoptionActionRead>, ExecutionError> {
         let parameters = serde_json::to_value(confirmation)
             .map_err(|_| error(ErrorCode::InvalidInput, "source-action-confirmation"))?;
         let found = super::review::read_snapshot(self.execution_connection()?, |connection| {
+            if super::read_metadata_from(connection).map_err(|_| error(ErrorCode::CorruptLedger, "project"))?
+                .project_id().to_string() != project.to_string() {
+                return Err(error(ErrorCode::Unauthorized, "source-action-project"));
+            }
             let Some((read, _)) = read_adoption_action_in(connection, action)? else {
                 return Ok(None);
             };
@@ -3906,10 +3980,37 @@ impl ProjectStore {
             }
             Ok(Some(read))
         })?;
-        if self.is_reconciling() {
-            self.reconcile_execution()?;
-        }
         Ok(found)
+    }
+
+    /// Only a recorded matching receipt settles success. Otherwise check the
+    /// original adoption's monotonic content-scope admission in the same read.
+    pub fn source_adoption_request_settlement_observation(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        action: ExecutionId,
+        unit: ExecutionId,
+        result: ExecutionId,
+        confirmation: &crate::content::SourceConfirmation,
+    ) -> Result<Option<AdoptionActionRead>, ExecutionError> {
+        super::review::read_snapshot(self.execution_connection()?, |c| {
+            let found = self.source_adoption_request_observation(project, attempt, action, unit, result, confirmation)?;
+            if found.as_ref().is_some_and(|value| value.receipt.is_some()) { return Ok(found); }
+            let input = load_input(c, attempt)?;
+            if input.envelope().project_id != project || input.envelope().operation != crate::content::OPERATION
+                || input.envelope().units.len() != 1 || input.envelope().units[0].unit_id != unit {
+                return Err(error(ErrorCode::ResultMismatch, "source-action-request"));
+            }
+            let fixed = load_result(c, &input, result)?;
+            let output = crate::content::validate_output(&input, &fixed)?;
+            if fixed.digest() != confirmation.result_digest || output.identity_policy != confirmation.identity_policy
+                || output.source_language != confirmation.source_language {
+                return Err(error(ErrorCode::ResultMismatch, "source-action-confirmation"));
+            }
+            super::content::check_adoption_scope(c, project, confirmation)?;
+            Ok(found)
+        })
     }
 
     /// The import item-to-unit association comes only from its original frozen input.

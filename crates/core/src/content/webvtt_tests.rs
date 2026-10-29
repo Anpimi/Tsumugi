@@ -305,12 +305,12 @@ fn caption_project_maintains_timing_basis_reviews_releases_and_receipts_on_reope
         .unwrap();
     assert_eq!(
         (
-            comparison.unchanged,
-            comparison.changed,
-            comparison.added,
-            comparison.removed
+            comparison.counts.unchanged,
+            comparison.counts.changed,
+            comparison.counts.added,
+            comparison.counts.removed
         ),
-        (1, 3, 2, 2)
+        (1, 3, 1, 2)
     );
     let mut confirmation = comparison.confirmation;
     confirmation.actor = Some("Caption reviewer".into());

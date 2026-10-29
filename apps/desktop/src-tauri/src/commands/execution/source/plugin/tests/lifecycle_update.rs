@@ -3,7 +3,7 @@
 //! settings-consent policy, included-package compatibility or native GUI exit.
 use super::{
     missing_package::OwnedDirectory,
-    native::{call, completed, consent, scoped},
+    native::{call, completed, scoped, source_consent},
     upgrade, *,
 };
 use crate::commands::plugins::{
@@ -560,7 +560,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     let old_attempt = ExecutionId::new();
     let old_review =
         upgrade::preflight_source(&app, &window, &context, &material, &a_choice, old_attempt);
-    let old_start = consent(&context, &old_review);
+    let old_start = source_consent(&context, &old_review);
     let old_grant: ExecutionId = serde_json::from_value(old_start["grantId"].clone()).unwrap();
     assert_eq!(
         call(&window, "start_plugin_source", old_start.clone()).unwrap(),
@@ -588,7 +588,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     .unwrap();
     let checker_attempt = ExecutionId::new();
     let check = call(&window, "prepare_source_check", scoped(&context, json!({"sourceAttemptId":old_attempt,"sourceResultId":old_result,"attemptId":checker_attempt,"source":a_choice}))).unwrap();
-    let check_start = consent(&context, &check);
+    let check_start = source_consent(&context, &check);
     let check_grant: ExecutionId = serde_json::from_value(check_start["grantId"].clone()).unwrap();
     call(&window, "start_source_check", check_start).unwrap();
     let check_result = succeeded(&window, &context, checker_attempt);
@@ -703,7 +703,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     .unwrap();
     let held_review =
         upgrade::preflight_source(&app, &window, &context, &material, &a_choice, held_attempt);
-    let held_start = consent(&context, &held_review);
+    let held_start = source_consent(&context, &held_review);
     let held_grant: ExecutionId = serde_json::from_value(held_start["grantId"].clone()).unwrap();
     call(&window, "start_plugin_source", held_start.clone()).unwrap();
     let held_entered = observation(&observations, held_attempt, "entered");
@@ -856,7 +856,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     let b_review =
         upgrade::preflight_source(&app, &window, &context, &material, &b_choice, b_attempt);
     assert_eq!(b_review["source"]["settingsRevision"], "3");
-    let b_start = consent(&context, &b_review);
+    let b_start = source_consent(&context, &b_review);
     let b_grant: ExecutionId = serde_json::from_value(b_start["grantId"].clone()).unwrap();
     assert_frames(
         &app,
@@ -1135,7 +1135,7 @@ fn actual_live_version_update_rejects_old_callbacks_and_matches_cold_source() {
     assert_eq!(cold_review["source"], final_source);
     assert_eq!(cold_review["files"], b_review["files"]);
     assert_eq!(cold_review["source"]["settingsRevision"], "4");
-    let cold_start = consent(&current, &cold_review);
+    let cold_start = source_consent(&current, &cold_review);
     let cold_grant: ExecutionId = serde_json::from_value(cold_start["grantId"].clone()).unwrap();
     assert_ne!(cold_grant, b_grant);
     call(&window, "start_plugin_source", cold_start.clone()).unwrap();

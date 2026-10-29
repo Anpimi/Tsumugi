@@ -4,7 +4,7 @@
 //! This does not establish upgrade compatibility for any included real format.
 use super::{
     missing_package::{ApplicationCleanup, OwnedDirectory},
-    native::{call, completed, consent, consents, scoped},
+    native::{call, completed, consent, consents, scoped, source_consent},
     *,
 };
 use crate::commands::plugins::{PluginBuildRequest, PluginInventoryView, PluginPackageRequest};
@@ -362,7 +362,7 @@ fn extract_checked(
     grants: &mut Vec<Value>,
 ) -> (Value, Value, Value) {
     let review = preflight_source(app, window, context, materials, choice, ExecutionId::new());
-    let start = consent(context, &review);
+    let start = source_consent(context, &review);
     let attempt = call(window, "start_plugin_source", start.clone()).unwrap();
     let produced = result(window, context, &attempt);
     grants.push(start);
@@ -378,7 +378,7 @@ fn extract_checked(
     assert_eq!(preview["rows"].as_array().unwrap().len(), 1);
     assert_eq!(preview["rows"][0]["occurrence"]["text"], TEXT);
     let check = call(window,"prepare_source_check",scoped(context,json!({"sourceAttemptId":attempt,"sourceResultId":produced,"attemptId":ExecutionId::new(),"source":choice}))).unwrap();
-    let check_start = consent(context, &check);
+    let check_start = source_consent(context, &check);
     let checked = call(window, "start_source_check", check_start.clone()).unwrap();
     let checked_result = result(window, context, &checked);
     grants.push(check_start);

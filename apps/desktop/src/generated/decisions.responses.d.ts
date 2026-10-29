@@ -224,8 +224,11 @@ export type DecisionJournalKey =
     }
   | {
       kind: "resource";
+    }
+  | {
+      kind: "source";
     };
-export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact";
+export type DecisionJournalSlot = "primary" | "revocation" | "resource-fact" | "source-hook-stop";
 export type DecisionLocalRequestKind =
   | "save"
   | "selection"
@@ -246,7 +249,14 @@ export type DecisionLocalRequestKind =
   | "resource-context"
   | "resource-decision"
   | "resource-capture"
-  | "resource-fact";
+  | "resource-fact"
+  | "source-capture"
+  | "source-start"
+  | "source-prepare-check"
+  | "source-start-check"
+  | "source-finish-check"
+  | "source-adopt"
+  | "source-hook-stop";
 export type DecisionEvidence =
   | {
       blockerCount: number;
@@ -268,6 +278,7 @@ export type DecisionEvidence =
     }
   | {
       ambiguousCount: number;
+      changedCount: number;
       kind: "source-comparison";
       renameCandidateCount: number;
     }

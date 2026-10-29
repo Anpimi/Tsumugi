@@ -199,6 +199,7 @@ pub(super) fn declared_fixture(
         &context,
         json!({
             "attemptId":source_check["attemptId"],"inputDigest":source_check["inputDigest"],
+            "startMetadata":source_check.get("startMetadata").expect("source review start metadata"),
             "grantId":ExecutionId::new(),"unsandboxedExecution":true,
             "expiresAtMs":(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()+600_000).to_string()
         }),

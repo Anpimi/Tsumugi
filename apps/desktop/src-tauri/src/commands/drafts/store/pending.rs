@@ -4,13 +4,14 @@ use sha2::{Digest, Sha256};
 
 const MAX_SNAPSHOT_HEADS: u32 = 1_000;
 const MAX_SNAPSHOT_ACTIONS: usize = 1_000;
-const MAX_SNAPSHOT_BYTES: u64 = 8 * 1024 * 1024;
+const MAX_SNAPSHOT_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub enum PendingJournalKey {
     Translation(DraftKey),
     Conversation(ConversationDraftKey),
     Resource(ResourceDraftKey),
+    Source(SourceDraftKey),
 }
 
 /// Original frozen requests only. No unrelated current message or editor text.
@@ -21,6 +22,8 @@ pub enum PendingJournalSlot {
     Revocation(ConversationDraftRevocation),
     Resource(ResourceDraftPending),
     ResourceFact(ResourceFactPending),
+    Source(SourceDraftPending),
+    SourceHookStop(SourceDraftHookStop),
 }
 
 impl PendingJournalSlot {
@@ -40,6 +43,8 @@ impl PendingJournalSlot {
             Self::Revocation(slot) => slot.request.action_id,
             Self::Resource(slot) => slot.action_id(),
             Self::ResourceFact(slot) => slot.request.action_id,
+            Self::Source(slot) => slot.action_id(),
+            Self::SourceHookStop(slot) => slot.request.stop.action_id,
         }
     }
 
@@ -59,6 +64,8 @@ impl PendingJournalSlot {
             Self::Revocation(slot) => slot.submitted_seq,
             Self::Resource(slot) => slot.submitted_seq(),
             Self::ResourceFact(slot) => slot.submitted_seq,
+            Self::Source(slot) => slot.submitted_seq(),
+            Self::SourceHookStop(slot) => slot.submitted_seq,
         }
     }
 }
@@ -121,7 +128,9 @@ impl DraftStore {
         snapshot.format = Some(format);
         digest.update(format.to_le_bytes());
         let translation = "SELECT 0 AS journal_kind,locale,unit_id AS entry_id,revision,edit_seq,source_revision_id,has_pending,length(payload) AS bytes,payload FROM draft_heads WHERE project_id=?1 AND (?2 IS NULL OR locale=?2)";
-        let query = if format >= RESOURCE_FORMAT {
+        let query = if format >= SOURCE_FORMAT {
+            format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 UNION ALL SELECT 2 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM resource_draft_heads WHERE project_id=?1 UNION ALL SELECT 3 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM source_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
+        } else if format >= RESOURCE_FORMAT {
             format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 UNION ALL SELECT 2 AS journal_kind,'' AS locale,project_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM resource_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
         } else if format >= CONVERSATION_FORMAT {
             format!("{translation} UNION ALL SELECT 1 AS journal_kind,'' AS locale,conversation_id AS entry_id,revision,edit_seq,NULL AS source_revision_id,has_pending,length(payload) AS bytes,payload FROM conversation_draft_heads WHERE project_id=?1 ORDER BY journal_kind,locale,entry_id LIMIT ?3")
@@ -135,7 +144,7 @@ impl DraftStore {
             let kind: i64 = row.get(0).map_err(sql)?;
             let bytes: i64 = row.get(7).map_err(sql)?;
             let bytes = u64::try_from(bytes).map_err(|_| fail(ErrorCode::CorruptLedger, "drafts-record"))?;
-            let record_limit = if kind == 0 || format == CONVERSATION_FORMAT { MAX_DRAFT_RECORD_BYTES } else { MAX_CONVERSATION_DRAFT_RECORD_BYTES };
+            let record_limit = if kind == 3 { sources::MAX_RECORD } else if kind == 0 || format == CONVERSATION_FORMAT { MAX_DRAFT_RECORD_BYTES } else { MAX_CONVERSATION_DRAFT_RECORD_BYTES };
             if bytes > record_limit as u64 {
                 return Err(fail(ErrorCode::CorruptLedger, "drafts-record"));
             }
@@ -168,7 +177,7 @@ impl DraftStore {
                     slots.extend(value.revocations.into_iter().map(PendingJournalSlot::Revocation));
                 }
                 (PendingJournalKey::Conversation(key), head.revision, head.writer_id, seq, slots)
-            } else {
+            } else if kind == 2 {
                 let key=ResourceDraftKey{project_id:project};
                 if entry!=project.to_string(){return Err(fail(ErrorCode::CorruptLedger,"resource-drafts-project"));}
                 let head=resources::decode(&key,(stored_revision,edit_seq,has_pending,Some(payload)))?;
@@ -180,6 +189,19 @@ impl DraftStore {
                     slots.extend(v.fact_pending.filter(|p|locale.is_none_or(|l|p.request.basis.scope.locale==l)).map(PendingJournalSlot::ResourceFact));
                 }
                 (PendingJournalKey::Resource(key),head.revision,head.writer_id,seq,slots)
+            } else if kind == 3 {
+                let key = SourceDraftKey { project_id: project };
+                if entry != project.to_string() { return Err(fail(ErrorCode::CorruptLedger, "source-drafts-project")); }
+                let head = sources::decode(&key, (stored_revision, edit_seq, has_pending, Some(payload)))?;
+                let seq = head.value.as_ref().map(|value| value.edit_seq);
+                let mut slots = Vec::new();
+                if let Some(value) = head.value {
+                    slots.extend(value.pending.map(PendingJournalSlot::Source));
+                    slots.extend(value.hook_stop.into_iter().map(PendingJournalSlot::SourceHookStop));
+                }
+                (PendingJournalKey::Source(key), head.revision, head.writer_id, seq, slots)
+            } else {
+                return Err(fail(ErrorCode::CorruptLedger, "drafts-journal-kind"));
             };
             snapshot.scanned_heads += 1;
             snapshot.scanned_bytes += bytes;

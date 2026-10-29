@@ -1,13 +1,14 @@
 //! Generic source import: declared native capture, separately consented producer
 //! and semantic checker, and the existing Core adoption boundary.
-pub use super::super::PluginStartRequest;
 use super::*;
 use crate::commands::plugins::{PluginSourceRequest, PluginSourceView, sources::SourceEnvironment};
 use tsumugi_core::content::SourceSettings;
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
+pub(in crate::commands) mod observations;
 
 #[derive(Default)]
 pub(super) struct PluginSourceSession {
+    pub(super) native_drop: native_drop::NativeDropSession,
     choice: Option<(ExecutionId, PluginSourceRequest)>,
     review: Option<Arc<SourceReview>>,
     last_start: Option<PluginStartRequest>,
@@ -43,12 +44,14 @@ impl PluginSourceSession {
         capture
     }
     pub(super) fn discard_capture(&mut self) {
+        self.native_drop.clear();
         self.choice = None;
         self.review = None;
         // Accepted execution/check identities remain available for reconciliation.
     }
 }
 struct SourceReview {
+    pub(super) request: PluginCaptureRequest,
     choice: PluginSourceRequest,
     input: FixedInput,
     view: PluginSourcePreflight,
@@ -81,6 +84,7 @@ pub struct PluginSourceFile {
 pub struct PluginSourcePreflight {
     pub attempt_id: ExecutionId,
     pub input_digest: String,
+    pub start_metadata: content::SourcePluginStartMetadata,
     pub source_language: String,
     pub source: PluginSourceView,
     pub files: Vec<PluginSourceFile>,
@@ -91,11 +95,24 @@ pub struct PluginSourcePreflight {
 pub struct SourceCheckReview {
     pub attempt_id: ExecutionId,
     pub input_digest: String,
+    pub start_metadata: content::SourcePluginStartMetadata,
     pub source_attempt_id: ExecutionId,
     pub source_result_id: ExecutionId,
     pub source: PluginSourceView,
     pub rules: Vec<tsumugi_plugin_sdk::ContractRef>,
 }
+request!(
+    #[derive(PartialEq, Eq)]
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PluginStartRequest {
+        attempt_id: ExecutionId,
+        input_digest: String,
+        grant_id: ExecutionId,
+        expires_at_ms: UnsignedDecimal,
+        unsandboxed_execution: bool,
+        start_metadata: content::SourcePluginStartMetadata
+    }
+);
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     PluginSourceSelectRequest {
@@ -103,6 +120,7 @@ request!(
     }
 );
 request!(
+    #[derive(PartialEq, Eq)]
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     PluginCaptureRequest {
         selection_id: ExecutionId,
@@ -208,6 +226,15 @@ pub async fn select_plugin_source<R: tauri::Runtime>(
     state: State<'_, AppState>,
     request: PluginSourceSelectRequest,
 ) -> Result<Option<PluginSourceSelection>, CommandError> {
+    select_plugin_source_location(Some(app), state, request, None).await
+}
+
+pub(super) async fn select_plugin_source_location<R: tauri::Runtime>(
+    app: Option<tauri::AppHandle<R>>,
+    state: State<'_, AppState>,
+    request: PluginSourceSelectRequest,
+    dropped: Option<(String, ExecutionId)>,
+) -> Result<Option<PluginSourceSelection>, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let initial = request.clone();
     let picker = ExecutionId::new();
@@ -223,17 +250,37 @@ pub async fn select_plugin_source<R: tauri::Runtime>(
             )?;
             let (host, _) = active.execution_parts()?;
             host.allow_mutation()?;
+            let generation = host.runtime.generation();
+            let path = dropped
+                .map(|(window, ticket)| {
+                    let path = host.source.plugin.native_drop.consume(
+                        ticket,
+                        &native_drop::DropScope {
+                            window: window.clone(),
+                            session_token: initial.session_token.clone(),
+                            project_id: initial.project_id,
+                            generation,
+                        },
+                        Instant::now(),
+                    )?;
+                    Ok::<_, CommandError>((path, window))
+                })
+                .transpose()?;
             let work = host.begin_package_work(vec![initial.source.package.clone()])?;
             host.source.stop();
             host.source.picker = Some(picker);
-            Ok(work)
+            let path = path.map(|(path, window)| {
+                host.source.plugin.native_drop.begin_selection(window, picker);
+                path
+            });
+            Ok((work, path, generation))
         },
     )?;
     let io = state.io.clone();
     let dialogs = state.dialogs.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let work = admitted.await?;
+        let (work, dropped_path, generation) = admitted.await?;
         let source = request.source.clone();
         let accepted_work = work.clone();
         let captured = async {
@@ -243,16 +290,24 @@ pub async fn select_plugin_source<R: tauri::Runtime>(
                     plugins.capture_source(&source)
                 })
                 .await?;
-            let path = dialogs
-                .run(CommandStage::ExecutionRead, move || {
-                    Ok(app.dialog().file().blocking_pick_folder())
-                })
-                .await?;
+            let path = match dropped_path {
+                Some(path) => Some(path),
+                None => {
+                    let app = app.ok_or_else(stale)?;
+                    dialogs
+                        .run(CommandStage::ExecutionRead, move || {
+                            app.dialog()
+                                .file()
+                                .blocking_pick_folder()
+                                .map(|path| path.into_path().map_err(|_| stale()))
+                                .transpose()
+                        })
+                        .await?
+                }
+            };
             io.run(CommandStage::ExecutionRead, move || {
                 path.map(|path| {
-                    let selection =
-                        capture::Selection::authorize(path.into_path().map_err(|_| stale())?)
-                            .map_err(map_source)?;
+                    let selection = capture::Selection::authorize(path).map_err(map_source)?;
                     Ok((Arc::new(selection), environment.view()?))
                 })
                 .transpose()
@@ -273,10 +328,13 @@ pub async fn select_plugin_source<R: tauri::Runtime>(
                     )?;
                     let (host, _) = active.execution_parts()?;
                     host.allow_mutation()?;
-                    if host.source.picker != Some(picker) {
+                    if host.source.picker != Some(picker)
+                        || host.runtime.generation() != generation
+                    {
                         return Err(stale());
                     }
                     host.source.picker = None;
+                    host.source.plugin.native_drop.finish_selection(picker);
                     work.check()?;
                     Ok(captured?.map(|(selection, source)| {
                         let selection_id = ExecutionId::new();
@@ -326,7 +384,8 @@ pub async fn preflight_plugin_source(
                 .ok_or_else(stale)?;
             if let Some(review) = &host.source.plugin.review {
                 if review.input.envelope().attempt_id == initial.attempt_id {
-                    if review.choice != choice
+                    if review.request != initial
+                        || review.choice != choice
                         || review.view.source_language != initial.source_language
                     {
                         return Err(stale());
@@ -343,6 +402,7 @@ pub async fn preflight_plugin_source(
                 .metadata()
                 .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
                 .project_id();
+            let generation = host.runtime.generation();
             let work = host.begin_package_work(vec![choice.package.clone()])?;
             let job = begin(
                 sessions,
@@ -351,18 +411,19 @@ pub async fn preflight_plugin_source(
                 initial.selection_id,
                 &initial.source_language,
             )?;
-            Ok(Ok((job, choice, project, work)))
+            Ok(Ok((job, choice, project, generation, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (job, choice, project, work) = match admitted.await? {
+        let (job, choice, project, generation, work) = match admitted.await? {
             Ok(job) => job,
             Err(view) => return Ok(view),
         };
         let id = job.id;
         let language = request.source_language.clone();
+        let capture_request = request.clone();
         let accepted_work = work.clone();
         let captured = io
             .run(CommandStage::ExecutionRead, move || {
@@ -406,6 +467,7 @@ pub async fn preflight_plugin_source(
                 let view = PluginSourcePreflight {
                     attempt_id: request.attempt_id,
                     input_digest: input.digest().into(),
+                    start_metadata: content::SourcePluginStartMetadata { task_id: input.envelope().task_id, generation },
                     source_language: language,
                     source: environment.view()?,
                     files: bundle
@@ -420,6 +482,7 @@ pub async fn preflight_plugin_source(
                         .collect(),
                 };
                 Ok(Arc::new(SourceReview {
+                    request: capture_request,
                     choice,
                     input,
                     view,
@@ -508,7 +571,8 @@ async fn start(
                     .ok_or_else(stale)?;
                 (review.input.clone(), review.choice.clone())
             };
-            if input.digest() != initial.input_digest {
+            if input.digest() != initial.input_digest || input.envelope().task_id != initial.start_metadata.task_id
+                || host.runtime.generation() != initial.start_metadata.generation {
                 return Err(stale());
             }
             if previous
@@ -554,6 +618,8 @@ async fn start(
                     work.check()?;
                     let (host, store) = active.execution_parts()?;
                     let (environment, runners) = loaded?;
+                    if input.envelope().task_id != request.start_metadata.task_id
+                        || host.runtime.generation() != request.start_metadata.generation { return Err(stale()); }
                     register(host, runners, &environment)?;
                     host.runtime
                         .authorize_plugin(
@@ -639,15 +705,16 @@ pub async fn prepare_source_check(
             let captured = store
                 .capture_result_validation(initial.source_attempt_id, initial.source_result_id)
                 .map_err(map_source)?;
+            let generation = host.runtime.generation();
             let work = host.begin_package_work(vec![initial.source.package.clone()])?;
             let id = begin_job(active)?;
-            Ok(Ok((id, captured, work)))
+            Ok(Ok((id, captured, generation, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (id, captured, work) = match admitted.await? {
+        let (id, captured, generation, work) = match admitted.await? {
             Ok(capture) => capture,
             Err(view) => return Ok(view),
         };
@@ -665,6 +732,7 @@ pub async fn prepare_source_check(
                 let view = SourceCheckReview {
                     attempt_id: preparing.attempt_id,
                     input_digest: capture.check_input().digest().into(),
+                    start_metadata: content::SourcePluginStartMetadata { task_id: capture.check_input().envelope().task_id, generation },
                     source_attempt_id: preparing.source_attempt_id,
                     source_result_id: preparing.source_result_id,
                     source: environment.view()?,
@@ -702,6 +770,11 @@ pub async fn finish_source_check(
     state: State<'_, AppState>,
     request: SourceCheckFinishRequest,
 ) -> Result<(), CommandError> {
+    enum Capture {
+        Recorded,
+        Live { id: ExecutionId, review: Arc<CheckReview>, result: FixedResult },
+        Recovery(SourceValidationPublicationCapture),
+    }
     let lease = state.sessions.lease(CommandStage::ExecutionAdopt)?;
     let initial = request.clone();
     let admitted = lease.submit(
@@ -714,45 +787,46 @@ pub async fn finish_source_check(
                 initial.project_id,
                 CommandStage::ExecutionAdopt,
             )?;
-            let (host, store) = active.execution_parts()?;
-            host.allow_mutation()?;
-            let review = host
-                .source
-                .plugin
-                .check
-                .as_ref()
-                .filter(|review| review.view.attempt_id == initial.attempt_id)
-                .cloned()
-                .ok_or_else(stale)?;
-            let result = store
-                .execution_result(initial.attempt_id, initial.result_id)
-                .map_err(map_source)?;
-            let id = begin_job(active)?;
-            Ok((id, review, result))
+            if active.store.source_check_finish_request_observation(initial.project_id, initial.attempt_id, initial.result_id)
+                .map_err(map_source)?.is_some() { return Ok(Capture::Recorded); }
+            if let Some(host) = active.execution.as_ref() { host.allow_mutation()?; }
+            let review = active.execution.as_ref().and_then(|host| host.source.plugin.check.as_ref())
+                .filter(|review| review.view.attempt_id == initial.attempt_id).cloned();
+            if let Some(review) = review {
+                let result = active.store.execution_result(initial.attempt_id, initial.result_id).map_err(map_source)?;
+                let id = begin_job(active)?;
+                Ok(Capture::Live { id, review, result })
+            } else {
+                if active.execution.as_ref().is_some_and(|host| host.source.is_active()) {
+                    return Err(map_source(ExecutionError::new(ErrorCode::Busy, "input-busy")));
+                }
+                active.store.capture_source_validation_publication(initial.project_id, initial.attempt_id, initial.result_id)
+                    .map(Capture::Recovery).map_err(map_source)
+            }
         },
     )?;
     let io = state.io.clone();
     tauri::async_runtime::spawn(async move {
-        let (id, review, result) = admitted.await?;
-        let prepared = io
-            .run(CommandStage::ExecutionAdopt, move || {
-                review.capture.clone().prepare(result).map_err(map_source)
-            })
-            .await;
-        lease
-            .run(
-                "finish_source_check.commit",
-                CommandStage::ExecutionAdopt,
-                move |sessions| {
+        match admitted.await? {
+            Capture::Recorded => Ok(()),
+            Capture::Live { id, review, result } => {
+                let prepared = io.run(CommandStage::ExecutionAdopt, move || review.capture.clone().prepare(result).map_err(map_source)).await;
+                lease.run("finish_source_check.commit", CommandStage::ExecutionAdopt, move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
-                    store
-                        .commit_source_validation(prepared?)
-                        .map_err(map_source)
-                },
-            )
-            .await
+                    store.commit_source_validation(prepared?).map_err(map_source)
+                }).await
+            }
+            Capture::Recovery(capture) => {
+                let prepared = io.run(CommandStage::ExecutionAdopt, move || capture.prepare().map_err(map_source)).await;
+                lease.run("finish_source_check.publish_original", CommandStage::ExecutionAdopt, move |sessions| {
+                    let active = authorized(sessions, &request.session_token, request.project_id, CommandStage::ExecutionAdopt)?;
+                    if let Some(host) = active.execution.as_ref() { host.allow_mutation()?; }
+                    active.store.commit_source_validation_publication(prepared?).map_err(map_source)
+                }).await
+            }
+        }
     })
     .await
     .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?

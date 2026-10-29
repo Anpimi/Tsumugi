@@ -209,6 +209,18 @@ export type SourceMaintenanceHookStopResult =
       kind: "stopped";
       receipt: SourceMaintenanceHookStopReceipt;
     };
+export type NativeSourceDropEvent =
+  | {
+      dropTicket: ExecutionId;
+      folderName: string;
+      kind: "ready";
+      projectId: ExecutionId;
+      sessionToken: string;
+    }
+  | {
+      error: CommandError;
+      kind: "rejected";
+    };
 export type SourceContextPageEntry =
   | {
       kind: "block";
@@ -321,6 +333,7 @@ export interface Responses {
   cancelled: null;
   checkReview: SourceCheckReview;
   comparison: SourceChangePage;
+  droppedSelection: PluginSourceSelection;
   estimates: SourceImpactSummary[];
   history: SourceHistory;
   impact: SourceImpactPage;
@@ -329,6 +342,7 @@ export interface Responses {
   maintenanceHook: SourceMaintenanceHookObservation;
   maintenanceHookSession: SourceMaintenanceHookSession;
   maintenanceHookStopped: SourceMaintenanceHookStopped;
+  nativeDropEvent: NativeSourceDropEvent;
   page: ContentPage;
   pluginPreflight: PluginSourcePreflight;
   pluginSelection: PluginSourceSelection | null;
@@ -373,6 +387,7 @@ export interface SourceCheckReview {
   source: PluginSourceView;
   sourceAttemptId: ExecutionId;
   sourceResultId: ExecutionId;
+  startMetadata: SourcePluginStartMetadata;
 }
 /**
  * Schema and behavior are separate exact-match compatibility identities.
@@ -536,22 +551,30 @@ export interface ReviewRuleDeclaration {
   requiresTranslation: boolean;
   rule: ContractRef;
 }
+/**
+ * Frozen before direct Source dispatch. This is attribution for cancellation,
+ * never a live grant or permission restored from a local draft.
+ */
+export interface SourcePluginStartMetadata {
+  generation: ExecutionId;
+  taskId: ExecutionId;
+}
 export interface SourceChangePage {
-  added: number;
-  ambiguous: number;
   attemptId: ExecutionId;
-  changed: number;
   confirmation: SourceConfirmation;
+  counts: SourceChangeCounts;
   filteredTotal: number;
-  moved: number;
+  /**
+   * Subset of the complete comparison that requires a human mapping choice.
+   * Changed keys are not silently continued; local choices do not alter this count.
+   */
+  mappingReviewRequired: number;
   nextOrdinal: number | null;
   previousSnapshotId: ExecutionId;
-  removed: number;
   resultId: ExecutionId;
   rows: SourceChange[];
   scope: ContentScope;
   total: number;
-  unchanged: number;
 }
 export interface SourceConfirmation {
   actor: string | null;
@@ -577,6 +600,19 @@ export interface SourceMaintenanceHookActivation {
   locale: string;
   policyVersion: string;
   sessionEpoch: string;
+}
+/**
+ * Mutually exclusive occurrence classifications over the complete comparison.
+ * These counts do not change when a page or a text filter changes.
+ */
+export interface SourceChangeCounts {
+  added: number;
+  ambiguous: number;
+  changed: number;
+  moved: number;
+  removed: number;
+  renameCandidate: number;
+  unchanged: number;
 }
 export interface SourceChange {
   candidates: ContentRow[];
@@ -655,6 +691,11 @@ export interface TextRange {
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;
   revision: Revision;
+}
+export interface PluginSourceSelection {
+  folderName: string;
+  selectionId: ExecutionId;
+  source: PluginSourceView;
 }
 export interface SourceImpactSummary {
   locale: string;
@@ -865,17 +906,13 @@ export interface PluginSourcePreflight {
   inputDigest: string;
   source: PluginSourceView;
   sourceLanguage: string;
+  startMetadata: SourcePluginStartMetadata;
 }
 export interface PluginSourceFile {
   byteLength: number;
   logicalPath: string;
   role: string;
   sha256: string;
-}
-export interface PluginSourceSelection {
-  folderName: string;
-  selectionId: ExecutionId;
-  source: PluginSourceView;
 }
 export interface Preflight {
   count: number;

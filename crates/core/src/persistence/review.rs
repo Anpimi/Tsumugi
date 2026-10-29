@@ -2567,8 +2567,8 @@ pub(super) mod tests {
             .source_comparison(input.envelope().attempt_id, result, 0, 10)
             .unwrap();
         assert_eq!(
-            (comparison.unchanged, comparison.removed, comparison.added),
-            (1, 1, 0)
+            (comparison.counts.unchanged, comparison.counts.moved, comparison.counts.removed, comparison.counts.added),
+            (0, 1, 1, 0)
         );
         let action = store
             .prepare_adoption_with_id(
@@ -2950,7 +2950,7 @@ pub(super) mod tests {
         let comparison = store
             .source_comparison(input.envelope().attempt_id, result, 0, 10)
             .unwrap();
-        assert_eq!((comparison.unchanged, comparison.changed), (1, 1));
+        assert_eq!((comparison.counts.unchanged, comparison.counts.changed), (1, 1));
         let mut confirmation = comparison.confirmation;
         confirmation.actor = Some("Reviewer A".into());
         confirmation.lineage.push(crate::content::LineageChoice {

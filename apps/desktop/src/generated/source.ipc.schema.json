@@ -442,6 +442,30 @@
         ],
         "type": "object"
       },
+      "PluginSourceDropRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "dropTicket": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "dropTicket",
+          "source"
+        ],
+        "type": "object"
+      },
       "PluginSourceRequest": {
         "additionalProperties": false,
         "properties": {
@@ -503,6 +527,9 @@
           "sessionToken": {
             "type": "string"
           },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
+          },
           "unsandboxedExecution": {
             "type": "boolean"
           }
@@ -514,7 +541,8 @@
           "inputDigest",
           "grantId",
           "expiresAtMs",
-          "unsandboxedExecution"
+          "unsandboxedExecution",
+          "startMetadata"
         ],
         "type": "object"
       },
@@ -1003,6 +1031,23 @@
         ],
         "type": "object"
       },
+      "SourcePluginStartMetadata": {
+        "additionalProperties": false,
+        "description": "Frozen before direct Source dispatch. This is attribution for cancellation,\nnever a live grant or permission restored from a local draft.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "generation"
+        ],
+        "type": "object"
+      },
       "StartRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1106,6 +1151,9 @@
       "pluginCapture": {
         "$ref": "#/definitions/PluginCaptureRequest"
       },
+      "pluginDrop": {
+        "$ref": "#/definitions/PluginSourceDropRequest"
+      },
       "pluginSelect": {
         "$ref": "#/definitions/PluginSourceSelectRequest"
       },
@@ -1151,6 +1199,7 @@
       "adopt",
       "adoptionAction",
       "pluginSelect",
+      "pluginDrop",
       "pluginCapture",
       "pluginStart",
       "checkPrepare",
@@ -2669,6 +2718,56 @@
         ],
         "type": "object"
       },
+      "NativeSourceDropEvent": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dropTicket": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "folderName": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "ready",
+                "type": "string"
+              },
+              "projectId": {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              "sessionToken": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "dropTicket",
+              "folderName",
+              "sessionToken",
+              "projectId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/CommandError"
+              },
+              "kind": {
+                "const": "rejected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "PermissionRequest": {
         "description": "These are requested permissions, never an authorization token.",
         "oneOf": [
@@ -2835,11 +2934,15 @@
           },
           "sourceLanguage": {
             "type": "string"
+          },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
           }
         },
         "required": [
           "attemptId",
           "inputDigest",
+          "startMetadata",
           "sourceLanguage",
           "source",
           "files"
@@ -3255,6 +3358,64 @@
         ],
         "type": "object"
       },
+      "SourceChangeCounts": {
+        "additionalProperties": false,
+        "description": "Mutually exclusive occurrence classifications over the complete comparison.\nThese counts do not change when a page or a text filter changes.",
+        "properties": {
+          "added": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ambiguous": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "changed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "moved": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "renameCandidate": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unchanged": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unchanged",
+          "moved",
+          "changed",
+          "added",
+          "renameCandidate",
+          "ambiguous",
+          "removed"
+        ],
+        "type": "object"
+      },
       "SourceChangeKind": {
         "enum": [
           "unchanged",
@@ -3270,29 +3431,14 @@
       "SourceChangePage": {
         "additionalProperties": false,
         "properties": {
-          "added": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "ambiguous": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
           "attemptId": {
             "$ref": "#/definitions/ExecutionId"
           },
-          "changed": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
           "confirmation": {
             "$ref": "#/definitions/SourceConfirmation"
+          },
+          "counts": {
+            "$ref": "#/definitions/SourceChangeCounts"
           },
           "filteredTotal": {
             "format": "uint32",
@@ -3300,7 +3446,8 @@
             "minimum": 0,
             "type": "integer"
           },
-          "moved": {
+          "mappingReviewRequired": {
+            "description": "Subset of the complete comparison that requires a human mapping choice.\nChanged keys are not silently continued; local choices do not alter this count.",
             "format": "uint32",
             "maximum": 4294967295,
             "minimum": 0,
@@ -3317,12 +3464,6 @@
           },
           "previousSnapshotId": {
             "$ref": "#/definitions/ExecutionId"
-          },
-          "removed": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
           },
           "resultId": {
             "$ref": "#/definitions/ExecutionId"
@@ -3341,12 +3482,6 @@
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
-          },
-          "unchanged": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
           }
         },
         "required": [
@@ -3357,12 +3492,8 @@
           "confirmation",
           "total",
           "filteredTotal",
-          "unchanged",
-          "moved",
-          "changed",
-          "added",
-          "ambiguous",
-          "removed",
+          "counts",
+          "mappingReviewRequired",
           "nextOrdinal",
           "rows"
         ],
@@ -3391,11 +3522,15 @@
           },
           "sourceResultId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
           }
         },
         "required": [
           "attemptId",
           "inputDigest",
+          "startMetadata",
           "sourceAttemptId",
           "sourceResultId",
           "source",
@@ -4849,6 +4984,23 @@
         ],
         "type": "object"
       },
+      "SourcePluginStartMetadata": {
+        "additionalProperties": false,
+        "description": "Frozen before direct Source dispatch. This is attribution for cancellation,\nnever a live grant or permission restored from a local draft.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "generation"
+        ],
+        "type": "object"
+      },
       "SourceReference": {
         "additionalProperties": false,
         "properties": {
@@ -5040,6 +5192,9 @@
       "comparison": {
         "$ref": "#/definitions/SourceChangePage"
       },
+      "droppedSelection": {
+        "$ref": "#/definitions/PluginSourceSelection"
+      },
       "estimates": {
         "items": {
           "$ref": "#/definitions/SourceImpactSummary"
@@ -5069,6 +5224,9 @@
       },
       "maintenanceHookStopped": {
         "$ref": "#/definitions/SourceMaintenanceHookStopped"
+      },
+      "nativeDropEvent": {
+        "$ref": "#/definitions/NativeSourceDropEvent"
       },
       "page": {
         "$ref": "#/definitions/ContentPage"
@@ -5141,6 +5299,8 @@
       "action",
       "adoptionAction",
       "pluginSelection",
+      "droppedSelection",
+      "nativeDropEvent",
       "pluginPreflight",
       "checkReview"
     ],

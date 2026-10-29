@@ -56,6 +56,10 @@ import { DecisionBadge, DecisionTray } from "./features/decisions/DecisionList";
 import { TokenizedText } from "../design-system/TokenizedText";
 import { installWorkspaceMenu } from "./nativeMenu";
 import { FeatureBoundary } from "./FeatureBoundary";
+import { sourceCommands, validateResponseNativeDropEvent } from "../sourceCommands";
+import { commandFailure, type CommandFailure } from "../CommandFailure";
+import type { SourceOwner, SourceReviewTarget } from "./features/source/sourceTypes";
+import type { SourceDrop } from "./features/source/SourcePreparationSheet";
 import styles from "./WorkbenchLayout.module.css";
 import appStyles from "./WorkbenchApp.module.css";
 
@@ -82,12 +86,19 @@ const KnowledgeView = lazy(() => import("./features/knowledge/KnowledgeView"));
 const TranslationMemoryDetails = lazy(() => import("./features/knowledge/TranslationMemoryDetails"));
 const KnowledgeDetails = lazy(() => import("./features/knowledge/KnowledgeDetails"));
 const ContextResourceDetails = lazy(() => import("./features/knowledge/ContextResourceDetails"));
+const createSourceOwnerHost = () => lazy(() => import("./features/source/SourceOwnerHost"));
+const SourcePreparationSheet = lazy(() => import("./features/source/SourcePreparationSheet"));
+const SourceMaintenanceBrief = lazy(() => import("./features/source/SourceMaintenanceBrief"));
 type Runtime = ReturnType<typeof createWorkspaceRouter>;
 type KnowledgeOpenIntent = { newView: boolean; restoreDraft: boolean; viewId: string | null; origin: Element | null };
 type ShellActions = { requestOpen: () => void; close: () => Promise<boolean>; refresh: () => void;
+  openSource: () => void;
   openImport: () => Promise<void>; canOpenImport: () => boolean;
   confirm: (advance: boolean) => Promise<void>; exitEditor: () => Promise<void>; toggleFocus: () => Promise<void>; isEditing: () => boolean; canConfirm: () => boolean; canAdvance: () => boolean };
 type SessionContext = { session: ProjectSession; lifecycle: ProjectLifecycle; runtime: Runtime; store: ReturnType<typeof createWorkspaceStore>; gate: InteractionGate; readOnly: boolean; requestOpen: () => void;
+  sourceOwner: SourceOwner | null; sourceOpen: boolean; setSourceOpen: (open: boolean) => void;
+  sourceTarget: SourceReviewTarget | null; setSourceTarget: (target: SourceReviewTarget | null) => void;
+  sourceDrop: SourceDrop | null; clearSourceDrop: () => void; sourceDropFailure: CommandFailure | null;
   drafts: TranslationDrafts | null; draftLoadFailed: boolean; retryDrafts: () => void; recoveryKey: DraftKey | null; revealDraft: (key: DraftKey | null) => void;
   importOwners: ImportOwners | null; importRecovery: boolean; requestImport: () => void; revealImport: () => void; hideImportRecovery: () => void;
   candidateOwners: CandidateOwners | null; requestCandidates: () => void; revealCandidates: () => void;
@@ -114,11 +125,24 @@ function KnowledgeLoadFailure({ canRetry, onFailure, onRetry }: { canRetry: bool
   return <ErrorState title={t("loadFailed")} description={t(canRetry ? "loadRetryHelp" : "loadExistingHelp")}
     action={canRetry ? <Button onClick={onRetry}>{t("retryLoad")}</Button> : undefined}/>;
 }
+function SourceLoadFailure({ canRetry, onRetry }: { canRetry: boolean; onRetry: () => void }) {
+  const { t } = useTranslation(undefined, { keyPrefix: "sourceMaintenance" });
+  return <ErrorState title={t("ownerFailed")} description={t("ownerFailedHelp")}
+    action={canRetry ? <Button onClick={onRetry}>{t("retryOwner")}</Button> : undefined}/>;
+}
 
 function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: { session: ProjectSession; lifecycle: ProjectLifecycle; gate: InteractionGate; readOnly: boolean; requestOpen: () => void }) {
   const [ExecutionOwnerHost, setExecutionOwnerHost] = useState(createExecutionOwnerHost), [KnowledgeOwnerHost, setKnowledgeOwnerHost] = useState(createKnowledgeOwnerHost);
   const [store] = useState(() => createWorkspaceStore({ initialLocale: session.project.metadata.targetLocales[0] ?? "" }));
   const [runtime, setRuntime] = useState<Runtime | null>(null);
+  const [SourceOwnerHost, setSourceOwnerHost] = useState(createSourceOwnerHost), [sourceAttempt, setSourceAttempt] = useState(0);
+  const [sourceOwner, setSourceOwner] = useState<SourceOwner | null>(null), sourceHadOwner = useRef(false);
+  const [sourceOpen, setSourceOpen] = useState(false), [sourceTarget, setSourceTarget] = useState<SourceReviewTarget | null>(null);
+  const [sourceDrop, setSourceDrop] = useState<SourceDrop | null>(null), [sourceDropFailure, setSourceDropFailure] = useState<CommandFailure | null>(null);
+  const sourceParticipant = useRef<LifecycleParticipant | null>(null);
+  const publishSourceParticipant = useCallback((participant: LifecycleParticipant | null) => { sourceParticipant.current = participant; }, []);
+  const publishSourceOwner = useCallback((owner: SourceOwner | null) => { if (owner) sourceHadOwner.current = true; setSourceOwner(owner); }, []);
+  const revealSource = useCallback(() => setSourceOpen(true), []);
   const [navigationFailed, setNavigationFailed] = useState(false);
   const [drafts, setDrafts] = useState<TranslationDrafts | null>(null), [draftLoadFailed, setDraftLoadFailed] = useState(false), [draftAttempt, setDraftAttempt] = useState(0);
   const [recoveryKey, setRecoveryKey] = useState<DraftKey | null>(null);
@@ -152,8 +176,10 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const executionHadOwner = useRef(false), [executionAttempt, setExecutionAttempt] = useState(0);
   const publishExecutionTasks = useCallback((owner: ReturnType<typeof useExecutionTaskSession> | null) => { if (owner) executionHadOwner.current = true; setExecutionTasks(owner); }, []);
   const revealTask = useCallback((operation: string | null, attemptId: string | null) => {
-    if (operation === "ai-semantic-review" || operation === null && attemptId !== null && reviewStatus.current.owner?.semantic.current().attempts.includes(attemptId)) revealReview(); else revealImport();
-  }, [revealReview, revealImport]);
+    if (operation === "source-import" || operation === "source-semantic-check" || operation === null && attemptId !== null
+      && [sourceOwner?.current().attempt, sourceOwner?.current().checkAttempt].includes(attemptId)) revealSource();
+    else if (operation === "ai-semantic-review" || operation === null && attemptId !== null && reviewStatus.current.owner?.semantic.current().attempts.includes(attemptId)) revealReview(); else revealImport();
+  }, [revealReview, revealImport, revealSource, sourceOwner]);
   const [candidateBatchOpen, setCandidateBatchOpen] = useState(false);
   const revealCandidateBatch = useCallback(() => { requestCandidates(); setCandidateBatchOpen(true); }, [requestCandidates]);
   const [comparisonsRequested, setComparisonsRequested] = useState(false), [comparisonOwner, setComparisonOwner] = useState<ComparisonSession | null>(null);
@@ -225,6 +251,26 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
     prepareLeave: (intent, proof, current) => draftParticipant.current?.prepareLeave(intent, proof, current) ?? Promise.resolve(false),
     reveal: () => draftParticipant.current?.reveal?.(),
   }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId]);
+  useLayoutEffect(() => lifecycle.register({ id: "source-maintenance", area: "source", scope: { kind: "project", ...executionContext(session.project) },
+    inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-source-session" }
+      : sourceParticipant.current?.inspect(intent) ?? { status: "blocked", revision: "source-owner-loading" },
+    prepareLeave: (intent, proof, present) => sourceParticipant.current?.prepareLeave(intent, proof, present) ?? Promise.resolve(false),
+    reveal: revealSource,
+  }), [lifecycle, session.project.sessionToken, session.project.metadata.projectId, revealSource]);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let live = true, unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) => listen<unknown>("source-native-drop", event => {
+      if (!live || session.reads.retired || readOnly) return;
+      const value = event.payload;
+      if (!validateResponseNativeDropEvent(value)) { setSourceDropFailure(commandFailure(new Error("Invalid native source drop"))); return; }
+      if (value.kind === "ready") {
+        if (value.projectId !== session.project.metadata.projectId || value.sessionToken !== session.project.sessionToken) return;
+        setSourceDrop({ dropTicket: value.dropTicket, folderName: value.folderName }); setSourceTarget(null); setSourceDropFailure(null); setSourceOpen(true);
+      } else { setSourceDropFailure(commandFailure(value.error)); setSourceOpen(true); }
+    })).then(remove => { if (live) unlisten = remove; else remove(); }).catch(error => { if (live) setSourceDropFailure(commandFailure(error)); });
+    return () => { live = false; unlisten?.(); };
+  }, [session.project.sessionToken, session.project.metadata.projectId, session.reads, readOnly]);
   useLayoutEffect(() => lifecycle.register({ id: "translation-import-loading", area: "translation", scope: { kind: "project", ...executionContext(session.project) },
     inspect: intent => ["navigate", "language", "close-view", "restore"].includes(intent.kind) ? { status: "ready", revision: "retained-import-presentation" }
       : { status: importStatus.current.requested && !importStatus.current.owners ? "blocked" : "ready",
@@ -282,6 +328,8 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
   if (!runtime) return <LoadingState label={t("loadingEntries")} />;
   return <WorkspaceContext.Provider value={{ session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed,
+    sourceOwner: executionTasks ? sourceOwner : null, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop,
+    clearSourceDrop: () => { setSourceDrop(null); setSourceDropFailure(null); }, sourceDropFailure,
     retryDrafts: () => { if (draftOwner.current) void draftOwner.current.initialize(); else setDraftAttempt(attempt => attempt + 1); }, recoveryKey, revealDraft: setRecoveryKey,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
@@ -304,6 +352,10 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
         {knowledgeRequested ? <FeatureBoundary key={knowledgeAttempt} fallback={<KnowledgeLoadFailure canRetry={!knowledgeHadOwner.current} onFailure={failKnowledgeLoad} onRetry={() => retryKnowledgeLoad(false)}/>}><Suspense fallback={null}>
           <KnowledgeOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishKnowledgeOwner} onReveal={revealKnowledge} onParticipant={publishKnowledgeParticipant}/>
         </Suspense></FeatureBoundary> : null}
+        <FeatureBoundary key={`source-${sourceAttempt}`} fallback={<SourceLoadFailure canRetry={!sourceHadOwner.current} onRetry={() => {
+          if (!sourceHadOwner.current) { setSourceOwnerHost(() => createSourceOwnerHost()); setSourceAttempt(value => value + 1); }
+        }}/>}><Suspense fallback={null}><SourceOwnerHost project={session.project} lifecycle={lifecycle} onOwner={publishSourceOwner}
+          onParticipant={publishSourceParticipant} onReveal={revealSource}/></Suspense></FeatureBoundary>
       </ExecutionOwnerHost>
     </Suspense></FeatureBoundary> : null}
     {candidatesRequested && drafts ? <FeatureBoundary fallback={<ErrorState title={t("candidateUnavailable")} description={t("candidateUnavailableHelp")} />}><Suspense fallback={null}>
@@ -320,6 +372,7 @@ function ProjectWorkspace({ session, lifecycle, gate, readOnly, requestOpen }: {
 function WorkspaceShell() {
   const readStatus = useSessionReadStatus();
   const { session, lifecycle, runtime, store, gate, readOnly, requestOpen, drafts, draftLoadFailed, retryDrafts, recoveryKey, revealDraft,
+    sourceOwner, sourceOpen, setSourceOpen, sourceTarget, setSourceTarget, sourceDrop, clearSourceDrop, sourceDropFailure,
     importOwners, importRecovery, requestImport, revealImport, hideImportRecovery,
     candidateOwners, requestCandidates, revealCandidates, candidateBatchOpen, setCandidateBatchOpen, comparisonOwner, requestComparisons,
     reviewOwner, requestReview, revealReview, reviewRecovery, hideReviewRecovery, reviewBatchOpen, setReviewBatchOpen, reviewBatchSelection, prepareReviewBatch,
@@ -347,6 +400,7 @@ function WorkspaceShell() {
   const drawerRecoveryFocus = useRef(false);
   const drawerDecisionClose = useRef(false), decisionTrigger = useRef<HTMLButtonElement>(null);
   const paletteRelease = useRef<(() => void) | null>(null), drawerRelease = useRef<(() => void) | null>(null);
+  const paletteOrigin = useRef<Element | null>(null);
   const [commandFailed, setCommandFailed] = useState(false);
   const [presented, setPresented] = useState<{ candidates: string | null; protection: string | null; comparison: string | null; review: string | null }>({ candidates: null, protection: null, comparison: null, review: null });
   const reportPresented = useCallback((viewId: string, kind: "candidates" | "protection" | "comparison" | "review", visible: boolean) => setPresented(before => {
@@ -375,10 +429,42 @@ function WorkspaceShell() {
   const recoveryEntry = recoveryKey ? drafts?.getEntry(recoveryKey) : undefined;
   const pendingDrafts = draftState.summaries.filter(summary => summary.hasPending);
   const disabled = readOnly || lifecycleState.phase !== "idle" || !!lifecycleState.pending;
+  const sourcePresentation = useRef<{ viewId: string | null; origin: Element | null } | null>(null);
+  const [sourceSavedSnapshot, setSourceSavedSnapshot] = useState<string | null>(null);
+  useEffect(() => { if (!sourceOpen || sourceDrop || sourceTarget) setSourceSavedSnapshot(null); }, [sourceOpen, sourceDrop, sourceTarget]);
+  useLayoutEffect(() => {
+    if (!sourceOpen) { sourcePresentation.current = null; return; }
+    const intent = sourcePresentation.current ?? { viewId: currentId, origin: document.activeElement }; sourcePresentation.current = intent;
+    const moved = (event: FocusEvent) => {
+      const target = event.target;
+      if (document.querySelector(".source-preparation-sheet")) return;
+      if (target !== intent.origin && target !== document.body) { sourcePresentation.current = null; setSourceOpen(false); }
+    };
+    document.addEventListener("focusin", moved); return () => document.removeEventListener("focusin", moved);
+  }, [sourceOpen, setSourceOpen]);
+  useEffect(() => { if (sourceOpen && sourcePresentation.current && sourcePresentation.current.viewId !== currentId
+    && !document.querySelector(".source-preparation-sheet")) { sourcePresentation.current = null; setSourceOpen(false); } }, [currentId, sourceOpen, setSourceOpen]);
+  function openSource(dialogId?: string) {
+    if (disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return;
+    if (dialogId === "workspace-dock") closeDrawer();
+    setSourceSavedSnapshot(null); setSourceTarget(null); setSourceOpen(true);
+  }
+  async function openSourceAffected(snapshotId: string, unitId?: string, locale = activeLocale, beforeNavigate?: () => void) {
+    if (disabled || session.reads.retired) return;
+    const scope = await sourceCommands.scope(executionContext(session.project));
+    if (scope.currentSnapshot !== snapshotId || session.reads.retired) { setCommandFailed(true); return; }
+    beforeNavigate?.(); setSourceOpen(false);
+    const accepted = await runtime.navigation.open({ kind: "entries", locale, preset: unitId ? "all" : "affected", compareSource: true,
+      ...(unitId ? { focus: unitId, editing: false } : {}) });
+    if (accepted) { setSourceOpen(false); setSourceTarget(null); }
+  }
   const resourceSubscribe = knowledgeOwner?.subscribe, readResourceActivity = knowledgeOwner?.getDecisionActivity;
   const resourceActivity = useMemo(() => resourceSubscribe && readResourceActivity ? { subscribe: resourceSubscribe, getDecisionActivity: readResourceActivity } : null,
     [resourceSubscribe, readResourceActivity]);
-  const decisionFeed = useDecisionFeed(session.reads, [drafts, conversations, resourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
+  const sourceSubscribe = sourceOwner?.subscribe, readSourceActivity = sourceOwner?.getDecisionActivity;
+  const sourceActivity = useMemo(() => sourceSubscribe && readSourceActivity ? { subscribe: sourceSubscribe, getDecisionActivity: readSourceActivity } : null,
+    [sourceSubscribe, readSourceActivity]);
+  const decisionFeed = useDecisionFeed(session.reads, [drafts, conversations, resourceActivity, sourceActivity], view?.kind === "decisions" ? view.decisionCursor : null,
     view?.kind === "decisions" && !importVisible, !readOnly);
   const decisionBadgeId = useId();
   const lastDecisionView = useRef<string | null>(null);
@@ -413,7 +499,7 @@ function WorkspaceShell() {
       ? { ...executionContext(session.project), area: "translation" as const } : null;
   };
   function closePalette() { paletteRelease.current?.(); paletteRelease.current = null; setPalette(false); }
-  function openPalette() { if (paletteRelease.current) return; paletteRelease.current = gate.pushDialog("workspace-palette"); setPalette(true); }
+  function openPalette() { if (paletteRelease.current) return; paletteOrigin.current = document.activeElement; paletteRelease.current = gate.pushDialog("workspace-palette"); setPalette(true); }
   const closeDrawer = useCallback(() => { drawerRelease.current?.(); drawerRelease.current = null; setDrawer(false); }, []);
   useLayoutEffect(() => recoveryKey ? gate.pushDialog("draft-recovery") : undefined, [gate, recoveryKey !== null]);
   const showDock = useCallback(() => {
@@ -482,9 +568,11 @@ function WorkspaceShell() {
     if (commandsReady && commands) commands.dispatch("review.batch-preview", scope, payload);
   }
   const actions = useRef<ShellActions>({ requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
+    openSource,
     openImport: async () => {}, canOpenImport: () => false,
     confirm: async (_advance: boolean) => {}, exitEditor: async () => {}, toggleFocus: async () => {}, isEditing: () => false, canConfirm: () => false, canAdvance: () => false });
   actions.current = { requestOpen, close: () => lifecycle.close(), refresh: () => { void session.reads.synchronize(true); void lifecycle.refresh(); entries.current?.refresh(); },
+    openSource,
     openImport: async () => {
       requestImport();
       if (!importOwners) {
@@ -525,6 +613,7 @@ function WorkspaceShell() {
       }, refresh: () => actions.current.refresh(), focusSearch: () => entries.current?.focusSearch(), focusAgent: showDock, focusDetails: showDock, openCommands: openPalette,
       openDecisions: () => openDecisions(),
       openImport: () => actions.current.openImport(), canOpenImport: () => actions.current.canOpenImport(),
+      openSource: () => actions.current.openSource(),
       confirm: advance => actions.current.confirm(advance), exitEditor: () => actions.current.exitEditor(), toggleFocus: () => actions.current.toggleFocus(),
       isEditing: () => actions.current.isEditing(), canConfirm: () => actions.current.canConfirm(), canAdvance: () => actions.current.canAdvance() }, onError: () => setCommandFailed(true) });
     setRegisteredCommands(commands); return remove;
@@ -618,6 +707,15 @@ function WorkspaceShell() {
         if (!pending || pending.request.actionId !== destination.actionId || !current()) return false;
         intent.release(); revealKnowledge(); return true;
       }
+      if (destination.kind === "source-request") {
+        if (!sourceOwner || sourceOwner.journal.hydration !== "ready") return false;
+        const frame = sourceOwner.draftValue(), pending = destination.slot === "source-hook-stop" ? frame.hookStop : frame.pending;
+        const actionId = pending && ("stop" in pending.request ? pending.request.stop.actionId
+          : "actionId" in pending.request ? pending.request.actionId : "resultId" in pending.request ? pending.request.resultId : pending.request.attemptId);
+        if (actionId !== destination.actionId || !current()) return false;
+        intent.release(); setSourceTarget(null); setSourceOpen(true); return true;
+      }
+      if (destination.kind === "source-review") { intent.release(); setSourceTarget(destination.target); setSourceOpen(true); return true; }
       if (destination.kind === "conversation-proposal") {
         if (!conversations || !await conversations.open(destination.conversationId) || !current()) return false;
         intent.release(); revealConversationProposal({ conversationId: destination.conversationId, proposalId: destination.proposalId,
@@ -646,7 +744,17 @@ function WorkspaceShell() {
       disabled={disabled || !commandsReady || interaction.composingOwners.length > 0 || interaction.intentOwner !== null} onOpen={openDecisionsFromTray}/>;
   }
   function conversationFallback(content: ReactNode) {
-    return <div className={styles.agent}><div className={styles.messages}>{content}</div>{decisionTray()}</div>;
+    return <div className={styles.agent}><div className={styles.messages}>{sourceBrief()}{content}</div>{decisionTray()}</div>;
+  }
+  function sourceBrief() {
+    const dialogId = narrow && drawer ? "workspace-dock" : undefined;
+    return sourceOwner ? <Suspense fallback={null}><SourceMaintenanceBrief project={session.project} owner={sourceOwner} locale={activeLocale}
+      visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })}
+      onOpen={() => openSource(dialogId)} onSaved={snapshotId => {
+        if (disabled || !gate.canDispatch({ viewId: currentId, source: "button", dialogId })) return;
+        if (narrow && drawer) closeDrawer();
+        setSourceTarget(null); setSourceSavedSnapshot(snapshotId); setSourceOpen(true);
+      }} onAffected={snapshotId => { if (narrow && drawer) closeDrawer(); void openSourceAffected(snapshotId); }}/></Suspense> : null;
   }
   async function openCandidateEditor(unitId: string, locale: string, parentDialogId?: string): Promise<boolean> {
     if (!gate.canDispatch({ viewId: currentId, source: "button", dialogId: parentDialogId })) return false;
@@ -812,7 +920,7 @@ function WorkspaceShell() {
       <TabsList aria-label={message("dockTabs")}><TabsTrigger value="agent"><Sparkles />{message("agent")}</TabsTrigger><TabsTrigger value="details">{message("detail")}</TabsTrigger></TabsList>
       <TabsContent value="agent" className={styles.dockContent}><FeatureBoundary fallback={conversationFallback(<ErrorState title={t("conversation.unavailable")}/>)}><Suspense fallback={conversationFallback(<LoadingState label={t("conversation.loading")}/>)}>
         {conversations ? <ConversationPanel onOpenCandidate={openRunCandidate} onOpenKnowledgeProposal={openKnowledgeProposal} owner={conversations} visible={(view?.dock ?? "agent") === "agent" && (!narrow || drawer)} disabled={disabled} gate={gate} viewId={currentId} parentDialogId={narrow && drawer ? "workspace-dock" : undefined}
-          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
+          selection={view?.kind === "entries" && !importVisible ? view.selection : null} decisionTray={decisionTray()} maintenanceBrief={sourceBrief()} recoveryTarget={conversationRecovery} proposalTarget={conversationProposal}/>
           : conversationFallback(conversationLoadFailed ? <ErrorState title={t("conversation.unavailable")} action={<Button onClick={retryConversations}>{t("conversation.retryRead")}</Button>}/> : <LoadingState label={t("conversation.loading")}/>)}
       </Suspense></FeatureBoundary></TabsContent>
       <TabsContent value="details" className={styles.dockContent}><FeatureBoundary key={currentId} fallback={<ErrorState title={message("featureFailed")} description={message("featureFailedHelp")} />}><Suspense fallback={<LoadingState label={message("loadingDetails")} />}>{view?.kind === "knowledge" ? knowledgeOwner ? view.preset === "memory" ? <TranslationMemoryDetails project={session.project} view={view} visible={view.dock === "details" && (!narrow || drawer)}/> : contextKindForKnowledge(view.preset) ? <ContextResourceDetails project={session.project} owner={knowledgeOwner} disabled={disabled} gate={gate} preset={view.preset} locale={view.locale}
@@ -829,12 +937,14 @@ function WorkspaceShell() {
     <header className={styles.titlebar} data-tauri-drag-region>
       <span className={styles.wordmark}>紡</span><Menu label={message("projectCommands")} trigger={<Button size="sm"><span className={styles.project}>{session.project.metadata.displayName}</span><ChevronDown /></Button>} items={[
         { id: "open", label: message("openProject"), onSelect: () => dispatch("workspace.open-project"), disabled: disabled || !commandsReady }, { id: "close", label: message("closeProject"), onSelect: () => dispatch("workspace.close-project"), disabled: disabled || !commandsReady },
+        { id: "source", label: t("sourceMaintenance.title"), onSelect: () => dispatch("source.import-upstream"), disabled: disabled || !commandsReady },
       ]} />
       <span className={styles.breadcrumb}>›</span><Menu label={message("language")} trigger={<Button size="sm" disabled={disabled || view?.kind === "decisions"}>{view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}<ChevronDown /></Button>} items={session.project.metadata.targetLocales.map(locale => ({ id: locale, label: locale, onSelect: () => { if (view) void runtime.navigation.update(view.id, { locale }); } }))} />
       <Button size="sm" disabled={!drafts || draftState.summaries.length === 0} onClick={() => { const first = draftState.summaries[0]; if (first) revealDraft(first.key); }}>{message("draftRecoveryTitle")}</Button>
       <Button className={styles.commandSearch} size="sm" disabled={!commandsReady || disabled} onClick={() => dispatch("workspace.commands")}><Search />{message("commandPlaceholder")}</Button>
       <IconButton className={styles.dockToggle} label={message("openAgent")} disabled={disabled || !commandsReady} onClick={() => dispatch("workspace.agent")}><PanelRight /></IconButton>
     </header>
+    {sourceOpen && !sourceOwner ? <Banner role="status">{t("sourceMaintenance.recoveryLoading")}</Banner> : null}
     {readStatus ? <Banner tone={readStatus.message === "execution.updatesUnavailable" ? "warning" : "info"} role={readStatus.message === "execution.updatesUnavailable" ? "alert" : "status"}
       action={<Button disabled={disabled || !commandsReady || !gate.canDispatch({ viewId: currentId, source: "button" })} onClick={() => dispatch("workspace.refresh")}>{t("execution.refresh")}</Button>}>{t(readStatus.message)}<CommandFailureDetails failure={readStatus.failure}/></Banner> : null}
     {commandFailed ? <Banner tone="error">{message("actionFailed")}</Banner> : null}
@@ -919,6 +1029,12 @@ function WorkspaceShell() {
       </SplitView>
     </div>
     <footer className={styles.statusbar}><span><Circle />{message(readOnly ? "retired" : "liveProject")}</span><span className={styles.statusEnd}>{message("language")} · {view?.kind === "decisions" ? message("decisionAllLanguages") : activeLocale}</span></footer>
+    {sourceOwner ? <FeatureBoundary fallback={<ErrorState title={t("sourceMaintenance.ownerFailed")}/>}><Suspense fallback={sourceOpen ? <LoadingState label={t("sourceMaintenance.recoveryLoading")}/> : null}>
+      <SourcePreparationSheet project={session.project} owner={sourceOwner} open={sourceOpen} disabled={disabled} gate={gate} viewId={currentId}
+        onClose={() => setSourceOpen(false)} target={sourceTarget} savedSnapshotId={sourceSavedSnapshot} drop={sourceDrop} dropFailure={sourceDropFailure} onDropConsumed={clearSourceDrop}
+        onApplied={(snapshotId, release) => { void openSourceAffected(snapshotId, undefined, activeLocale, release); }}
+        onOpenEntry={(snapshotId, unitId, locale, release) => { void openSourceAffected(snapshotId, unitId, locale, release); }}/>
+    </Suspense></FeatureBoundary> : null}
     <Sheet open={drawer && narrow} onOpenAutoFocus={event => { if (drawerRecoveryFocus.current) { event.preventDefault(); drawerRecoveryFocus.current = false; } }} onCloseAutoFocus={event => {
       if (drawerDecisionClose.current) {
         event.preventDefault(); drawerDecisionClose.current = false;
@@ -947,7 +1063,15 @@ function WorkspaceShell() {
     </Sheet>
     <CommandPalette open={palette} onOpenChange={open => { if (!open) closePalette(); }} title={message("commands")} placeholder={message("commandPlaceholder")} emptyLabel={message("noCommands")} closeLabel={message("close")} groups={[{ label: message("viewCommands"), commands: dispatcher.list({ source: "palette", dialogId: "workspace-palette" }).flatMap(command => {
       const id = workspaceCommandIds.find(value => value === command.id);
-      return id ? [{ id, label: t(command.nameKey), disabled: !command.availability.enabled, kbd: command.binding?.replace("Mod", navigator.platform.includes("Mac") ? "⌘" : "Ctrl"), onSelect: () => { closePalette(); dispatcher.dispatch(id, { source: "palette", viewId: currentId }); } }] : [];
+      return id ? [{ id, label: t(command.nameKey), disabled: !command.availability.enabled, kbd: command.binding?.replace("Mod", navigator.platform.includes("Mac") ? "⌘" : "Ctrl"), onSelect: () => {
+        closePalette();
+        // Palette dismissal returns focus to its original trigger. Hand that
+        // known return point to Source instead of retaining the removed list.
+        const sourceIntent = id === "source.import-upstream" ? { viewId: currentId, origin: paletteOrigin.current } : null;
+        if (sourceIntent) sourcePresentation.current = sourceIntent;
+        const dispatched = dispatcher.dispatch(id, { source: "palette", viewId: currentId });
+        if (!dispatched && sourcePresentation.current === sourceIntent) sourcePresentation.current = null;
+      } }] : [];
     }) }]} />
   </div>;
 }

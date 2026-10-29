@@ -8,6 +8,7 @@ export const ContextResourceKindValues = ["character","style","background"] as c
 export const ConversationKnowledgeDecisionKindValues = ["adopt","keep","reject"] as const;
 export const DraftUnavailableReasonValues = ["source-missing","locale-removed"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
+export const LineageDecisionValues = ["continue","reject"] as const;
 export const NativeHostProfileValues = ["native-application-host-v1"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
 export const RecoveryGuidanceValues = ["reconcile-original","review-current","choose-destination"] as const;

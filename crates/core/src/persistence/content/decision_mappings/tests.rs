@@ -76,7 +76,7 @@ fn multiple_equal_text_predecessors_remain_ambiguous_in_one_result_group() {
 }
 
 #[test]
-fn first_import_and_ordinary_changes_do_not_create_mapping_questions() {
+fn first_import_has_no_mapping_questions_but_changed_native_keys_require_review() {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(directory.path().join("project"),
         crate::ProjectMetadata::create("First source", "en", ["zh-CN"]).unwrap()).unwrap();
@@ -90,7 +90,10 @@ fn first_import_and_ordinary_changes_do_not_create_mapping_questions() {
     extract(&mut store,
         br#"{"UniqueID":"Other.Test","Name":"Other","Version":"1.0.0","EntryDll":"Other.dll"}"#,
         br#"{"renamed":"Hello {{name}}"}"#);
-    assert_eq!(pending(&store, project, 100), (Vec::new(), true));
+    let (groups, complete) = pending(&store, project, 100);
+    assert!(complete);
+    assert_eq!(groups.len(), 1);
+    assert_eq!((groups[0].changed_count, groups[0].rename_candidate_count, groups[0].ambiguous_count), (1, 0, 0));
 }
 
 #[test]
@@ -176,8 +179,8 @@ fn rejected_results_and_superseded_attempts_are_not_pending() {
 #[test]
 fn scanning_is_bounded_even_when_the_prefix_has_no_mapping_questions() {
     let (_directory, mut store, project, _) = fixture();
-    extract(&mut store, MANIFEST, br#"{"hello":"Changed once","plain":"Plain"}"#);
-    extract(&mut store, MANIFEST, br#"{"hello":"Changed twice","plain":"Plain"}"#);
+    extract(&mut store, MANIFEST, br#"{"hello":"Hello {{name}}","plain":"Plain","new-a":"New"}"#);
+    extract(&mut store, MANIFEST, br#"{"hello":"Hello {{name}}","plain":"Plain","new-b":"New"}"#);
     assert_eq!(pending(&store, project, 1), (Vec::new(), false));
     assert_eq!(pending(&store, project, 2), (Vec::new(), true));
     assert_eq!(pending(&store, project, 0), (Vec::new(), false));
@@ -226,21 +229,21 @@ fn damaged_input_result_and_capture_are_errors_instead_of_empty_coverage() {
     }
 }
 
-struct PluginFixture {
-    directory: tempfile::TempDir,
-    store: ProjectStore,
-    project: ExecutionId,
-    generation: ExecutionId,
-    input: FixedInput,
-    result: ExecutionId,
-    check_input: FixedInput,
-    producer_grant: ExecutionId,
-    checker_grant: ExecutionId,
+pub(in crate::persistence) struct PluginFixture {
+    pub directory: tempfile::TempDir,
+    pub store: ProjectStore,
+    pub project: ExecutionId,
+    pub generation: ExecutionId,
+    pub input: FixedInput,
+    pub result: ExecutionId,
+    pub check_input: FixedInput,
+    pub producer_grant: ExecutionId,
+    pub checker_grant: ExecutionId,
 }
 
 /// Receive a synthetic domain response through the actual grant, dispatch and
 /// result ledger boundaries. This creates no worker or external process.
-fn save_plugin_result(
+pub(in crate::persistence) fn save_plugin_result(
     store: &mut ProjectStore,
     generation: ExecutionId,
     input: &FixedInput,
@@ -276,7 +279,7 @@ fn save_plugin_result(
     (grant, result)
 }
 
-fn plugin_fixture() -> PluginFixture {
+pub(in crate::persistence) fn plugin_fixture() -> PluginFixture {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(directory.path().join("project"),
         crate::ProjectMetadata::create("Plugin mapping", "en", ["zh-CN"]).unwrap()).unwrap();

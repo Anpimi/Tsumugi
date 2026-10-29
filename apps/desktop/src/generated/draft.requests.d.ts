@@ -367,6 +367,64 @@ export type ContextFactDisposition =
     };
 export type ResourceKnowledgeDestination = "new" | "update" | "variant";
 export type TermOrigin = "manual" | "external";
+export type SourceDraftResolveTarget =
+  | {
+      kind: "primary";
+      pending: SourceDraftPending;
+    }
+  | {
+      kind: "hook-stop";
+      pending: SourceDraftHookStop;
+    };
+export type SourceDraftPending =
+  | {
+      kind: "capture";
+      request: SourceDraftCaptureRequest;
+      submittedMappingSeq: Revision;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "start";
+      request: SourceDraftStartRequest;
+      submittedMappingSeq: Revision;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "prepare-check";
+      request: SourceDraftCheckPrepareRequest;
+      submittedMappingSeq: Revision;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "start-check";
+      request: SourceDraftStartRequest;
+      submittedMappingSeq: Revision;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "finish-check";
+      request: SourceDraftCheckFinishRequest;
+      submittedMappingSeq: Revision;
+      submittedSeq: Revision;
+    }
+  | {
+      kind: "adopt";
+      request: SourceDraftAdoptRequest;
+      submittedMappingSeq: Revision;
+      submittedSeq: Revision;
+      unitId: ExecutionId;
+    };
+export type LineageDecision = "continue" | "reject";
+export type SourceDraftPreparationRef =
+  | {
+      kind: "capture";
+      request: SourceDraftCaptureRequest;
+    }
+  | {
+      kind: "prepare-check";
+      request: SourceDraftCheckPrepareRequest;
+    };
+export type SourceDraftDisposition = "recorded" | "confirmed-not-applied" | "preparation-expired";
 /**
  * A frozen original request, without any session token or execution authority.
  */
@@ -403,6 +461,12 @@ export interface Requests {
   resourceRead: ResourceDraftReadRequest;
   resourceResolve: ResourceDraftResolveRequest;
   resourceWrite: ResourceDraftWriteRequest;
+  sourceClear: SourceDraftClearRequest;
+  sourceObserve: SourceDraftObserveRequest;
+  sourcePreparation: SourceDraftPreparationRequest;
+  sourceRead: SourceDraftReadRequest;
+  sourceResolve: SourceDraftResolveRequest;
+  sourceWrite: SourceDraftWriteRequest;
   write: DraftWriteRequest;
 }
 export interface DraftClearRequest {
@@ -1283,6 +1347,194 @@ export interface ResourceContextResourceDraft {
 export interface ResourceDraftWriteRequest {
   sessionToken: string;
   write: ResourceDraftWrite;
+}
+export interface SourceDraftClearRequest {
+  clear: SourceDraftClear;
+  sessionToken: string;
+}
+export interface SourceDraftClear {
+  expectedRevision: Revision;
+  key: SourceDraftKey;
+}
+export interface SourceDraftKey {
+  projectId: ExecutionId;
+}
+export interface SourceDraftObserveRequest {
+  key: SourceDraftKey;
+  sessionToken: string;
+  target: SourceDraftResolveTarget;
+}
+export interface SourceDraftCaptureRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sourceLanguage: string;
+}
+export interface SourceDraftStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  startMetadata: SourcePluginStartMetadata;
+  unsandboxedExecution: boolean;
+}
+/**
+ * Frozen before direct Source dispatch. This is attribution for cancellation,
+ * never a live grant or permission restored from a local draft.
+ */
+export interface SourcePluginStartMetadata {
+  generation: ExecutionId;
+  taskId: ExecutionId;
+}
+export interface SourceDraftCheckPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  source: PluginSourceRequest;
+  sourceAttemptId: ExecutionId;
+  sourceResultId: ExecutionId;
+}
+export interface PluginSourceRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+export interface SourceDraftCheckFinishRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+}
+export interface SourceDraftAdoptRequest {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  confirmation: SourceConfirmation;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+}
+export interface SourceConfirmation {
+  actor?: string | null;
+  expectedContentRevision: Revision;
+  expectedCurrentSnapshot?: ExecutionId | null;
+  identityPolicy: string;
+  lineage?: LineageChoice[];
+  lineageBaseSnapshot?: ExecutionId | null;
+  maintenanceHook: SourceMaintenanceHookActivation | null;
+  resultDigest: string;
+  sourceLanguage: string;
+}
+export interface LineageChoice {
+  decision: LineageDecision;
+  newOrdinal: number;
+  oldOccurrenceId: ExecutionId;
+  reason: string;
+}
+export interface SourceMaintenanceHookActivation {
+  after: number;
+  expiresAtMs: number;
+  limit: number;
+  locale: string;
+  policyVersion: string;
+  sessionEpoch: string;
+}
+export interface SourceDraftHookStop {
+  request: SourceDraftHookStopRequest;
+  submittedSeq: Revision;
+}
+export interface SourceDraftHookStopRequest {
+  projectId: ExecutionId;
+  stop: StopSourceMaintenanceHook;
+}
+export interface StopSourceMaintenanceHook {
+  actionId: ExecutionId;
+  activation: SourceMaintenanceHookActivation;
+  projectId: ExecutionId;
+  sourceActionId: ExecutionId;
+}
+export interface SourceDraftPreparationRequest {
+  key: SourceDraftKey;
+  reference: SourceDraftPreparationRef;
+  sessionToken: string;
+}
+export interface SourceDraftReadRequest {
+  key: SourceDraftKey;
+  sessionToken: string;
+}
+export interface SourceDraftResolveRequest {
+  resolve: SourceDraftResolve;
+  sessionToken: string;
+}
+export interface SourceDraftResolve {
+  disposition: SourceDraftDisposition;
+  target: SourceDraftResolveTarget;
+  write: SourceDraftWrite;
+}
+export interface SourceDraftWrite {
+  expectedRevision: Revision;
+  key: SourceDraftKey;
+  value: SourceDraftValue;
+  writerId: ExecutionId;
+}
+export interface SourceDraftValue {
+  actor: string;
+  appliedFilter: string;
+  attemptId?: ExecutionId | null;
+  captureRequest?: SourceDraftCaptureRequest | null;
+  checkAttemptId?: ExecutionId | null;
+  checkPrepareRequest?: SourceDraftCheckPrepareRequest | null;
+  comparisonAfter: number;
+  comparisonRef?: SourceDraftComparisonRef | null;
+  declared: boolean;
+  domain: string;
+  editSeq: Revision;
+  filter: string;
+  historicalQuery: string;
+  historicalSearch?: SourceDraftHistoricalSearch | null;
+  hook: SourceDraftHook;
+  hookStop?: SourceDraftHookStop | null;
+  lineage: LineageChoice[];
+  manualOrdinal?: number | null;
+  mappingSeq: Revision;
+  pending?: SourceDraftPending | null;
+  pickerUncertain: boolean;
+  previewAfter: number;
+  receiptRef?: SourceDraftReceiptRef | null;
+  selectionLabel?: string | null;
+  source?: PluginSourceRequest | null;
+  sourceLanguage: string;
+  updating: boolean;
+}
+export interface SourceDraftComparisonRef {
+  attemptId: ExecutionId;
+  expectedContentRevision: Revision;
+  expectedCurrentSnapshot?: ExecutionId | null;
+  previousSnapshotId?: ExecutionId | null;
+  resultId: ExecutionId;
+}
+export interface SourceDraftHistoricalSearch {
+  after: number;
+  newOrdinal: number;
+  query: string;
+  snapshotId: ExecutionId;
+}
+export interface SourceDraftHook {
+  enabledIntent: boolean;
+  locale: string;
+  sourceActionId?: ExecutionId | null;
+}
+export interface SourceDraftReceiptRef {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  resultId: ExecutionId;
+  snapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SourceDraftWriteRequest {
+  sessionToken: string;
+  write: SourceDraftWrite;
 }
 export interface DraftWriteRequest {
   sessionToken: string;

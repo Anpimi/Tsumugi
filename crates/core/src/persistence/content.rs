@@ -10,6 +10,14 @@ use rusqlite::{Connection, params};
 pub(in crate::persistence) mod maintenance;
 pub(in crate::persistence) mod maintenance_hook;
 pub(in crate::persistence) mod decision_mappings;
+pub(in crate::persistence) mod validation_history;
+mod publication;
+#[cfg(test)]
+mod observation_tests;
+#[cfg(test)]
+mod start_fence_tests;
+#[cfg(test)]
+mod hook_observation_tests;
 
 const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
@@ -78,6 +86,7 @@ const LINEAGE_EVIDENCE_TABLE: &str = "CREATE TABLE source_lineage_evidence (
           OR (decision!='candidate' AND actor IS NOT NULL AND reason IS NOT NULL)))";
 pub(super) fn maintenance_table_names() -> Vec<String> {
     let mut names = vec!["source_lineage".into(), "source_lineage_evidence".into()];
+    names.push(validation_history::TABLE.into());
     names.extend(
         maintenance_hook::TABLES
             .iter()
@@ -95,6 +104,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute("INSERT INTO content_scope VALUES (1,1,NULL)", [])?;
     connection.execute_batch(LINEAGE_TABLE)?;
     connection.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
+    validation_history::initialize(connection)?;
     for (_, sql) in maintenance_hook::TABLES {
         connection.execute_batch(sql)?;
     }
@@ -255,6 +265,8 @@ pub(super) fn record_input(
 }
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     maintenance_hook::validate(connection)?;
+    let version: i64 = connection.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(sql_error)?;
+    if version >= 69 { validation_history::validate(connection)?; }
     for (name, sql) in TABLES {
         let actual: String = connection
             .query_row(
@@ -994,6 +1006,13 @@ impl ProjectStore {
     pub fn source_import_start_action_read(
         &self, request: &SourceImportStart,
     ) -> Result<Option<SourceImportStartRead>, ExecutionError> {
+        let found = self.source_import_start_request_observation(request)?;
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        Ok(found)
+    }
+    pub fn source_import_start_request_observation(
+        &self, request: &SourceImportStart,
+    ) -> Result<Option<SourceImportStartRead>, ExecutionError> {
         request.validate()?;
         let found = super::review::read_snapshot(
             self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "source-start-read"))?, |connection| {
@@ -1010,7 +1029,6 @@ impl ProjectStore {
             if read_bundle(connection, bundle.set_id)? != bundle.source_input() { return Err(corrupt()); }
             Ok(Some(SourceImportStartRead { request: saved, task_id: input.envelope().task_id, input_digest: input.digest().into() }))
         })?;
-        if self.is_reconciling() { self.reconcile_execution()?; }
         Ok(found)
     }
     pub fn source_bundle(&self, snapshot: ExecutionId) -> Result<SourceBundle, ExecutionError> {
@@ -1153,6 +1171,7 @@ impl ProjectStore {
         if limit == 0 || limit > 100 {
             return Err(failure(ErrorCode::InvalidInput, "page"));
         }
+        let counts = SourceChangeCounts::from_changes(&rows);
         let mut page = SourceChangePage {
             scope: scope.clone(),
             attempt_id: attempt,
@@ -1171,36 +1190,8 @@ impl ProjectStore {
             },
             total: rows.len() as u32,
             filtered_total: 0,
-            unchanged: rows
-                .iter()
-                .filter(|row| {
-                    row.kind == SourceChangeKind::Unchanged || row.kind == SourceChangeKind::Moved
-                })
-                .count() as u32,
-            moved: rows
-                .iter()
-                .filter(|row| row.kind == SourceChangeKind::Moved)
-                .count() as u32,
-            changed: rows
-                .iter()
-                .filter(|row| row.kind == SourceChangeKind::Changed)
-                .count() as u32,
-            added: rows
-                .iter()
-                .filter(|row| {
-                    row.kind == SourceChangeKind::Added
-                        || row.kind == SourceChangeKind::RenameCandidate
-                        || row.kind == SourceChangeKind::Ambiguous
-                })
-                .count() as u32,
-            ambiguous: rows
-                .iter()
-                .filter(|row| row.kind == SourceChangeKind::Ambiguous)
-                .count() as u32,
-            removed: rows
-                .iter()
-                .filter(|row| row.kind == SourceChangeKind::Removed)
-                .count() as u32,
+            counts,
+            mapping_review_required: counts.mapping_review_required(),
             next_ordinal: None,
             rows: Vec::new(),
         };
@@ -1255,6 +1246,41 @@ struct SourcePredecessor {
     revision_id: String,
     occurrence: SourceOccurrence,
     comparison_key: Option<String>,
+}
+
+/// The same monotonic scope admission is used by actual adoption and by a
+/// receipt-first settlement read. A missing receipt alone proves nothing.
+pub(in crate::persistence) fn check_adoption_scope(
+    c: &Connection,
+    project: ExecutionId,
+    confirmation: &SourceConfirmation,
+) -> Result<(i64, Option<String>), ExecutionError> {
+    let (revision, current): (i64, Option<String>) = c.query_row(
+        "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1", [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(sql_error)?;
+    if revision as u64 != confirmation.expected_content_revision.get() {
+        return Err(failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+            ConflictEvidence::ContentRevision {
+                expected: confirmation.expected_content_revision,
+                current: Revision::new(u64::try_from(revision).map_err(|_| corrupt())?)?,
+            },
+        ));
+    }
+    let actual = current.as_deref().map(|value| id(value.to_owned())).transpose()?;
+    if actual != confirmation.expected_current_snapshot {
+        return Err(failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+            ConflictEvidence::SourceSnapshot { expected: confirmation.expected_current_snapshot, current: actual },
+        ));
+    }
+    let (saved_project, language): (String, String) = c.query_row(
+        "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1", [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(sql_error)?;
+    if saved_project != project.to_string() || language != confirmation.source_language {
+        return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
+    }
+    Ok((revision, current))
 }
 fn predecessor_rows(
     tx: &AdoptionTransaction<'_>,
@@ -1695,31 +1721,8 @@ impl AdoptionHandler for SourceAdoptionHandler {
             let input = &input;
             let action = &action;
             let result = &result;
-            let (revision, current): (i64, Option<String>) = tx.query_row(
-                "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            if revision as u64 != confirmation.expected_content_revision.get() {
-                return Err(
-                    failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
-                        ConflictEvidence::ContentRevision {
-                            expected: confirmation.expected_content_revision,
-                            current: Revision::new(u64::try_from(revision).map_err(|_| {
-                                failure(ErrorCode::CorruptLedger, "content-scope")
-                            })?)?,
-                        },
-                    ),
-                );
-            }
-            let (project, language): (String, String) = tx.query_row(
-                "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            if project != action.project_id.to_string() || language != output.source_language {
-                return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
-            }
+            let (revision, current) = check_adoption_scope(tx.connection(), action.project_id, &confirmation)?;
+            let project = action.project_id.to_string();
             maintenance_hook::check_available(tx, &confirmation)?;
             let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",[bundle.set_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             if stored_project != project

@@ -32,8 +32,10 @@ pub use plugin_authority::{ApplicationExecutionLease, PluginConsent, PluginPermi
 pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery, PackageQuiescence};
 pub use source_validation::{
-    PreparedSourceValidation, SOURCE_CHECK_OPERATION, SourceValidationCapture,
+    PreparedSourceValidation, PreparedSourceValidationPublication, SOURCE_CHECK_OPERATION,
+    SourceValidationCapture, SourceValidationPublicationCapture,
 };
+pub(crate) use source_validation::SourceValidationBasis;
 pub use translation_validation::{
     PreparedTranslationValidation, TRANSLATION_CHECK_OPERATION, TranslationValidationCapture,
     translation_check_payload,

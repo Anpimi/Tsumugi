@@ -143,7 +143,7 @@ it("removes its read commands on unmount and automatically rereads the retained 
   view.rerender(<><Probe/><SourceHistoryPanel project={project} disabled={false}/></>);
   await screen.findByText("1 saved source snapshots");
   expect(screen.queryByText("99 saved source snapshots")).not.toBeInTheDocument();
-  expect(invoke.mock.calls.map(([command]) => command)).toEqual(["read_source_history", "read_source_history"]);
+  expect(invoke.mock.calls.map(([command]) => command).filter(command => !["read_local_source_draft", "read_local_resource_draft"].includes(command))).toEqual(["read_source_history", "read_source_history"]);
 });
 
 it("opens the exact current unit and blocks missing, stale and previous-unit targets", async () => {

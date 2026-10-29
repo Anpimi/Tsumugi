@@ -7,7 +7,8 @@ export interface DecisionActivityOwner {
   subscribe(listener: () => void): () => void;
 }
 export type DecisionOwners = readonly [DecisionActivityOwner | null, DecisionActivityOwner | null]
-  | readonly [DecisionActivityOwner | null, DecisionActivityOwner | null, DecisionActivityOwner | null];
+  | readonly [DecisionActivityOwner | null, DecisionActivityOwner | null, DecisionActivityOwner | null]
+  | readonly [DecisionActivityOwner | null, DecisionActivityOwner | null, DecisionActivityOwner | null, DecisionActivityOwner | null];
 const ownerBindings = new WeakMap<DecisionActivityOwner, number>();
 let nextBinding = 0;
 function binding(owner: DecisionActivityOwner | null): number | null {

@@ -49,6 +49,11 @@ pub(super) fn consent(context: &Value, checker: &Value) -> Value {
         "expiresAtMs":(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()+600_000).to_string()}),
     )
 }
+pub(super) fn source_consent(context: &Value, review: &Value) -> Value {
+    let mut request = consent(context, review);
+    request["startMetadata"] = review.get("startMetadata").expect("source review start metadata").clone();
+    request
+}
 pub(super) fn consents(context: &Value, view: &Value) -> Vec<Value> {
     view["checkers"]
         .as_array()
@@ -259,7 +264,7 @@ fn actual_native_desktop_source_translation_review_and_build_use_independent_gra
     });
     fs::write(source.join("source.json"), "Changed after fixed capture").unwrap();
     let revoked = call(&window, "set_plugin_native_host_approval", json!({"environmentDigest":host_digest,"approved":false,"expectedRevision":approved["settingsRevision"],"actionId":ExecutionId::new()})).unwrap();
-    let start = consent(&context, &preflight);
+    let start = source_consent(&context, &preflight);
     assert!(
         call(&window, "start_plugin_source", start.clone()).is_err(),
         "a captured review cannot bypass Host revocation"
@@ -300,7 +305,7 @@ fn actual_native_desktop_source_translation_review_and_build_use_independent_gra
     );
     let check = call(&window, "prepare_source_check", scoped(&context, json!({"sourceAttemptId":started,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice}))).unwrap();
     assert_eq!(check["source"]["environment"], offer["environment"]);
-    let check_start = consent(&context, &check);
+    let check_start = source_consent(&context, &check);
     let mut borrowed = check_start.clone();
     borrowed["grantId"] = start["grantId"].clone();
     assert!(call(&window, "start_source_check", borrowed).is_err());

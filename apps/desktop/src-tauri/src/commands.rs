@@ -1216,6 +1216,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
     builder
         .on_window_event(|window, event| {
             use tauri::Manager;
+            execution::source::native_drop::on_window_event(window, event);
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<AppState>().disconnect_change_events();
             }

@@ -73,7 +73,7 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   const checkActive = !!state.checkAttempt && (!checkedItem || checkedItem.status.execution === "queued" || checkedItem.status.execution === "dispatched");
   const error = inventory.error ?? environmentRead.error ?? checkRead.error;
   const pending = state.pendingPlugin;
-  const locked = disabled || state.busyMutation || owner.hasPending() || checkActive;
+  const locked = disabled || owner.journal.hydration !== "ready" || owner.journal.retired || state.busyMutation || owner.hasPending() || checkActive;
   function sameView() { const value = committed.current; return mounted.current && !reads.retired && value.open
     && value.project.sessionToken === context.sessionToken && value.project.metadata.projectId === context.projectId; }
   function live() { return sameView() && !committed.current.disabled; }
@@ -81,6 +81,7 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
     return record?.status === "success" && record.error === null && record.fetchStatus === "idle" && !record.isInvalidated; }
   function common(recovery = false, rendering = false): CommandAvailability {
     if (rendering ? !open || disabled || reads.retired : !live()) return { enabled: false, reason: "hidden" };
+    if (owner.journal.hydration !== "ready" || owner.journal.retired) return { enabled: false, reason: "busy" };
     if (owner.inFlight()) return { enabled: false, reason: "busy" };
     return !recovery && owner.hasPending() ? { enabled: false, reason: "pending-action" } : { enabled: true };
   }
@@ -131,7 +132,7 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
       registry.register({ ...meta, id: "source.start-check", nameKey: "sourcePlugin.startCheck", payloadKind: "source-check", availability: input => checkAvailability(input, "start"), handler: () => { const captured = proof(); void owner.startCheck(captured.current, captured.dispose); } }),
       registry.register({ ...meta, id: "source.finish-check", nameKey: "sourcePlugin.recordCheck", payloadKind: "source-check", availability: input => checkAvailability(input, "finish"), handler: input => { if (input.checkResultId) void owner.finishCheck(input.checkResultId).then(() => { if (sameView()) return onValidated(); }); } }),
       registry.register({ ...meta, id: "source.check-plugin-start", nameKey: "execution.checkPluginStart", risk: "reads-source", payloadKind: "source-plugin-pending", availability: input => input?.pendingKind === "start-check" ? retryAvailability(input) : unavailable, handler: () => void owner.checkPluginStart() }),
-      registry.register({ ...meta, id: "source.retry-plugin-request", nameKey: "sourcePlugin.retryOriginal", payloadKind: "source-plugin-pending", availability: input => input?.pendingKind !== "start-check" || owner.current().startRetryAllowed ? retryAvailability(input) : unavailable, handler: () => void owner.retryPlugin().then(() => { if (sameView()) return onValidated(); }) }),
+      registry.register({ ...meta, id: "source.retry-plugin-request", nameKey: "sourcePlugin.retryOriginal", payloadKind: "source-plugin-pending", availability: input => owner.canRetryPlugin() ? retryAvailability(input) : unavailable, handler: () => void owner.retryPlugin().then(() => { if (sameView()) return onValidated(); }) }),
     ];
     return () => unregister.forEach(cleanup => cleanup());
   });
@@ -194,7 +195,7 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
     {retryCommand ? <section role="status"><p>{t(state.checkingStart ? "execution.checkingPluginStart" : retryCommand.pendingKind === "finish-check" ? "sourcePlugin.checkCommitUnknown" : "sourcePlugin.operationUnknown")}</p>
       {retryCommand.pendingKind === "start-check" ? <><button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.check-plugin-start", commandScope, retryCommand)}>{t("execution.checkPluginStart")}</button>
         {state.startRetryAllowed ? <><p>{t("execution.pluginStartMissing")}</p><button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.retry-plugin-request", commandScope, retryCommand)}>{t("execution.retryPluginStart")}</button></> : null}</>
-        : <button className="secondary-button" disabled={!retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.retry-plugin-request", commandScope, retryCommand)}>{t(retryCommand.pendingKind === "finish-check" ? "sourcePlugin.reconcileCheck" : "sourcePlugin.retryOriginal")}</button>}
+        : <button className="secondary-button" disabled={!owner.canRetryPlugin() || !retryAvailability(retryCommand, true).enabled} onClick={() => registry.dispatch("source.retry-plugin-request", commandScope, retryCommand)}>{t(retryCommand.pendingKind === "finish-check" ? "sourcePlugin.reconcileCheck" : "sourcePlugin.retryOriginal")}</button>}
     </section> : null}
   </section>;
 }

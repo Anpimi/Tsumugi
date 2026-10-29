@@ -1512,7 +1512,7 @@ fn source_update_estimate_requires_fresh_qa_for_unchanged_units_without_writing(
             10,
         )
         .unwrap();
-    assert_eq!((comparison.changed, comparison.unchanged), (1, 1));
+    assert_eq!((comparison.counts.changed, comparison.counts.unchanged), (1, 1));
     let mut confirmation = comparison.confirmation;
     confirmation.actor = Some("Synthetic reviewer".into());
     confirmation

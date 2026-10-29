@@ -56,7 +56,7 @@ it.each(["en-US", "zh-CN"])("pages the original source comparison and keeps unce
   const compare = vi.spyOn(sourceCommands, "compare").mockImplementation(async request => comparison(request.after));
   const item: DecisionItem = { decisionId: "source-mapping:result:original", source: "source-mapping", state: "pending", locale: null,
     targets: [{ kind: "source-result", attemptId: raw.attemptId, resultId: raw.resultId }], targetsComplete: true,
-    basis: "b".repeat(64), sourceActionId: null, evidence: { kind: "source-comparison", ambiguousCount: 0, renameCandidateCount: 1 },
+    basis: "b".repeat(64), sourceActionId: null, evidence: { kind: "source-comparison", changedCount: 0, ambiguousCount: 0, renameCandidateCount: 1 },
     action: { kind: "compare-source-mapping", attemptId: raw.attemptId, resultId: raw.resultId,
       previousSnapshotId: snapshot, expectedContentRevision: raw.scope.revision } };
   reads = new SessionReads(context);

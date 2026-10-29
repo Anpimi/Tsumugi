@@ -2,13 +2,18 @@ import source from "../../test/fixtures/pluginSource.contract.json";
 import workflow from "../../test/fixtures/pluginSourceWorkflow.contract.json";
 import packageFixture from "../../test/fixtures/pluginPackage.contract.json";
 import type { PluginInventoryView, PluginPackageDetailsView, PluginSourceView } from "../pluginCommands";
+import { validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "../generated/source.validators";
 
 if (!validateResponseSource(source.view)) throw new Error("Invalid canonical source fixture");
 export const pluginSourceView: PluginSourceView = source.view;
 const nodeEnvironment = pluginSourceView.environment;
 if (nodeEnvironment.profile !== "node-system-libraries-v1") throw new Error("Expected the canonical Node environment");
 export const pluginSourceRequest = source.request;
-export const pluginSourceWorkflow = workflow;
+const selection = workflow.selection, preflight = workflow.preflight, checkReview = workflow.checkReview;
+if (!validateResponsePluginSelection(selection) || selection === null || !validateResponsePluginPreflight(preflight) || !validateResponseCheckReview(checkReview)) {
+  throw new Error("Invalid canonical source workflow fixture");
+}
+export const pluginSourceWorkflow = { ...workflow, selection, preflight, checkReview };
 export const pluginSourceInventory: PluginInventoryView = {
   uninstallations: [],
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,

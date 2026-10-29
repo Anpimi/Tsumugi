@@ -7,6 +7,7 @@ use tsumugi_core::content::{
 #[path = "source/block_tests.rs"]
 mod block_tests;
 pub(super) mod capture;
+pub mod native_drop;
 pub mod plugin;
 pub mod plugin_translation;
 #[cfg(test)]

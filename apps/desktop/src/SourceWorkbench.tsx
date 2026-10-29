@@ -2,13 +2,13 @@ import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } 
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { QueryKey } from "@tanstack/react-query";
-import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import type { UiMessages } from "./i18n/types";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useSourceDraftSession } from "./SourceDraftSession";
+import SourceDraftRecovery from "./SourceDraftRecovery";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { SourceHistoryPanel, SourceImpactPanel, SourceReadFeedback, SourceOccurrenceOrigin, readSourceHistoryCoverage, useSourceOccurrenceLabel } from "./SourceMaintenance";
 import { SourceImportControls } from "./SourceImportControls";
@@ -40,14 +40,11 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const [captureBusy, setCaptureBusy] = useState(false), [captureFailure, setCaptureFailure] = useState<CommandFailure | null>(null);
   const [captureVersion, setCaptureVersion] = useState(0);
   const [pluginRefresh] = useWorkbenchState("source", "pluginRefresh", 0);
-  const [leave, setLeave] = useState(false);
   const mounted = useRef(false), sequence = useRef(0), captureRunning = useRef(false);
-  const committed = useRef({ open, disabled, leave, project });
-  const leaveProof = useRef<(() => boolean) | null>(null);
-  const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
+  const committed = useRef({ open, disabled, project });
   const first = useRef<HTMLHeadingElement>(null), errorRegion = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
-  useLayoutEffect(() => { committed.current = { open, disabled, leave, project }; });
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; }; }, []);
+  useLayoutEffect(() => { committed.current = { open, disabled, project }; });
   useLayoutEffect(() => { sequence.current++; captureRunning.current = false; setCaptureBusy(false); }, [open, project.sessionToken]);
   const integrationOptions = sourceReads.integration(context, source);
   const inventoryRead = useSessionQuery({ ...sourceReads.inventory(pluginRefresh), enabled: open });
@@ -103,17 +100,18 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const setHistoricalQuery = (value: string) => owner.edit("historicalQuery", value);
   const setConfirmed = owner.confirm;
   function ready(key: QueryKey) { const state = reads.client.getQueryState(reads.key(key)); return state?.status === "success" && state.error === null && state.fetchStatus === "idle" && !state.isInvalidated; }
-  function viewCurrent() { const value = committed.current; return mounted.current && value.open && !value.leave && !value.disabled
+  function viewCurrent() { const value = committed.current; return mounted.current && value.open && !value.disabled
     && value.project.sessionToken === context.sessionToken && value.project.metadata.projectId === context.projectId; }
   // Render uses reactive inputs; dispatched commands retain the committed-view guard.
   function common(pending = false, rendering = false): CommandAvailability {
-    if (rendering ? !open || leave || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
+    if (owner.journal.hydration !== "ready" || owner.journal.retired) return { enabled: false, reason: "unavailable" };
+    if (rendering ? !open || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
     if (captureRunning.current || owner.inFlight()) return { enabled: false, reason: "busy" };
     if (!pending && owner.hasPending()) return { enabled: false, reason: "pending-action" };
     return { enabled: true };
   }
   function discardAvailability(rendering = false): CommandAvailability {
-    if (rendering ? !open || leave || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
+    if (rendering ? !open || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
     if (captureRunning.current || !owner.canDiscard()) return { enabled: false, reason: "busy" };
     return { enabled: true };
   }
@@ -254,7 +252,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       registry.register({ ...meta, id: "source.retry-start", nameKey: "execution.retryPluginStart", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" && owner.current().startRetryAllowed ? pendingAvailability(input) : unavailable, handler: () => void owner.retryStart() }),
       registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "reads-source", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
       registry.register({ ...meta, id: "source.retry-apply", nameKey: "execution.retryAdoption", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: () => void owner.retryApply() }),
-      registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
+      registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" && owner.current().pendingObserved?.kind === "confirmed-not-applied" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
       registry.register({ ...meta, id: "source.cancel-task", nameKey: "execution.cancel", risk: "cancels-source-task", payloadKind: "source-task", availability: taskAvailability, handler: input => void owner.cancelTask(input.taskId, () => [owner.current().attempt, owner.current().checkAttempt].includes(input.attemptId), input.attemptId) }),
       registry.register({ ...meta, id: "source.read-page", nameKey: "execution.nextPage", payloadKind: "source-page", availability: pageAvailability, handler: input => {
         if (input.snapshotId === null) { if (input.after === owner.current().previewAfter) void previewRead.refetch(); else owner.pageIntent(input.after); }
@@ -278,10 +276,13 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   useImperativeHandle(ref, () => ({
     showAttempt(id) { if (owner.showAttempt(id)) { sequence.current++; captureRunning.current = false; setCaptureBusy(false); setReadIntent("auto"); setContentCursor(null); setCaptureFailure(null); } setOpen(true); },
     allowNavigate() { return Promise.resolve(!busy && !owner.inFlight() && !owner.hasPending()); },
-    allowLeave(current: () => boolean = () => true) {
-      leaveProof.current = current; const value = owner.current(); if (owner.hasPending() && !owner.canDiscard()) { setOpen(true); return Promise.resolve(false); }
-      if (!value.selection && !Object.keys(value.lineage).length && !value.actor.trim() && !owner.hook.hasDraft() && !busy && !owner.inFlight()) return Promise.resolve(true);
-      setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
+    async allowLeave(current: () => boolean = () => true) {
+      const value = owner.current(), hook = owner.hook.current();
+      if (!current() || owner.blocked()) { setOpen(true); return false; }
+      const saved = await owner.flush();
+      if (!saved || !current() || owner.current() !== value || owner.hook.current() !== hook || owner.blocked()) { setOpen(true); return false; }
+      return true;
+    },
   }));
   // Initial preparation is a deliberate fixed capture, never a query refresh.
   useEffect(() => {
@@ -328,7 +329,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     "unsupported-encoding": "encoding", "source-changed": "changed", "duplicate-native-key": "duplicate", "empty-source": "empty", "capture-timeout": "timeout", "extract-timeout": "unknown", "source-corrupt": "invalid", "stale-preview": "conflict", "language-required": "language",
     "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
   };
-  const locked = busy || owner.hasPending();
+  const locked = busy || owner.journal.hydration !== "ready" || owner.journal.retired || owner.hasPending();
   const proposal = comparison ? { attemptId: comparison.attemptId, resultId: comparison.resultId } : fixedPreview ? { attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId }
     : attempt && sourceResult?.resultId && sourceResult.status.execution === "succeeded" && !sourceResult.status.cancellationRequested ? { attemptId: attempt, resultId: sourceResult.resultId } : null;
   const warnings = page?.diagnostics ?? [];
@@ -336,6 +337,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   return <>
     <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
+          <SourceDraftRecovery owner={owner} disabled={disabled}/>
           <TaskCancellationFeedback origin="source" taskId={detail?.taskId} disabled={busy} visible={open} />
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />
             <ExecutionDiagnosticDetails code={typeof failureValue === "string" ? failure : null}
@@ -398,7 +400,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
           </section> : null)}
           {comparison ? <section>
             <h3 ref={first} tabIndex={-1}>{t("source.compareTitle")}</h3>
-            <p role="status">{t("source.compareSummary", { unchanged: String(comparison.unchanged), moved: String(comparison.moved), changed: String(comparison.changed), added: String(comparison.added), ambiguous: String(comparison.ambiguous), removed: String(comparison.removed) })}</p>
+            <p role="status">{t("source.compareSummary", { unchanged: String(comparison.counts.unchanged), moved: String(comparison.counts.moved), changed: String(comparison.counts.changed), added: String(comparison.counts.added), renameCandidate: String(comparison.counts.renameCandidate), ambiguous: String(comparison.counts.ambiguous), removed: String(comparison.counts.removed) })}</p>
             <p>{t("source.compareHelp")}</p>
             <label className="source-field">{t("source.mappingActor")}<input disabled={locked} value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
             <label className="source-field">{t("source.comparisonFilter")}<input disabled={locked} value={filter} maxLength={256} onChange={event => setFilter(event.target.value)} /></label>
@@ -452,7 +454,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
             <button className="primary-button" disabled={!basisAvailability(basisPayload(), true, true).enabled} onClick={() => registry.dispatch("source.apply", commandScope, basisPayload())}>{t("source.applyUpdate")}</button>
           </section> : null}
           {pendingApply && (!busy || checkingReceipt) ? <section><p role="status">{t(checkingReceipt ? "source.checkingReceipt" : "source.applyUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), false, true).enabled} onClick={() => registry.dispatch("source.check-receipt", commandScope, pendingPayload("apply"))}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.retry-apply", commandScope, pendingPayload("apply"))}>{t("execution.retryAdoption")}</button> : null}
-            <button className="text-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.keep-output", commandScope, pendingPayload("apply"))}>{t("execution.keepOutput")}</button>
+            {owner.state.pendingObserved?.kind === "confirmed-not-applied" ? <button className="text-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.keep-output", commandScope, pendingPayload("apply"))}>{t("execution.keepOutput")}</button> : null}
           </section> : null}
           <button className="text-button" disabled={!common(false, true).enabled || !!Object.keys(lineage).length} onClick={() => registry.dispatch("source.show-current", commandScope)}>{t("source.viewCurrent")}</button>
           {contentPage?.snapshotId && contentPage.snapshotId === contentPage.scope.currentSnapshot ? <SourceImpactPanel key={contentPage.snapshotId} project={project} snapshotId={contentPage.snapshotId} active={open} disabled={locked} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork} /> : null}
@@ -461,12 +463,5 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
           <p>{t("source.draftHelp")}</p>
         </div>
       </WorkbenchPanel>
-    <Dialog.Root open={leave} onOpenChange={next => { if (!next) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; } }}>
-      <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
-        <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>
-        <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; }}>{t("source.keep")}</button>
-          <button className="primary-button" onClick={() => { if (leaveProof.current && !leaveProof.current()) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; } sequence.current++; captureRunning.current = false; setCaptureBusy(false); setCaptureFailure(null); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; leaveProof.current = null; }); }}>{t("source.leave")}</button></div>
-      </Dialog.Content></Dialog.Portal>
-    </Dialog.Root>
   </>;
 }

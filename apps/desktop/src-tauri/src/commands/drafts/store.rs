@@ -3,8 +3,10 @@
 
 use super::types::*;
 use super::resource_types::*;
+use super::source_types::*;
 mod conversations;
 mod resources;
+mod sources;
 mod pending;
 pub use pending::{PendingActionRef, PendingJournalKey, PendingJournalSlot, PendingSnapshot};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -29,7 +31,8 @@ pub const MAX_DRAFT_RECORDS: usize = 65_536;
 pub const MAX_DRAFT_PAGE_SIZE: u32 = 100;
 const DATABASE: &str = "drafts.sqlite3";
 const APPLICATION_ID: i64 = 0x5444_5246;
-const FORMAT: i64 = 10;
+const FORMAT: i64 = 11;
+const SOURCE_FORMAT: i64 = 11;
 const RESOURCE_FORMAT: i64 = 10;
 const REUSE_ORIGIN_FORMAT: i64 = 9;
 const KNOWLEDGE_PROPOSAL_FORMAT: i64 = 8;
@@ -349,6 +352,7 @@ impl DraftStore {
         tx.execute_batch(HEAD_SQL).map_err(sql)?;
         tx.execute_batch(conversations::HEAD_SQL).map_err(sql)?;
         tx.execute_batch(resources::HEAD_SQL).map_err(sql)?;
+        tx.execute_batch(sources::HEAD_SQL).map_err(sql)?;
         tx.pragma_update(None, "application_id", APPLICATION_ID)
             .map_err(sql)?;
         tx.pragma_update(None, "user_version", FORMAT)
@@ -472,7 +476,7 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     let format: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql)?;
-    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | REUSE_ORIGIN_FORMAT | FORMAT) {
+    if application != APPLICATION_ID || !matches!(format, LEGACY_FORMAT | MERGE_FORMAT | CONVERSATION_FORMAT | ACTION_FORMAT | PROPOSAL_FORMAT | RUN_FORMAT | REVOCATION_FORMAT | KNOWLEDGE_PROPOSAL_FORMAT | REUSE_ORIGIN_FORMAT | RESOURCE_FORMAT | FORMAT) {
         return Err(fail(ErrorCode::InvalidInput, "drafts-schema-version"));
     }
     let mut statement = connection
@@ -499,6 +503,10 @@ fn verify_schema(connection: &Connection) -> Result<i64> {
     }
     if format >= RESOURCE_FORMAT {
         expected.push(("resource_draft_heads".into(), "table".into(), resources::HEAD_SQL.into()));
+        expected.sort();
+    }
+    if format >= SOURCE_FORMAT {
+        expected.push(("source_draft_heads".into(), "table".into(), sources::HEAD_SQL.into()));
         expected.sort();
     }
     if schema != expected {
@@ -530,13 +538,19 @@ fn upgrade_schema(connection: &Connection, format: i64) -> Result<()> {
     if format < RESOURCE_FORMAT {
         connection.execute_batch(resources::HEAD_SQL).map_err(sql)?;
     }
+    if format < SOURCE_FORMAT {
+        if format >= RESOURCE_FORMAT { resources::validate_existing(connection)?; }
+        connection.execute_batch(sources::HEAD_SQL).map_err(sql)?;
+    }
     connection.pragma_update(None,"user_version",FORMAT).map_err(sql)?;
     test_hook("conversation-upgrade-after-ddl", Some(connection));
     Ok(())
 }
 
 fn journal_usage(connection:&Connection,format:i64,project:ExecutionId) -> Result<(i64,i64,i64,i64)> {
-    let records = if format >= RESOURCE_FORMAT {
+    let records = if format >= SOURCE_FORMAT {
+        "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads UNION ALL SELECT project_id,payload FROM resource_draft_heads UNION ALL SELECT project_id,payload FROM source_draft_heads)"
+    } else if format >= RESOURCE_FORMAT {
         "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads UNION ALL SELECT project_id,payload FROM resource_draft_heads)"
     } else if format >= CONVERSATION_FORMAT {
         "(SELECT project_id,payload FROM draft_heads UNION ALL SELECT project_id,payload FROM conversation_draft_heads)"
@@ -906,6 +920,7 @@ mod tests;
 
 #[cfg(test)]
 fn set_legacy_format(c:&Connection,format:i64)->rusqlite::Result<()>{
+    if format<SOURCE_FORMAT {c.execute_batch("DROP TABLE IF EXISTS source_draft_heads")?;}
     if format<RESOURCE_FORMAT {c.execute_batch("DROP TABLE IF EXISTS resource_draft_heads")?;}
     c.pragma_update(None,"user_version",format)
 }

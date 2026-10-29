@@ -17,7 +17,7 @@ import { DecisionNavigationChanged, resolveDecisionNavigation, type DecisionNavi
 const ctx = { projectId: id(60000), sessionToken: "synthetic-decision-session" };
 function ports(overrides: Partial<DecisionNavigationPorts> = {}): DecisionNavigationPorts {
   const unexpected = vi.fn(async () => { throw new Error("Unexpected reader"); });
-  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, resourceDraft: unexpected, proposal: unexpected, knowledgeDecision: unexpected, ...overrides };
+  return { revision: unexpected, target: unexpected, findings: unexpected, draft: unexpected, conversationDraft: unexpected, resourceDraft: unexpected, sourceDraft: unexpected, sourceTarget: unexpected, proposal: unexpected, knowledgeDecision: unexpected, ...overrides };
 }
 function item(action: DecisionItem["action"], targets: DecisionItem["targets"], locale: string | null = "zh-CN"): DecisionItem {
   const source = action.kind === "compare-candidate" ? "translation-candidate" : action.kind === "review-translation" ? "human-review"

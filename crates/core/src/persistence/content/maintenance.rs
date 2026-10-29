@@ -2,6 +2,32 @@ use super::*;
 use rusqlite::OptionalExtension;
 use std::collections::BTreeMap;
 
+/// Candidate and rejected edges stay unresolved until a continuation is adopted.
+/// Rejecting one edge does not reject other alternatives or establish a new
+/// correspondence. Existing immutable evidence is sufficient; no history is rewritten.
+pub(in crate::persistence) fn unresolved_occurrences_in(
+    connection: &Connection,
+    snapshot: ExecutionId,
+    limit: usize,
+) -> Result<Vec<(ExecutionId, ExecutionId)>, ExecutionError> {
+    let limit = i64::try_from(limit)
+        .map_err(|_| failure(ErrorCode::LimitExceeded, "source-mapping-limit"))?;
+    let mut statement = connection.prepare(
+        "SELECT o.occurrence_id,o.unit_id FROM source_occurrences o
+         JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
+         WHERE o.snapshot_id=?1 AND l.relation IN ('new','unresolved')
+         AND EXISTS(SELECT 1 FROM source_lineage_evidence e WHERE e.new_occurrence_id=o.occurrence_id)
+         ORDER BY o.ordinal LIMIT ?2",
+    ).map_err(sql_error)?;
+    statement.query_map(params![snapshot.to_string(), limit], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(sql_error)?
+        .map(|row| {
+            let (occurrence, unit) = row.map_err(sql_error)?;
+            Ok((id(occurrence)?, id(unit)?))
+        }).collect()
+}
+
 /// Keep capture, receipt, and lineage validation in the existing source owner.
 pub(in crate::persistence) fn adopted_comparison_for_units(
     connection: &Connection,
@@ -500,17 +526,26 @@ impl ProjectStore {
             }
             targets.insert(target.unit_id, target);
         }
+        let unresolved = unresolved_occurrences_in(connection, snapshot, MAX_OCCURRENCES + 1)?;
+        for (_, unit) in unresolved {
+            if targets.contains_key(&unit) {
+                let reasons = work.entry(unit).or_default();
+                reasons.push("correspondence-unresolved".into());
+                reasons.sort();
+                reasons.dedup();
+            }
+        }
         let summary = SourceImpactSummary {
             locale: locale.into(),
-            preserved: content.total - work.len() as u32,
+            preserved: targets.len() as u32 - work.len() as u32,
             reassess: 0,
             unresolved: 0,
-            total: content.total,
+            total: targets.len() as u32,
         };
         let mut summary = summary;
         for target in targets.values() {
             if work.contains_key(&target.unit_id) {
-                if target.selection_id.is_none() {
+                if target.selection_id.is_none() || work[&target.unit_id].iter().any(|reason| reason == "correspondence-unresolved") {
                     summary.unresolved += 1;
                 } else {
                     summary.reassess += 1;
@@ -614,6 +649,11 @@ pub(in crate::persistence) fn apply_impact_reasons(
     row: &mut SourceImpactRow,
     mut reasons: Vec<String>,
 ) {
+    if !row.lineage.is_empty() && !row.lineage.iter().any(|edge| {
+        matches!(edge.applied_relation.as_deref(), Some("unchanged" | "changed"))
+    }) {
+        reasons.push("correspondence-unresolved".into());
+    }
     if !reasons.is_empty() {
         if row
             .previous
@@ -622,15 +662,12 @@ pub(in crate::persistence) fn apply_impact_reasons(
         {
             reasons.push("source-changed".into());
         }
-        if row.selection_id.is_none() && !row.lineage.is_empty() {
-            reasons.push("correspondence-unresolved".into());
-        }
     }
     reasons.sort();
     reasons.dedup();
     row.status = if reasons.is_empty() {
         SourceImpactStatus::Preserved
-    } else if row.selection_id.is_none() {
+    } else if row.selection_id.is_none() || reasons.iter().any(|reason| reason == "correspondence-unresolved") {
         SourceImpactStatus::Unresolved
     } else {
         SourceImpactStatus::Reassess

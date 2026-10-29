@@ -65,7 +65,7 @@ function originalGroups() {
         action: { kind: "clarify-conversation-proposal", conversationId: uuid(51), proposalId: uuid(50), revisionId: uuid(52) } },
       { decisionId: `source-mapping:result:${uuid(53)}`, source: "source-mapping", state: "stale", locale: null,
         targets: [{ kind: "source-result", attemptId: uuid(54), resultId: uuid(53) }], targetsComplete: true,
-        basis: "b".repeat(64), sourceActionId: null, evidence: { kind: "source-comparison", ambiguousCount: 1, renameCandidateCount: 2 },
+        basis: "b".repeat(64), sourceActionId: null, evidence: { kind: "source-comparison", changedCount: 0, ambiguousCount: 1, renameCandidateCount: 2 },
         action: { kind: "compare-source-mapping", attemptId: uuid(54), resultId: uuid(53), previousSnapshotId: uuid(55), expectedContentRevision: "2" } },
     ], knownCount: 2, total: null, next: null, localActions: null, executionActivity: [], deliveryActivity: [],
     coverage: [
@@ -87,7 +87,7 @@ it.each(["wrong-proposal", "wrong-result", "missing-evidence", "empty-group", "f
   if (kind === "wrong-proposal" && question.action.kind === "clarify-conversation-proposal") question.action.proposalId = source.action.kind === "compare-source-mapping" ? source.action.resultId : "";
   if (kind === "wrong-result" && source.action.kind === "compare-source-mapping") source.action.resultId = source.action.attemptId;
   if (kind === "missing-evidence") question.evidence = null;
-  if (kind === "empty-group") source.evidence = { kind: "source-comparison", ambiguousCount: 0, renameCandidateCount: 0 };
+  if (kind === "empty-group") source.evidence = { kind: "source-comparison", changedCount: 0, ambiguousCount: 0, renameCandidateCount: 0 };
   if (kind === "fake-entry") source.targets.push({ kind: "entry", unitId: page.projectId });
   if (kind === "false-language") question.locale = "zh-CN";
   invoke.mockResolvedValueOnce(page);

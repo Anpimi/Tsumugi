@@ -2,6 +2,28 @@
 
 use super::*;
 
+/// Frozen before direct Source dispatch. This is attribution for cancellation,
+/// never a live grant or permission restored from a local draft.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SourcePluginStartMetadata {
+    pub task_id: ExecutionId,
+    pub generation: ExecutionId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum SourcePluginStartObservation {
+    Started { proof: PluginStartActionRead },
+    /// The exact revoked grant has no enqueued attempt. This fences admission
+    /// for the entire grant/attempt, not a reconstruction of an absent input's
+    /// operation. The Host still binds the original producer/checker slot.
+    ConfirmedNotApplied,
+    Unknown,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

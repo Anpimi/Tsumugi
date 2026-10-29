@@ -96,6 +96,7 @@ fn pending_snapshot_isolates_projects_and_translation_languages() {
         PendingJournalKey::Translation(key) => key.project_id == write.key.project_id && key.locale == "zh-CN",
         PendingJournalKey::Conversation(key) => key.project_id == write.key.project_id,
         PendingJournalKey::Resource(key) => key.project_id == write.key.project_id,
+        PendingJournalKey::Source(key) => key.project_id == write.key.project_id,
     }));
     assert_eq!(store.pending_snapshot(foreign_project, None).unwrap().rows.len(), 1);
     assert_ne!(all.basis, selected.basis);

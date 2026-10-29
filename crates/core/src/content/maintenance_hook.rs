@@ -118,6 +118,14 @@ pub struct SourceMaintenanceHookStopReceipt {
     pub admission_closed: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum SourceHookStopObservation {
+    Recorded { receipt: SourceMaintenanceHookStopReceipt },
+    ConfirmedNotApplied { stopped_by_action_id: ExecutionId },
+    Unknown,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum SourceMaintenanceHookStopResult {

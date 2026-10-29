@@ -69,7 +69,7 @@ function relatedItem(item: DecisionItem, projectId: string): boolean {
         && item.targets.some(target => target.kind === "source-occurrence" && target.snapshotId === action.snapshotId && target.occurrenceId === action.occurrenceId);
     case "compare-source-mapping":
       return item.source === "source-mapping" && item.locale === null && item.sourceActionId === null
-        && item.evidence?.kind === "source-comparison" && item.evidence.ambiguousCount + item.evidence.renameCandidateCount > 0
+        && item.evidence?.kind === "source-comparison" && item.evidence.changedCount + item.evidence.ambiguousCount + item.evidence.renameCandidateCount > 0
         && ["pending", "stale"].includes(item.state)
         && item.targets.some(target => target.kind === "source-result" && target.attemptId === action.attemptId && target.resultId === action.resultId)
         && item.targets.every(target => target.kind !== "entry" && target.kind !== "source-occurrence");
@@ -93,6 +93,11 @@ function relatedItem(item: DecisionItem, projectId: string): boolean {
               && (pending.slot === "resource-fact" ? reference.requestKind === "resource-fact"
                 : pending.slot === "primary" && reference.requestKind !== "resource-fact")
               && item.locale === null && item.targets.every(target => target.kind === "project")
+            : pending.key.kind === "source"
+              ? reference.requestKind.startsWith("source-")
+                && (pending.slot === "source-hook-stop" ? reference.requestKind === "source-hook-stop"
+                  : pending.slot === "primary" && reference.requestKind !== "source-hook-stop")
+                && item.locale === null && item.targets.every(target => target.kind === "project")
             : ["create", "append", "planning", "proposal-capture", "proposal-revision", "proposal-work-plan", "work-plan-start", "work-plan-control"].includes(reference.requestKind)
               && (pending.slot === "primary" || pending.slot === "revocation" && reference.requestKind === "work-plan-control")
               && item.locale === null && item.targets.some(target => target.kind === "conversation" && pending.key.kind === "conversation" && target.conversationId === pending.key.conversationId));

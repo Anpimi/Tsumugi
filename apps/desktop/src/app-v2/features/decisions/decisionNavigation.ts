@@ -7,6 +7,9 @@ import { reviewCommands, type ReviewTarget } from "../../../reviewCommands";
 import { currentDiagnosticRun, sameReviewBasis } from "../../../reviewDiagnosticNavigation";
 import { translationCommands, translationHistoryAfter } from "../../../translationCommands";
 import { resourceDraftCommands, resourcePendingProject } from "../../../resourceDraftCommands";
+import { sourceDraftCommands } from "../../../sourceDraftCommands";
+import { readDecisionTarget } from "./decisionTargetReads";
+import type { SourceReviewTarget } from "../source/sourceTypes";
 
 export type DecisionNavigation =
   | { kind: "candidate"; unitId: string; locale: string; revisionId: string; afterOrdinal: string }
@@ -15,6 +18,8 @@ export type DecisionNavigation =
   | { kind: "translation-request"; key: DraftKey }
   | { kind: "conversation-request"; conversationId: string; slot: "primary" | "revocation"; actionId: string }
   | { kind: "resource-request"; slot: "primary" | "resource-fact"; actionId: string }
+  | { kind: "source-request"; slot: "primary" | "source-hook-stop"; actionId: string }
+  | { kind: "source-review"; target: SourceReviewTarget }
   | { kind: "conversation-proposal"; conversationId: string; proposalId: string; revisionId: string }
   | { kind: "knowledge-proposal"; proposal: ConversationProposalRef; entryIndex: number }
   | { kind: "details" };
@@ -26,6 +31,8 @@ export interface DecisionNavigationPorts {
   draft: typeof draftCommands.read;
   conversationDraft: typeof conversationDraftCommands.read;
   resourceDraft: typeof resourceDraftCommands.read;
+  sourceDraft: typeof sourceDraftCommands.read;
+  sourceTarget: typeof readDecisionTarget;
   proposal: typeof conversationCommands.readProposal;
   knowledgeDecision: typeof conversationCommands.readKnowledgeDecision;
 }
@@ -36,6 +43,8 @@ const ports: DecisionNavigationPorts = {
   draft: request => draftCommands.read(request),
   conversationDraft: request => conversationDraftCommands.read(request),
   resourceDraft: request => resourceDraftCommands.read(request),
+  sourceDraft: request => sourceDraftCommands.read(request),
+  sourceTarget: (...args) => readDecisionTarget(...args),
   proposal: request => conversationCommands.readProposal(request),
   knowledgeDecision: request => conversationCommands.readKnowledgeDecision(request),
 };
@@ -67,6 +76,12 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
   }
   present();
   switch (action.kind) {
+    case "compare-source-mapping":
+    case "resolve-source-mapping": {
+      const target = await commands.sourceTarget(ctx, fixed.item, current); present();
+      match(action.kind === "compare-source-mapping" ? target.kind === "source-comparison" : target.kind === "mapping");
+      return { kind: "source-review", target: action };
+    }
     case "clarify-conversation-proposal": {
       match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "conversation-proposal"
         && target.conversationId === action.conversationId && target.proposalId === action.proposalId));
@@ -156,6 +171,21 @@ export async function resolveDecisionNavigation(context: SessionRequest, item: D
     case "inspect-local-request": {
       const reference = action.reference, original = reference.action;
       match(fixed.item.sourceActionId === original.actionId);
+      if (original.key.kind === "source") {
+        match(fixed.item.locale === null && fixed.item.targets.some(target => target.kind === "project"));
+        const head = await commands.sourceDraft({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } }); present();
+        match(head.key.projectId === ctx.projectId);
+        if (original.slot === "source-hook-stop") {
+          const pending = head.value?.hookStop;
+          match(reference.requestKind === "source-hook-stop" && !!pending && pending.request.stop.actionId === original.actionId && pending.submittedSeq === original.submittedSeq);
+        } else {
+          const pending = head.value?.pending;
+          match(original.slot === "primary" && !!pending && reference.requestKind === `source-${pending.kind}` && pending.submittedSeq === original.submittedSeq);
+          const actionId = pending.kind === "adopt" ? pending.request.actionId : pending.kind === "finish-check" ? pending.request.resultId : pending.request.attemptId;
+          match(actionId === original.actionId);
+        }
+        return { kind: "source-request", slot: original.slot, actionId: original.actionId };
+      }
       if (original.key.kind === "resource") {
         match(planMatches(null) && fixed.item.targets.some(target => target.kind === "project"));
         const head = await commands.resourceDraft({ sessionToken: ctx.sessionToken, key: { projectId: ctx.projectId } }); present();

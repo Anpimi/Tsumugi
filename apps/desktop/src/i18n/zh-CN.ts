@@ -1,4 +1,5 @@
 import { knowledgeZh } from "./knowledge";
+import { sourceMaintenanceZh } from "./sourceMaintenance";
 import type { UiMessages } from "./types";
 import { workbenchPreviewZh } from "./workbenchPreview";
 import { workbenchZh } from "./workbench";
@@ -7,6 +8,7 @@ import { conversationZh } from "./conversation";
 import { strategyZh } from "./strategy";
 export const zhCN = {
 knowledge: knowledgeZh,
+sourceMaintenance: sourceMaintenanceZh,
 conversation: conversationZh,
 workbenchV2: workbenchZh,
 workbenchPreview: workbenchPreviewZh,
@@ -2386,7 +2388,7 @@ ai: {
   "update": "更新源内容",
   "updateIntro": "选择完整的新版源文件目录。在应用更新前，当前源内容和已保存的发布保持不变。",
   "compareTitle": "核对上游变化",
-  "compareSummary": "未变 {{unchanged}} 条（顺序调整 {{moved}} 条）· 已变更 {{changed}} 条 · 新增 {{added}} 条（待确认关联 {{ambiguous}} 条）· 已移除 {{removed}} 条",
+  "compareSummary": "未变 {{unchanged}} 条 · 位置变化 {{moved}} 条 · 原文变化 {{changed}} 条 · 新增 {{added}} 条 · 可能改名 {{renameCandidate}} 条 · 对应不确定 {{ambiguous}} 条 · 移除 {{removed}} 条",
   "compareHelp": "对比当前源条目键名与原文文本。不同键名下的相同文本仅作为参考提示；应用更新前请确认条目关联关系。",
   "changePage": "本页显示 {{count}} / {{total}} 条变更；应用更新时将包含全部页面。",
   "changeKind": "变化",

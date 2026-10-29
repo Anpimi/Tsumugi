@@ -42,6 +42,34 @@ pub struct PreparedSourceValidation {
     pub(crate) check_result: FixedResult,
     pub(crate) proof: validation::ValidationProof,
 }
+
+/// A user-requested publication of stored results. The recovery scope is
+/// captured now; it is not evidence that the old checker was bound to S1.
+#[derive(Clone)]
+pub struct SourceValidationPublicationCapture {
+    pub(crate) capture: SourceValidationCapture,
+    pub(crate) check_result: FixedResult,
+    pub(crate) scope: crate::content::ContentScope,
+    pub(crate) epoch: String,
+    pub(crate) publication_head: Option<(ExecutionId, bool)>,
+}
+
+pub struct PreparedSourceValidationPublication {
+    pub(crate) validation: PreparedSourceValidation,
+    pub(crate) scope: crate::content::ContentScope,
+    pub(crate) epoch: String,
+    pub(crate) publication_head: Option<(ExecutionId, bool)>,
+}
+
+impl SourceValidationPublicationCapture {
+    /// Reuse the original checker policy outside the publication transaction.
+    pub fn prepare(self) -> Result<PreparedSourceValidationPublication, ExecutionError> {
+        Ok(PreparedSourceValidationPublication {
+            validation: self.capture.prepare(self.check_result)?, scope: self.scope,
+            epoch: self.epoch, publication_head: self.publication_head,
+        })
+    }
+}
 impl SourceValidationCapture {
     pub(crate) fn capture(source: ResultValidationCapture) -> Result<Self, ExecutionError> {
         let projected = Arc::new(crate::content::validate_output(

@@ -1,9 +1,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StrictMode, useLayoutEffect, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n";
 import { SessionReads } from "../sessionReads";
 import { sourceCommands } from "../sourceCommands";
+import { sourceDraftCommands } from "../sourceDraftCommands";
+import { sourceDraftValue } from "../sourceDraftJournal";
+import { sourceDraftStateFixture } from "../testSupport/sourceDraftStateFixture";
+import { pluginCommands } from "../pluginCommands";
+import { pluginSourceInventory, pluginSourcePackage } from "../testSupport/pluginSourceFixture";
 import { segmentCommands, type SegmentPage } from "../segmentCommands";
 import { draftCommands } from "../draftCommands";
 import { translationCommands } from "../translationCommands";
@@ -22,10 +28,11 @@ import type { TranslationImportPanelProps } from "./features/import/TranslationI
 import { Button } from "../design-system/Button";
 import { fixtureIdentity } from "../testSupport/executionFixture";
 import { installResourceDraftPortsFixture } from "../testSupport/resourceDraftFixture";
+import { installSourceDraftPortsFixture } from "../testSupport/sourceDraftFixture";
 import { translationCaptureFixture, translationImportChoice, translationSelectionFixture } from "../testSupport/translationFixture";
 
 vi.mock("./platform/useProjectLifecycle", async original => ({ ...await original<object>(), useNativeProjectClose: () => ({ state: "ready" }) }));
-const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null }));
+const ownerLoad = vi.hoisted(() => ({ execution: null as Promise<void> | null, knowledge: null as Promise<void> | null, source: null as Promise<void> | null }));
 vi.mock("./features/execution/ExecutionOwnerHost", async original => {
   const module = await original<typeof import("./features/execution/ExecutionOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
@@ -37,6 +44,13 @@ vi.mock("./features/knowledge/KnowledgeOwnerHost", async original => {
   const module = await original<typeof import("./features/knowledge/KnowledgeOwnerHost")>(), Actual = module.default;
   return { ...module, default: (props: ComponentProps<typeof Actual>) => {
     if (ownerLoad.knowledge) throw ownerLoad.knowledge;
+    return <Actual {...props}/>;
+  } };
+});
+vi.mock("./features/source/SourceOwnerHost", async original => {
+  const module = await original<typeof import("./features/source/SourceOwnerHost")>(), Actual = module.default;
+  return { ...module, default: (props: ComponentProps<typeof Actual>) => {
+    if (ownerLoad.source) throw ownerLoad.source;
     return <Actual {...props}/>;
   } };
 });
@@ -69,8 +83,9 @@ const page: SegmentPage = {
 };
 let controller: ProjectLifecycle;
 beforeEach(async () => {
-  ownerLoad.execution = null; ownerLoad.knowledge = null;
+  ownerLoad.execution = null; ownerLoad.knowledge = null; ownerLoad.source = null;
   installResourceDraftPortsFixture();
+  installSourceDraftPortsFixture();
   importPresentation = null;
   localStorage.clear(); history.replaceState(null, "", "/");
   await i18n.changeLanguage("zh-CN");
@@ -102,6 +117,81 @@ async function openImportPalette() {
   expect(option).not.toHaveAttribute("aria-disabled", "true"); fireEvent.click(option);
   return screen.findByRole("region", { name: i18n.t("workbenchV2.importTitle") });
 }
+
+it("opens the retained Source recovery from the first command while its original owner is still loading", async () => {
+  let releaseSource!: () => void; ownerLoad.source = new Promise<void>(resolve => { releaseSource = resolve; });
+  const inputs = sourceDraftStateFixture(); inputs.source.actor = "Retained source B 人工"; inputs.source.editSeq = 1;
+  const pending = { kind: "capture" as const, request: { projectId: project.metadata.projectId, selectionId: fixtureIdentity(851),
+    attemptId: fixtureIdentity(852), sourceLanguage: "en" }, submittedSeq: "1", submittedMappingSeq: "0" };
+  await sourceDraftCommands.write({ sessionToken: project.sessionToken, write: { key: { projectId: project.metadata.projectId },
+    writerId: fixtureIdentity(853), expectedRevision: "0", value: { ...sourceDraftValue(inputs, "2"), pending } } });
+  vi.spyOn(pluginCommands, "inventory").mockResolvedValue(pluginSourceInventory);
+  vi.spyOn(pluginCommands, "package").mockResolvedValue(pluginSourcePackage);
+  const observe = vi.spyOn(sourceDraftCommands, "observe"), select = vi.spyOn(sourceCommands, "selectPlugin"), start = vi.spyOn(sourceCommands, "startPlugin");
+  controller = new ProjectLifecycle({ open: async () => project, close: vi.fn(async () => ({ closed: true })),
+    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  const register = vi.spyOn(controller, "register");
+  render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>);
+  const user = userEvent.setup();
+  await user.type(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), project.locator);
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }, { timeout: 5000 });
+  await waitFor(() => expect(open).toBeEnabled(), { timeout: 5000 }); await user.click(open);
+  const palette = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.commands") });
+  await user.click(within(palette).getByRole("option", { name: i18n.t("sourceMaintenance.title") }));
+  expect(await screen.findByText(i18n.t("sourceMaintenance.recoveryLoading"))).toBeVisible();
+  const registeredBeforeLoad = register.mock.calls.filter(([value]) => value.id === "source-maintenance");
+  const participant = registeredBeforeLoad.at(-1)?.[0];
+  expect(participant).toBeDefined();
+  expect(participant?.inspect({ kind: "close-project" }).status).toBe("blocked");
+  await act(async () => { ownerLoad.source = null; releaseSource(); });
+  const sheet = await screen.findByRole("dialog", { name: i18n.t("sourceMaintenance.title") }, { timeout: 5000 });
+  expect(await within(sheet).findByRole("button", { name: i18n.t("sourceMaintenance.recoveryCheck") })).toBeEnabled();
+  fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("sourceMaintenance.recoveryShow") }));
+  expect(within(sheet).getByRole<HTMLTextAreaElement>("textbox", { name: i18n.t("sourceMaintenance.recoveryLocal") }).value).toContain("Retained source B 人工");
+  expect(observe).not.toHaveBeenCalled(); expect(select).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled();
+  expect(register.mock.calls.filter(([value]) => value.id === "source-maintenance")).toHaveLength(registeredBeforeLoad.length);
+  expect(participant?.inspect({ kind: "close-project" }).status).toBe("blocked");
+  fireEvent.click(within(sheet).getByRole("button", { name: i18n.t("sourceMaintenance.close") }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: i18n.t("sourceMaintenance.title") })).not.toBeInTheDocument());
+  const saved = await sourceDraftCommands.read({ sessionToken: project.sessionToken, key: { projectId: project.metadata.projectId } });
+  expect(saved.value?.pending).toEqual(pending); expect(saved.value?.actor).toBe("Retained source B 人工");
+}, 15000);
+
+it.each(["focus", "view"] as const)("cancels late Source presentation when the user changes %s before the original owner arrives", async movement => {
+  let releaseSource!: () => void; ownerLoad.source = new Promise<void>(resolve => { releaseSource = resolve; });
+  const close = vi.fn(async () => ({ closed: true }));
+  controller = new ProjectLifecycle({ open: async () => project, close,
+    status: async () => ({ active: false, quiescing: false, queryCount: 0, error: null }) });
+  const register = vi.spyOn(controller, "register"), observe = vi.spyOn(sourceDraftCommands, "observe"), start = vi.spyOn(sourceCommands, "startPlugin");
+  render(<StrictMode><WorkbenchApp controller={controller} native/></StrictMode>); const user = userEvent.setup();
+  await user.type(screen.getByRole("textbox", { name: i18n.t("workbenchV2.projectFolder") }), project.locator);
+  await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.openProject") }));
+  const open = await screen.findByRole("button", { name: i18n.t("workbenchV2.commandPlaceholder") }, { timeout: 5000 });
+  await waitFor(() => expect(open).toBeEnabled(), { timeout: 5000 }); await user.click(open);
+  const palette = await screen.findByRole("dialog", { name: i18n.t("workbenchV2.commands") });
+  await user.click(within(palette).getByRole("option", { name: i18n.t("sourceMaintenance.title") }));
+  expect(await screen.findByText(i18n.t("sourceMaintenance.recoveryLoading"))).toBeVisible();
+  const participant = register.mock.calls.filter(([value]) => value.id === "source-maintenance").at(-1)?.[0];
+  expect(participant).toBeDefined(); expect(participant?.inspect({ kind: "close-project" }).status).toBe("blocked");
+  const originalTab = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.views") })).getByRole("button", { current: "page" });
+  let selectedTab = originalTab;
+  if (movement === "view") {
+    await user.click(screen.getByRole("button", { name: i18n.t("workbenchV2.newView") }));
+    await waitFor(() => {
+      selectedTab = within(screen.getByRole("navigation", { name: i18n.t("workbenchV2.views") })).getByRole("button", { current: "page" });
+      expect(selectedTab).not.toBe(originalTab);
+    });
+  }
+  const search = screen.getByRole("textbox", { name: i18n.t("workbenchV2.searchEntries") });
+  await user.click(search); await user.type(search, "Newer search B"); expect(search).toHaveFocus();
+  await waitFor(() => expect(screen.queryByText(i18n.t("sourceMaintenance.recoveryLoading"))).not.toBeInTheDocument());
+  await act(async () => { ownerLoad.source = null; releaseSource(); });
+  await waitFor(() => expect(participant?.inspect({ kind: "close-project" }).status).toBe("ready"), { timeout: 5000 });
+  expect(search).toHaveFocus(); expect(search).toHaveValue("Newer search B"); expect(selectedTab).toHaveAttribute("aria-current", "page");
+  expect(screen.queryByRole("dialog", { name: i18n.t("sourceMaintenance.title") })).not.toBeInTheDocument();
+  expect(observe).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
+}, 15000);
 
 it("shows project observation fallback in the workspace and refreshes through its guarded command", async () => {
   const write = vi.spyOn(draftCommands, "write");

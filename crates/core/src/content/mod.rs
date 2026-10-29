@@ -904,6 +904,44 @@ pub struct SourceChange {
     pub candidates: Vec<ContentRow>,
 }
 
+/// Mutually exclusive occurrence classifications over the complete comparison.
+/// These counts do not change when a page or a text filter changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct SourceChangeCounts {
+    pub unchanged: u32,
+    pub moved: u32,
+    pub changed: u32,
+    pub added: u32,
+    pub rename_candidate: u32,
+    pub ambiguous: u32,
+    pub removed: u32,
+}
+impl SourceChangeCounts {
+    pub(crate) fn from_changes(rows: &[SourceChange]) -> Self {
+        let mut counts = Self::default();
+        for row in rows {
+            let count = match row.kind {
+                SourceChangeKind::Unchanged => &mut counts.unchanged,
+                SourceChangeKind::Moved => &mut counts.moved,
+                SourceChangeKind::Changed => &mut counts.changed,
+                SourceChangeKind::Added => &mut counts.added,
+                SourceChangeKind::RenameCandidate => &mut counts.rename_candidate,
+                SourceChangeKind::Ambiguous => &mut counts.ambiguous,
+                SourceChangeKind::Removed => &mut counts.removed,
+            };
+            *count += 1;
+        }
+        counts
+    }
+
+    /// Original correspondence questions, before any local draft choices.
+    pub fn mapping_review_required(self) -> u32 {
+        self.changed + self.rename_candidate + self.ambiguous
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -934,12 +972,10 @@ pub struct SourceChangePage {
     pub confirmation: SourceConfirmation,
     pub total: u32,
     pub filtered_total: u32,
-    pub unchanged: u32,
-    pub moved: u32,
-    pub changed: u32,
-    pub added: u32,
-    pub ambiguous: u32,
-    pub removed: u32,
+    pub counts: SourceChangeCounts,
+    /// Subset of the complete comparison that requires a human mapping choice.
+    /// Changed keys are not silently continued; local choices do not alter this count.
+    pub mapping_review_required: u32,
     pub next_ordinal: Option<u32>,
     pub rows: Vec<SourceChange>,
 }

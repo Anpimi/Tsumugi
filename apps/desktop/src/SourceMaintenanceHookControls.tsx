@@ -29,7 +29,7 @@ export function SourceMaintenanceHookChoice({ project, disabled }: { project: Pr
     {state.activation ? <p>{t("sourceHook.expiry", { expiry: new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium", timeStyle: "medium" }).format(state.activation.expiresAtMs) })}</p> : null}
     {state.preparationFailure ? <div role="alert"><p>{t("sourceHook.prepareFailed")}</p><CommandFailureDetails failure={state.preparationFailure} /></div> : null}
     {expired ? <p role="alert">{t("sourceHook.expiredChoice")}</p> : null}
-    {state.enabled && (state.preparing || state.preparationFailure || expired) ? <button type="button" className="secondary-button"
+    {state.enabled && (state.preparing || state.preparationFailure || expired || !state.activation) ? <button type="button" className="secondary-button"
       onClick={() => { void owner.enable(true); }}>{t(state.preparing ? "sourceHook.retryDeclarationWait" : "sourceHook.reconfirm")}</button> : null}
   </fieldset>;
 }

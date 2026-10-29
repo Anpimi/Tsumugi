@@ -318,7 +318,8 @@ fn with_joint_review_fixture_units(
     let source_check = call(&window, "prepare_source_check", Some(scoped(&context, json!({
         "sourceAttemptId":source_attempt,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice
     })))).unwrap();
-    let source_check_start = consent(&context, &source_check);
+    let mut source_check_start = consent(&context, &source_check);
+    source_check_start["startMetadata"] = source_check.get("startMetadata").expect("source review start metadata").clone();
     review_phase("setup: independent source check");
     let checked_source = call(&window, "start_source_check", Some(source_check_start)).unwrap();
     let checked_source_result = completed_result(&window, &context, checked_source.clone());

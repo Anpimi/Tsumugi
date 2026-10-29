@@ -121,6 +121,12 @@ struct DraftRequests {
     resource_write: drafts::ResourceDraftWriteRequest,
     resource_clear: drafts::ResourceDraftClearRequest,
     resource_resolve: drafts::ResourceDraftResolveRequest,
+    source_read: drafts::SourceDraftReadRequest,
+    source_write: drafts::SourceDraftWriteRequest,
+    source_clear: drafts::SourceDraftClearRequest,
+    source_resolve: drafts::SourceDraftResolveRequest,
+    source_observe: drafts::SourceDraftObserveRequest,
+    source_preparation: drafts::SourceDraftPreparationRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -141,6 +147,13 @@ struct DraftResponses {
     resource_cleared: drafts::ResourceDraftHead,
     resource_resolved: drafts::ResourceDraftHead,
     resource_value: drafts::ResourceDraftValue,
+    source_read: drafts::SourceDraftHead,
+    source_written: drafts::SourceDraftHead,
+    source_cleared: drafts::SourceDraftHead,
+    source_resolved: drafts::SourceDraftHead,
+    source_value: drafts::SourceDraftValue,
+    source_observed: drafts::SourceDraftObserved,
+    source_prepared: drafts::SourceDraftPrepared,
     error: CommandError,
 }
 #[derive(JsonSchema)]
@@ -341,6 +354,7 @@ struct SourceRequests {
     adopt: execution::source::SourceAdoptRequest,
     adoption_action: execution::source::SourceAdoptionActionRequest,
     plugin_select: execution::source::plugin::PluginSourceSelectRequest,
+    plugin_drop: execution::source::native_drop::PluginSourceDropRequest,
     plugin_capture: execution::source::plugin::PluginCaptureRequest,
     plugin_start: execution::source::plugin::PluginStartRequest,
     check_prepare: execution::source::plugin::SourceCheckPrepareRequest,
@@ -371,6 +385,8 @@ struct SourceResponses {
     action: tsumugi_core::execution::AdoptionAction,
     adoption_action: Option<tsumugi_core::execution::AdoptionActionRead>,
     plugin_selection: Option<execution::source::plugin::PluginSourceSelection>,
+    dropped_selection: execution::source::plugin::PluginSourceSelection,
+    native_drop_event: execution::source::native_drop::NativeSourceDropEvent,
     plugin_preflight: execution::source::plugin::PluginSourcePreflight,
     check_review: execution::source::plugin::SourceCheckReview,
 }

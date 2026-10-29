@@ -2,12 +2,17 @@ import type { CaptureRequest, StartRequest as LegacyStartRequest } from "./gener
 import { validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseStartAction } from "./generated/source.validators";
 import type { AdoptionAction, Receipt, SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
+import type { PluginSourceDropRequest } from "./generated/source.requests";
+import { validateResponseDroppedSelection, validateResponseNativeDropEvent } from "./generated/source.validators";
 import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
 import type { SourceAdoptRequest, SourceAdoptionActionRequest, PreviewRequest, ContentRequest, SourceContextReadRequest, SourceContextBlockReadRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
 import type { Responses, SourceContextPage, SourceContextBlockBasis, SourceContextBlockDescriptor } from "./generated/source.responses";
 import { validateRequestAdopt, validateResponseAdoptionAction, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseSourceContext, validateResponseSourceContextBlock, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
 export type { SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
+export type { PluginSourceDropRequest } from "./generated/source.requests";
+export type { NativeSourceDropEvent } from "./generated/source.responses";
+export { validateResponseNativeDropEvent };
 export type { SourceContextReadRequest, SourceContextBlockReadRequest } from "./generated/source.requests";
 export type { SourceContextPage, SourceContextPageEntry, SourceContextBlock, SourceContextNeighbor, SourceContextBlockBasis, SourceContextBlockDescriptor, SourceContextBlockDetail } from "./generated/source.responses";
 export type { PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
@@ -31,6 +36,11 @@ export const sourceCommands = {
   start: (request: LegacyStartRequest) => checkedInvoke("start_source_import", request, validateResponseAttempt),
   startAction: async (request: LegacyStartRequest) => confirmSourceStart(request, await checkedInvoke("read_source_import_start", request, validateResponseStartAction)),
   selectPlugin: (request: PluginSourceSelectRequest) => checkedInvoke("select_plugin_source", request, validateResponsePluginSelection),
+  selectDropped: (input: PluginSourceDropRequest) => {
+    const request = structuredClone(input);
+    return checkedInvoke("select_dropped_plugin_source", request,
+      (value): value is NonNullable<Responses["pluginSelection"]> => validateResponseDroppedSelection(value) && sameSourceEnvironment(value.source, request.source));
+  },
   capturePlugin: (request: PluginCaptureRequest) => checkedInvoke("preflight_plugin_source", request, validateResponsePluginPreflight),
   startPlugin: (request: PluginStartRequest) => checkedInvoke("start_plugin_source", request, validateResponseAttempt),
   prepareCheck: (request: SourceCheckPrepareRequest) => checkedInvoke("prepare_source_check", request, validateResponseCheckReview),

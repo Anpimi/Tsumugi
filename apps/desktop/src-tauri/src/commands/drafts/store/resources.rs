@@ -140,6 +140,15 @@ pub(super) fn decode(key:&ResourceDraftKey,stored:Stored)->Result<ResourceDraftH
         return Err(fail(ErrorCode::CorruptLedger,"resource-drafts-record"));
     }Ok(head)
 }
+pub(super) fn validate_existing(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("SELECT project_id,revision,edit_seq,has_pending,CASE WHEN length(payload)<=?1 THEN payload END FROM resource_draft_heads ORDER BY project_id").map_err(sql)?;
+    let rows = statement.query_map([MAX_RECORD as i64], |row| Ok((row.get::<_,String>(0)?, (row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))).map_err(sql)?;
+    for row in rows {
+        let (project, stored) = row.map_err(sql)?;
+        decode(&ResourceDraftKey { project_id: stored_id(&project)? }, stored)?;
+    }
+    Ok(())
+}
 fn read(c:&Connection,key:&ResourceDraftKey,format:i64)->Result<ResourceDraftHead>{
     if format<RESOURCE_FORMAT{return Ok(empty(key));}
     let row=c.query_row("SELECT revision,edit_seq,has_pending,CASE WHEN length(payload)<=?2 THEN payload END

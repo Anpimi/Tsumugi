@@ -61,14 +61,14 @@ it.each(["en-US", "zh-CN"])("keeps proposal question groups and unadopted source
   const mapping: DecisionItem = { ...question, decisionId: "source-mapping:result:original", source: "source-mapping",
     targets: [{ kind: "source-result", attemptId: id(23), resultId: id(24) }],
     action: { kind: "compare-source-mapping", attemptId: id(23), resultId: id(24), previousSnapshotId: id(25), expectedContentRevision: "2" },
-    evidence: { kind: "source-comparison", ambiguousCount: 3, renameCandidateCount: 1 } };
+    evidence: { kind: "source-comparison", changedCount: 2, ambiguousCount: 3, renameCandidateCount: 1 } };
   const page = { ...sample(), items: [question, mapping], knownCount: 2, total: null, next: null,
     coverage: [{ source: "agent-question" as const, state: "partial" as const, knownCount: 1, total: null,
       reason: "source-not-implemented" as const, errorCode: null }] };
   const value = props(page), rendered = render(content(value));
   expect(screen.getByText(language.t("workbenchV2.decisionsTeamQuestionsIncomplete"))).toBeVisible();
   expect(screen.getByText(language.t("workbenchV2.decisionsProposalQuestions", { count: 2 }))).toBeVisible();
-  expect(screen.getByText(language.t("workbenchV2.decisionsSourceMatches", { ambiguous: 3, renamed: 1 }))).toBeVisible();
+  expect(screen.getByText(language.t("workbenchV2.decisionsSourceMatches", { changed: 2, ambiguous: 3, renamed: 1 }))).toBeVisible();
   await userEvent.setup().click(screen.getByRole("button", { name: language.t("workbenchV2.decisionsQuestionOpen") }));
   expect(value.onSelect).toHaveBeenCalledWith(question);
   expect(rendered.container.textContent).not.toContain(question.decisionId);

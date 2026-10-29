@@ -134,7 +134,7 @@ fn selection_resource_and_source_changes_make_old_diagnostic_locations_unavailab
                 let (_, proof) = support::execute(&mut runtime, &mut store, capture.check_input());
                 store.commit_source_validation(capture.prepare(proof).unwrap()).unwrap();
                 let comparison = store.source_comparison(input.envelope().attempt_id, result.envelope().result_id, 0, 10).unwrap();
-                assert_eq!((comparison.changed, comparison.unchanged), (1, 1));
+                assert_eq!((comparison.counts.changed, comparison.counts.unchanged), (1, 1));
                 assert_eq!(comparison.previous_snapshot_id, run.basis_evidence.source_snapshot_id);
                 let target_change = comparison.rows.iter().find(|entry| {
                     entry.old.as_ref().is_some_and(|old| old.unit_id == Some(unit))

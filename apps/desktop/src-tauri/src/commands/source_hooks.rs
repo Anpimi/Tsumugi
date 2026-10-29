@@ -213,7 +213,7 @@ impl SourceHooks {
             ..Self::default()
         }
     }
-    fn drained(&self, source: ExecutionId) -> bool {
+    pub(super) fn drained(&self, source: ExecutionId) -> bool {
         self.slot
             .as_ref()
             .filter(|s| s.source == source)

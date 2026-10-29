@@ -1,10 +1,12 @@
 import { knowledgeEn } from "./knowledge";
+import { sourceMaintenanceEn } from "./sourceMaintenance";
 import { strategyEn } from "./strategy";
 import { workbenchPreviewEn } from "./workbenchPreview";
 import { workbenchEn } from "./workbench";
 import { conversationEn } from "./conversation";
 export const enUS = {
 knowledge: knowledgeEn,
+sourceMaintenance: sourceMaintenanceEn,
 conversation: conversationEn,
 workbenchV2: workbenchEn,
 workbenchPreview: workbenchPreviewEn,
@@ -2397,7 +2399,7 @@ ai: {
   "update": "Update source content",
   "updateIntro": "Choose an updated source package. The current source and earlier releases remain intact until you apply the update.",
   "compareTitle": "Review upstream changes",
-  "compareSummary": "{{unchanged}} unchanged ({{moved}} reordered) · {{changed}} changed · {{added}} added ({{ambiguous}} ambiguous) · {{removed}} removed",
+  "compareSummary": "{{unchanged}} unchanged · {{moved}} moved · {{changed}} changed · {{added}} added · {{renameCandidate}} possible renames · {{ambiguous}} uncertain matches · {{removed}} removed",
   "compareHelp": "Compares entry keys and source text against the current source. Matching text under a different key is shown only as a suggestion. Review key mappings before applying the update.",
   "changePage": "Showing {{count}} of {{total}} changes on this page; applying updates all pages.",
   "changeKind": "Change",

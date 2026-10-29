@@ -1,7 +1,7 @@
 //! Fixed application packages use the real setup, Host and Core boundaries.
 //! Only the window transport and directory picker are synthetic.
 use super::{
-    native::{call, completed, consent, consents, scoped},
+    native::{call, completed, consent, consents, scoped, source_consent},
     *,
 };
 use std::{
@@ -165,7 +165,7 @@ fn journey(material: Materials) {
         host.source.plugin.choice = Some((selection, fixed_choice));
     });
     let preflight = call(&window, "preflight_plugin_source", scoped(&context, json!({"selectionId":selection,"sourceLanguage":"en-US","attemptId":ExecutionId::new()}))).unwrap();
-    let start = consent(&context, &preflight);
+    let start = source_consent(&context, &preflight);
     let mut denied = start.clone();
     denied["unsandboxedExecution"] = json!(false);
     assert!(call(&window, "start_plugin_source", denied).is_err());
@@ -194,7 +194,7 @@ fn journey(material: Materials) {
     let action = scoped(&context, json!({"actionId":adoption["actionId"]}));
     assert!(call(&window, "adopt_execution", action.clone()).is_err());
     let check = call(&window, "prepare_source_check", scoped(&context, json!({"sourceAttemptId":started,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice}))).unwrap();
-    let check_start = consent(&context, &check);
+    let check_start = source_consent(&context, &check);
     let mut borrowed = check_start.clone();
     borrowed["grantId"] = start["grantId"].clone();
     assert!(call(&window, "start_source_check", borrowed).is_err());

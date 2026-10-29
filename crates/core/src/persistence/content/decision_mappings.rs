@@ -11,6 +11,7 @@ pub(in crate::persistence) struct PendingSourceMapping {
     pub scope: ContentScope,
     pub previous_snapshot_id: ExecutionId,
     pub result_digest: String,
+    pub changed_count: u32,
     pub ambiguous_count: u32,
     pub rename_candidate_count: u32,
     pub cancellation_revision: Revision,
@@ -106,11 +107,8 @@ pub(in crate::persistence) fn pending_in(
             continue;
         }
         let changes = compare_rows(&old_rows, &output.occurrences);
-        let ambiguous_count = changes.iter()
-            .filter(|change| change.kind == SourceChangeKind::Ambiguous).count() as u32;
-        let rename_candidate_count = changes.iter()
-            .filter(|change| change.kind == SourceChangeKind::RenameCandidate).count() as u32;
-        if ambiguous_count == 0 && rename_candidate_count == 0 {
+        let counts = SourceChangeCounts::from_changes(&changes);
+        if counts.mapping_review_required() == 0 {
             continue;
         }
         let authorization_current = if input.envelope().plugin.is_some() {
@@ -127,7 +125,8 @@ pub(in crate::persistence) fn pending_in(
         };
         groups.push(PendingSourceMapping {
             task_id, attempt_id, item_id, result_id, scope: scope.clone(), previous_snapshot_id,
-            result_digest: result.digest().into(), ambiguous_count, rename_candidate_count,
+            result_digest: result.digest().into(), changed_count: counts.changed,
+            ambiguous_count: counts.ambiguous, rename_candidate_count: counts.rename_candidate,
             cancellation_revision, cancellation_requested: cancellation_revision.get() > captured_cancel,
             authorization_current,
         });

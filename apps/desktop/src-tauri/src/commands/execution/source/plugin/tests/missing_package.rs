@@ -1,7 +1,7 @@
 //! Actual included-package execution, exact removal and generic reuse.
 //! Only window transport and directory picker results are synthetic.
 use super::{
-    native::{call, completed, consent, consents, scoped},
+    native::{call, completed, consent, consents, scoped, source_consent},
     *,
 };
 use crate::commands::plugins::{
@@ -551,7 +551,7 @@ fn journey(material: Materials, loss: PackageLoss) {
         host.source.plugin.choice = Some((selection, fixed_choice));
     });
     let preflight = call(&window, "preflight_plugin_source", scoped(&context, json!({"selectionId":selection,"sourceLanguage":"en-US","attemptId":ExecutionId::new()}))).unwrap();
-    let source_start = consent(&context, &preflight);
+    let source_start = source_consent(&context, &preflight);
     let source_attempt = call(&window, "start_plugin_source", source_start.clone()).unwrap();
     let source_result = one_result(&completed(&window, &context, &source_attempt));
     let preview = call(
@@ -568,7 +568,7 @@ fn journey(material: Materials, loss: PackageLoss) {
     let source_adoption = ExecutionId::new();
     call(&window, "prepare_source_adoption", scoped(&context, json!({"attemptId":source_attempt,"resultId":source_result,"actionId":source_adoption,"confirmation":preview["confirmation"]}))).unwrap();
     let source_check = call(&window, "prepare_source_check", scoped(&context, json!({"sourceAttemptId":source_attempt,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice}))).unwrap();
-    let source_check_start = consent(&context, &source_check);
+    let source_check_start = source_consent(&context, &source_check);
     assert_ne!(source_check_start["grantId"], source_start["grantId"]);
     let source_checked = call(&window, "start_source_check", source_check_start.clone()).unwrap();
     let source_checked_result = one_result(&completed(&window, &context, &source_checked));

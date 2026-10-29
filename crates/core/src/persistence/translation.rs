@@ -415,6 +415,7 @@ pub(super) fn migrate_memory(c: &Connection) -> rusqlite::Result<()> {
 
 #[cfg(test)]
 pub(in crate::persistence) fn make_legacy_memory_schema(c: &Connection) -> rusqlite::Result<()> {
+    c.execute_batch("DROP TABLE IF EXISTS source_validation_history")?;
     let present: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('translation_revisions')
         WHERE name='reuse_origin_json')", [], |r| r.get(0))?;
     if present {

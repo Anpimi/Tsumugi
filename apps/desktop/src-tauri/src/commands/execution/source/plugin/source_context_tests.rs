@@ -51,6 +51,7 @@ fn consent(context: &Value, review: &Value) -> Value {
         json!({
             "attemptId": review["attemptId"],
             "inputDigest": review["inputDigest"],
+            "startMetadata": review.get("startMetadata").expect("source review start metadata"),
             "grantId": ExecutionId::new(),
             "unsandboxedExecution": true,
             "expiresAtMs": (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()

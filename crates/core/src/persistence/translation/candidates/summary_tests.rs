@@ -29,7 +29,7 @@ fn update_source_with_continued_identity(store: &mut ProjectStore, units: &[Exec
     };
     let comparison = store.source_comparison(input.envelope().attempt_id, result, 0, 10).unwrap();
     assert_eq!(comparison.previous_snapshot_id, previous);
-    assert_eq!(comparison.changed as usize, units.len());
+    assert_eq!(comparison.counts.changed as usize, units.len());
     let mut confirmation = comparison.confirmation;
     confirmation.actor = Some("Synthetic reviewer".into());
     for row in comparison.rows {

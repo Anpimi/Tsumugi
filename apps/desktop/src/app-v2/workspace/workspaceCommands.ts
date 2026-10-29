@@ -4,7 +4,7 @@ import { InteractionGate, type CommandSource } from "./interactionGate";
 import { getWorkspaceView, type WorkspaceStore } from "./workspaceStore";
 import type { WorkspaceNavigation } from "./workspaceRouter";
 
-export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.decisions", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "translation.import", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode", "translation.stage-focused-ai"] as const;
+export const workspaceCommandIds = ["workspace.open-project", "workspace.close-project", "workspace.close-window", "workspace.new-view", "workspace.close-view", "workspace.pin-view", "workspace.agent", "workspace.details", "workspace.decisions", "workspace.focus-search", "workspace.search", "workspace.refresh", "workspace.commands", "source.import-upstream", "translation.import", "translation.confirm", "translation.confirm-next", "translation.exit-editor", "translation.focus-mode", "translation.stage-focused-ai"] as const;
 export type WorkspaceCommandId = typeof workspaceCommandIds[number];
 const commandIds = new Set<string>(workspaceCommandIds);
 
@@ -24,6 +24,7 @@ export interface WorkspaceCommandActions {
   openDecisions?: () => void | Promise<unknown>;
   openImport?: () => void | Promise<unknown>;
   canOpenImport?: () => boolean;
+  openSource?: () => void;
   confirm?: (advance: boolean) => void | Promise<unknown>;
   exitEditor?: () => void | Promise<unknown>;
   toggleFocus?: () => void | Promise<unknown>;
@@ -72,6 +73,7 @@ export function registerWorkspaceCommands({ commands, store, gate, viewId, scope
     commands.register({ ...metadata, id: "workspace.refresh", nameKey: "workbenchV2.refresh", binding: null, availability: () => available(!!actions.refresh), handler: run(() => actions.refresh?.()) }),
     commands.register({ ...metadata, id: "workspace.commands", nameKey: "workbenchV2.commands", binding: "Mod+K", availability: () => available(!!actions.openCommands), handler: run(() => actions.openCommands?.()) }),
     commands.register({ ...metadata, category: "translation", id: "translation.import", nameKey: "workbenchV2.importTitle", binding: null, availability: () => available(!!actions.openImport && (actions.canOpenImport?.() ?? true)), handler: run(() => actions.openImport?.()) }),
+    commands.register({ ...metadata, category: "source", id: "source.import-upstream", nameKey: "sourceMaintenance.title", binding: null, availability: () => available(!!actions.openSource), handler: run(() => actions.openSource?.()) }),
     commands.register({ ...metadata, category: "translation", risk: "writes-translation", id: "translation.confirm", nameKey: "workbenchV2.editorConfirm", binding: "Mod+S", availability: () => available(!!actions.confirm && !!actions.canConfirm?.()), handler: run(() => actions.confirm?.(false)) }),
     commands.register({ ...metadata, category: "translation", risk: "writes-translation", id: "translation.confirm-next", nameKey: "workbenchV2.confirmNext", binding: "Mod+Enter", availability: () => available(!!actions.confirm && !!actions.canConfirm?.() && (actions.canAdvance?.() ?? true)), handler: run(() => actions.confirm?.(true)) }),
     commands.register({ ...metadata, id: "translation.exit-editor", nameKey: "workbenchV2.editorExit", binding: "Escape", availability: () => available(!!actions.exitEditor && !!actions.isEditing?.()), handler: run(() => actions.exitEditor?.()) }),

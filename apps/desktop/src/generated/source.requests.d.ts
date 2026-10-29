@@ -34,6 +34,7 @@ export interface Requests {
   maintenanceHookSession: SessionRequest;
   maintenanceHookStop: SourceMaintenanceHookStopRequest;
   pluginCapture: PluginCaptureRequest;
+  pluginDrop: PluginSourceDropRequest;
   pluginSelect: PluginSourceSelectRequest;
   pluginStart: PluginStartRequest;
   preview: PreviewRequest;
@@ -189,6 +190,12 @@ export interface PluginCaptureRequest {
   sessionToken: string;
   sourceLanguage: string;
 }
+export interface PluginSourceDropRequest {
+  dropTicket: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  source: PluginSourceRequest;
+}
 export interface PluginSourceSelectRequest {
   projectId: ExecutionId;
   sessionToken: string;
@@ -201,7 +208,16 @@ export interface PluginStartRequest {
   inputDigest: string;
   projectId: ExecutionId;
   sessionToken: string;
+  startMetadata: SourcePluginStartMetadata;
   unsandboxedExecution: boolean;
+}
+/**
+ * Frozen before direct Source dispatch. This is attribution for cancellation,
+ * never a live grant or permission restored from a local draft.
+ */
+export interface SourcePluginStartMetadata {
+  generation: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface PreviewRequest {
   after: number;

@@ -692,6 +692,24 @@ impl PluginAuthority {
         Ok(())
     }
 
+    /// A durable cancellation may refer to a previous epoch. It must revoke an
+    /// exact retained handle if present, without creating an epoch or touching
+    /// newer grants for the same task.
+    pub(crate) fn revoke_grant_if_current(
+        &self,
+        generation: ExecutionId,
+        grant_id: ExecutionId,
+    ) -> Result<(), ExecutionError> {
+        let epoch = self.current_lock()?.as_ref()
+            .filter(|epoch| epoch.generation == generation).cloned();
+        if let Some(epoch) = epoch {
+            if let Some(grant) = epoch.grants()?.get(&grant_id) {
+                grant.revoked.store(true, Ordering::Release);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn revoke_task(&self, task: ExecutionId) -> Result<(), ExecutionError> {
         let current = self.current_lock()?;
         if let Some(epoch) = current.as_ref() {

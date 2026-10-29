@@ -118,6 +118,19 @@
               "kind"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -125,7 +138,8 @@
         "enum": [
           "primary",
           "revocation",
-          "resource-fact"
+          "resource-fact",
+          "source-hook-stop"
         ],
         "type": "string"
       },
@@ -1356,6 +1370,12 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "changedCount": {
+                "format": "uint32",
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
               "kind": {
                 "const": "source-comparison",
                 "type": "string"
@@ -1369,6 +1389,7 @@
             },
             "required": [
               "kind",
+              "changedCount",
               "ambiguousCount",
               "renameCandidateCount"
             ],
@@ -1535,6 +1556,19 @@
               "kind"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "source",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -1542,7 +1576,8 @@
         "enum": [
           "primary",
           "revocation",
-          "resource-fact"
+          "resource-fact",
+          "source-hook-stop"
         ],
         "type": "string"
       },
@@ -1647,7 +1682,14 @@
           "resource-context",
           "resource-decision",
           "resource-capture",
-          "resource-fact"
+          "resource-fact",
+          "source-capture",
+          "source-start",
+          "source-prepare-check",
+          "source-start-check",
+          "source-finish-check",
+          "source-adopt",
+          "source-hook-stop"
         ],
         "type": "string"
       },

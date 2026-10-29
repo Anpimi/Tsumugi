@@ -132,31 +132,50 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
     .unwrap();
     assert_eq!(comparison.previous_snapshot_id, old_snapshot);
     assert_eq!(
-        comparison.unchanged as usize,
+        comparison.counts.unchanged as usize,
         oracle["unchanged"].as_array().unwrap().len()
     );
     assert_eq!(
-        comparison.changed as usize,
+        comparison.counts.changed as usize,
         oracle["changed"].as_array().unwrap().len()
     );
     assert_eq!(
-        comparison.added as usize,
+        comparison.counts.added as usize,
         oracle["added"].as_array().unwrap().len()
     );
     assert_eq!(
-        comparison.removed as usize,
+        comparison.counts.removed as usize,
         oracle["removed"].as_array().unwrap().len()
     );
     assert_eq!(comparison.total, 16);
+    assert_eq!(comparison.mapping_review_required, 6);
+    assert_eq!(comparison.counts, SourceChangeCounts {
+        unchanged: 0, moved: 4, changed: 2, added: 1,
+        rename_candidate: 1, ambiguous: 3, removed: 5,
+    });
+    let filtered = store.source_comparison_filtered(input.envelope().attempt_id,
+        result.envelope().result_id, None, "edited", 0, 1).unwrap();
+    assert_eq!(filtered.rows.len(), 1);
+    assert_eq!(filtered.filtered_total, 1);
+    assert_eq!(filtered.counts, comparison.counts);
+    assert_eq!(filtered.mapping_review_required, comparison.mapping_review_required);
+    let first = store.source_comparison(input.envelope().attempt_id, result.envelope().result_id, 0, 1).unwrap();
+    let next = store.source_comparison(input.envelope().attempt_id, result.envelope().result_id,
+        first.next_ordinal.unwrap(), 1).unwrap();
+    assert_eq!(first.counts, next.counts);
+    assert_eq!(first.mapping_review_required, 6);
     for (kind, keys) in [
         ("unchanged", "unchanged"),
+        ("moved", "moved"),
         ("changed", "changed"),
+        ("added", "added"),
+        ("rename-candidate", "renameCandidate"),
+        ("ambiguous", "ambiguous"),
         ("removed", "removed"),
     ] {
         for key in oracle[keys].as_array().unwrap() {
             assert!(comparison.rows.iter().any(|row| {
-                (row.kind.as_str() == kind
-                    || (kind == "unchanged" && row.kind == SourceChangeKind::Moved))
+                row.kind.as_str() == kind
                     && row
                         .new
                         .as_ref()
@@ -166,7 +185,7 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
             }));
         }
     }
-    assert_eq!(comparison.moved, 4);
+    assert_eq!(comparison.counts.moved, 4);
     assert!(
         comparison
             .rows
@@ -174,7 +193,7 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
             .any(|row| row.kind == SourceChangeKind::Moved
                 && row.new.as_ref().unwrap().key == "moved")
     );
-    assert_eq!(comparison.ambiguous, 3);
+    assert_eq!(comparison.counts.ambiguous, 3);
     for (key, candidates) in [
         ("split-a", vec!["split-old"]),
         ("split-b", vec!["split-old"]),
@@ -807,10 +826,10 @@ fn real_532_key_source_can_compare_and_adopt_a_controlled_successor() {
         .unwrap();
     assert_eq!(
         (
-            comparison.unchanged,
-            comparison.changed,
-            comparison.added,
-            comparison.removed
+            comparison.counts.unchanged,
+            comparison.counts.changed,
+            comparison.counts.added,
+            comparison.counts.removed
         ),
         (531, 1, 0, 0)
     );

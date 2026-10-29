@@ -2253,6 +2253,40 @@
           }
         ]
       },
+      "LineageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/LineageDecision"
+          },
+          "newOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldOccurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "newOrdinal",
+          "oldOccurrenceId",
+          "decision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "LineageDecision": {
+        "enum": [
+          "continue",
+          "reject"
+        ],
+        "type": "string"
+      },
       "McpTermQueryArguments": {
         "additionalProperties": false,
         "properties": {
@@ -2827,6 +2861,42 @@
           "publisher",
           "id",
           "version"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginSourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
         ],
         "type": "object"
       },
@@ -4336,6 +4406,77 @@
         ],
         "type": "string"
       },
+      "SourceConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedContentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedCurrentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "identityPolicy": {
+            "type": "string"
+          },
+          "lineage": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/LineageChoice"
+            },
+            "type": "array"
+          },
+          "lineageBaseSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "maintenanceHook": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "maintenanceHook",
+          "resultDigest",
+          "identityPolicy",
+          "expectedContentRevision",
+          "sourceLanguage"
+        ],
+        "type": "object"
+      },
       "SourceContextFact": {
         "additionalProperties": false,
         "properties": {
@@ -4491,6 +4632,908 @@
         ],
         "type": "object"
       },
+      "SourceDraftAdoptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmation": {
+            "$ref": "#/definitions/SourceConfirmation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "resultId",
+          "actionId",
+          "confirmation"
+        ],
+        "type": "object"
+      },
+      "SourceDraftCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "selectionId",
+          "sourceLanguage",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftCheckFinishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftCheckPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceAttemptId",
+          "sourceResultId",
+          "attemptId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "SourceDraftClear": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "key": {
+            "$ref": "#/definitions/SourceDraftKey"
+          }
+        },
+        "required": [
+          "key",
+          "expectedRevision"
+        ],
+        "type": "object"
+      },
+      "SourceDraftClearRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "clear": {
+            "$ref": "#/definitions/SourceDraftClear"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "clear"
+        ],
+        "type": "object"
+      },
+      "SourceDraftComparisonRef": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedContentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedCurrentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previousSnapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "resultId",
+          "expectedContentRevision"
+        ],
+        "type": "object"
+      },
+      "SourceDraftDisposition": {
+        "enum": [
+          "recorded",
+          "confirmed-not-applied",
+          "preparation-expired"
+        ],
+        "type": "string"
+      },
+      "SourceDraftHistoricalSearch": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "newOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "query",
+          "after",
+          "newOrdinal"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHook": {
+        "additionalProperties": false,
+        "properties": {
+          "enabledIntent": {
+            "type": "boolean"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sourceActionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "locale",
+          "enabledIntent"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHookStop": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/SourceDraftHookStopRequest"
+          },
+          "submittedSeq": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "request",
+          "submittedSeq"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHookStopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "stop": {
+            "$ref": "#/definitions/StopSourceMaintenanceHook"
+          }
+        },
+        "required": [
+          "projectId",
+          "stop"
+        ],
+        "type": "object"
+      },
+      "SourceDraftKey": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftObserveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/definitions/SourceDraftKey"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/definitions/SourceDraftResolveTarget"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "key",
+          "target"
+        ],
+        "type": "object"
+      },
+      "SourceDraftPending": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "capture",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCaptureRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "start",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftStartRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "prepare-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCheckPrepareRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "start-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftStartRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "finish-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCheckFinishRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "adopt",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftAdoptRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "unitId",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftPreparationRef": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "capture",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCaptureRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "prepare-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCheckPrepareRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftPreparationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/definitions/SourceDraftKey"
+          },
+          "reference": {
+            "$ref": "#/definitions/SourceDraftPreparationRef"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "key",
+          "reference"
+        ],
+        "type": "object"
+      },
+      "SourceDraftReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/definitions/SourceDraftKey"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "key"
+        ],
+        "type": "object"
+      },
+      "SourceDraftReceiptRef": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "unitId",
+          "snapshotId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftResolve": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "$ref": "#/definitions/SourceDraftDisposition"
+          },
+          "target": {
+            "$ref": "#/definitions/SourceDraftResolveTarget"
+          },
+          "write": {
+            "$ref": "#/definitions/SourceDraftWrite"
+          }
+        },
+        "required": [
+          "write",
+          "target",
+          "disposition"
+        ],
+        "type": "object"
+      },
+      "SourceDraftResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "resolve": {
+            "$ref": "#/definitions/SourceDraftResolve"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "resolve"
+        ],
+        "type": "object"
+      },
+      "SourceDraftResolveTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "primary",
+                "type": "string"
+              },
+              "pending": {
+                "$ref": "#/definitions/SourceDraftPending"
+              }
+            },
+            "required": [
+              "kind",
+              "pending"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "hook-stop",
+                "type": "string"
+              },
+              "pending": {
+                "$ref": "#/definitions/SourceDraftHookStop"
+              }
+            },
+            "required": [
+              "kind",
+              "pending"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution",
+          "startMetadata"
+        ],
+        "type": "object"
+      },
+      "SourceDraftValue": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "appliedFilter": {
+            "type": "string"
+          },
+          "attemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "captureRequest": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftCaptureRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkAttemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkPrepareRequest": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftCheckPrepareRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "comparisonAfter": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "comparisonRef": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftComparisonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "declared": {
+            "type": "boolean"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "filter": {
+            "type": "string"
+          },
+          "historicalQuery": {
+            "type": "string"
+          },
+          "historicalSearch": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftHistoricalSearch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hook": {
+            "$ref": "#/definitions/SourceDraftHook"
+          },
+          "hookStop": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftHookStop"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lineage": {
+            "items": {
+              "$ref": "#/definitions/LineageChoice"
+            },
+            "type": "array"
+          },
+          "manualOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mappingSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftPending"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pickerUncertain": {
+            "type": "boolean"
+          },
+          "previewAfter": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "receiptRef": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftReceiptRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginSourceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceLanguage": {
+            "type": "string"
+          },
+          "updating": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "editSeq",
+          "mappingSeq",
+          "domain",
+          "sourceLanguage",
+          "declared",
+          "updating",
+          "lineage",
+          "actor",
+          "filter",
+          "appliedFilter",
+          "historicalQuery",
+          "previewAfter",
+          "comparisonAfter",
+          "pickerUncertain",
+          "hook"
+        ],
+        "type": "object"
+      },
+      "SourceDraftWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "key": {
+            "$ref": "#/definitions/SourceDraftKey"
+          },
+          "value": {
+            "$ref": "#/definitions/SourceDraftValue"
+          },
+          "writerId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "key",
+          "expectedRevision",
+          "writerId",
+          "value"
+        ],
+        "type": "object"
+      },
+      "SourceDraftWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "sessionToken": {
+            "type": "string"
+          },
+          "write": {
+            "$ref": "#/definitions/SourceDraftWrite"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "write"
+        ],
+        "type": "object"
+      },
       "SourceFactBasis": {
         "additionalProperties": false,
         "properties": {
@@ -4512,6 +5555,63 @@
           "sourceResultId",
           "sourceResultDigest",
           "fact"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookActivation": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "sessionEpoch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policyVersion",
+          "sessionEpoch",
+          "locale",
+          "after",
+          "limit",
+          "expiresAtMs"
+        ],
+        "type": "object"
+      },
+      "SourcePluginStartMetadata": {
+        "additionalProperties": false,
+        "description": "Frozen before direct Source dispatch. This is attribution for cancellation,\nnever a live grant or permission restored from a local draft.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "generation"
         ],
         "type": "object"
       },
@@ -4554,6 +5654,30 @@
           "skipped"
         ],
         "type": "string"
+      },
+      "StopSourceMaintenanceHook": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "activation": {
+            "$ref": "#/definitions/SourceMaintenanceHookActivation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceActionId",
+          "actionId",
+          "activation"
+        ],
+        "type": "object"
       },
       "TeamDiscussionPolicy": {
         "oneOf": [
@@ -5244,6 +6368,24 @@
       "resourceWrite": {
         "$ref": "#/definitions/ResourceDraftWriteRequest"
       },
+      "sourceClear": {
+        "$ref": "#/definitions/SourceDraftClearRequest"
+      },
+      "sourceObserve": {
+        "$ref": "#/definitions/SourceDraftObserveRequest"
+      },
+      "sourcePreparation": {
+        "$ref": "#/definitions/SourceDraftPreparationRequest"
+      },
+      "sourceRead": {
+        "$ref": "#/definitions/SourceDraftReadRequest"
+      },
+      "sourceResolve": {
+        "$ref": "#/definitions/SourceDraftResolveRequest"
+      },
+      "sourceWrite": {
+        "$ref": "#/definitions/SourceDraftWriteRequest"
+      },
       "write": {
         "$ref": "#/definitions/DraftWriteRequest"
       }
@@ -5262,7 +6404,13 @@
       "resourceRead",
       "resourceWrite",
       "resourceClear",
-      "resourceResolve"
+      "resourceResolve",
+      "sourceRead",
+      "sourceWrite",
+      "sourceClear",
+      "sourceResolve",
+      "sourceObserve",
+      "sourcePreparation"
     ],
     "title": "Requests",
     "type": "object",
@@ -5272,6 +6420,105 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AdoptionAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "parameters": true,
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "operation",
+          "resultIds",
+          "cancellationRevision",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "AdoptionActionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/AdoptionAction"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AdoptionReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "action",
+          "receipt"
+        ],
+        "type": "object"
+      },
+      "AdoptionReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/definitions/ChangeReference"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "requestDigest",
+          "changes"
+        ],
+        "type": "object"
+      },
       "AdvisoryReviewCheck": {
         "additionalProperties": false,
         "description": "Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.",
@@ -5735,6 +6982,26 @@
           "target",
           "protected",
           "reason"
+        ],
+        "type": "object"
+      },
+      "ChangeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "revision"
         ],
         "type": "object"
       },
@@ -7989,6 +9256,40 @@
           }
         ]
       },
+      "LineageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/LineageDecision"
+          },
+          "newOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldOccurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "newOrdinal",
+          "oldOccurrenceId",
+          "decision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "LineageDecision": {
+        "enum": [
+          "continue",
+          "reject"
+        ],
+        "type": "string"
+      },
       "McpTermQueryArguments": {
         "additionalProperties": false,
         "properties": {
@@ -8564,6 +9865,197 @@
           "publisher",
           "id",
           "version"
+        ],
+        "type": "object"
+      },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginSourceFile": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLength": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalPath",
+          "role",
+          "byteLength",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "PluginSourcePreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/definitions/PluginSourceFile"
+            },
+            "type": "array"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceView"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "startMetadata",
+          "sourceLanguage",
+          "source",
+          "files"
+        ],
+        "type": "object"
+      },
+      "PluginSourceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
+      "PluginSourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/SourceImportDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "extractor": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "review": {
+            "$ref": "#/definitions/ReviewBinding"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "extractor",
+          "checker",
+          "review",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginStartActionRead": {
+        "additionalProperties": false,
+        "description": "Evidence of one exact ordinary plugin input in the durable execution ledger.\nThis proves enqueueing, never current scope, worker completion or live consent.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "taskId",
+          "attemptId",
+          "operation",
+          "inputDigest"
         ],
         "type": "object"
       },
@@ -9471,6 +10963,22 @@
         ],
         "type": "object"
       },
+      "ReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
       "ReviewCheckerKey": {
         "additionalProperties": false,
         "properties": {
@@ -9484,6 +10992,46 @@
         "required": [
           "provider",
           "profile"
+        ],
+        "type": "object"
+      },
+      "ReviewDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ReviewRuleDeclaration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "ReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+        "properties": {
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation"
         ],
         "type": "object"
       },
@@ -9993,6 +11541,120 @@
         ],
         "type": "string"
       },
+      "SourceCheckReview": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceView"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "startMetadata",
+          "sourceAttemptId",
+          "sourceResultId",
+          "source",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "SourceConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedContentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedCurrentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "identityPolicy": {
+            "type": "string"
+          },
+          "lineage": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/LineageChoice"
+            },
+            "type": "array"
+          },
+          "lineageBaseSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "maintenanceHook": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceMaintenanceHookActivation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "maintenanceHook",
+          "resultDigest",
+          "identityPolicy",
+          "expectedContentRevision",
+          "sourceLanguage",
+          "expectedCurrentSnapshot",
+          "lineage",
+          "actor",
+          "lineageBaseSnapshot"
+        ],
+        "type": "object"
+      },
       "SourceContextFact": {
         "additionalProperties": false,
         "properties": {
@@ -10148,6 +11810,983 @@
         ],
         "type": "object"
       },
+      "SourceDraftAdoptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmation": {
+            "$ref": "#/definitions/SourceConfirmation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "resultId",
+          "actionId",
+          "confirmation"
+        ],
+        "type": "object"
+      },
+      "SourceDraftCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "selectionId",
+          "sourceLanguage",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftCheckFinishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftCheckPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "source": {
+            "$ref": "#/definitions/PluginSourceRequest"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceAttemptId",
+          "sourceResultId",
+          "attemptId",
+          "source"
+        ],
+        "type": "object"
+      },
+      "SourceDraftComparisonRef": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedContentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedCurrentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previousSnapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "resultId",
+          "previousSnapshotId",
+          "expectedContentRevision",
+          "expectedCurrentSnapshot"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHead": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "$ref": "#/definitions/SourceDraftKey"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "writerId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "revision",
+          "writerId",
+          "value"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHistoricalSearch": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "newOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "query",
+          "after",
+          "newOrdinal"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHook": {
+        "additionalProperties": false,
+        "properties": {
+          "enabledIntent": {
+            "type": "boolean"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sourceActionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "locale",
+          "enabledIntent",
+          "sourceActionId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHookStop": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/SourceDraftHookStopRequest"
+          },
+          "submittedSeq": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "request",
+          "submittedSeq"
+        ],
+        "type": "object"
+      },
+      "SourceDraftHookStopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "stop": {
+            "$ref": "#/definitions/StopSourceMaintenanceHook"
+          }
+        },
+        "required": [
+          "projectId",
+          "stop"
+        ],
+        "type": "object"
+      },
+      "SourceDraftKey": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftObservation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "capture",
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/definitions/PluginSourcePreflight"
+              }
+            },
+            "required": [
+              "kind",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "preparation-expired",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "started",
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/definitions/PluginStartActionRead"
+              }
+            },
+            "required": [
+              "kind",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "check-prepared",
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/definitions/SourceCheckReview"
+              }
+            },
+            "required": [
+              "kind",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "check-finished",
+                "type": "string"
+              },
+              "valid": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "valid"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "adoption-prepared",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/AdoptionActionRead"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "adopted",
+                "type": "string"
+              },
+              "value": {
+                "$ref": "#/definitions/AdoptionActionRead"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "hook-stopped",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/definitions/SourceMaintenanceHookStopReceipt"
+              }
+            },
+            "required": [
+              "kind",
+              "receipt"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "confirmed-not-applied",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftObserved": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "$ref": "#/definitions/SourceDraftObservation"
+          },
+          "target": {
+            "$ref": "#/definitions/SourceDraftResolveTarget"
+          }
+        },
+        "required": [
+          "target",
+          "observation"
+        ],
+        "type": "object"
+      },
+      "SourceDraftPending": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "capture",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCaptureRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "start",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftStartRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "prepare-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCheckPrepareRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "start-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftStartRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "finish-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCheckFinishRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "adopt",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftAdoptRequest"
+              },
+              "submittedMappingSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "submittedSeq": {
+                "$ref": "#/definitions/Revision"
+              },
+              "unitId": {
+                "$ref": "#/definitions/ExecutionId"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "unitId",
+              "submittedSeq",
+              "submittedMappingSeq"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftPreparationRef": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "capture",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCaptureRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "prepare-check",
+                "type": "string"
+              },
+              "request": {
+                "$ref": "#/definitions/SourceDraftCheckPrepareRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "request"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftPrepared": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "$ref": "#/definitions/SourceDraftObservation"
+          },
+          "reference": {
+            "$ref": "#/definitions/SourceDraftPreparationRef"
+          }
+        },
+        "required": [
+          "reference",
+          "observation"
+        ],
+        "type": "object"
+      },
+      "SourceDraftReceiptRef": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "unitId",
+          "snapshotId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "SourceDraftResolveTarget": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "primary",
+                "type": "string"
+              },
+              "pending": {
+                "$ref": "#/definitions/SourceDraftPending"
+              }
+            },
+            "required": [
+              "kind",
+              "pending"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "hook-stop",
+                "type": "string"
+              },
+              "pending": {
+                "$ref": "#/definitions/SourceDraftHookStop"
+              }
+            },
+            "required": [
+              "kind",
+              "pending"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SourceDraftStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "startMetadata": {
+            "$ref": "#/definitions/SourcePluginStartMetadata"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution",
+          "startMetadata"
+        ],
+        "type": "object"
+      },
+      "SourceDraftValue": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "appliedFilter": {
+            "type": "string"
+          },
+          "attemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "captureRequest": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftCaptureRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkAttemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkPrepareRequest": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftCheckPrepareRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "comparisonAfter": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "comparisonRef": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftComparisonRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "declared": {
+            "type": "boolean"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "editSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "filter": {
+            "type": "string"
+          },
+          "historicalQuery": {
+            "type": "string"
+          },
+          "historicalSearch": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftHistoricalSearch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hook": {
+            "$ref": "#/definitions/SourceDraftHook"
+          },
+          "hookStop": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftHookStop"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lineage": {
+            "items": {
+              "$ref": "#/definitions/LineageChoice"
+            },
+            "type": "array"
+          },
+          "manualOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mappingSeq": {
+            "$ref": "#/definitions/Revision"
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftPending"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pickerUncertain": {
+            "type": "boolean"
+          },
+          "previewAfter": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "receiptRef": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceDraftReceiptRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginSourceRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceLanguage": {
+            "type": "string"
+          },
+          "updating": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "editSeq",
+          "mappingSeq",
+          "domain",
+          "source",
+          "sourceLanguage",
+          "declared",
+          "selectionLabel",
+          "updating",
+          "attemptId",
+          "checkAttemptId",
+          "captureRequest",
+          "checkPrepareRequest",
+          "comparisonRef",
+          "lineage",
+          "actor",
+          "filter",
+          "appliedFilter",
+          "manualOrdinal",
+          "historicalQuery",
+          "previewAfter",
+          "comparisonAfter",
+          "historicalSearch",
+          "receiptRef",
+          "pickerUncertain",
+          "hook",
+          "pending",
+          "hookStop"
+        ],
+        "type": "object"
+      },
       "SourceFactBasis": {
         "additionalProperties": false,
         "properties": {
@@ -10172,6 +12811,150 @@
         ],
         "type": "object"
       },
+      "SourceImportDeclaration": {
+        "additionalProperties": false,
+        "description": "All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "extractor": {
+            "type": "string"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/definitions/SourceMaterialDeclaration"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "reviewResource": {
+            "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+            "type": "string"
+          },
+          "revisionPolicy": {
+            "$ref": "#/definitions/SourceRevisionPolicy"
+          },
+          "semanticRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "materials",
+          "extractor",
+          "checker",
+          "reviewResource",
+          "revisionPolicy",
+          "semanticRules"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookActivation": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expiresAtMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "sessionEpoch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "policyVersion",
+          "sessionEpoch",
+          "locale",
+          "after",
+          "limit",
+          "expiresAtMs"
+        ],
+        "type": "object"
+      },
+      "SourceMaintenanceHookStopReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "admissionClosed": {
+            "type": "boolean"
+          },
+          "request": {
+            "$ref": "#/definitions/StopSourceMaintenanceHook"
+          }
+        },
+        "required": [
+          "request",
+          "admissionClosed"
+        ],
+        "type": "object"
+      },
+      "SourceMaterialDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "logicalPath": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalPath",
+          "role",
+          "maxBytes"
+        ],
+        "type": "object"
+      },
+      "SourcePluginStartMetadata": {
+        "additionalProperties": false,
+        "description": "Frozen before direct Source dispatch. This is attribution for cancellation,\nnever a live grant or permission restored from a local draft.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "taskId",
+          "generation"
+        ],
+        "type": "object"
+      },
       "SourceReference": {
         "additionalProperties": false,
         "properties": {
@@ -10185,6 +12968,26 @@
         "required": [
           "artifactId",
           "range"
+        ],
+        "type": "object"
+      },
+      "SourceRevisionPolicy": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted policy owner before a proposal is received. Only\nthese exact block schemas contribute opaque bytes to source revisions.",
+        "properties": {
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "revisionBasis": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "revisionBasis"
         ],
         "type": "object"
       },
@@ -10211,6 +13014,30 @@
           "skipped"
         ],
         "type": "string"
+      },
+      "StopSourceMaintenanceHook": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "activation": {
+            "$ref": "#/definitions/SourceMaintenanceHookActivation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceActionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "sourceActionId",
+          "actionId",
+          "activation"
+        ],
+        "type": "object"
       },
       "TeamDiscussionPolicy": {
         "oneOf": [
@@ -10913,6 +13740,27 @@
       "resourceWritten": {
         "$ref": "#/definitions/ResourceDraftHead"
       },
+      "sourceCleared": {
+        "$ref": "#/definitions/SourceDraftHead"
+      },
+      "sourceObserved": {
+        "$ref": "#/definitions/SourceDraftObserved"
+      },
+      "sourcePrepared": {
+        "$ref": "#/definitions/SourceDraftPrepared"
+      },
+      "sourceRead": {
+        "$ref": "#/definitions/SourceDraftHead"
+      },
+      "sourceResolved": {
+        "$ref": "#/definitions/SourceDraftHead"
+      },
+      "sourceValue": {
+        "$ref": "#/definitions/SourceDraftValue"
+      },
+      "sourceWritten": {
+        "$ref": "#/definitions/SourceDraftHead"
+      },
       "written": {
         "$ref": "#/definitions/DraftHead"
       }
@@ -10933,6 +13781,13 @@
       "resourceCleared",
       "resourceResolved",
       "resourceValue",
+      "sourceRead",
+      "sourceWritten",
+      "sourceCleared",
+      "sourceResolved",
+      "sourceValue",
+      "sourceObserved",
+      "sourcePrepared",
       "error"
     ],
     "title": "Responses",

@@ -39,7 +39,7 @@ import { validateRequestPluginStart as validateTranslationPluginStart, validateR
 import type { ProjectView } from "./projectCommands";
 import { validateResponseProjectView } from "./generated/validators";
 
-type PlainWorkbenchCommandId = "translation.hide-candidate-batch" | "translation.open-retained-candidate-batch" | "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
+type PlainWorkbenchCommandId = "source.import-upstream" | "translation.hide-candidate-batch" | "translation.open-retained-candidate-batch" | "arena.setup-saved" | "arena.first-saved-page" | "arena.next-saved-page" | "arena.saved-list-refresh" | "arena.return-candidates" | "strategy.check-pending" | "strategy.retry-pending" | "project.metadata.save" | "translation.save"
   | "workspace.open-project" | "workspace.close-project" | "workspace.close-window" | "workspace.new-view" | "workspace.close-view" | "workspace.pin-view"
   | "workspace.agent" | "workspace.details" | "workspace.decisions" | "workspace.focus-search" | "workspace.search" | "workspace.refresh" | "workspace.commands"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"

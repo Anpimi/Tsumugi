@@ -53,17 +53,7 @@ fn source_mapping(
     let Some(snapshot) = scope.current_snapshot else {
         return Ok(SourceProjection { items: Vec::new(), complete: true });
     };
-    let mut statement = c.prepare(
-        "SELECT o.occurrence_id FROM source_occurrences o
-         JOIN source_lineage l ON l.occurrence_id=o.occurrence_id
-         WHERE o.snapshot_id=?1 AND l.relation='unresolved'
-         ORDER BY o.ordinal LIMIT ?2",
-    ).map_err(super::super::ledger::sql_error)?;
-    let unresolved = statement.query_map(params![snapshot.to_string(), (SOURCE_LIMIT + 1) as i64], |row| {
-        row.get::<_, String>(0)
-    }).map_err(super::super::ledger::sql_error)?
-        .map(|row| id(row.map_err(super::super::ledger::sql_error)?))
-        .collect::<Result<Vec<_>, ExecutionError>>()?;
+    let unresolved = super::super::content::maintenance::unresolved_occurrences_in(c, snapshot, SOURCE_LIMIT + 1)?;
     if unresolved.is_empty() {
         return Ok(SourceProjection { items: Vec::new(), complete: true });
     }
@@ -81,7 +71,7 @@ fn source_mapping(
     let current = rows.into_iter().filter_map(|row| row.occurrence_id.map(|id| (id, row)))
         .collect::<BTreeMap<_, _>>();
     let mut items = Vec::new();
-    for occurrence in unresolved.into_iter().take(SOURCE_LIMIT) {
+    for (occurrence, _) in unresolved.into_iter().take(SOURCE_LIMIT) {
         let row = current.get(&occurrence)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "decision-source-occurrence"))?;
         let unit = row.unit_id

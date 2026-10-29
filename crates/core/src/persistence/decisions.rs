@@ -79,7 +79,7 @@ pub enum DecisionEvidence {
     Delivery { blocker_count: u32, reasons: Vec<super::EligibilityReason>, reasons_complete: bool },
     LocalRequest { outcome: DecisionLocalOutcome, error_code: Option<ErrorCode> },
     DeliveryOutcome { state: super::DeliveryState, locales: Vec<String>, file_count: u32, unknown_file_count: u32 },
-    SourceComparison { ambiguous_count: u32, rename_candidate_count: u32 },
+    SourceComparison { changed_count: u32, ambiguous_count: u32, rename_candidate_count: u32 },
     ProposalQuestions { question_count: u32 },
 }
 

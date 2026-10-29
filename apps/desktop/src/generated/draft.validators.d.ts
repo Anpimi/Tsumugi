@@ -14,6 +14,12 @@ export declare function validateRequestResourceClear(value: unknown): value is R
 export declare function validateRequestResourceRead(value: unknown): value is Requests["resourceRead"];
 export declare function validateRequestResourceResolve(value: unknown): value is Requests["resourceResolve"];
 export declare function validateRequestResourceWrite(value: unknown): value is Requests["resourceWrite"];
+export declare function validateRequestSourceClear(value: unknown): value is Requests["sourceClear"];
+export declare function validateRequestSourceObserve(value: unknown): value is Requests["sourceObserve"];
+export declare function validateRequestSourcePreparation(value: unknown): value is Requests["sourcePreparation"];
+export declare function validateRequestSourceRead(value: unknown): value is Requests["sourceRead"];
+export declare function validateRequestSourceResolve(value: unknown): value is Requests["sourceResolve"];
+export declare function validateRequestSourceWrite(value: unknown): value is Requests["sourceWrite"];
 export declare function validateRequestWrite(value: unknown): value is Requests["write"];
 export declare function validateResponseCleared(value: unknown): value is Responses["cleared"];
 export declare function validateResponseConversationCleared(value: unknown): value is Responses["conversationCleared"];
@@ -30,4 +36,11 @@ export declare function validateResponseResourceRead(value: unknown): value is R
 export declare function validateResponseResourceResolved(value: unknown): value is Responses["resourceResolved"];
 export declare function validateResponseResourceValue(value: unknown): value is Responses["resourceValue"];
 export declare function validateResponseResourceWritten(value: unknown): value is Responses["resourceWritten"];
+export declare function validateResponseSourceCleared(value: unknown): value is Responses["sourceCleared"];
+export declare function validateResponseSourceObserved(value: unknown): value is Responses["sourceObserved"];
+export declare function validateResponseSourcePrepared(value: unknown): value is Responses["sourcePrepared"];
+export declare function validateResponseSourceRead(value: unknown): value is Responses["sourceRead"];
+export declare function validateResponseSourceResolved(value: unknown): value is Responses["sourceResolved"];
+export declare function validateResponseSourceValue(value: unknown): value is Responses["sourceValue"];
+export declare function validateResponseSourceWritten(value: unknown): value is Responses["sourceWritten"];
 export declare function validateResponseWritten(value: unknown): value is Responses["written"];

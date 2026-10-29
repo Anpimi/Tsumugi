@@ -4,6 +4,7 @@ use crate::commands::drafts::{
     self, ConversationDraftPending, ConversationDraftResolveTarget, DraftPending, PendingActionRef,
     PendingJournalKey, PendingJournalSlot, PendingSnapshot,
     ResourceDraftPending, ResourceDraftResolveTarget, ResourceDraftDisposition,
+    SourceDraftPending, SourceDraftResolveTarget, SourceDraftDisposition,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -55,8 +56,10 @@ pub(super) fn validate_activity(
             }
             if matches!(action.key,DecisionJournalKey::Resource)
                 && !matches!(action.slot,DecisionJournalSlot::Primary|DecisionJournalSlot::ResourceFact)
+                || matches!(action.key,DecisionJournalKey::Source)
+                    && !matches!(action.slot,DecisionJournalSlot::Primary|DecisionJournalSlot::SourceHookStop)
                 || matches!(action.key,DecisionJournalKey::Conversation{..})
-                    && action.slot==DecisionJournalSlot::ResourceFact {
+                    && !matches!(action.slot,DecisionJournalSlot::Primary|DecisionJournalSlot::Revocation) {
                 return Err(failure(ErrorCode::InvalidInput,"decision-activity"));
             }
         }
@@ -81,6 +84,7 @@ fn reference(
             }
         }
         PendingJournalKey::Resource(key) if key.project_id==project=>DecisionJournalKey::Resource,
+        PendingJournalKey::Source(key) if key.project_id==project=>DecisionJournalKey::Source,
         _ => {
             return Err(failure(
                 ErrorCode::CorruptLedger,
@@ -130,11 +134,22 @@ fn reference(
             ResourceDraftPending::Capture{..}=>DecisionLocalRequestKind::ResourceCapture,
         },
         PendingJournalSlot::ResourceFact(_)=>DecisionLocalRequestKind::ResourceFact,
+        PendingJournalSlot::Source(pending)=>match pending {
+            SourceDraftPending::Capture { .. }=>DecisionLocalRequestKind::SourceCapture,
+            SourceDraftPending::Start { .. }=>DecisionLocalRequestKind::SourceStart,
+            SourceDraftPending::PrepareCheck { .. }=>DecisionLocalRequestKind::SourcePrepareCheck,
+            SourceDraftPending::StartCheck { .. }=>DecisionLocalRequestKind::SourceStartCheck,
+            SourceDraftPending::FinishCheck { .. }=>DecisionLocalRequestKind::SourceFinishCheck,
+            SourceDraftPending::Adopt { .. }=>DecisionLocalRequestKind::SourceAdopt,
+        },
+        PendingJournalSlot::SourceHookStop(_)=>DecisionLocalRequestKind::SourceHookStop,
     };
     let slot = if matches!(row.slot, PendingJournalSlot::Revocation(_)) {
         DecisionJournalSlot::Revocation
     } else if matches!(row.slot,PendingJournalSlot::ResourceFact(_)){
         DecisionJournalSlot::ResourceFact
+    } else if matches!(row.slot,PendingJournalSlot::SourceHookStop(_)){
+        DecisionJournalSlot::SourceHookStop
     } else {
         DecisionJournalSlot::Primary
     };
@@ -208,6 +223,19 @@ fn observe(
                 None=>DecisionLocalOutcome::ReceiptAbsent,
             });
         }
+        (PendingJournalKey::Source(key),slot)=>{
+            let target=match slot {
+                PendingJournalSlot::Source(pending)=>SourceDraftResolveTarget::Primary { pending:pending.clone() },
+                PendingJournalSlot::SourceHookStop(pending)=>SourceDraftResolveTarget::HookStop { pending:pending.clone() },
+                _=>return Err(failure(ErrorCode::CorruptLedger,"decision-journal-slot")),
+            };
+            let observation=super::super::source::plugin::observations::observe_persistent(store,key,&target)?;
+            return Ok(match observation.disposition() {
+                Some(SourceDraftDisposition::Recorded)=>DecisionLocalOutcome::Recorded,
+                Some(SourceDraftDisposition::ConfirmedNotApplied)=>DecisionLocalOutcome::FencedNotApplied,
+                Some(SourceDraftDisposition::PreparationExpired)|None=>DecisionLocalOutcome::ReceiptAbsent,
+            });
+        }
         _ => return Err(failure(ErrorCode::CorruptLedger, "decision-journal-slot")),
     };
     Ok(if recorded {
@@ -226,6 +254,7 @@ fn targets(row: &PendingActionRef) -> Vec<DecisionTarget> {
             conversation_id: key.conversation_id,
         }],
         PendingJournalKey::Resource(_)=>vec![DecisionTarget::Project],
+        PendingJournalKey::Source(_)=>vec![DecisionTarget::Project],
     };
     let plan = match &row.slot {
         PendingJournalSlot::Conversation(ConversationDraftPending::WorkPlanStart {
@@ -312,10 +341,12 @@ pub(super) fn project(
                     format!("conversation:{conversation_id}")
                 }
                 DecisionJournalKey::Resource=>"resource".into(),
+                DecisionJournalKey::Source=>"source".into(),
             };
             let slot = match reference.action.slot {
                 DecisionJournalSlot::Revocation=>"revocation",
                 DecisionJournalSlot::ResourceFact=>"resource-fact",
+                DecisionJournalSlot::SourceHookStop=>"source-hook-stop",
                 DecisionJournalSlot::Primary=>"primary",
             };
             let bytes = serde_json::to_vec(&(

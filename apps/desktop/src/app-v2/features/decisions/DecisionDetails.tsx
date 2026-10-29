@@ -151,14 +151,15 @@ function SourceComparisonDetails({ view, after, disabled, onPrevious, onNext }: 
   onPrevious: () => void; onNext: (after: number) => void;
 }) {
   const { t } = useTranslation(undefined, { keyPrefix: "workbenchV2" });
-  const page = view.page, uncertain = page.rows.filter(row => row.kind === "ambiguous" || row.kind === "rename-candidate");
+  const page = view.page, uncertain = page.rows.filter(row => row.kind === "changed" || row.kind === "ambiguous" || row.kind === "rename-candidate");
   return <div className={styles.body}>
     <p>{t("decisionDetailsSourcePreviewHelp")}</p>
     <p className={styles.meta}>{t("decisionDetailsSourcePage", { from: page.rows.length ? after + 1 : 0, to: after + page.rows.length, total: page.filteredTotal })}</p>
     {uncertain.length ? <ul className={styles.list}>{uncertain.map(row => <li className={styles.record} key={row.new?.ordinal}>
       <h3>{row.new?.nativeIdentity?.display?.value || row.new?.key || t("decisionDetailsUnnamed")}</h3>
-      <p><Badge>{t(row.kind === "rename-candidate" ? "decisionDetailsRenameCandidate" : "decisionDetailsAmbiguousMatch")}</Badge></p>
+      <p><Badge>{t(row.kind === "changed" ? "decisionDetailsChangedSource" : row.kind === "rename-candidate" ? "decisionDetailsRenameCandidate" : "decisionDetailsAmbiguousMatch")}</Badge></p>
       {row.new ? <TextBlock label={t("decisionDetailsNewSource")} text={row.new.text}/> : null}
+      {row.old && !row.candidates.some(candidate => candidate.occurrenceId === row.old?.occurrenceId) ? <TextBlock label={t("decisionDetailsSource")} text={row.old.occurrence.text}/> : null}
       <h4>{t("decisionDetailsPreviousCandidates")}</h4>
       <ul>{row.candidates.map(candidate => <li key={candidate.occurrenceId}>
         <p>{candidate.occurrence.nativeIdentity?.display?.value || candidate.occurrence.key || t("decisionDetailsUnnamed")}</p>
@@ -280,6 +281,14 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
     catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
     finally { navigation.current = false; if (mounted.current) setOpening(false); }
   }
+  async function openSource() {
+    const expected = view, callback = live.current.onNavigate;
+    if (!expected || expected.kind !== "mapping" && expected.kind !== "source-comparison" || !callback || !currentView(expected) || navigation.current) return;
+    navigation.current = true; setOpening(true); setFailure(null);
+    try { if (!await callback(item, () => currentView(expected)) && currentView(expected)) setFailure({ cause: null }); }
+    catch (cause) { if (currentView(expected)) setFailure({ cause: commandFailure(cause) }); }
+    finally { navigation.current = false; if (mounted.current) setOpening(false); }
+  }
   function refresh() {
     if (!present() || query.isFetching || navigation.current) return;
     setFailure(null); void query.refetch();
@@ -302,10 +311,11 @@ function DetailsRead({ item, disabled, current, onBack, onOpenEntry, onNavigate 
       {view?.kind === "resource" ? <ResourceDetails view={view}/> : null}
       {view?.kind === "knowledge" ? <><KnowledgeDetails view={view}/>{onNavigate ? <div><Button size="sm" disabled={!fresh || opening || view.decision !== null}
         onClick={() => { void openKnowledge(); }}>{t("decisionsKnowledgeProposalOpen")}</Button></div> : null}</> : null}
-      {view?.kind === "mapping" ? <MappingDetails view={view}/> : null}
+      {view?.kind === "mapping" ? <><MappingDetails view={view}/>{onNavigate ? <Button size="sm" disabled={!fresh || opening} onClick={() => void openSource()}>{t("decisionDetailsSavedSource")}</Button> : null}</> : null}
       {view?.kind === "source-comparison" ? <SourceComparisonDetails view={view} after={sourceAfter} disabled={!fresh || opening}
         onPrevious={() => { if (sourceOffsets.length > 1) readSourcePage(sourceOffsets.slice(0, -1)); }}
         onNext={after => { if (view.page.nextOrdinal === after) readSourcePage([...sourceOffsets, after]); }}/>: null}
+      {view?.kind === "source-comparison" && onNavigate ? <Button size="sm" disabled={!fresh || opening} onClick={() => void openSource()}>{t("decisionDetailsReviewSource")}</Button> : null}
       {view?.kind === "execution" ? <ExecutionDetails view={view} item={item} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery" ? <DeliveryDetails view={view} blocked={!fresh || opening} openEntry={(unitId, locale) => void openEntry(unitId, locale)}/> : null}
       {view?.kind === "delivery-outcome" ? <DeliveryOutcomeDetails view={view}/> : null}

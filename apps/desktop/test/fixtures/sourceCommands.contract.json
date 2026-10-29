@@ -203,12 +203,6 @@
     },
     "total": 1,
     "filteredTotal": 1,
-    "unchanged": 0,
-    "moved": 0,
-    "changed": 0,
-    "added": 1,
-    "ambiguous": 0,
-    "removed": 0,
     "nextOrdinal": null,
     "rows": [
       {
@@ -263,7 +257,17 @@
         },
         "candidates": []
       }
-    ]
+    ],
+    "counts": {
+      "unchanged": 0,
+      "moved": 0,
+      "changed": 0,
+      "added": 1,
+      "renameCandidate": 0,
+      "ambiguous": 0,
+      "removed": 0
+    },
+    "mappingReviewRequired": 0
   },
   "estimates": [
     {

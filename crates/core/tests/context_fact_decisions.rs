@@ -670,7 +670,7 @@ fn source_replacement_retains_old_decisions_and_requires_explicit_new_basis() {
             2,
         )
         .unwrap();
-    assert_eq!(comparison.changed, 2);
+    assert_eq!(comparison.counts.changed, 2);
     assert_eq!(comparison.rows.len(), 2);
     assert!(comparison.confirmation.lineage.is_empty());
     let mut confirmation = comparison.confirmation;

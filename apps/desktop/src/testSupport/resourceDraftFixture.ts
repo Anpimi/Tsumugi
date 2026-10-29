@@ -49,6 +49,8 @@ export function resourceDraftFixture(next: (command: string, payload: Parameters
 }
 
 const installed = new WeakSet<object>();
+/** A composed fixture still forwards this same resource journal. */
+export function inheritResourceDraftFixture(wrapper: object) { installed.add(wrapper); }
 /** Attach once to an existing synthetic IPC harness, keeping its domain behavior. */
 export function installResourceDraftFixture() {
   const mock = vi.mocked(invoke), next = mock.getMockImplementation();

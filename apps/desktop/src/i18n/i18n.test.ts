@@ -33,13 +33,13 @@ describe("i18n resources", () => {
 
   it.each([
     ["en-US", ["0 questions in the original proposal", "1 question in the original proposal", "2 questions in the original proposal"],
-      "Uncertain matches: 3 · Possible renames: 1", "Preview rows 1–2 of 3; showing the uncertain matches on this page."],
+      "Changed source: 2 · Uncertain matches: 3 · Possible renames: 1", "Preview rows 1–2 of 3; showing the uncertain matches on this page."],
     ["zh-CN", ["原提议中有 0 个问题", "原提议中有 1 个问题", "原提议中有 2 个问题"],
-      "3 处对应不确定 · 1 处可能改名", "读取预览第 1–2 行，共 3 行；下方显示其中待核对的对应关系。"],
+      "2 处原文变化 · 3 处对应不确定 · 1 处可能改名", "读取预览第 1–2 行，共 3 行；下方显示其中待核对的对应关系。"],
   ])("renders decision counts and interpolation in %s", async (locale, questions, matches, page) => {
     await i18n.changeLanguage(locale);
     expect([0, 1, 2].map(count => i18n.t("workbenchV2.decisionsProposalQuestions", { count }))).toEqual(questions);
-    expect(i18n.t("workbenchV2.decisionsSourceMatches", { ambiguous: 3, renamed: 1 })).toBe(matches);
+    expect(i18n.t("workbenchV2.decisionsSourceMatches", { changed: 2, ambiguous: 3, renamed: 1 })).toBe(matches);
     expect(i18n.t("workbenchV2.decisionDetailsSourcePage", { from: 1, to: 2, total: 3 })).toBe(page);
   });
 

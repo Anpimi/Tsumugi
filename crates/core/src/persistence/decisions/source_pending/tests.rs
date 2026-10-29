@@ -54,13 +54,14 @@ fn original_adoption_replaces_pending_group_with_the_current_unresolved_occurren
     let receipt = adopt_comparison(&mut store, &input, result);
     let after = read(&store, project);
     assert_ne!(before.basis, after.basis);
-    assert_eq!(after.total, Some(1));
+    assert_eq!(after.total, Some(2));
     assert!(after.items.iter().all(|item| !matches!(item.action, DecisionAction::CompareSourceMapping { .. })));
     let current = store.content_scope().unwrap().current_snapshot.unwrap();
     assert_ne!(current, old_snapshot);
     let content = store.source_content(current, 0, 100).unwrap();
     let successor = content.rows.iter().find(|row| row.occurrence.key == "hello").unwrap();
-    let item = &after.items[0];
+    let item = after.items.iter().find(|item| matches!(item.action,
+        DecisionAction::ResolveSourceMapping { occurrence_id, .. } if Some(occurrence_id) == successor.occurrence_id)).unwrap();
     assert_eq!(item.source_action_id, Some(receipt.action_id));
     assert!(matches!(item.action, DecisionAction::ResolveSourceMapping { snapshot_id, occurrence_id, ordinal }
         if snapshot_id == current && Some(occurrence_id) == successor.occurrence_id
@@ -69,6 +70,55 @@ fn original_adoption_replaces_pending_group_with_the_current_unresolved_occurren
     assert!(evidence.iter().any(|edge| edge.old.occurrence_id == old_unresolved.occurrence_id));
     assert_eq!(store.decision_page(project, &query(), Some(cursor), 1, |_| false).unwrap_err().code,
         ErrorCode::DependencyConflict);
+}
+
+#[test]
+fn retained_and_rejected_ambiguous_edges_remain_pending_after_translation_and_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("project");
+    let mut store = ProjectStore::create(&path,
+        crate::ProjectMetadata::create("Mapping alternatives", "en", ["zh-CN"]).unwrap()).unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    crate::persistence::review::tests::adopt_source(&mut store, br#"{"a":"Same","b":"Same","keep":"Keep"}"#);
+    let previous = store.content_scope().unwrap().current_snapshot.unwrap();
+    let old = store.source_content(previous, 0, 100).unwrap();
+    let a = old.rows.iter().find(|row| row.occurrence.key == "a").unwrap();
+    let (input, result) = extract(&mut store, MANIFEST, br#"{"x":"Same","y":"Same","keep":"Keep"}"#);
+    let comparison = store.source_comparison(input.envelope().attempt_id, result, 0, 100).unwrap();
+    assert_eq!(comparison.counts.ambiguous, 2);
+    assert_eq!(comparison.mapping_review_required, 2);
+    let x = comparison.rows.iter().find_map(|row| row.new.as_ref().filter(|row| row.key == "x")).unwrap();
+    let mut confirmation = comparison.confirmation;
+    confirmation.actor = Some("Mapping reviewer".into());
+    confirmation.lineage.push(crate::content::LineageChoice { new_ordinal: x.ordinal,
+        old_occurrence_id: a.occurrence_id.unwrap(), decision: crate::content::LineageDecision::Reject,
+        reason: "This old occurrence is not the same content".into() });
+    let action = store.prepare_adoption(input.envelope().attempt_id, input.envelope().units[0].unit_id,
+        vec![result], serde_json::to_value(confirmation).unwrap()).unwrap();
+    store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let content = store.source_content(snapshot, 0, 100).unwrap();
+    let x = content.rows.iter().find(|row| row.occurrence.key == "x").unwrap();
+    let edges = store.source_lineage_evidence(snapshot, x.occurrence.ordinal).unwrap();
+    assert_eq!(edges.len(), 2);
+    assert!(edges.iter().any(|edge| edge.old.occurrence.key == "a" && edge.decision == "reject"));
+    assert!(edges.iter().any(|edge| edge.old.occurrence.key == "b" && edge.decision == "candidate"));
+    assert!(old.rows.iter().all(|row| row.unit_id != x.unit_id));
+    let saved = store.save_translation_edit(&crate::SaveTranslationRevision { reuse_origin: None,
+        project_id: project, action_id: ExecutionId::new(), unit_id: x.unit_id.unwrap(), locale: "zh-CN".into(),
+        source_revision_id: x.source_revision_id.unwrap(), expected_selection_id: None, text: "Current manual translation".into() }).unwrap();
+    let impact = store.source_impact(snapshot, "zh-CN", 0, 100).unwrap();
+    let row = impact.rows.iter().find(|row| row.current.unit_id == x.unit_id).unwrap();
+    assert_eq!(row.selection_id, Some(saved.selection.event_id));
+    assert_eq!(row.status, crate::content::SourceImpactStatus::Unresolved);
+    assert!(row.reasons.iter().any(|reason| reason == "correspondence-unresolved"));
+    let pending = read(&store, project);
+    assert_eq!(pending.total, Some(2));
+    assert!(pending.items.iter().all(|item| matches!(item.action, DecisionAction::ResolveSourceMapping { snapshot_id, .. } if snapshot_id == snapshot)));
+    drop(store);
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(read(&reopened, project).items, pending.items);
+    assert_eq!(reopened.source_lineage_evidence(snapshot, x.occurrence.ordinal).unwrap(), edges);
 }
 
 #[test]

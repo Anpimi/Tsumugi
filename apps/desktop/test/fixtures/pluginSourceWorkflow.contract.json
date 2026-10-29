@@ -547,7 +547,11 @@
         "byteLength": 80,
         "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       }
-    ]
+    ],
+    "startMetadata": {
+      "taskId": "00000000-0000-4000-8000-000000000901",
+      "generation": "00000000-0000-4000-8000-000000000902"
+    }
   },
   "start": {
     "sessionToken": "fixture-session",
@@ -556,7 +560,11 @@
     "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "grantId": "10000000-0000-4000-8000-000000000204",
     "expiresAtMs": "1893456000000",
-    "unsandboxedExecution": true
+    "unsandboxedExecution": true,
+    "startMetadata": {
+      "taskId": "00000000-0000-4000-8000-000000000901",
+      "generation": "00000000-0000-4000-8000-000000000902"
+    }
   },
   "prepareCheck": {
     "sessionToken": "fixture-session",
@@ -843,7 +851,11 @@
         "schemaVersion": 1,
         "behaviorVersion": 1
       }
-    ]
+    ],
+    "startMetadata": {
+      "taskId": "00000000-0000-4000-8000-000000000903",
+      "generation": "00000000-0000-4000-8000-000000000902"
+    }
   },
   "finishCheck": {
     "sessionToken": "fixture-session",

@@ -8,12 +8,13 @@ pub enum DecisionJournalKey {
     Translation { unit_id: ExecutionId, locale: String },
     Conversation { conversation_id: ExecutionId },
     Resource,
+    Source,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-pub enum DecisionJournalSlot { Primary, Revocation, ResourceFact }
+pub enum DecisionJournalSlot { Primary, Revocation, ResourceFact, SourceHookStop }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -44,6 +45,7 @@ pub enum DecisionLocalRequestKind {
     ProposalRevision, ProposalWorkPlan, WorkPlanStart, WorkPlanControl,
     ResourceTypedContextSave, ResourceTypedContextWithdraw, ResourceKnowledgeDecision,
     ResourceCorrection, ResourceTerm, ResourceContext, ResourceDecision, ResourceCapture, ResourceFact,
+    SourceCapture, SourceStart, SourcePrepareCheck, SourceStartCheck, SourceFinishCheck, SourceAdopt, SourceHookStop,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

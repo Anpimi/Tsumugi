@@ -11,25 +11,30 @@ export const sourceHookKey = (actionId: string | null) => ["source-maintenance-h
 function fixed<T>(value: T): T { const copy = structuredClone(value); function freeze(item: unknown) {
   if (item && typeof item === "object") { Object.values(item).forEach(freeze); Object.freeze(item); }
 } freeze(copy); return copy; }
-interface State {
+export interface SourceMaintenanceHookState {
   enabled: boolean; locale: string; activation: SourceMaintenanceHookActivation | null; preparing: boolean; preparationFailure: CommandFailure | null;
   sourceActionId: string | null; originalActivation: SourceMaintenanceHookActivation | null; originalRequest: SourceAdoptRequest | null;
   reading: boolean; readFailure: CommandFailure | null; closed: boolean; drained: boolean;
   stopping: boolean;
-  stop: { request: SourceMaintenanceHookStopRequest; pending: boolean; unknown: boolean; notKnown: boolean; ended: boolean } | null;
+  stop: { request: SourceMaintenanceHookStopRequest; submittedSeq: string; pending: boolean; unknown: boolean; notKnown: boolean; ended: boolean } | null;
   stopFailure: CommandFailure | null;
   waitEnded: boolean;
 }
-export function useSourceMaintenanceHook(project: ProjectView, ports: { live: () => boolean; changed: () => void; canSelect: () => boolean }) {
+export function useSourceMaintenanceHook(project: ProjectView, ports: {
+  live: () => boolean; changed: () => void; canSelect: () => boolean; observed?: () => void;
+  sequence: () => string; checkpointStop: () => Promise<boolean>;
+  resolveStop: (change: (before: SourceMaintenanceHookState) => SourceMaintenanceHookState, disposition: "recorded" | "confirmed-not-applied") => Promise<boolean>;
+}) {
   const reads = useSessionReads(), projectRef = useRef(project), portsRef = useRef(ports), [session] = useState(() => executionContext(project));
-  const [state, setState] = useState<State>({ enabled: false, locale: "", activation: null, preparing: false, preparationFailure: null,
+  const [state, setState] = useState<SourceMaintenanceHookState>({ enabled: false, locale: "", activation: null, preparing: false, preparationFailure: null,
     sourceActionId: null, originalActivation: null, originalRequest: null, reading: false, readFailure: null, closed: false, drained: false, stopping: false, stop: null, stopFailure: null, waitEnded: false });
   const stateRef = useRef(state), declarationTicket = useRef<object | null>(null), readTicket = useRef<object | null>(null), stopTicket = useRef<object | null>(null), selectionTicket = useRef<object | null>(null);
   useLayoutEffect(() => { projectRef.current = project; portsRef.current = ports; });
   useLayoutEffect(() => () => { declarationTicket.current = null; readTicket.current = null; stopTicket.current = null; selectionTicket.current = null; }, []);
   function current() { return stateRef.current; }
   function live() { return portsRef.current.live() && !reads.retired; }
-  function update(change: (before: State) => State) { if (!live()) return; const next = change(stateRef.current); stateRef.current = next; setState(next); }
+  function update(change: (before: SourceMaintenanceHookState) => SourceMaintenanceHookState) { if (!live()) return; const next = change(stateRef.current); stateRef.current = next; setState(next); portsRef.current.observed?.(); }
+  function restore(value: SourceMaintenanceHookState) { stateRef.current = value; setState(value); }
   function editLocale(locale: string) {
     if (!live() || locale && !projectRef.current.metadata.targetLocales.includes(locale)) return;
     declarationTicket.current = null;
@@ -71,11 +76,9 @@ export function useSourceMaintenanceHook(project: ProjectView, ports: { live: ()
     if (before.closed && value.view && !value.view.admissionClosed) throw new Error("Obsolete notification observation");
     const stopped = value.view?.stop;
     const confirmedStop = !!before.stop && !!stopped && sameSourceHookStop(before.stop.request.stop, stopped.request) && stopped.admissionClosed;
-    if (confirmedStop) stopTicket.current = null;
     update(part => ({ ...part, originalActivation: part.originalActivation ?? value.view?.activation ?? null,
       closed: part.closed || value.view?.admissionClosed === true, drained: part.closed && part.drained || value.callbacksDrained,
-      stopping: confirmedStop ? false : part.stopping, waitEnded: confirmedStop ? false : part.waitEnded,
-      stop: confirmedStop && part.stop ? { ...part.stop, pending: false, unknown: false, notKnown: false, ended: false } : part.stop }));
+      stopping: confirmedStop && !part.stop?.pending ? false : part.stopping }));
   }
   async function read(replaceWait = false) {
     const before = current(), id = before.sourceActionId;
@@ -97,6 +100,7 @@ export function useSourceMaintenanceHook(project: ProjectView, ports: { live: ()
     const before = current(), activation = before.originalActivation;
     if (!live() || !before.sourceActionId || !activation || stopTicket.current && !replaceWait || !canStop()) return;
     const ticket = {}; stopTicket.current = ticket;
+    const submittedSeq = before.stop?.submittedSeq ?? portsRef.current.sequence();
     update(value => ({ ...value, stopFailure: null, stopping: true }));
     try {
       let request = before.stop?.request;
@@ -104,12 +108,15 @@ export function useSourceMaintenanceHook(project: ProjectView, ports: { live: ()
         if (!live() || stopTicket.current !== ticket || current().sourceActionId !== before.sourceActionId) return;
         request = fixed({ ...session, stop: { projectId: session.projectId, sourceActionId: before.sourceActionId, actionId, activation } });
       }
-      update(value => ({ ...value, stop: { request, pending: true, unknown: false, notKnown: false, ended: false }, waitEnded: false }));
+      update(value => ({ ...value, stop: { request, submittedSeq, pending: true, unknown: false, notKnown: false, ended: false }, waitEnded: false }));
+      if (!await portsRef.current.checkpointStop() || !live() || stopTicket.current !== ticket) return;
       const result = await commands.stop(request);
       if (!live() || stopTicket.current !== ticket || current().sourceActionId !== before.sourceActionId) return;
       const stopped = result.result.kind === "stopped";
-      update(value => ({ ...value, closed: value.closed || stopped, drained: result.callbacksDrained, stopping: false,
-        stop: value.stop ? { ...value.stop, pending: false, unknown: false, notKnown: !stopped } : null }));
+      if (stopped) await portsRef.current.resolveStop(value => ({ ...value, closed: true, drained: result.callbacksDrained, stopping: false,
+        stop: value.stop ? { ...value.stop, pending: false, unknown: false, notKnown: false } : null }), "recorded");
+      else update(value => ({ ...value, drained: result.callbacksDrained, stopping: false,
+        stop: value.stop ? { ...value.stop, pending: false, unknown: true, notKnown: true } : null }));
       void read();
     } catch (error) { if (stopTicket.current === ticket && current().sourceActionId === before.sourceActionId) update(value => ({ ...value,
       stopFailure: commandFailure(error), stopping: false, stop: value.stop ? { ...value.stop, pending: false, unknown: true } : null })); }
@@ -130,17 +137,23 @@ export function useSourceMaintenanceHook(project: ProjectView, ports: { live: ()
     && (!value.closed || !!value.stop && (value.stop.pending || value.stop.unknown || value.stop.notKnown)); }
   function canEndWait() { const value = current(), id = value.sourceActionId; if (!id || !blocked()) return false;
     const query = reads.client.getQueryState<SourceMaintenanceHookObservation>(reads.key(sourceHookKey(id)));
+    const stopped = query?.data?.view?.stop, original = value.stop?.request.stop;
     return live() && !value.reading && !value.readFailure && query?.status === "success" && query.fetchStatus === "idle" && !query.isInvalidated
-      && query.error === null && query.data?.sourceActionId === id && query.data.view?.admissionClosed === true && query.data.callbacksDrained;
+      && query.error === null && query.data?.sourceActionId === id && query.data.view?.admissionClosed === true && query.data.callbacksDrained
+      && !!original && !!stopped && stopped.admissionClosed
+      && sameSourceHookStop({ ...original, actionId: stopped.request.actionId }, stopped.request);
   }
-  function endWait() { if (!canEndWait()) return false;
+  async function endWait() { if (!canEndWait()) return false;
+    const stopped = status()?.view?.stop;
+    if (!stopped || !current().stop) return false;
+    const recorded = sameSourceHookStop(current().stop!.request.stop, stopped.request);
     stopTicket.current = null;
-    update(value => ({ ...value, stopping: false, waitEnded: true, stop: value.stop ? { ...value.stop, pending: false, unknown: false, ended: true } : null }));
-    return true;
+    return portsRef.current.resolveStop(value => ({ ...value, stopping: false, waitEnded: true,
+      stop: value.stop ? { ...value.stop, pending: false, unknown: false, ended: true } : null }), recorded ? "recorded" : "confirmed-not-applied");
   }
   function revision() { const value = current(); return [value.enabled, value.locale, value.activation, value.preparing, value.sourceActionId,
     value.stopping, value.stop?.request.stop.actionId, value.stop?.pending, value.stop?.unknown, value.stop?.notKnown, value.waitEnded, value.closed, value.drained]; }
-  return { state, current, status, editLocale, enable, canPrepare, capture, discardDraft, read, retryRead: () => read(true), stop, retryStop: () => stop(true), select, blocked, revision,
+  return { state, current, restore, status, editLocale, enable, canPrepare, capture, discardDraft, read, retryRead: () => read(true), stop, retryStop: () => stop(true), select, blocked, revision,
     canStop, canEndWait, endWait, refreshDeadline: () => update(value => ({ ...value })),
     hasDraft: () => current().enabled || current().locale !== "" };
 }

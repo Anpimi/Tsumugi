@@ -109,6 +109,11 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         );
         request
     }
+    fn source_consent(context: &Value, review: &Value) -> Value {
+        let mut request = consent(context, review);
+        request["startMetadata"] = review.get("startMetadata").expect("source review start metadata").clone();
+        request
+    }
     fn consents(context: &Value, view: &Value) -> Vec<Value> {
         view["checkers"]
             .as_array()
@@ -301,7 +306,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     // Installation approval does not grant execution. Disabling the exact
     // installed package after capture must reject a new producer dispatch.
     let disabled = call(&window, "set_plugin_enabled", json!({"package":source_choice.package,"enabled":false,"expectedRevision":"1","actionId":ExecutionId::new()})).unwrap();
-    let start_request = consent(&context, &preflight);
+    let start_request = source_consent(&context, &preflight);
     assert!(call(&window, "start_plugin_source", start_request.clone()).is_err());
     call(&window, "set_plugin_enabled", json!({"package":source_choice.package,"enabled":true,"expectedRevision":disabled["settingsRevision"],"actionId":ExecutionId::new()})).unwrap();
     let mut expired = start_request.clone();
@@ -350,7 +355,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         call(&window, "prepare_source_check", check_prepare).unwrap(),
         check_review
     );
-    let check_request = consent(&context, &check_review);
+    let check_request = source_consent(&context, &check_review);
     let mut missing = check_request.clone();
     missing["unsandboxedExecution"] = json!(false);
     assert!(call(&window, "start_source_check", missing).is_err());

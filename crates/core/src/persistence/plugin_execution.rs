@@ -5,6 +5,7 @@ use crate::execution::{
     ErrorCode, ExecutionError, ExecutionId, FixedInput, PluginConsent, PluginPermit,
     plugin_authority::{PluginAuthority, PluginEpoch, plugin_grant_deadline, plugin_now_ms},
 };
+use crate::content::{SourcePluginStartMetadata, SourcePluginStartObservation};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::Arc;
 
@@ -187,6 +188,84 @@ fn check_record(record: &GrantRecord, input: &FixedInput) -> Result<(), Executio
     Ok(())
 }
 
+fn check_direct_start_identity(
+    record: &GrantRecord,
+    grant: ExecutionId,
+    attempt: ExecutionId,
+    digest: &str,
+    expires_at_ms: u64,
+    consent: PluginConsent,
+) -> Result<(), ExecutionError> {
+    if record.grant_id != grant || record.attempt_id != attempt || record.input_digest != digest
+        || record.expires_at_ms != expires_at_ms || record.unsandboxed_execution != consent.unsandboxed_execution
+        || record.application_execution != consent.application_execution || record.delegation.is_some() {
+        return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
+    }
+    Ok(())
+}
+
+struct SourceStartIdentity<'a> {
+    project: ExecutionId,
+    attempt: ExecutionId,
+    operation: &'a str,
+    digest: &'a str,
+    grant: ExecutionId,
+    expires_at_ms: u64,
+    unsandboxed: bool,
+    metadata: &'a SourcePluginStartMetadata,
+}
+
+fn source_start_observation_in(
+    c: &Connection,
+    request: &SourceStartIdentity<'_>,
+) -> Result<SourcePluginStartObservation, ExecutionError> {
+    if ![crate::content::OPERATION, crate::execution::SOURCE_CHECK_OPERATION].contains(&request.operation)
+        || !request.unsandboxed || request.expires_at_ms == 0 || request.expires_at_ms > i64::MAX as u64
+        || tsumugi_plugin_sdk::validate_package_digest(request.digest).is_err() {
+        return Err(failure(ErrorCode::InvalidInput, "source-start-request"));
+    }
+    if super::read_metadata_from(c).map_err(|_| failure(ErrorCode::CorruptLedger, "plugin-project"))?
+        .project_id().to_string() != request.project.to_string() {
+        return Err(failure(ErrorCode::Unauthorized, "source-start-project"));
+    }
+    let by_grant = for_grant(c, request.grant)?;
+    let record = for_attempt(c, request.attempt)?;
+    if by_grant.as_ref().map(|row| (row.grant_id, row.attempt_id))
+        != record.as_ref().map(|row| (row.grant_id, row.attempt_id)) {
+        return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
+    }
+    if let Some(record) = &record {
+        check_direct_start_identity(record, request.grant, request.attempt, request.digest,
+            request.expires_at_ms, PluginConsent { unsandboxed_execution: request.unsandboxed, application_execution: false })?;
+        if record.task_id != request.metadata.task_id || record.generation != request.metadata.generation {
+            return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
+        }
+    }
+    not_delegated(c, request.metadata.task_id)?;
+    let enqueued: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+        [request.attempt.to_string()], |r| r.get(0)).map_err(sql)?;
+    if enqueued {
+        let input = ledger::load_input(c, request.attempt)?;
+        if input.envelope().project_id != request.project || input.envelope().task_id != request.metadata.task_id
+            || input.envelope().operation != request.operation || input.digest() != request.digest
+            || input.envelope().plugin.is_none() || input.envelope().automation.is_some()
+            || input.envelope().previous_attempt_id.is_some() {
+            return Err(failure(ErrorCode::ResultMismatch, "source-start-request"));
+        }
+        check_record(record.as_ref().ok_or_else(|| failure(ErrorCode::CorruptLedger, "source-start-proof"))?, &input)?;
+        return Ok(SourcePluginStartObservation::Started { proof: crate::execution::PluginStartActionRead {
+            project_id: request.project, task_id: request.metadata.task_id, attempt_id: request.attempt,
+            operation: request.operation.into(), input_digest: request.digest.into(),
+        }});
+    }
+    // The grant's unique attempt association is the fence. Without a stored
+    // input its original operation is unavailable; neither Source operation
+    // can use this revoked grant to create that attempt later.
+    Ok(if record.as_ref().is_some_and(|row| row.revoked) {
+        SourcePluginStartObservation::ConfirmedNotApplied
+    } else { SourcePluginStartObservation::Unknown })
+}
+
 /// Historical provenance uses the original persisted grant, never a live permit.
 pub(super) fn validate_result_in(
     connection: &Connection,
@@ -202,6 +281,41 @@ pub(super) fn validate_result_in(
         }
     }
     Ok(())
+}
+
+/// Publication records an already executed Source result. Old epochs and
+/// expired process permits are historical attribution, not new execution
+/// authority. Persisted revocation and cancellation still forbid new writes.
+pub(super) fn check_source_publication_provenance_in(
+    c: &Connection,
+    input: &FixedInput,
+    result: &crate::execution::FixedResult,
+) -> Result<(), ExecutionError> {
+    if ![crate::content::OPERATION, crate::execution::SOURCE_CHECK_OPERATION].contains(&input.envelope().operation.as_str())
+        || input.envelope().automation.is_some() || input.envelope().plugin.is_none()
+        || result.envelope().plugin.is_none() {
+        return Err(failure(ErrorCode::Unauthorized, "source-publication-provenance"));
+    }
+    let record = for_attempt(c, input.envelope().attempt_id)?.ok_or_else(denied)?;
+    check_record(&record, input)?;
+    check_project(c, input)?;
+    validate_result_in(c, input, result)?;
+    if !record.unsandboxed_execution || record.application_execution || record.delegation.is_some() {
+        return Err(failure(ErrorCode::Unauthorized, "source-publication-provenance"));
+    }
+    not_delegated(c, record.task_id)?;
+    // These two stages are permanent admission fences for an exact, still
+    // unpublished result. Invalid provenance or a missing live permit is not.
+    if record.revoked {
+        return Err(failure(ErrorCode::Unauthorized, "source-publication-revoked"));
+    }
+    not_cancelled(c, record.task_id).map_err(|error| {
+        if error.code == ErrorCode::Cancelled {
+            failure(ErrorCode::Cancelled, "source-publication-cancelled")
+        } else {
+            error
+        }
+    })
 }
 
 /// Read provenance is checked against the original grant, without requiring a
@@ -370,6 +484,19 @@ impl ProjectStore {
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "plugin-session"));
         }
+        self.plugin_start_request_observation(grant_id, attempt_id, input_digest, expires_at_ms, consent)
+    }
+
+    /// Observe the complete original direct-start identity without clearing
+    /// execution uncertainty, renewing a grant, or opening runtime admission.
+    pub(in crate::persistence) fn plugin_start_request_observation(
+        &self,
+        grant_id: ExecutionId,
+        attempt_id: ExecutionId,
+        input_digest: &str,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+    ) -> Result<Option<FixedInput>, ExecutionError> {
         if !consent.unsandboxed_execution
             || expires_at_ms == 0
             || expires_at_ms > i64::MAX as u64
@@ -378,45 +505,90 @@ impl ProjectStore {
             return Err(denied());
         }
         let connection = self.connection().map_err(|_| denied())?;
-        let tx = connection.unchecked_transaction().map_err(sql)?;
-        let record = for_attempt(&tx, attempt_id)?;
-        if let Some(record) = &record {
-            if record.grant_id != grant_id
-                || record.input_digest != input_digest
-                || record.expires_at_ms != expires_at_ms
-                || record.unsandboxed_execution != consent.unsandboxed_execution
-                || record.application_execution != consent.application_execution
-                || record.delegation.is_some()
-            {
+        super::review::read_snapshot(connection, |tx| {
+            let record = for_attempt(tx, attempt_id)?;
+            if let Some(record) = &record {
+                check_direct_start_identity(record, grant_id, attempt_id, input_digest, expires_at_ms, consent)?;
+                not_delegated(tx, record.task_id)?;
+            } else if for_grant(tx, grant_id)?.is_some() {
                 return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
             }
-            not_delegated(&tx, record.task_id)?;
-        } else if for_grant(&tx, grant_id)?.is_some() {
-            return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
-        }
-        let enqueued: bool = tx
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
-                [attempt_id.to_string()],
-                |row| row.get(0),
-            )
-            .map_err(sql)?;
-        let input = if enqueued {
-            let record = record.ok_or_else(denied)?;
-            let input = ledger::load_input(&tx, attempt_id)?;
-            check_project(&tx, &input)?;
-            check_record(&record, &input)?;
-            if !consent.allows(&input) {
-                return Err(denied());
-            }
-            Some(input)
+            let enqueued: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [attempt_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql)?;
+            let input = if enqueued {
+                let record = record.ok_or_else(denied)?;
+                let input = ledger::load_input(tx, attempt_id)?;
+                check_project(tx, &input)?;
+                check_record(&record, &input)?;
+                if !consent.allows(&input) {
+                    return Err(denied());
+                }
+                Some(input)
+            } else {
+                // Consent may precede enqueue. Its row alone is not an accepted
+                // start and must continue through the caller's original admission.
+                None
+            };
+            Ok(input)
+        })
+    }
+
+    pub fn source_plugin_start_request_observation(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+        grant: ExecutionId,
+        expires_at_ms: u64,
+        unsandboxed_execution: bool,
+        metadata: &SourcePluginStartMetadata,
+    ) -> Result<SourcePluginStartObservation, ExecutionError> {
+        let request = SourceStartIdentity { project, attempt, operation, digest, grant, expires_at_ms,
+            unsandboxed: unsandboxed_execution, metadata };
+        super::review::read_snapshot(self.connection().map_err(|_| denied())?, |c| source_start_observation_in(c, &request))
+    }
+
+    /// Explicit cancellation only. A matching enqueued start wins before any
+    /// revocation. A revoked direct-grant row permanently fences late admission.
+    pub fn cancel_source_start_request(
+        &mut self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+        operation: &str,
+        digest: &str,
+        grant: ExecutionId,
+        expires_at_ms: u64,
+        unsandboxed_execution: bool,
+        metadata: &SourcePluginStartMetadata,
+    ) -> Result<SourcePluginStartObservation, ExecutionError> {
+        let request = SourceStartIdentity { project, attempt, operation, digest, grant, expires_at_ms,
+            unsandboxed: unsandboxed_execution, metadata };
+        let first = self.source_plugin_start_request_observation(project, attempt, operation, digest, grant,
+            expires_at_ms, unsandboxed_execution, metadata)?;
+        if matches!(first, SourcePluginStartObservation::Started { .. }) { return Ok(first); }
+        if self.is_reconciling() { self.reconcile_execution()?; }
+        let authority = self.plugin_authority.clone();
+        let tx = self.execution_write()?;
+        let current = source_start_observation_in(&tx, &request)?;
+        if !matches!(current, SourcePluginStartObservation::Unknown) { return Ok(current); }
+        authority.revoke_grant_if_current(metadata.generation, grant)?;
+        if for_attempt(&tx, attempt)?.is_some() {
+            tx.execute("UPDATE plugin_execution_grants SET revoked=1 WHERE grant_id=?1", [grant.to_string()]).map_err(sql)?;
         } else {
-            // Consent may precede enqueue. Its row alone is not an accepted
-            // start and must continue through the caller's original admission.
-            None
-        };
-        tx.rollback().map_err(sql)?;
-        Ok(input)
+            tx.execute("INSERT INTO plugin_execution_grants
+                (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,application_execution,revoked)
+                VALUES (?1,?2,?3,?4,?5,?6,1,0,1)",
+                params![grant.to_string(), attempt.to_string(), metadata.task_id.to_string(), digest,
+                    metadata.generation.to_string(), expires_at_ms as i64]).map_err(sql)?;
+        }
+        ledger::commit(tx)?;
+        Ok(SourcePluginStartObservation::ConfirmedNotApplied)
     }
 
     pub(crate) fn check_plugin_epoch_owner(

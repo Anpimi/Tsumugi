@@ -83,6 +83,53 @@ fn read_action<T: serde::de::DeserializeOwned>(
         })
         .transpose()
 }
+
+fn stop_action_in(c: &Connection, action: ExecutionId)
+    -> Result<Option<SourceMaintenanceHookStopReceipt>, ExecutionError> {
+    let row: Option<(String, String, Vec<u8>, String, Vec<u8>, String)> = c.query_row(
+        "SELECT source_action_id,kind,request,request_digest,receipt,receipt_digest
+         FROM source_maintenance_hook_actions WHERE action_id=?1",
+        [action.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
+    ).optional().map_err(sql_error)?;
+    let Some((source, kind, request, request_digest, receipt, receipt_digest)) = row else { return Ok(None); };
+    if kind != "stop" { return Err(failure(ErrorCode::ResultMismatch, "source-hook-action")); }
+    if codec::digest(&request) != request_digest || codec::digest(&receipt) != receipt_digest { return Err(corrupt()); }
+    let request: StopSourceMaintenanceHook = codec::decode(&request, MAX_INPUT_BYTES)?;
+    let receipt: SourceMaintenanceHookStopReceipt = codec::decode(&receipt, MAX_INPUT_BYTES)?;
+    if request.action_id != action || request.source_action_id.to_string() != source
+        || receipt.request != request || !receipt.admission_closed { return Err(corrupt()); }
+    Ok(Some(receipt))
+}
+
+fn stop_request_observation_in(c: &Connection, request: &StopSourceMaintenanceHook)
+    -> Result<SourceHookStopObservation, ExecutionError> {
+    if request.action_id == request.source_action_id {
+        return Err(failure(ErrorCode::InvalidInput, "source-hook-stop-identity"));
+    }
+    check_shape(&request.activation)?;
+    if super::super::read_metadata_from(c).map_err(|_| corrupt())?.project_id().to_string() != request.project_id.to_string() {
+        return Err(failure(ErrorCode::Unauthorized, "source-hook-project"));
+    }
+    // An A collision must be rejected before looking for a different stop B.
+    let original = stop_action_in(c, request.action_id)?;
+    if original.as_ref().is_some_and(|receipt| receipt.request != *request) {
+        return Err(failure(ErrorCode::ResultMismatch, "source-hook-action"));
+    }
+    let Some(a) = activation(c, request.project_id, request.source_action_id)? else {
+        if original.is_some() { return Err(corrupt()); }
+        return Ok(SourceHookStopObservation::Unknown);
+    };
+    if a != request.activation { return Err(failure(ErrorCode::ResultMismatch, "source-hook-activation")); }
+    if let Some(receipt) = original { return Ok(SourceHookStopObservation::Recorded { receipt }); }
+    let Some(other) = read_action::<SourceMaintenanceHookStopReceipt>(c, request.source_action_id, "stop")? else {
+        return Ok(SourceHookStopObservation::Unknown);
+    };
+    let verified = stop_action_in(c, other.request.action_id)?.ok_or_else(corrupt)?;
+    if verified != other || other.request.source_action_id != request.source_action_id
+        || other.request.project_id != request.project_id || other.request.activation != request.activation
+        || other.request.action_id == request.action_id { return Err(corrupt()); }
+    Ok(SourceHookStopObservation::ConfirmedNotApplied { stopped_by_action_id: other.request.action_id })
+}
 fn insert_action<T: serde::Serialize, U: serde::Serialize>(
     c: &Connection,
     id: ExecutionId,
@@ -388,16 +435,11 @@ impl ProjectStore {
         &mut self,
         request: &StopSourceMaintenanceHook,
     ) -> Result<SourceMaintenanceHookStopResult, ExecutionError> {
-        if request.action_id == request.source_action_id {
-            return Err(failure(
-                ErrorCode::InvalidInput,
-                "source-hook-stop-identity",
-            ));
-        }
         let tx = self.execution_write()?;
-        if let Some((source,kind,bytes))=tx.query_row("SELECT source_action_id,kind,request FROM source_maintenance_hook_actions WHERE action_id=?1",[request.action_id.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,Vec<u8>>(2)?))).optional().map_err(sql_error)? {
-            if source!=request.source_action_id.to_string() || kind!="stop" || codec::decode::<StopSourceMaintenanceHook>(&bytes,MAX_INPUT_BYTES)?!=*request {return Err(failure(ErrorCode::ResultMismatch,"source-hook-action"))}
-            let receipt=read_action(&tx,request.source_action_id,"stop")?.ok_or_else(corrupt)?;return Ok(SourceMaintenanceHookStopResult::Stopped{receipt});
+        match stop_request_observation_in(&tx, request)? {
+            SourceHookStopObservation::Recorded { receipt } => return Ok(SourceMaintenanceHookStopResult::Stopped { receipt }),
+            SourceHookStopObservation::ConfirmedNotApplied { .. } => return Err(failure(ErrorCode::DependencyConflict, "source-hook-stopped")),
+            SourceHookStopObservation::Unknown => {}
         }
         let Some(a) = activation(&tx, request.project_id, request.source_action_id)? else {
             return Ok(SourceMaintenanceHookStopResult::NotKnown);
@@ -428,6 +470,12 @@ impl ProjectStore {
         super::super::ledger::commit(tx)?;
         self.source_hook_deadlines.remove(&request.source_action_id);
         Ok(SourceMaintenanceHookStopResult::Stopped { receipt })
+    }
+
+    pub fn source_hook_stop_request_observation(&self, request: &StopSourceMaintenanceHook)
+        -> Result<SourceHookStopObservation, ExecutionError> {
+        let c = self.connection().map_err(|_| failure(ErrorCode::StorageFailed, "source-hook-read"))?;
+        super::super::review::read_snapshot(c, |c| stop_request_observation_in(c, request))
     }
     /// One candidate only. A wake-up is not the durable cause or authority.
     pub fn next_source_maintenance_hook(&self) -> Result<Option<ExecutionId>, ExecutionError> {
